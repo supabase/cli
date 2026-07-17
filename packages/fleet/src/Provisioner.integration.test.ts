@@ -21,13 +21,13 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("Provisioner", () => {
   it("creates, forks, resets, destroys", async () => {
     const { p, pods } = await makeProvisioner();
     const a = await p.create({ id: "a", versions: { postgres: PG_VERSION } });
-    expect(a.ports.dbPort).toBeGreaterThan(0);
+    expect(a.dbPort).toBeGreaterThan(0);
     expect(await stat(join(pods.dataDir("a"), "PG_VERSION")).then(() => true)).toBe(true);
 
     // fork: divergence
     await writeFile(join(pods.dataDir("a"), "marker.txt"), "from-a");
     const b = await p.fork("a", "b");
-    expect(b.ports.dbPort).not.toBe(a.ports.dbPort);
+    expect(b.dbPort).not.toBe(a.dbPort);
     await writeFile(join(pods.dataDir("b"), "marker.txt"), "from-b");
     expect(await readFile(join(pods.dataDir("a"), "marker.txt"), "utf8")).toBe("from-a");
 

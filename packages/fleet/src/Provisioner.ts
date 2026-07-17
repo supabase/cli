@@ -2,6 +2,8 @@ import { rename, rm } from "node:fs/promises";
 import {
   SERVICE_NAMES,
   validateEnabledServiceDependencies,
+  type ProvisionedServiceName,
+  type ProvisionedStackVersions,
   type ServiceName,
   type VersionManifest,
 } from "@supabase/stack";
@@ -16,7 +18,7 @@ function errorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-const NATIVE_FLEET_SERVICES = new Set<ServiceName>(["postgres", "postgrest", "auth"]);
+const NATIVE_FLEET_SERVICES = new Set<ProvisionedServiceName>(["postgrest", "auth"]);
 const SERVICE_NAME_SET = new Set<string>(SERVICE_NAMES);
 
 /**
@@ -44,7 +46,7 @@ function validateVersions(versions: Partial<VersionManifest>): void {
 
 export interface CreatePodOptions {
   readonly id: string;
-  readonly versions: Partial<VersionManifest>;
+  readonly versions: ProvisionedStackVersions;
   readonly services?: Partial<Record<ServiceName, boolean>>;
   readonly flags?: { readonly supautils?: boolean };
   /** Build/use a warm template (services pre-migrated). Default: base template. */
@@ -79,7 +81,15 @@ export class Provisioner {
     if (pgVersion === undefined) throw new Error("versions.postgres is required");
     validateVersions(opts.versions);
     validateServices(opts.services ?? {});
-    const enabled = SERVICE_NAMES.filter((name) => opts.services?.[name] === true);
+    if (opts.services?.postgres === true) {
+      throw new Error(
+        "postgres is always enabled for fleet pods and must not be configured as a service",
+      );
+    }
+    const enabled = SERVICE_NAMES.filter(
+      (name): name is ProvisionedServiceName =>
+        name !== "postgres" && opts.services?.[name] === true,
+    );
     const dependencyError = validateEnabledServiceDependencies(new Set(enabled));
     if (dependencyError !== undefined) {
       throw new Error(dependencyError);
@@ -104,8 +114,7 @@ export class Provisioner {
         services: opts.services ?? {},
         flags: { supautils: opts.flags?.supautils ?? false },
         warm: opts.warm === true,
-        ports: allocated.ports,
-        internalPorts: allocated.internalPorts,
+        dbPort: allocated.dbPort,
         postgresPassword,
         createdAt: new Date().toISOString(),
       };
@@ -126,7 +135,10 @@ export class Provisioner {
     if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
     const pgVersion = manifest.versions.postgres;
     if (pgVersion === undefined) throw new Error(`pod ${id} has no postgres version`);
-    const enabled = SERVICE_NAMES.filter((name) => manifest.services[name] === true);
+    const enabled = SERVICE_NAMES.filter(
+      (name): name is ProvisionedServiceName =>
+        name !== "postgres" && manifest.services[name] === true,
+    );
     const template = manifest.warm
       ? await templates.ensureWarmTemplate(manifest.versions, enabled)
       : await templates.ensureBaseTemplate(pgVersion);
@@ -175,8 +187,7 @@ export class Provisioner {
       const manifest: PodManifest = {
         ...source,
         id: newId,
-        ports: allocated.ports,
-        internalPorts: allocated.internalPorts,
+        dbPort: allocated.dbPort,
         createdAt: new Date().toISOString(),
       };
       await pods.write(manifest);

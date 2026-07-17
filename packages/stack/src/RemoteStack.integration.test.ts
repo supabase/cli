@@ -86,11 +86,11 @@ function mockStack() {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
-    enableExtension: (name: string) =>
+    ensureExtensionPreload: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
         : Effect.sync(() => {
-            serviceCalls.push(`enable-extension:${name}`);
+            serviceCalls.push(`ensure-extension-preload:${name}`);
           }),
     reloadFunctions: () =>
       Effect.sync(() => {
@@ -234,10 +234,10 @@ describe("RemoteStack integration", () => {
             );
             if (res.status === 404) return yield* new ServiceNotFoundError({ name });
           }),
-        enableExtension: (name: string) =>
+        ensureExtensionPreload: (name: string) =>
           Effect.gen(function* () {
             const res = yield* Effect.promise(() =>
-              fetch(`${url}/extensions/${name}/enable`, { method: "POST" }),
+              fetch(`${url}/extensions/${name}/preload`, { method: "POST" }),
             );
             if (res.status === 404) return yield* new ServiceNotFoundError({ name });
           }),
@@ -356,6 +356,13 @@ describe("RemoteStack integration", () => {
       Effect.flatMap(Stack, (stack) => stack.restartService("postgres")),
     );
     expect(mock.serviceCalls).toContain("restart:postgres");
+  });
+
+  test("ensureExtensionPreload records the call", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.ensureExtensionPreload("pg_cron")),
+    );
+    expect(mock.serviceCalls).toContain("ensure-extension-preload:pg_cron");
   });
 
   test("reloadEdgeRuntime records the call", async () => {

@@ -87,7 +87,7 @@ function makeConfig(dataDir: string): ResolvedStackConfig {
     // (unlike postgres's Exec-based pg_isready probe, which the mocked
     // ChildProcessSpawner satisfies), so nothing in this mock setup would ever
     // answer them and waitAllReady would hang/fail. Keeping only postgres
-    // enabled is sufficient to exercise the enableExtension race.
+    // enabled is sufficient to exercise the ensureExtensionPreload race.
     postgrest: false,
     auth: false,
     edgeRuntime: false,
@@ -181,21 +181,21 @@ function startFakeHealthyServer(): Promise<FakeHealthyServer> {
   });
 }
 
-describe("StackLifecycleCoordinator enableExtension", () => {
-  // Regression test: two concurrent enableExtension calls used to race on
+describe("StackLifecycleCoordinator ensureExtensionPreload", () => {
+  // Regression test: two concurrent ensureExtensionPreload calls used to race on
   // pod.conf — both read the same preload list, both wrote independently, and
   // the second write clobbered the first, silently dropping one extension
   // from shared_preload_libraries. Racing the two restarts of "postgres" also
   // deadlocks the orchestrator (concurrent FiberMap.run + stopForRestart calls
   // on the same service name step on each other), so without the fix this
   // test times out rather than merely asserting the wrong libraries.
-  // enableExtension is now serialized per coordinator instance with an Effect
+  // ensureExtensionPreload is now serialized per coordinator instance with an Effect
   // Semaphore, which fixes both the lost write and the restart deadlock.
   //
   // it.live is required (not it.effect/TestClock): the mock ChildProcessSpawner
   // resolves exit codes and the postgres health-check probe via a real
   // `Effect.sleep("10 millis")`, which needs the real clock to progress.
-  it.live("serializes concurrent enableExtension calls so no write is lost", () => {
+  it.live("serializes concurrent ensureExtensionPreload calls so no write is lost", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-test-"));
     writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
     const config = makeConfig(dataDir);
@@ -205,9 +205,12 @@ describe("StackLifecycleCoordinator enableExtension", () => {
       const stack = yield* Stack;
       yield* stack.start();
 
-      yield* Effect.all([stack.enableExtension("pg_cron"), stack.enableExtension("pg_net")], {
-        concurrency: "unbounded",
-      });
+      yield* Effect.all(
+        [stack.ensureExtensionPreload("pg_cron"), stack.ensureExtensionPreload("pg_net")],
+        {
+          concurrency: "unbounded",
+        },
+      );
 
       const libraries = yield* Effect.promise(() => readPreloadLibraries(dataDir));
       expect(libraries).toContain("pg_cron");
@@ -272,7 +275,7 @@ describe("StackLifecycleCoordinator enableExtension", () => {
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
-      yield* stack.enableExtension("vector");
+      yield* stack.ensureExtensionPreload("vector");
       expect(existsSync(dataDir)).toBe(false);
     }).pipe(
       Effect.provide(layer),
@@ -292,7 +295,7 @@ describe("StackLifecycleCoordinator enableExtension", () => {
       yield* stack.stop();
       const spawnedBefore = spawner.spawned.length;
 
-      yield* stack.enableExtension("pg_cron");
+      yield* stack.ensureExtensionPreload("pg_cron");
 
       expect(spawner.spawned).toHaveLength(spawnedBefore);
       expect((yield* stack.getState("postgres")).status).toBe("Stopped");
@@ -319,7 +322,7 @@ describe("StackLifecycleCoordinator enableExtension", () => {
           yield* Effect.sleep(Duration.millis(10));
         }
 
-        const exit = yield* stack.enableExtension("pg_cron").pipe(Effect.exit);
+        const exit = yield* stack.ensureExtensionPreload("pg_cron").pipe(Effect.exit);
 
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* Effect.promise(() => readPreloadLibraries(dataDir))).toEqual([]);
@@ -351,7 +354,7 @@ describe("StackLifecycleCoordinator enableExtension", () => {
       const startExit = yield* coordinator.start().pipe(Effect.exit);
 
       expect(Exit.isFailure(startExit)).toBe(true);
-      yield* coordinator.enableExtension("pg_cron");
+      yield* coordinator.ensureExtensionPreload("pg_cron");
       expect(yield* Effect.promise(() => readPreloadLibraries(dataDir))).toEqual(["pg_cron"]);
     }).pipe(
       Effect.provide(layer),
@@ -363,7 +366,7 @@ describe("StackLifecycleCoordinator enableExtension", () => {
 describe("StackLifecycleCoordinator lazyServices", () => {
   // it.live: the mocked ChildProcessSpawner and postgres's health-check probe both resolve via a
   // real `Effect.sleep`, which needs the real clock to progress (same reason as the
-  // enableExtension test above).
+  // ensureExtensionPreload test above).
   it.live("start() only eager-starts postgres/postgres-init; postgrest starts on demand", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-lazy-test-"));
 

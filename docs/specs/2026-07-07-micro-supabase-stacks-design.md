@@ -94,9 +94,9 @@ Everything not listed stays at PG defaults.
 
 **Replication:** `wal_level=logical`, `max_wal_senders=5`, `max_replication_slots=5`, `max_slot_wal_keep_size=256MB`, `wal_keep_size=0`.
 
-### Preload policy: preload-on-enable
+### Preload policy: preload on request
 
-`shared_preload_libraries` starts **empty**. Extensions that require preload (`pg_cron`, `pg_net`, `timescaledb`, `pg_stat_statements`, `auto_explain`, `pgaudit`, `plan_filter`, `supautils`, legacy `pgsodium`) are handled by an orchestrator API `enable-extension <name>`: append the library to the pod's conf overlay, restart that pod's Postgres (sub-second with `fsync=off`), then `CREATE EXTENSION` works. All other extensions (`pgvector`, `pg_graphql`, `postgis`, `pgjwt`, `vault`, …) are plain `CREATE EXTENSION`, zero cost until used. `supautils` (platform role guardrails) is a profile flag: off for local dev, on for free-tier fidelity.
+`shared_preload_libraries` starts **empty**. Extensions that require preload (`pg_cron`, `pg_net`, `timescaledb`, `pg_stat_statements`, `auto_explain`, `pgaudit`, `plan_filter`, `supautils`, legacy `pgsodium`) are handled by an orchestrator API `ensure-extension-preload <name>`: append the library to the pod's conf overlay, restart that pod's Postgres (sub-second with `fsync=off`), then `CREATE EXTENSION` works. All other extensions (`pgvector`, `pg_graphql`, `postgis`, `pgjwt`, `vault`, …) are plain `CREATE EXTENSION`, zero cost until used. `supautils` (platform role guardrails) is a profile flag: off for local dev, on for free-tier fidelity.
 
 ### Config layering
 
@@ -167,8 +167,8 @@ This replaces the current daemon-per-stack fork model (100 pods must not mean 10
 
 ### Changes inside `@supabase/stack`
 
-1. **Provision via template clone, not per-boot init:** `postgres-init` reduces to a no-op check; the fleet daemon hands `createStack` a pre-cloned data dir. (Per-boot init can never support `fork`; templates can.)
-2. **Micro config profile:** the Postgres service gains the conf-overlay mechanism and an `enableExtension(name)` API implementing preload-on-enable.
+1. **Provision via template clone, not per-boot init:** `postgres-init` reduces to a no-op check; the fleet daemon hands `createProvisionedStack` a pre-cloned data dir and declarative version/service selection. Stack owns the runtime configuration. (Per-boot init can never support `fork`; templates can.)
+2. **Micro config profile:** the Postgres service gains the conf-overlay mechanism and an `ensureExtensionPreload(name)` interface that persists the required preload and restarts Postgres when necessary.
 3. **Version bump `17.6.1.081 → 17.6.1.143`; native-first hardening.** Roadmap flag (not this project): Edge Runtime is currently Docker-forced; native bundles for remaining services are the ask to service teams — Docker-only services undercut the density story on tiny machines.
 
 Untouched: Effect-based internals, BinaryResolver, health checks, key-translation proxy, log streaming.
@@ -198,7 +198,7 @@ A script in the CLI repo: provision N pods, wake a subset, drive synthetic traff
 ### Tests
 
 - **Unit:** port registry, template cache keys (tuple hashing), idle-timer state machine, manifest round-trips.
-- **Integration:** base/warm template builds; clone and `fork` divergence (write to fork, source untouched); preload-on-enable end-to-end; suspend/resume preserves committed data; wake-latency assertions.
+- **Integration:** base/warm template builds; clone and `fork` divergence (write to fork, source untouched); extension-preload configuration end-to-end; suspend/resume preserves committed data; wake-latency assertions.
 - **Compatibility suite (the "no compromise on extensions" proof):** `CREATE EXTENSION` for every extension in `supabase/postgres 17.6.1.143` plus a smoke query each; real CLI migration/seed flows; round-trip fidelity (`pg_dump` from pod → restore into stock image, and vice versa); logical-replication smoke test (create slot, stream changes) standing in for Realtime until sidecars land.
 - **Density E2E:** extend `parallelStacks.e2e` — 100 registered pods, wake 10 at random, assert envelope, port uniqueness, clean suspend.
 - **Chaos:** `kill -9` fleet daemon → adoption on restart; kill Postgres → supervised restart; simulated host crash → verify documented `reset` recovery.

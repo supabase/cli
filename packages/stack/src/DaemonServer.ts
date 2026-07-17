@@ -274,10 +274,10 @@ export class DaemonServer extends Context.Service<
 
         HttpRouter.route(
           "POST",
-          "/extensions/:name/enable",
+          "/extensions/:name/preload",
           Effect.gen(function* () {
             const routeParams = yield* HttpRouter.params;
-            yield* stack.enableExtension(routeParams.name!);
+            yield* stack.ensureExtensionPreload(routeParams.name!);
             return HttpServerResponse.jsonUnsafe({ ok: true });
           }).pipe(
             Effect.catchTag("ServiceNotFoundError", (e) =>

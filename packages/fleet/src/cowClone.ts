@@ -9,6 +9,11 @@ const run = (cmd: string, args: string[]): Promise<number> =>
     child.on("exit", (code) => resolve(code ?? 1));
   });
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
 export interface CloneDirOptions {
   /**
    * Overrides the executable used for the platform-specific copy-on-write attempt
@@ -28,7 +33,10 @@ export async function cloneDir(
 ): Promise<void> {
   const exists = await stat(dest).then(
     () => true,
-    () => false,
+    (error: unknown) => {
+      if (errorCode(error) === "ENOENT") return false;
+      throw error;
+    },
   );
   if (exists) throw new Error(`cloneDir: destination already exists: ${dest}`);
   await mkdir(dirname(dest), { recursive: true });

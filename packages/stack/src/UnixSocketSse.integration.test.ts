@@ -67,7 +67,7 @@ function makeStackLayer(opts: {
       name === "postgres" ? Effect.void : Effect.fail(new ServiceNotFoundError({ name })),
     restartService: (name: string) =>
       name === "postgres" ? Effect.void : Effect.fail(new ServiceNotFoundError({ name })),
-    enableExtension: (name: string) =>
+    ensureExtensionPreload: (name: string) =>
       name === "postgres" ? Effect.void : Effect.fail(new ServiceNotFoundError({ name })),
     reloadFunctions: () => Effect.void,
     reloadEdgeRuntime: () => Effect.void,

@@ -677,7 +677,7 @@ export function mockStack(
       startService: () => Effect.void,
       stopService: () => Effect.void,
       restartService: () => Effect.void,
-      enableExtension: () => Effect.void,
+      ensureExtensionPreload: () => Effect.void,
       reloadFunctions: () => Effect.void,
       reloadEdgeRuntime: () => Effect.void,
       getState: () =>

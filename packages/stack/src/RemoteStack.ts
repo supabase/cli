@@ -293,10 +293,10 @@ export const RemoteStack = {
               }),
             ),
 
-          enableExtension: (name: string) =>
+          ensureExtensionPreload: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, `/extensions/${name}/enable`, {
+                const response = yield* unixResponse(socketPath, `/extensions/${name}/preload`, {
                   method: "POST",
                 });
                 if (response.status === 404) {

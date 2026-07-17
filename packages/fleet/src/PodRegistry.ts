@@ -1,14 +1,10 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { SERVICE_NAMES } from "@supabase/stack";
-import type { AllocatedPorts, ServiceName } from "@supabase/stack";
+import type { ServiceName } from "@supabase/stack";
 import type { PodManifest } from "./PodManifest.ts";
-import { FLEET_INTERNAL_PORT_RANGE, FLEET_PUBLIC_PORT_RANGE } from "./PortRegistry.ts";
-
-interface PortRange {
-  readonly min: number;
-  readonly max: number;
-}
+import type { VersionManifest } from "@supabase/stack";
+import { FLEET_PUBLIC_PORT_RANGE } from "./PortRegistry.ts";
 
 const POD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SERVICE_NAME_SET = new Set<string>(SERVICE_NAMES);
@@ -54,63 +50,16 @@ function errorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-// Public and internal ports live in disjoint ranges (proxy listeners vs
-// in-process stack services); a "parseable but corrupt" manifest whose
-// internal ports drifted into the public range would make wake() bind
-// postgres on a proxy-owned port, so each set is validated against its range.
-function isFleetPort(value: unknown, range: PortRange): value is number {
+function isFleetPort(value: unknown): value is number {
   return (
-    typeof value === "number" && Number.isInteger(value) && value >= range.min && value <= range.max
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= FLEET_PUBLIC_PORT_RANGE.min &&
+    value <= FLEET_PUBLIC_PORT_RANGE.max
   );
 }
 
-function parsePorts(value: unknown, range: PortRange): AllocatedPorts | undefined {
-  if (!isRecord(value)) return undefined;
-  if (
-    !isFleetPort(value.dbPort, range) ||
-    !isFleetPort(value.apiPort, range) ||
-    !isFleetPort(value.authPort, range) ||
-    !isFleetPort(value.postgrestPort, range) ||
-    !isFleetPort(value.postgrestAdminPort, range) ||
-    !isFleetPort(value.edgeRuntimePort, range) ||
-    !isFleetPort(value.edgeRuntimeInspectorPort, range) ||
-    !isFleetPort(value.realtimePort, range) ||
-    !isFleetPort(value.storagePort, range) ||
-    !isFleetPort(value.imgproxyPort, range) ||
-    !isFleetPort(value.mailpitPort, range) ||
-    !isFleetPort(value.mailpitSmtpPort, range) ||
-    !isFleetPort(value.mailpitPop3Port, range) ||
-    !isFleetPort(value.pgmetaPort, range) ||
-    !isFleetPort(value.studioPort, range) ||
-    !isFleetPort(value.analyticsPort, range) ||
-    !isFleetPort(value.poolerPort, range) ||
-    !isFleetPort(value.poolerApiPort, range)
-  ) {
-    return undefined;
-  }
-  return {
-    dbPort: value.dbPort,
-    apiPort: value.apiPort,
-    authPort: value.authPort,
-    postgrestPort: value.postgrestPort,
-    postgrestAdminPort: value.postgrestAdminPort,
-    edgeRuntimePort: value.edgeRuntimePort,
-    edgeRuntimeInspectorPort: value.edgeRuntimeInspectorPort,
-    realtimePort: value.realtimePort,
-    storagePort: value.storagePort,
-    imgproxyPort: value.imgproxyPort,
-    mailpitPort: value.mailpitPort,
-    mailpitSmtpPort: value.mailpitSmtpPort,
-    mailpitPop3Port: value.mailpitPop3Port,
-    pgmetaPort: value.pgmetaPort,
-    studioPort: value.studioPort,
-    analyticsPort: value.analyticsPort,
-    poolerPort: value.poolerPort,
-    poolerApiPort: value.poolerApiPort,
-  };
-}
-
-function parseVersions(value: unknown): PodManifest["versions"] | undefined {
+function parseVersions(value: unknown): Partial<VersionManifest> | undefined {
   if (!isRecord(value)) return undefined;
   let postgres: string | undefined;
   let postgrest: string | undefined;
@@ -205,21 +154,9 @@ function parseManifest(value: unknown): PodManifest | undefined {
   if (typeof value.id !== "string" || !isValidPodId(value.id)) return undefined;
   const versions = parseVersions(value.versions);
   const services = parseServices(value.services);
-  const ports = parsePorts(value.ports, FLEET_PUBLIC_PORT_RANGE);
-  const internalPorts = parsePorts(value.internalPorts, FLEET_INTERNAL_PORT_RANGE);
-  if (
-    versions === undefined ||
-    services === undefined ||
-    ports === undefined ||
-    internalPorts === undefined
-  ) {
+  if (versions === undefined || services === undefined || !isFleetPort(value.dbPort)) {
     return undefined;
   }
-  // Duplicate ports within a manifest would make PortRegistry.reconcile()
-  // throw at startup and abort the whole fleet; treat the manifest as corrupt
-  // (dropped, like every other malformed-manifest case) instead.
-  const allPorts = [...Object.values(ports), ...Object.values(internalPorts)];
-  if (new Set(allPorts).size !== allPorts.length) return undefined;
   // Provisioning always records the exact versions a pod was initialized
   // with (see resolveTemplateVersions); a manifest missing them would make
   // the next wake silently boot whatever the CURRENT defaults are against
@@ -238,12 +175,11 @@ function parseManifest(value: unknown): PodManifest | undefined {
   }
   return {
     id: value.id,
-    versions,
+    versions: { ...versions, postgres: versions.postgres },
     services,
     flags: { supautils: value.flags.supautils },
     warm: value.warm,
-    ports,
-    internalPorts,
+    dbPort: value.dbPort,
     postgresPassword: value.postgresPassword,
     createdAt: value.createdAt,
   };
@@ -272,12 +208,20 @@ export class PodRegistry {
   async exists(id: string): Promise<boolean> {
     return stat(this.podDir(id)).then(
       () => true,
-      () => false,
+      (error: unknown) => {
+        if (errorCode(error) === "ENOENT") return false;
+        throw error;
+      },
     );
   }
 
   async read(id: string): Promise<PodManifest | undefined> {
-    const raw = await readFile(join(this.podDir(id), "pod.json"), "utf8").catch(() => undefined);
+    const raw = await readFile(join(this.podDir(id), "pod.json"), "utf8").catch(
+      (error: unknown) => {
+        if (errorCode(error) === "ENOENT") return undefined;
+        throw error;
+      },
+    );
     if (raw === undefined) return undefined;
     try {
       const manifest = parseManifest(JSON.parse(raw));
@@ -288,6 +232,10 @@ export class PodRegistry {
   }
 
   async write(manifest: PodManifest): Promise<void> {
+    const parsed = parseManifest(manifest);
+    if (parsed === undefined || parsed.id !== manifest.id) {
+      throw new Error(`invalid pod manifest: ${manifest.id}`);
+    }
     const dir = this.podDir(manifest.id);
     // The manifest holds the pod's postgres password in plaintext, so keep the
     // directory and file owner-only regardless of the process umask.

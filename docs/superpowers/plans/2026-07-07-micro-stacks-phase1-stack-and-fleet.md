@@ -487,19 +487,19 @@ git commit -m "feat(stack): provisioned data dirs, micro profile wiring, postgre
 
 ---
 
-### Task 5: `enableExtension` on the coordinator and StackHandle
+### Task 5: `ensureExtensionPreload` on the coordinator and StackHandle
 
 **Files:**
 - Modify: `packages/stack/src/StackLifecycleCoordinator.ts` (service methods, ~lines 131-171 and 518-564)
 - Modify: `packages/stack/src/createStack.ts` (StackHandle interface ~line 90-111 and Promise wiring ~line 694-763)
 - Modify: `packages/stack/src/index.ts` (export new types)
-- Test: `packages/stack/src/enableExtension.unit.test.ts`
+- Test: `packages/stack/src/extensionPreload.unit.test.ts`
 
 **Interfaces:**
 - Consumes: `PRELOAD_REQUIRED_EXTENSIONS` (Task 2), `readPreloadLibraries`/`writePreloadLibraries` (Task 3), coordinator `restartService` (existing).
 - Produces:
-  - Coordinator: `readonly enableExtension: (name: string) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>`
-  - `StackHandle.enableExtension(name: string): Promise<void>`
+  - Coordinator: `readonly ensureExtensionPreload: (name: string) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>`
+  - `StackHandle.ensureExtensionPreload(name: string): Promise<void>`
   - Behavior: if `name` is not in `PRELOAD_REQUIRED_EXTENSIONS` → no-op (plain `CREATE EXTENSION` works). If already in pod.conf → no-op. Else append to pod.conf and `restartService("postgres")`.
 
 - [ ] **Step 1: Write the failing test**
@@ -507,20 +507,20 @@ git commit -m "feat(stack): provisioned data dirs, micro profile wiring, postgre
 Test the pure decision logic separately from the Effect plumbing so it runs without postgres:
 
 ```typescript
-// src/enableExtension.unit.test.ts
+// src/extensionPreload.unit.test.ts
 import { describe, expect, it } from "vitest";
-import { planEnableExtension } from "./enableExtension.ts";
+import { planExtensionPreload } from "./extensionPreload.ts";
 
-describe("planEnableExtension", () => {
+describe("planExtensionPreload", () => {
   it("no-ops for extensions that do not need preload", () => {
-    expect(planEnableExtension("pgvector", [])).toEqual({ action: "none" });
+    expect(planExtensionPreload("pgvector", [])).toEqual({ action: "none" });
   });
   it("no-ops when already preloaded", () => {
-    expect(planEnableExtension("pg_cron", ["pg_cron"])).toEqual({ action: "none" });
+    expect(planExtensionPreload("pg_cron", ["pg_cron"])).toEqual({ action: "none" });
   });
-  it("appends and restarts otherwise", () => {
-    expect(planEnableExtension("pg_cron", ["pg_net"])).toEqual({
-      action: "restart",
+  it("appends the required library otherwise", () => {
+    expect(planExtensionPreload("pg_cron", ["pg_net"])).toEqual({
+      action: "update",
       libraries: ["pg_net", "pg_cron"],
     });
   });
@@ -529,36 +529,36 @@ describe("planEnableExtension", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd packages/stack && pnpm vitest run src/enableExtension.unit.test.ts`
+Run: `cd packages/stack && pnpm vitest run src/extensionPreload.unit.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
 
 ```typescript
-// src/enableExtension.ts
+// src/extensionPreload.ts
 import { PRELOAD_REQUIRED_EXTENSIONS } from "./micro.ts";
 
-export type EnableExtensionPlan =
+export type ExtensionPreloadPlan =
   | { readonly action: "none" }
-  | { readonly action: "restart"; readonly libraries: ReadonlyArray<string> };
+  | { readonly action: "update"; readonly libraries: ReadonlyArray<string> };
 
-export const planEnableExtension = (
+export const planExtensionPreload = (
   name: string,
   currentLibraries: ReadonlyArray<string>,
-): EnableExtensionPlan => {
+): ExtensionPreloadPlan => {
   if (!PRELOAD_REQUIRED_EXTENSIONS.has(name)) return { action: "none" };
   if (currentLibraries.includes(name)) return { action: "none" };
-  return { action: "restart", libraries: [...currentLibraries, name] };
+  return { action: "update", libraries: [...currentLibraries, name] };
 };
 ```
 
 In `StackLifecycleCoordinator.ts`, add to the service interface and implementation (the coordinator already knows the resolved postgres `dataDir` from config):
 
 ```typescript
-enableExtension: (name: string) =>
+ensureExtensionPreload: (name: string) =>
   Effect.gen(function* () {
     const libs = yield* Effect.promise(() => readPreloadLibraries(pgDataDir));
-    const plan = planEnableExtension(name, libs);
+    const plan = planExtensionPreload(name, libs);
     if (plan.action === "none") return;
     yield* Effect.promise(() => writePreloadLibraries(pgDataDir, plan.libraries));
     yield* restartServiceImpl("postgres");
@@ -568,21 +568,21 @@ enableExtension: (name: string) =>
 In `createStack.ts`, add to `StackHandle` and the wiring:
 
 ```typescript
-enableExtension(name: string): Promise<void>;
+ensureExtensionPreload(name: string): Promise<void>;
 // ...
-enableExtension: (name) => run(localStack.enableExtension(name)),
+ensureExtensionPreload: (name) => run(localStack.ensureExtensionPreload(name)),
 ```
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `cd packages/stack && pnpm vitest run src/enableExtension.unit.test.ts && pnpm vitest run --exclude '**/*.e2e.test.ts'`
+Run: `cd packages/stack && pnpm vitest run src/extensionPreload.unit.test.ts && pnpm vitest run --exclude '**/*.e2e.test.ts'`
 Expected: PASS, no regressions.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add packages/stack/src
-git commit -m "feat(stack): enableExtension with preload-on-enable restart"
+git commit -m "feat(stack): configure extension preloads on demand"
 ```
 
 ---
@@ -1826,7 +1826,7 @@ export interface FleetHandle extends AsyncDisposable {
   forkPod(sourceId: string, newId: string): Promise<PodStatus>;
   wake(id: string): Promise<void>;
   suspend(id: string): Promise<void>;
-  enableExtension(id: string, extension: string): Promise<void>;
+  ensureExtensionPreload(id: string, extension: string): Promise<void>;
   listPods(): Promise<ReadonlyArray<PodStatus>>;
   dispose(): Promise<void>;
 }
@@ -1838,7 +1838,7 @@ export function createFleet(opts?: FleetOptions): Promise<FleetHandle>;
   - Wake path: `wake(id)` (or first proxied connection) → `createStack({ postgres: { dataDir, provisioned: true, profile: "micro", port: <internal> }, lazyServices: true, ...services-from-manifest })` → `start()` → `serviceReady("postgres")` → IdleMonitor `track(id)`. Memoize concurrent wakes (reuse `makeEnsureServiceMemo` pattern with per-pod keys).
   - Suspend path: IdleMonitor `onIdle` → `suspend(id)` → `stack.dispose()` → drop the StackHandle → state `suspended`. EdgeProxy registration stays.
   - `forkPod`: `suspend(source)` first if warm, then `Provisioner.fork`.
-  - `enableExtension`: if warm → delegate to `StackHandle.enableExtension`; if suspended → edit pod.conf directly via `writePreloadLibraries(dataDir, ...)` (no restart needed — next wake picks it up).
+  - `ensureExtensionPreload`: if warm → delegate to `StackHandle.ensureExtensionPreload`; if suspended → edit pod.conf directly via `writePreloadLibraries(dataDir, ...)` (no restart needed — next wake picks it up).
   - **Startup reconciliation:** on `createFleet`, scan `podsRoot/*/run.pid`; any live process groups from a previous daemon are terminated (SIGTERM, then SIGKILL after 5s) and their pods marked suspended. Phase 1 explicitly kills-then-wakes rather than adopting (documented deviation from the spec's adoption goal; acceptable because data is disposable and wake is ~fast — revisit in a later phase). Write `run.pid` on wake, remove on suspend.
   - `dispose()` suspends all warm pods and closes the EdgeProxy.
 
@@ -1939,7 +1939,7 @@ export interface FleetHandle extends AsyncDisposable {
   forkPod(sourceId: string, newId: string): Promise<PodStatus>;
   wake(id: string): Promise<void>;
   suspend(id: string): Promise<void>;
-  enableExtension(id: string, extension: string): Promise<void>;
+  ensureExtensionPreload(id: string, extension: string): Promise<void>;
   listPods(): Promise<ReadonlyArray<PodStatus>>;
   dispose(): Promise<void>;
 }
@@ -2095,10 +2095,10 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       await wakeUpstream(id);
     },
     suspend,
-    async enableExtension(id, extension) {
+    async ensureExtensionPreload(id, extension) {
       const pod = warm.get(id);
       if (pod) {
-        await pod.stack.enableExtension(extension);
+        await pod.stack.ensureExtensionPreload(extension);
         return;
       }
       const manifest = await pods.read(id);
@@ -2135,7 +2135,7 @@ export type { PodManifest } from "./PodManifest.ts";
 export { templateKey, baseTemplateKey } from "./PodManifest.ts";
 ```
 
-Note for the implementer: `enableExtension` filtering of non-preload extensions happens inside the stack for warm pods; for suspended pods, add the same `PRELOAD_REQUIRED_EXTENSIONS` guard by importing it from `@supabase/stack` (export it from stack's index alongside the pgconf helpers).
+Note for the implementer: both warm and suspended pods use Stack's `configureExtensionPreload(dataDir, name)` module. Warm Stack handles additionally restart PostgreSQL when that module reports an update; suspended pods pick up the persisted configuration on their next wake.
 
 - [ ] **Step 4: Run to verify pass**
 

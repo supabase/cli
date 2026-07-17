@@ -16,13 +16,11 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
-import { planEnableExtension } from "./enableExtension.ts";
-import { PRELOAD_REQUIRED_EXTENSIONS } from "./micro.ts";
+import { configureExtensionPreload } from "./extensionPreload.ts";
 import { StackBuildError } from "./errors.ts";
 import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import { postgresConnectionUrl } from "./postgresCredentials.ts";
-import { installPodConfOverlay, readPreloadLibraries, writePreloadLibraries } from "./pgconf.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
@@ -199,7 +197,7 @@ export class StackLifecycleCoordinator extends Context.Service<
     readonly restartService: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
-    readonly enableExtension: (
+    readonly ensureExtensionPreload: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly reloadFunctions: (
@@ -254,7 +252,7 @@ export class StackLifecycleCoordinator extends Context.Service<
         const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
         const startInFlightRef = yield* Ref.make(false);
-        const enableExtensionLock = yield* Semaphore.make(1);
+        const ensureExtensionPreloadLock = yield* Semaphore.make(1);
         // Tracks every service that has actually been asked to start: the eager set from
         // start() under lazyServices, plus anything started later via startService (the
         // ApiProxy's ensureService on-demand path) or restartService. Under lazyServices,
@@ -690,21 +688,16 @@ export class StackLifecycleCoordinator extends Context.Service<
               // keeps this call site self-contained if that invariant ever changes.
               yield* markStarted([name]);
             }),
-          enableExtension: (name) =>
-            enableExtensionLock.withPermits(1)(
+          ensureExtensionPreload: (name) =>
+            ensureExtensionPreloadLock.withPermits(1)(
               Effect.gen(function* () {
                 const startInFlight = yield* Ref.get(startInFlightRef);
                 if (startInFlight || (yield* Ref.get(phaseRef)) === "starting") {
                   return yield* Effect.fail(
                     new StackBuildError({
-                      detail: `Cannot enable extension "${name}" while the stack is starting. Wait for start() to finish and retry.`,
+                      detail: `Cannot configure preload for extension "${name}" while the stack is starting. Wait for start() to finish and retry.`,
                     }),
                   );
-                }
-                // Non-preload extensions are a pure no-op: bail before touching
-                // PGDATA, which may not even exist yet on a never-started stack.
-                if (!PRELOAD_REQUIRED_EXTENSIONS.has(name)) {
-                  return;
                 }
                 // PGDATA I/O failures (missing dir, bad permissions) surface as
                 // typed StackBuildErrors so daemon routes serialize them instead
@@ -714,22 +707,13 @@ export class StackLifecycleCoordinator extends Context.Service<
                     try: io,
                     catch: (cause) => new StackBuildError({ detail, cause }),
                   });
-                yield* podConfIo(
-                  `Failed to install the pod.conf overlay while enabling extension "${name}"`,
-                  () => installPodConfOverlay(config.postgres.dataDir),
+                const result = yield* podConfIo(
+                  `Failed to configure preload for extension "${name}"`,
+                  () => configureExtensionPreload(config.postgres.dataDir, name),
                 );
-                const currentLibraries = yield* podConfIo(
-                  `Failed to read preload libraries while enabling extension "${name}"`,
-                  () => readPreloadLibraries(config.postgres.dataDir),
-                );
-                const plan = planEnableExtension(name, currentLibraries);
-                if (plan.action === "none") {
+                if (result !== "updated") {
                   return;
                 }
-                yield* podConfIo(
-                  `Failed to write preload libraries while enabling extension "${name}"`,
-                  () => writePreloadLibraries(config.postgres.dataDir, plan.libraries),
-                );
                 if ((yield* Ref.get(phaseRef)) !== "running") {
                   return;
                 }

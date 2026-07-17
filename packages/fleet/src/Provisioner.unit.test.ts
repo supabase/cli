@@ -1,7 +1,11 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_VERSIONS, type ServiceName, type VersionManifest } from "@supabase/stack";
+import {
+  DEFAULT_VERSIONS,
+  type ProvisionedServiceName,
+  type ProvisionedStackVersions,
+} from "@supabase/stack";
 import { describe, expect, it } from "vitest";
 import { PodRegistry } from "./PodRegistry.ts";
 import { PortRegistry } from "./PortRegistry.ts";
@@ -24,8 +28,8 @@ function fakeTemplateStore(templateDir: string, calls: string[]): TemplateStore 
       return templateDir;
     },
     async ensureWarmTemplate(
-      _versions: Partial<VersionManifest>,
-      enabledServices: ReadonlyArray<ServiceName>,
+      _versions: ProvisionedStackVersions,
+      enabledServices: ReadonlyArray<ProvisionedServiceName>,
     ): Promise<string> {
       calls.push(`warm:${[...enabledServices].sort().join(",")}`);
       return templateDir;
@@ -64,10 +68,7 @@ describe("Provisioner (unit, fake deps)", () => {
 
       expect(manifest.id).toBe("x");
       expect(manifest.postgresPassword).toBe("secret-password");
-      expect(ports.get("x")).toEqual({
-        ports: manifest.ports,
-        internalPorts: manifest.internalPorts,
-      });
+      expect(ports.get("x")).toEqual({ dbPort: manifest.dbPort });
       expect(await pods.read("x")).toEqual(manifest);
     });
 
@@ -116,10 +117,7 @@ describe("Provisioner (unit, fake deps)", () => {
 
       // The duplicate-id pre-check throws before any (re-)allocation, so the
       // original pod's ports must still be intact.
-      expect(ports.get("dup")).toEqual({
-        ports: first.ports,
-        internalPorts: first.internalPorts,
-      });
+      expect(ports.get("dup")).toEqual({ dbPort: first.dbPort });
     });
 
     it("records resolved default versions for enabled warm services", async () => {
@@ -164,9 +162,10 @@ describe("Provisioner (unit, fake deps)", () => {
 
       // Simulates an untyped JS caller: a numeric version would persist into a
       // pod.json the registry's strict parser refuses to read back.
-      const junkVersions = { postgres: PG_VERSION, auth: 123 } as unknown as Partial<
-        Record<ServiceName, string>
-      >;
+      const junkVersions = {
+        postgres: PG_VERSION,
+        auth: 123,
+      } as unknown as CreatePodOptions["versions"];
       await expect(
         p.create({ id: "bad", versions: junkVersions, services: { auth: true } }),
       ).rejects.toThrow(/invalid version entry/);
@@ -268,12 +267,8 @@ describe("Provisioner (unit, fake deps)", () => {
       const forked = await p.fork("src", "dst");
 
       expect(forked.id).toBe("dst");
-      expect(forked.ports).not.toEqual(source.ports);
-      expect(forked.internalPorts).not.toEqual(source.internalPorts);
-      expect(ports.get("dst")).toEqual({
-        ports: forked.ports,
-        internalPorts: forked.internalPorts,
-      });
+      expect(forked.dbPort).not.toBe(source.dbPort);
+      expect(ports.get("dst")).toEqual({ dbPort: forked.dbPort });
       expect(await pods.read("dst")).toEqual(forked);
     });
 
@@ -325,14 +320,8 @@ describe("Provisioner (unit, fake deps)", () => {
 
       // The pre-check for an already-existing target throws before
       // (re-)allocating, so neither pod's ports should be disturbed.
-      expect(ports.get("src")).toEqual({
-        ports: source.ports,
-        internalPorts: source.internalPorts,
-      });
-      expect(ports.get("dst")).toEqual({
-        ports: existing.ports,
-        internalPorts: existing.internalPorts,
-      });
+      expect(ports.get("src")).toEqual({ dbPort: source.dbPort });
+      expect(ports.get("dst")).toEqual({ dbPort: existing.dbPort });
     });
   });
 });

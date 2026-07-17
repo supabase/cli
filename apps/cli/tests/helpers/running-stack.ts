@@ -152,7 +152,7 @@ function makeStackLayer(opts: {
       opts.states.some((state) => state.name === name)
         ? Effect.void
         : Effect.fail(new ServiceNotFoundError({ name })),
-    enableExtension: (name: string) =>
+    ensureExtensionPreload: (name: string) =>
       opts.states.some((state) => state.name === name)
         ? Effect.void
         : Effect.fail(new ServiceNotFoundError({ name })),

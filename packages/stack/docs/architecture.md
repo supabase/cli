@@ -1,6 +1,6 @@
 # Architecture of `@supabase/stack`
 
-Manages a local Supabase development stack — resolving native binaries, wiring services into a dependency graph, and exposing a single async `createStack()` call that returns running connection details.
+Manages a local Supabase development stack — resolving native binaries, wiring services into a dependency graph, and exposing deep constructors that return running connection details.
 
 ## Table of contents
 
@@ -899,6 +899,7 @@ interface Stack extends AsyncDisposable {
   startService(name: string): Promise<void>;
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
+  ensureExtensionPreload(name: string): Promise<void>;
 
   // Status
   getStatus(): Promise<ReadonlyArray<StackServiceState>>;
@@ -965,7 +966,9 @@ Streams (`statusChanges`, `logs`, `serviceLogs`) are converted to `AsyncIterable
 
 **Files:** `src/bun.ts`, `src/node.ts`
 
-These thin wrappers are the runtime-specific implementations selected by the package root export conditions. Each one constructs the platform-specific layer and delegates to `createStack` from `createStack.ts`.
+These thin wrappers are the runtime-specific adapters selected by the package root export conditions. Each one constructs the platform-specific layer and delegates to `createStack` from `createStack.ts`.
+
+They expose two constructors. `createStack(config)` is the general interface. `createProvisionedStack(options)` is the deeper pod-runtime interface: `provisionedStack.ts` owns native mode, the micro profile, service disabling, pinned-version mapping, and dependency validation for a pre-initialized data directory. Fleet therefore describes a pod without duplicating StackConfig assembly.
 
 ```ts
 // bun.ts

@@ -9,7 +9,7 @@ CoW template provisioning, wake-on-connect, suspend-on-idle, instant fork.
 import { createFleet } from "@supabase/fleet";
 
 await using fleet = await createFleet();
-const pod = await fleet.createPod({ id: "my-worktree", versions: { postgres: "17.6.1.143" } });
+const pod = await fleet.createPod({ id: "my-worktree", postgresVersion: "17.6.1.143" });
 // pod.dbUrl is live immediately -- the first connection wakes postgres (~200ms).
 // After 5 idle minutes (default) the pod suspends to zero processes; the port keeps listening.
 const branch = await fleet.forkPod("my-worktree", "my-worktree-experiment");
@@ -46,7 +46,7 @@ interface FleetHandle extends AsyncDisposable {
   forkPod(sourceId: string, newId: string): Promise<PodStatus>;
   wake(id: string): Promise<void>;
   suspend(id: string): Promise<void>;
-  enableExtension(id: string, extension: string): Promise<void>;
+  ensureExtensionPreload(id: string, extension: string): Promise<void>;
   listPods(): Promise<ReadonlyArray<PodStatus>>;
   dispose(): Promise<void>;
 }
@@ -63,11 +63,9 @@ stable across suspend/wake cycles -- the external port never changes for the lif
   `postmaster.pid` (killing the leftover Postgres process group) and leaves the pod suspended;
   the next connection re-wakes it normally. Pod data is disposable, so this is safe, just not
   zero-downtime.
-- **HTTP gateway / additional services are not fleet-wired yet.** Wake-on-connect only listens
-  on the Postgres port. Other stack services (PostgREST, Auth, Realtime, etc.) can be requested
-  per-pod via `services` and lazily started inside an already-warm pod, but there's no edge
-  proxy in front of the API port the way there is for `dbPort` -- so only a warm pod's HTTP
-  services are reachable, and connecting to them does not itself wake a suspended pod.
+- **HTTP gateway / additional services are not fleet-wired yet.** The public fleet interface
+  creates Postgres-only pods. Lazy sidecar startup remains available in `@supabase/stack`, but
+  fleet will not expose sidecar selection until it owns a stable HTTP edge endpoint.
 - **Realtime's WebSocket lazy-start is not covered.** Even inside a warm pod, Realtime's
   lazy-start behavior over a persistent WebSocket connection is a known gap versus the
   request/response lazy-start story for other HTTP services.

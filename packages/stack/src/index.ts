@@ -21,6 +21,11 @@ export type {
 } from "./StackBuilder.ts";
 
 export type { ServiceName, VersionManifest } from "./versions.ts";
+export type {
+  ProvisionedServiceName,
+  ProvisionedStackOptions,
+  ProvisionedStackVersions,
+} from "./provisionedStack.ts";
 export { DEFAULT_VERSIONS, fillServiceVersionManifest, SERVICE_NAMES } from "./versions.ts";
 export type { AllocatedPorts } from "./PortAllocator.ts";
 export { PORT_FIELDS } from "./PortAllocator.ts";
@@ -31,10 +36,6 @@ export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export type { ReadyOptions, StackHandle } from "./createStack.ts";
 export type { FunctionsConfig, FunctionsRuntimeConfig } from "./functions.ts";
 export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
-export {
-  installMicroProfile,
-  installPodConfOverlay,
-  readPreloadLibraries,
-  writePreloadLibraries,
-} from "./pgconf.ts";
-export { PRELOAD_REQUIRED_EXTENSIONS } from "./micro.ts";
+export { installMicroProfile } from "./pgconf.ts";
+export { configureExtensionPreload } from "./extensionPreload.ts";
+export type { ExtensionPreloadResult } from "./extensionPreload.ts";

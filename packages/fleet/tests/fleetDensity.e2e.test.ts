@@ -15,14 +15,14 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("fleet density", () => {
 
     // Registration is cheap: template built once, then CoW clones.
     for (let i = 0; i < REGISTERED; i += 1) {
-      await fleet.createPod({ id: `pod-${i}`, versions: { postgres: PG_VERSION } });
+      await fleet.createPod({ id: `pod-${i}`, postgresVersion: PG_VERSION });
     }
     const all = await fleet.listPods();
     expect(all).toHaveLength(REGISTERED);
     expect(all.every((p) => p.state === "suspended")).toBe(true);
 
     // Distinct external ports across the whole fleet.
-    const portSet = new Set(all.map((p) => p.manifest.ports.dbPort));
+    const portSet = new Set(all.map((p) => new URL(p.dbUrl).port));
     expect(portSet.size).toBe(REGISTERED);
 
     // Wake a subset; the rest stay suspended (zero processes).
@@ -34,6 +34,6 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("fleet density", () => {
     // Explicit suspend brings a pod back to zero.
     await fleet.suspend("pod-0");
     const final = await fleet.listPods();
-    expect(final.find((p) => p.manifest.id === "pod-0")?.state).toBe("suspended");
+    expect(final.find((p) => p.id === "pod-0")?.state).toBe("suspended");
   }, 900_000);
 });

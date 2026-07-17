@@ -4,7 +4,7 @@ Programmatic local Supabase stack for TypeScript. Create a local Supabase runtim
 
 ## Features
 
-- **Single entry point** -- `createStack()` resolves config and returns a handle; `start()` prepares assets, starts services, and waits for readiness
+- **Deep constructors** -- `createStack()` handles general stacks, while `createProvisionedStack()` owns the complete runtime policy for pre-initialized micro-profile data directories
 - **Preparation-aware startup** -- cold-cache startup can surface `Downloading` before normal runtime states like `Starting`, `Initializing`, and `Healthy`
 - **Native binaries with Docker fallback** -- uses native services when available and falls back to Docker images automatically
 - **Automatic port allocation** -- all ports are optional and auto-assigned to avoid conflicts
@@ -239,7 +239,23 @@ The package uses export conditions so Bun and Node.js consumers import from the 
 import { createStack } from "@supabase/stack";
 ```
 
-The runtime selects the Bun or Node.js implementation automatically. Both expose the same `createStack(config): Promise<Stack>` API.
+The runtime selects the Bun or Node.js implementation automatically. Both expose the same constructors and Stack handle interface.
+
+Fleet and other high-density hosts should use `createProvisionedStack()` instead of assembling a raw `StackConfig`. Its interface accepts the prepared data directory, pinned versions, enabled sidecars, password, and lazy-start policy; the Stack module owns native mode, the micro profile, service disabling, and version mapping.
+
+```typescript
+import { createProvisionedStack } from "@supabase/stack";
+
+const stack = await createProvisionedStack({
+  dataDir: "/var/lib/supabase/pods/example/data",
+  postgresPassword: "postgres",
+  versions: { postgres: "17.6.1.143", postgrest: "14.14" },
+  enabledServices: ["postgrest"],
+  lazyServices: true,
+});
+```
+
+For preload-required extensions, `stack.ensureExtensionPreload(name)` idempotently persists the required `shared_preload_libraries` entry and restarts PostgreSQL only when the stack is running. It does not execute `CREATE EXTENSION`.
 
 ## Prefetching
 

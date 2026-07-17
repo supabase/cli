@@ -11,8 +11,13 @@ import {
 } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
-import { createStack, installMicroProfile, resolvePostgresPassword } from "@supabase/stack";
-import type { ServiceName, VersionManifest } from "@supabase/stack";
+import {
+  createProvisionedStack,
+  createStack,
+  installMicroProfile,
+  resolvePostgresPassword,
+} from "@supabase/stack";
+import type { ProvisionedServiceName, ProvisionedStackVersions } from "@supabase/stack";
 import { cloneDir } from "./cowClone.ts";
 import { baseTemplateKey, resolveTemplateVersions, templateKey } from "./PodManifest.ts";
 
@@ -115,8 +120,8 @@ export class TemplateStore {
   }
 
   async ensureWarmTemplate(
-    versions: Partial<VersionManifest>,
-    enabledServices: ReadonlyArray<ServiceName>,
+    versions: ProvisionedStackVersions,
+    enabledServices: ReadonlyArray<ProvisionedServiceName>,
   ): Promise<string> {
     const pgVersion = versions.postgres;
     if (pgVersion === undefined) throw new Error("versions.postgres is required");
@@ -139,50 +144,11 @@ export class TemplateStore {
         await this.withStackBootLock(async () => {
           // The clone is already post-init, so postgres-init is skipped (`provisioned: true`);
           // each enabled service boots once and self-migrates against it.
-          const stack = await createStack({
-            mode: "native",
-            postgres: {
-              version: pgVersion,
-              dataDir: buildDataDir,
-              password: postgresPassword,
-              provisioned: true,
-              profile: "micro",
-            },
-            postgrest: enabledServices.includes("postgrest")
-              ? { version: resolvedVersions.postgrest }
-              : false,
-            auth: enabledServices.includes("auth") ? { version: resolvedVersions.auth } : false,
-            edgeRuntime: enabledServices.includes("edge-runtime")
-              ? { version: resolvedVersions["edge-runtime"] }
-              : false,
-            realtime: enabledServices.includes("realtime")
-              ? { version: resolvedVersions.realtime }
-              : false,
-            storage: enabledServices.includes("storage")
-              ? { version: resolvedVersions.storage }
-              : false,
-            imgproxy: enabledServices.includes("imgproxy")
-              ? { version: resolvedVersions.imgproxy }
-              : false,
-            mailpit: enabledServices.includes("mailpit")
-              ? { version: resolvedVersions.mailpit }
-              : false,
-            pgmeta: enabledServices.includes("pgmeta")
-              ? { version: resolvedVersions.pgmeta }
-              : false,
-            studio: enabledServices.includes("studio")
-              ? { version: resolvedVersions.studio }
-              : false,
-            analytics: enabledServices.includes("analytics")
-              ? { version: resolvedVersions.analytics }
-              : false,
-            vector: enabledServices.includes("vector")
-              ? { version: resolvedVersions.vector }
-              : false,
-            pooler: enabledServices.includes("pooler")
-              ? { version: resolvedVersions.pooler }
-              : false,
-            functions: false,
+          const stack = await createProvisionedStack({
+            dataDir: buildDataDir,
+            postgresPassword,
+            versions: resolvedVersions,
+            enabledServices,
           });
           try {
             await stack.start();

@@ -2,31 +2,8 @@ import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { AllocatedPorts } from "@supabase/stack";
+import type { PodManifest } from "./PodManifest.ts";
 import { PodRegistry } from "./PodRegistry.ts";
-
-function ports(dbPort: number, apiPort: number): AllocatedPorts {
-  return {
-    dbPort,
-    apiPort,
-    authPort: apiPort + 1,
-    postgrestPort: apiPort + 2,
-    postgrestAdminPort: apiPort + 3,
-    edgeRuntimePort: apiPort + 4,
-    edgeRuntimeInspectorPort: apiPort + 5,
-    realtimePort: apiPort + 6,
-    storagePort: apiPort + 7,
-    imgproxyPort: apiPort + 8,
-    mailpitPort: apiPort + 9,
-    mailpitSmtpPort: apiPort + 10,
-    mailpitPop3Port: apiPort + 11,
-    pgmetaPort: apiPort + 12,
-    studioPort: apiPort + 13,
-    analyticsPort: apiPort + 14,
-    poolerPort: apiPort + 15,
-    poolerApiPort: apiPort + 16,
-  };
-}
 
 describe("PodRegistry", () => {
   it("rejects ids that could escape the pod root", async () => {
@@ -46,8 +23,7 @@ describe("PodRegistry", () => {
       services: {},
       flags: { supautils: false },
       warm: false,
-      ports: ports(55000, 55001),
-      internalPorts: ports(45000, 45001),
+      dbPort: 55000,
       postgresPassword: "postgres",
       createdAt: "2026-07-08T00:00:00.000Z",
     };
@@ -68,7 +44,7 @@ describe("PodRegistry", () => {
     await expect(pods.list()).resolves.toEqual([]);
   });
 
-  it("rejects manifests whose ports drifted out of their fleet ranges", async () => {
+  it("rejects manifests whose database port is outside the fleet range", async () => {
     const root = await mkdtemp(join(tmpdir(), "pods-"));
     const pods = new PodRegistry(root);
     const base = {
@@ -80,60 +56,27 @@ describe("PodRegistry", () => {
       createdAt: "2026-07-08T00:00:00.000Z",
     };
 
-    // Internal ports in the public proxy range: wake would bind postgres on a
-    // proxy-owned port.
-    await mkdir(join(root, "bad-internal"));
-    await writeFile(
-      join(root, "bad-internal", "pod.json"),
-      JSON.stringify({
-        ...base,
-        id: "bad-internal",
-        ports: ports(55000, 55001),
-        internalPorts: ports(55100, 55101),
-      }),
-    );
-    // Public ports below the proxy range.
     await mkdir(join(root, "bad-public"));
     await writeFile(
       join(root, "bad-public", "pod.json"),
       JSON.stringify({
         ...base,
         id: "bad-public",
-        ports: ports(45000, 45001),
-        internalPorts: ports(46000, 46001),
+        dbPort: 45000,
       }),
     );
 
-    await expect(pods.read("bad-internal")).resolves.toBeUndefined();
     await expect(pods.read("bad-public")).resolves.toBeUndefined();
     await expect(pods.list()).resolves.toEqual([]);
   });
 
-  it("rejects manifests with duplicate ports and non-directory pod entries", async () => {
+  it("ignores non-directory pod entries", async () => {
     const root = await mkdtemp(join(tmpdir(), "pods-"));
     const pods = new PodRegistry(root);
-    const duplicated = ports(55000, 55001);
-
-    await mkdir(join(root, "dup-ports"));
-    await writeFile(
-      join(root, "dup-ports", "pod.json"),
-      JSON.stringify({
-        id: "dup-ports",
-        versions: { postgres: "17.6.1.143" },
-        services: {},
-        flags: { supautils: false },
-        warm: false,
-        ports: { ...duplicated, apiPort: duplicated.dbPort },
-        internalPorts: ports(45000, 45001),
-        postgresPassword: "postgres",
-        createdAt: "2026-07-08T00:00:00.000Z",
-      }),
-    );
     // A stray regular file matching the id regex must not surface as a pod id.
     await writeFile(join(root, "not-a-pod"), "just a file");
 
-    await expect(pods.read("dup-ports")).resolves.toBeUndefined();
-    await expect(pods.listIds()).resolves.toEqual(["dup-ports"]);
+    await expect(pods.listIds()).resolves.toEqual([]);
     await expect(pods.list()).resolves.toEqual([]);
   });
 
@@ -154,6 +97,40 @@ describe("PodRegistry", () => {
     await expect(missing.listIds()).resolves.toEqual([]);
   });
 
+  it("propagates lookup failures instead of treating an unreadable pod as absent", async () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return; // root ignores modes
+    const root = await mkdtemp(join(tmpdir(), "pods-"));
+    const pods = new PodRegistry(root);
+    await mkdir(join(root, "pod-a"));
+    try {
+      await chmod(root, 0o000);
+      await expect(pods.exists("pod-a")).rejects.toThrow();
+      await expect(pods.read("pod-a")).rejects.toThrow();
+    } finally {
+      await chmod(root, 0o700);
+    }
+  });
+
+  it("refuses to persist manifests that cannot be read back", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pods-"));
+    const pods = new PodRegistry(root);
+    const invalid = {
+      id: "pod-a",
+      versions: {},
+      services: {},
+      flags: { supautils: false },
+      warm: false,
+      dbPort: 55000,
+      postgresPassword: "postgres",
+      createdAt: "2026-07-08T00:00:00.000Z",
+    };
+
+    await expect(pods.write(invalid as unknown as PodManifest)).rejects.toThrow(
+      "invalid pod manifest",
+    );
+    await expect(pods.exists("pod-a")).resolves.toBe(false);
+  });
+
   it("rejects manifests missing versions for postgres or enabled services", async () => {
     const root = await mkdtemp(join(tmpdir(), "pods-"));
     const pods = new PodRegistry(root);
@@ -161,8 +138,7 @@ describe("PodRegistry", () => {
       services: {},
       flags: { supautils: false },
       warm: false,
-      ports: ports(55000, 55001),
-      internalPorts: ports(45000, 45001),
+      dbPort: 55000,
       postgresPassword: "postgres",
       createdAt: "2026-07-08T00:00:00.000Z",
     };

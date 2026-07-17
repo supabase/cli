@@ -114,5 +114,8 @@ export async function reapStalePostmaster(dataDir: string): Promise<void> {
   if (!(await isPostmasterForDataDir(pid, dataDir, raw))) return;
 
   signalPostmaster(pid, "SIGKILL");
-  await waitUntilExited(pid, TERM_TIMEOUT_MS);
+  if (await waitUntilExited(pid, TERM_TIMEOUT_MS)) return;
+  if (await isPostmasterForDataDir(pid, dataDir, raw)) {
+    throw new Error(`failed to terminate postgres process ${pid} for data directory ${dataDir}`);
+  }
 }

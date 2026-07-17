@@ -1,9 +1,8 @@
 import { createServer } from "node:net";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { AllocatedPorts } from "@supabase/stack";
 import { createFleet } from "./Fleet.ts";
 import { PodRegistry } from "./PodRegistry.ts";
 import type { PodManifest } from "./PodManifest.ts";
@@ -18,10 +17,8 @@ function tryListen(port: number): Promise<boolean> {
   });
 }
 
-// Manifest ports must sit in the fleet's public range (55000+), with the
-// derived internal set (port - 10_000) inside the internal range (< 55000).
-// The OS ephemeral range may sit entirely below 55000, so probe candidates
-// in the fleet range directly instead of asking for port 0.
+// Manifest ports must sit in the fleet's public range (55000+). The OS
+// ephemeral range may sit entirely below it, so probe candidates directly.
 async function freeFleetPort(): Promise<number> {
   const start = 55000 + Math.floor(Math.random() * 8000);
   for (let offset = 0; offset < 200; offset += 1) {
@@ -41,38 +38,14 @@ function expectPortAvailable(port: number): Promise<void> {
   });
 }
 
-function ports(dbPort: number, apiPort: number): AllocatedPorts {
-  return {
-    dbPort,
-    apiPort,
-    authPort: apiPort + 1,
-    postgrestPort: apiPort + 2,
-    postgrestAdminPort: apiPort + 3,
-    edgeRuntimePort: apiPort + 4,
-    edgeRuntimeInspectorPort: apiPort + 5,
-    realtimePort: apiPort + 6,
-    storagePort: apiPort + 7,
-    imgproxyPort: apiPort + 8,
-    mailpitPort: apiPort + 9,
-    mailpitSmtpPort: apiPort + 10,
-    mailpitPop3Port: apiPort + 11,
-    pgmetaPort: apiPort + 12,
-    studioPort: apiPort + 13,
-    analyticsPort: apiPort + 14,
-    poolerPort: apiPort + 15,
-    poolerApiPort: apiPort + 16,
-  };
-}
-
-function manifest(id: string, dbPort: number, apiPort: number): PodManifest {
+function manifest(id: string, dbPort: number): PodManifest {
   return {
     id,
     versions: { postgres: "17.6.1.143" },
     services: {},
     flags: { supautils: false },
     warm: false,
-    ports: ports(dbPort, apiPort),
-    internalPorts: ports(dbPort - 10_000, apiPort - 10_000),
+    dbPort,
     postgresPassword: "postgres",
     createdAt: "2026-07-08T00:00:00.000Z",
   };
@@ -108,17 +81,54 @@ describe("createFleet", () => {
     }
   });
 
+  it("releases the fleet lock when registry initialization fails", async () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return;
+    const root = await mkdtemp(join(tmpdir(), "fleet-unit-"));
+    const stateFile = join(root, "fleet-state.json");
+    try {
+      await writeFile(stateFile, JSON.stringify({ pods: {} }));
+      await chmod(stateFile, 0o000);
+      await expect(createFleet({ root })).rejects.toThrow();
+
+      await chmod(stateFile, 0o600);
+      const fleet = await createFleet({ root });
+      await fleet.dispose();
+    } finally {
+      await chmod(stateFile, 0o600).catch(() => {});
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects every operation after disposal releases the fleet lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fleet-unit-"));
+    try {
+      const fleet = await createFleet({ root });
+      await fleet.dispose();
+
+      await expect(fleet.listPods()).rejects.toThrow("fleet is disposed");
+      await expect(fleet.wake("pod-a")).rejects.toThrow("fleet is disposed");
+      await expect(fleet.suspend("pod-a")).rejects.toThrow("fleet is disposed");
+      await expect(fleet.destroyPod("pod-a")).rejects.toThrow("fleet is disposed");
+      await expect(fleet.resetPod("pod-a")).rejects.toThrow("fleet is disposed");
+      await expect(fleet.forkPod("pod-a", "pod-b")).rejects.toThrow("fleet is disposed");
+      await expect(fleet.ensureExtensionPreload("pod-a", "pg_cron")).rejects.toThrow(
+        "fleet is disposed",
+      );
+      await expect(fleet.createPod({ id: "pod-a", postgresVersion: "17.6.1.143" })).rejects.toThrow(
+        "fleet is disposed",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("closes registered edge listeners when startup reconciliation fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "fleet-unit-"));
     try {
       const pods = new PodRegistry(join(root, "pods"));
       const dbPort = await freeFleetPort();
-      // Derived with a fixed offset (never bound by the test) so it can't
-      // collide with dbPort's field range within the same manifest.
-      const apiPort = dbPort + 100;
-
-      await pods.write(manifest("pod-a", dbPort, apiPort));
-      await pods.write(manifest("pod-b", dbPort, apiPort + 1));
+      await pods.write(manifest("pod-a", dbPort));
+      await pods.write(manifest("pod-b", dbPort));
 
       await expect(createFleet({ root })).rejects.toThrow(/port already assigned/);
       await expect(expectPortAvailable(dbPort)).resolves.toBeUndefined();

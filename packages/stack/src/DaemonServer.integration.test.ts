@@ -82,13 +82,13 @@ function mockStack() {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
-    enableExtension: (name: string) =>
+    ensureExtensionPreload: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
         : name === "bad-build"
-          ? Effect.fail(new StackBuildError({ detail: "cannot enable while starting" }))
+          ? Effect.fail(new StackBuildError({ detail: "cannot configure preload while starting" }))
           : Effect.sync(() => {
-              serviceCalls.push(`enable-extension:${name}`);
+              serviceCalls.push(`ensure-extension-preload:${name}`);
             }),
     reloadFunctions: () =>
       Effect.sync(() => {
@@ -341,6 +341,14 @@ describe("DaemonServer", () => {
     expect(mock.serviceCalls).toContain("restart:postgres");
   });
 
+  test("POST /extensions/:name/preload configures the extension preload", async () => {
+    const res = await fetch(`${url}/extensions/pg_cron/preload`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(mock.serviceCalls).toContain("ensure-extension-preload:pg_cron");
+  });
+
   test("POST /edge-runtime/reload returns 200", async () => {
     const res = await fetch(`${url}/edge-runtime/reload`, {
       method: "POST",
@@ -353,11 +361,11 @@ describe("DaemonServer", () => {
     expect(mock.serviceCalls).toContain("reload-edge-runtime");
   });
 
-  test("POST /extensions/:name/enable maps build errors to JSON 500", async () => {
-    const res = await fetch(`${url}/extensions/bad-build/enable`, { method: "POST" });
+  test("POST /extensions/:name/preload maps build errors to JSON 500", async () => {
+    const res = await fetch(`${url}/extensions/bad-build/preload`, { method: "POST" });
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error: string; service?: string };
-    expect(body.error).toContain("cannot enable while starting");
+    expect(body.error).toContain("cannot configure preload while starting");
     expect(body.service).toBeUndefined();
   });
 

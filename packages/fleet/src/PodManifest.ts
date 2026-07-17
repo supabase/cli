@@ -1,20 +1,20 @@
 import { createHash } from "node:crypto";
 import {
   fillServiceVersionManifest,
-  type AllocatedPorts,
+  type ProvisionedStackVersions,
   type ServiceName,
   type VersionManifest,
 } from "@supabase/stack";
 
 export interface PodManifest {
   readonly id: string;
-  readonly versions: Partial<VersionManifest>;
+  readonly versions: ProvisionedStackVersions;
   readonly services: Partial<Record<ServiceName, boolean>>;
   readonly flags: { readonly supautils: boolean };
   /** Whether the pod was provisioned from a warm (service-premigrated) template; reset re-clones the same kind. */
   readonly warm: boolean;
-  readonly ports: AllocatedPorts;
-  readonly internalPorts: AllocatedPorts;
+  /** Stable external database endpoint owned by the fleet edge proxy. */
+  readonly dbPort: number;
   readonly postgresPassword: string;
   readonly createdAt: string;
 }
@@ -52,11 +52,11 @@ export const templateKey = (
 export const resolveTemplateVersions = (
   versions: Partial<VersionManifest>,
   enabledServices: ReadonlyArray<ServiceName>,
-): Partial<VersionManifest> => {
+): ProvisionedStackVersions => {
   const full = fillServiceVersionManifest(versions);
-  const resolved: Partial<Record<ServiceName, string>> = { postgres: full.postgres };
+  const resolved: Partial<Record<ServiceName, string>> = {};
   for (const service of new Set(enabledServices)) {
     resolved[service] = full[service];
   }
-  return resolved;
+  return { ...resolved, postgres: full.postgres };
 };
