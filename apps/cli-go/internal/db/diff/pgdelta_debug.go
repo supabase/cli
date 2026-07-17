@@ -17,9 +17,10 @@ func IsPgDeltaDebugEnabled() bool {
 	}
 }
 
-// PgDeltaDiffResult holds pg-delta diff output and edge-runtime stderr.
+// PgDeltaDiffResult holds the parsed pg-delta diff envelope (one file per
+// execution-aware plan unit) and the edge-runtime stderr.
 type PgDeltaDiffResult struct {
-	SQL    string
+	Files  []PgDeltaPlanFile
 	Stderr string
 }
 
@@ -31,7 +32,10 @@ type PgDeltaDebugCapture struct {
 
 // DatabaseDiff is the result of diffing a target database against a shadow baseline.
 type DatabaseDiff struct {
-	SQL   string
+	SQL string
+	// Files carries the per-unit pg-delta plan files (empty for the migra engine).
+	// SQL is the flattened join of these, kept for callers that consume one blob.
+	Files []PgDeltaPlanFile
 	Debug *PgDeltaDebugCapture
 }
 

@@ -87,7 +87,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           new LegacyEdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
         );
       }
-      return Effect.succeed({ stdout: opts.diffSql ?? "", stderr: "" });
+      const diffSql = opts.diffSql ?? "";
+      // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
+      // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
+      // single-unit envelope so `legacyDiffPgDelta` parses it. The migra script
+      // returns raw SQL unchanged.
+      const stdout =
+        runOpts.script.includes("renderPlanFiles") && diffSql.length > 0
+          ? JSON.stringify({
+              version: 1,
+              files: [
+                {
+                  order: 1,
+                  name: "schema_changes",
+                  transactionMode: "transactional",
+                  sql: diffSql,
+                },
+              ],
+            })
+          : diffSql;
+      return Effect.succeed({ stdout, stderr: "" });
     },
   });
 

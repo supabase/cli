@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
@@ -75,11 +77,13 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		path := new.GetMigrationPath(utils.GetVersionTimestamp(base), "test")
+		_, err := run(context.Background(), nil, base, "test", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		contents, err := afero.ReadFile(fsys, "0_test.sql")
+		contents, err := afero.ReadFile(fsys, path)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte("test"), contents)
 	})
@@ -102,12 +106,14 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test with usePgDeltaDiff=true
-		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), true, diff.DiffPgDelta, fsys)
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		path := new.GetMigrationPath(utils.GetVersionTimestamp(base), "test")
+		_, err := run(context.Background(), nil, base, "test", conn.MockClient(t), true, diff.DiffPgDelta, fsys)
 		// Failure must come from shadow-creation image inspect (proving we
 		// reached the diff step), not from pg_dump.
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		exists, err := afero.Exists(fsys, "0_test.sql")
+		exists, err := afero.Exists(fsys, path)
 		assert.NoError(t, err)
 		assert.False(t, exists, "pg_dump should be skipped for pg-delta diff engine")
 	})
@@ -129,10 +135,56 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []any{"0"})
 		// Run test
-		err := run(context.Background(), []string{"public"}, "", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		_, err := run(context.Background(), []string{"public"}, base, "test", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestWritePgDeltaMigrations(t *testing.T) {
+	base := time.Date(2026, 7, 17, 15, 18, 48, 0, time.UTC)
+
+	t.Run("writes a single unit with the unchanged name", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		files := []diff.PgDeltaPlanFile{
+			{Order: 1, Name: "schema_changes", TransactionMode: "transactional", SQL: "-- unit 1\n\ncreate table a ();"},
+		}
+		written, err := writePgDeltaMigrations(files, base, "remote_schema", fsys)
+		require.NoError(t, err)
+		require.Len(t, written, 1)
+		assert.Equal(t, "20260717151848", written[0].Version)
+		expectedPath := new.GetMigrationPath("20260717151848", "remote_schema")
+		assert.Equal(t, expectedPath, written[0].Path)
+		contents, err := afero.ReadFile(fsys, expectedPath)
+		require.NoError(t, err)
+		assert.Equal(t, "-- unit 1\n\ncreate table a ();\n", string(contents))
+	})
+
+	t.Run("writes one ordered file per unit with strictly increasing versions", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		files := []diff.PgDeltaPlanFile{
+			{Order: 1, Name: "schema_changes", TransactionMode: "transactional", SQL: "-- unit 1\n\nalter type mood add value 'ok';"},
+			{Order: 2, Name: "after_enum_values", TransactionMode: "transactional", SQL: "-- unit 2\n\ninsert into t values ('ok');"},
+			{Order: 3, Name: "non_transactional", TransactionMode: "none", SQL: "-- unit 3\n\ncreate index concurrently i on t (c);"},
+		}
+		written, err := writePgDeltaMigrations(files, base, "remote_schema", fsys)
+		require.NoError(t, err)
+		require.Len(t, written, 3)
+
+		wantVersions := []string{"20260717151848", "20260717151849", "20260717151850"}
+		wantNames := []string{"remote_schema_schema_changes", "remote_schema_after_enum_values", "remote_schema_non_transactional"}
+		for i, w := range written {
+			assert.Equal(t, wantVersions[i], w.Version)
+			assert.Equal(t, new.GetMigrationPath(wantVersions[i], wantNames[i]), w.Path)
+			contents, err := afero.ReadFile(fsys, w.Path)
+			require.NoError(t, err)
+			assert.Equal(t, files[i].SQL+"\n", string(contents))
+		}
+		// Versions are strictly increasing so history + execution order stay stable.
+		assert.True(t, written[0].Version < written[1].Version)
+		assert.True(t, written[1].Version < written[2].Version)
 	})
 }
 

@@ -12,6 +12,10 @@ If no entries exist in the migration history table, the default diff engine uses
 
 Pass `--diff-engine pg-delta` to keep the migration-file `db pull` workflow while using pg-delta for the shadow diff step. On initial pull, pg-delta replaces `pg_dump` and produces the full migration from the shadow diff alone. Pass `--declarative` to switch to the declarative pg-delta export workflow instead.
 
+pg-delta plans are execution-aware: when a plan crosses a transaction boundary — for example `ALTER TYPE ... ADD VALUE` followed by a statement that uses the new enum value, which cannot run in the same transaction — `db pull` writes one ordered migration file per plan unit instead of a single file (for example `<ts>_remote_schema_schema_changes.sql` and `<ts+1s>_remote_schema_after_enum_values.sql`), each recorded in the migration history. The common case (a single unit) still produces exactly one `<ts>_remote_schema.sql` file.
+
+By default the emitted SQL is formatted with the same settings the declarative export uses (uppercase keywords, wrapped at a max width of 180, indented and column-aligned). Configure overrides with `[experimental.pgdelta] format_options` in `config.toml`, or set `format_options = "null"` to opt out and emit raw, unformatted statements.
+
 When `[experimental.pgdelta] enabled = true` (the default for projects created by a recent `supabase init`), the migration-file `db pull` workflow uses pg-delta for the shadow diff step by default; it does not switch to declarative output. Existing projects without the section are unaffected and keep using migra. To fall back to the legacy migra engine, set `enabled = false` under `[experimental.pgdelta]`, or pass `--diff-engine migra` for a single run.
 
 When pulling from a remote database with `--db-url`, prefer a direct connection (`db.<project-ref>.supabase.co:5432`) over the connection pooler so pg-delta can introspect the full catalog reliably.
