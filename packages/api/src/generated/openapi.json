@@ -4273,7 +4273,14 @@
             }
           },
           "400": {
-            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized"
@@ -4406,7 +4413,14 @@
             }
           },
           "400": {
-            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized"
@@ -4486,7 +4500,14 @@
             }
           },
           "400": {
-            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized"
@@ -4884,7 +4905,14 @@
             "description": "Unauthorized"
           },
           "402": {
-            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
           },
           "403": {
             "description": "Forbidden action"
@@ -10897,7 +10925,14 @@
             "description": "Unauthorized"
           },
           "402": {
-            "description": "This feature requires the Enterprise organization plan."
+            "description": "This feature requires the Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
           },
           "403": {
             "description": "Forbidden action"
@@ -10982,7 +11017,14 @@
             "description": "Unauthorized"
           },
           "402": {
-            "description": "This feature requires the Enterprise organization plan."
+            "description": "This feature requires the Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
           },
           "403": {
             "description": "Forbidden action"
@@ -13371,21 +13413,26 @@
         "type": "object",
         "properties": {
           "root_key": {
-            "type": "string"
+            "type": "string",
+            "description": "The pgsodium root key: 32 bytes, hex-encoded (64 characters)."
           }
         },
-        "required": ["root_key"]
+        "required": ["root_key"],
+        "example": {
+          "root_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
       },
       "UpdatePgsodiumConfigBody": {
         "type": "object",
         "properties": {
           "root_key": {
-            "type": "string"
+            "type": "string",
+            "description": "The pgsodium root key: 32 bytes, hex-encoded (64 characters)."
           }
         },
         "required": ["root_key"],
         "example": {
-          "root_key": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+          "root_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
       },
       "PostgrestConfigWithJWTSecretResponse": {
@@ -13625,6 +13672,36 @@
           }
         },
         "required": ["status"]
+      },
+      "PlanGateErrorBody": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human-readable explanation of the plan gate"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": ["entitlement_required"],
+                "description": "Machine-readable marker for plan-gated denials"
+              },
+              "feature": {
+                "type": "string",
+                "description": "Entitlement feature key that failed the check"
+              },
+              "upgrade_url": {
+                "type": "string",
+                "description": "Billing page URL for the organization, present when the org is resolvable"
+              }
+            },
+            "required": ["code", "feature"],
+            "description": "Present on entitlement denials. Other errors with this status code (validation, billing state) carry only message."
+          }
+        },
+        "required": ["message"]
       },
       "VanitySubdomainBody": {
         "type": "object",
