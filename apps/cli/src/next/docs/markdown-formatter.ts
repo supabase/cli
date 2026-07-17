@@ -2,7 +2,11 @@ import { Option } from "effect";
 import type { HelpDoc } from "effect/unstable/cli";
 
 function escapeMdxText(value: string): string {
-  return value.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return value
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\{/g, "&#123;")
+    .replace(/\}/g, "&#125;");
 }
 
 function formatTable(headers: string[], rows: string[][]): string {
