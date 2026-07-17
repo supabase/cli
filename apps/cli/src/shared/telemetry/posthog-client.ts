@@ -33,5 +33,9 @@ export const scopedPosthogClient = (apiKey: string, host: string) =>
           fetch: fireAndForgetFetch,
         }),
     ),
-    (client) => Effect.promise(() => client._shutdown(5_000)).pipe(Effect.ignore),
+    // The rejection must be caught on the promise itself: Effect.promise turns
+    // a rejection into a defect, which Effect.ignore does not swallow, so a
+    // shutdown timeout would fail the whole command (exit 1 with an
+    // UnknownError, observed on v2.109.1 whenever PostHog was unreachable).
+    (client) => Effect.promise(() => client._shutdown(5_000).catch(() => undefined)),
   );
