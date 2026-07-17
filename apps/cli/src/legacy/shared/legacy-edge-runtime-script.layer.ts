@@ -10,6 +10,7 @@ import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
 import { legacyResolveEdgeRuntimeImage } from "./legacy-edge-runtime-image.ts";
 import { LegacyEdgeRuntimeScriptError } from "./legacy-edge-runtime-script.errors.ts";
 import {
+  LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL,
   LegacyEdgeRuntimeScript,
   legacyBuildEdgeRuntimeEntrypoint,
   legacyBuildEdgeRuntimeStartCmd,
@@ -128,6 +129,21 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
             return yield* Effect.fail(
               new LegacyEdgeRuntimeScriptError({
                 message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
+              }),
+            );
+          }
+
+          // The pg-delta templates force the worker to exit by throwing, so a
+          // script crash is masked by the "main worker has been destroyed"
+          // suppression above. The sentinel — printed only by the templates'
+          // catch blocks — marks a real failure so the collected stderr (which
+          // holds the real error) reaches the user instead of looking like an
+          // empty diff. Byte-for-byte port of Go's check in
+          // apps/cli-go/internal/utils/edgeruntime.go.
+          if (result.stderr.includes(LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL)) {
+            return yield* Effect.fail(
+              new LegacyEdgeRuntimeScriptError({
+                message: `${opts.errPrefix}: error running script:\n${result.stderr}`,
               }),
             );
           }

@@ -1,6 +1,7 @@
 import {
   createPlan,
   deserializeCatalog,
+  flattenPlanStatements,
   formatSqlStatements,
 } from "npm:@supabase/pg-delta@1.0.0-alpha.20";
 import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.20/integrations/supabase";
@@ -46,7 +47,10 @@ try {
       skipDefaultPrivilegeSubtraction: true,
     },
   );
-  let statements = result?.plan.statements ?? [];
+  // pg-delta >= 1.0.0-alpha.32 groups plan statements into execution-aware
+  // `units` (+ `sessionStatements`); the flat `plan.statements` field no longer
+  // exists, so reading it would silently yield an empty diff.
+  let statements = result ? flattenPlanStatements(result.plan) : [];
   if (formatOptions != null) {
     statements = formatSqlStatements(statements, formatOptions);
   }
@@ -66,6 +70,10 @@ try {
   }
 } catch (e) {
   console.error(e);
+  // Emit a sentinel so the CLI runner can distinguish a real script crash from a
+  // successful empty diff, even though the forced-exit non-zero code below is
+  // suppressed by the "main worker has been destroyed" handling.
+  console.error("PGDELTA_SCRIPT_ERROR");
   // Force close event loop
   throw new Error("");
 }
