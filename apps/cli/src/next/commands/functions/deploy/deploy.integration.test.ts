@@ -1549,6 +1549,44 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  it.live("bundles when Docker only shares the project directory", () => {
+    const tempDir = makeTempDir();
+    const sharedOutputRoot = join(tempDir, "supabase", ".temp");
+    let outputPath = "";
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      onSpawn: (record) => {
+        if (record.command !== "docker" || record.args[0] !== "run") {
+          return;
+        }
+        outputPath = resolveDockerOutputPath(record.args);
+        if (!outputPath.startsWith(`${sharedOutputRoot}${sep}`)) {
+          return;
+        }
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, "eszip-test-output");
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+      const { layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      expect(outputPath.startsWith(`${sharedOutputRoot}${sep}`)).toBe(true);
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
   it.live("forwards npm auth environment to the Docker bundler", () => {
     const tempDir = makeTempDir();
     const previousRegistry = process.env["NPM_CONFIG_REGISTRY"];
