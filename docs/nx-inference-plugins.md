@@ -164,4 +164,6 @@ export const createNodesV2: CreateNodesV2 = [
 
 ## How TypeScript plugins are loaded
 
-Nx 22 loads `.ts` plugin files by registering `@swc-node/register` as a CommonJS transpiler before calling `require()` on the plugin path. This workspace has `@swc-node/register` and `@swc/core` installed at the root, along with a minimal `tsconfig.json` at the workspace root — both are required for Nx to find and activate the transpiler. Without either, Nx falls back to Node.js's native TypeScript type-stripping, which returns a non-extensible ES module namespace that Nx cannot annotate.
+Nx loads `.ts` plugin files by registering `@swc-node/register` as a CommonJS transpiler before calling `require()` on the plugin path. This workspace has `@swc-node/register` and `@swc/core` installed at the root, along with a minimal `tsconfig.json` at the workspace root — both are required for Nx to find and activate the transpiler. Without either, Nx falls back to Node.js's native TypeScript type-stripping, which returns a non-extensible ES module namespace that Nx cannot annotate.
+
+TypeScript 7 does not yet expose the programmatic compiler API that the Nx transpiler uses. Following the [Nx TypeScript 7 guide](https://nx.dev/docs/technologies/typescript/guides/typescript-7), the root package aliases `typescript` to `@typescript/typescript6` for API consumers and installs TypeScript 7 as `@typescript/native`, which provides the `tsc` executable.

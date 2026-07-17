@@ -22,9 +22,10 @@
   "devDependencies": {
     "@swc-node/register": "catalog:",
     "@swc/core": "catalog:",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "nx": "catalog:",
     "pkg-pr-new": "0.0.75",
-    "typescript": "^6.0.3",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "verdaccio": "^6.7.4"
   }
 }
