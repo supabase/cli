@@ -44,8 +44,12 @@ export const EdgeRuntimeReloadConfigSchema = Schema.Struct({
   functions: Schema.optionalKey(FunctionsConfigSchema),
 });
 
+export interface EdgeRuntimeReloadOptions extends EdgeRuntimeConfig {
+  readonly enabled?: boolean;
+}
+
 export interface EdgeRuntimeReloadConfig {
-  readonly edgeRuntime: EdgeRuntimeConfig;
+  readonly edgeRuntime: EdgeRuntimeReloadOptions;
   readonly functions?: FunctionsConfig;
 }
 

@@ -77,14 +77,14 @@ function signalPostmaster(pid: number, signal: NodeJS.Signals): void {
  * process-group leader — its pgid equals its pid, and every backend it forks
  * shares that pgid. So `kill(-pid, ...)` reliably reaches the whole
  * postgres process tree for this data dir, regardless of what spawned it or
- * how (in phase 1, `@supabase/stack`'s `createStack`, which — like
- * process-compose's `detached: true` children — does not run postgres as a
- * child of the fleet daemon's own process group).
+ * how (`@supabase/stack`'s `createStack`, like process-compose's
+ * `detached: true` children, does not run postgres as a child of the fleet
+ * daemon's own process group).
  *
- * Phase 1 only ever runs postgres under a fleet pod (postgres-only ready
- * gate; no HTTP edge / other services yet), so postmaster.pid alone is a
- * complete picture of "is anything from this pod still alive" — no need to
- * separately reap other service processes.
+ * This is a crash-recovery fallback for Postgres. Normal pod suspension asks
+ * Stack to stop the complete service graph before checking that Postgres has
+ * exited; orphaned sidecars remain covered by Stack's persisted cleanup
+ * metadata rather than inferred from `postmaster.pid`.
  */
 export async function reapStalePostmaster(dataDir: string): Promise<void> {
   const raw = await readFile(join(dataDir, "postmaster.pid"), "utf8").catch(() => undefined);

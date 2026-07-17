@@ -6,6 +6,7 @@ import {
   Exit,
   FiberMap,
   Layer,
+  PubSub,
   Context,
   Stream,
   SubscriptionRef,
@@ -51,6 +52,9 @@ export class Orchestrator extends Context.Service<
       name: string,
       def: ServiceDef,
     ) => Effect.Effect<void, ServiceNotFoundError | CyclicDependencyError | MissingDependencyError>;
+    readonly addServiceDefinitions: (
+      defs: ReadonlyArray<ServiceDef>,
+    ) => Effect.Effect<void, CyclicDependencyError | MissingDependencyError>;
     readonly getState: (name: string) => Effect.Effect<ServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<ServiceState>>;
     readonly stateChanges: (
@@ -103,18 +107,25 @@ export class Orchestrator extends Context.Service<
           stoppedByUser: boolean;
         }
         const services = new Map<string, ServiceSignals>();
+        const allStateChangesPubSub = yield* PubSub.unbounded<ServiceState>();
+
+        const addServiceSignals = (name: string) =>
+          Effect.gen(function* () {
+            if (services.has(name)) return;
+            const stateRef = yield* SubscriptionRef.make(initial(name));
+            services.set(name, {
+              state: stateRef,
+              started: Deferred.makeUnsafe<void>(),
+              healthy: Deferred.makeUnsafe<void>(),
+              completed: Deferred.makeUnsafe<number>(),
+              stopped: Deferred.makeUnsafe<void>(),
+              stoppedByUser: false,
+            });
+          });
 
         // Initialize all signal maps for all services in the graph
         for (const def of graph.startOrder) {
-          const stateRef = yield* SubscriptionRef.make(initial(def.name));
-          services.set(def.name, {
-            state: stateRef,
-            started: Deferred.makeUnsafe<void>(),
-            healthy: Deferred.makeUnsafe<void>(),
-            completed: Deferred.makeUnsafe<number>(),
-            stopped: Deferred.makeUnsafe<void>(),
-            stoppedByUser: false,
-          });
+          yield* addServiceSignals(def.name);
         }
 
         // FiberMap to track running service fibers — auto-interrupted on scope close
@@ -128,7 +139,11 @@ export class Orchestrator extends Context.Service<
         ): Effect.Effect<ServiceState | null> => {
           const svc = services.get(name);
           if (svc === undefined) return Effect.succeed(null);
-          return transition(svc.state, event);
+          return transition(svc.state, event).pipe(
+            Effect.tap((state) =>
+              state === null ? Effect.void : PubSub.publish(allStateChangesPubSub, state),
+            ),
+          );
         };
 
         // Helper: run all hooks for a given trigger in sequence
@@ -773,6 +788,18 @@ export class Orchestrator extends Context.Service<
               graph = nextGraph;
             }),
 
+          addServiceDefinitions: (defs: ReadonlyArray<ServiceDef>) =>
+            Effect.gen(function* () {
+              const additions = defs.filter((def) => lookupDef(def.name) === undefined);
+              if (additions.length === 0) return;
+              const nextGraph = yield* buildGraph([...graph.startOrder, ...additions]);
+              for (const def of additions) {
+                yield* addServiceSignals(def.name);
+                yield* PubSub.publish(allStateChangesPubSub, initial(def.name));
+              }
+              graph = nextGraph;
+            }),
+
           getState: (name: string) =>
             Effect.gen(function* () {
               const svc = services.get(name);
@@ -799,13 +826,13 @@ export class Orchestrator extends Context.Service<
               return SubscriptionRef.changes(svc.state);
             }),
 
-          allStateChanges: () => {
-            const streams = graph.startOrder.map((def) => {
-              const svc = services.get(def.name);
-              return svc ? SubscriptionRef.changes(svc.state) : Stream.empty;
-            });
-            return Stream.mergeAll(streams, { concurrency: "unbounded" });
-          },
+          allStateChanges: () =>
+            Stream.concat(
+              Stream.fromIterable(
+                [...services.values()].map((signals) => SubscriptionRef.getUnsafe(signals.state)),
+              ),
+              Stream.fromPubSub(allStateChangesPubSub),
+            ),
 
           waitReady: (name: string) =>
             Effect.gen(function* () {

@@ -47,7 +47,7 @@ const baseConfig: ResolvedStackConfig = {
   projectDir: "/tmp/supabase-project",
   mode: "auto",
   jwtSecret: testJwtSecret,
-  lazyServices: false,
+  startServices: [],
   ports: basePorts,
   apiPort: 3000,
   dbPort: 5432,
@@ -304,29 +304,26 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("lazyServices still builds every service enabled in the graph", () => {
-    // process-compose's dependency graph excludes `enabled: false` defs entirely (they're never
-    // added as nodes), so a service disabled at build time could never later be started via
-    // `startService`. lazyServices is enforced one layer up instead: StackLifecycleCoordinator
-    // only eagerly starts postgres/postgres-init, and the ApiProxy starts everything else on
-    // demand via the ordinary startService + waitReady coordinator methods, which require every
-    // def to remain a node in the graph.
+  it.effect("builds only the requested service definitions", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
 
     return Effect.gen(function* () {
       const builder = yield* StackBuilder;
       const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, {
-        ...baseConfig,
-        lazyServices: true,
+      const config = { ...baseConfig, auth: baseConfig.auth };
+      const prepared = yield* preparation.prepare({
+        mode: config.mode,
+        services: enabledServicesForConfig(config),
+        versions: versionsForConfig(config),
       });
+      const { graph } = yield* builder.build(config, prepared, ["postgres"]);
 
       const byName = new Map(graph.startOrder.map((def) => [def.name, def] as const));
       expect(byName.get("postgres")?.enabled).toBe(true);
       expect(byName.get("postgres-init")?.enabled).toBe(true);
-      expect(byName.get("postgrest")?.enabled).toBe(true);
-      expect(byName.get("auth")?.enabled).toBe(true);
+      expect(byName.has("postgrest")).toBe(false);
+      expect(byName.has("auth")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -495,7 +492,7 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects the micro profile on non-provisioned data dirs or non-native modes", () =>
+  it.effect("rejects the micro profile on non-provisioned data dirs", () =>
     Effect.gen(function* () {
       const nonProvisioned = yield* validateResolvedConfig({
         ...baseConfig,
@@ -504,12 +501,12 @@ describe("StackBuilder", () => {
       }).pipe(Effect.exit);
       expect(Exit.isFailure(nonProvisioned)).toBe(true);
 
-      // "auto" could resolve postgres to Docker, which ignores the profile.
-      const autoMode = yield* validateResolvedConfig({
+      // Auto mode is valid here because preparation verifies that Postgres
+      // resolved to a native binary before building the graph.
+      yield* validateResolvedConfig({
         ...baseConfig,
         postgres: { ...baseConfig.postgres, profile: "micro", provisioned: true },
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(autoMode)).toBe(true);
+      });
 
       yield* validateResolvedConfig({
         ...baseConfig,

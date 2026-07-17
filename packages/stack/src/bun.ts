@@ -5,7 +5,7 @@ import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import {
-  createStack as createStackCore,
+  createReadyStack as createStackCore,
   type PlatformFactory,
   type StackHandle,
 } from "./createStack.ts";
@@ -15,7 +15,6 @@ import {
   type PrefetchResult,
 } from "./prefetch.ts";
 import { defaultCacheRoot } from "./paths.ts";
-import { provisionedStackConfig, type ProvisionedStackOptions } from "./provisionedStack.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackConfig } from "./StackBuilder.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
@@ -55,12 +54,6 @@ export const daemonEntryPoint: string = fileURLToPath(new URL("./daemon-bun.ts",
 
 export async function createStack(config?: StackConfig): Promise<StackHandle> {
   return createStackCore(config, platformFactory);
-}
-
-export async function createProvisionedStack(
-  options: ProvisionedStackOptions,
-): Promise<StackHandle> {
-  return createStackCore(provisionedStackConfig(options), platformFactory);
 }
 
 export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResult> {

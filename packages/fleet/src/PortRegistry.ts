@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 
 export interface PodEndpoint {
   readonly dbPort: number;
+  readonly apiPort: number;
 }
 
 interface PortState {
@@ -39,15 +40,23 @@ function isFleetPort(value: unknown): value is number {
 }
 
 function isPodEndpoint(value: unknown): value is PodEndpoint {
-  return isRecord(value) && isFleetPort(value.dbPort);
+  return (
+    isRecord(value) &&
+    isFleetPort(value.dbPort) &&
+    isFleetPort(value.apiPort) &&
+    value.dbPort !== value.apiPort
+  );
 }
 
 function isValidState(value: unknown): value is PortState {
   if (!isRecord(value) || !isRecord(value.pods)) return false;
   const used = new Set<number>();
   for (const endpoint of Object.values(value.pods)) {
-    if (!isPodEndpoint(endpoint) || used.has(endpoint.dbPort)) return false;
+    if (!isPodEndpoint(endpoint) || used.has(endpoint.dbPort) || used.has(endpoint.apiPort)) {
+      return false;
+    }
     used.add(endpoint.dbPort);
+    used.add(endpoint.apiPort);
   }
   return true;
 }
@@ -69,10 +78,10 @@ function isPortAvailable(port: number): Promise<boolean> {
 }
 
 /**
- * Persistent registry for the only durable phase-1 endpoint: the database
- * port held open by EdgeProxy for the pod's entire lifetime. Internal stack
- * ports belong to a warm runtime and are allocated by @supabase/stack on each
- * wake, so they are intentionally absent from this state.
+ * Persistent registry for the database and API ports held open by EdgeProxy
+ * for the pod's entire lifetime. Internal stack ports belong to a warm runtime
+ * and are allocated by @supabase/stack on each wake, so they are intentionally
+ * absent from this state.
  *
  * Mutations are serialized in-process; the fleet-root lock provides the
  * cross-process single-owner guarantee. New allocations probe the host before
@@ -123,14 +132,20 @@ export class PortRegistry {
       const existing = this.get(podId);
       if (existing !== undefined) return existing;
 
-      const used = new Set(Object.values(this.state.pods).map((endpoint) => endpoint.dbPort));
-      let dbPort = DEFAULT_BASE_PORT;
-      while (dbPort <= MAX_PORT && (used.has(dbPort) || !(await isPortAvailable(dbPort)))) {
-        dbPort += 1;
-      }
-      if (dbPort > MAX_PORT) throw new Error("PortRegistry: exhausted fleet port range");
+      const used = new Set(
+        Object.values(this.state.pods).flatMap((endpoint) => [endpoint.dbPort, endpoint.apiPort]),
+      );
+      const allocatePort = async (): Promise<number> => {
+        let port = DEFAULT_BASE_PORT;
+        while (port <= MAX_PORT && (used.has(port) || !(await isPortAvailable(port)))) {
+          port += 1;
+        }
+        if (port > MAX_PORT) throw new Error("PortRegistry: exhausted fleet port range");
+        used.add(port);
+        return port;
+      };
 
-      const endpoint = { dbPort };
+      const endpoint = { dbPort: await allocatePort(), apiPort: await allocatePort() };
       this.state = { pods: { ...this.state.pods, [podId]: endpoint } };
       await this.persist();
       return { ...endpoint };
@@ -156,13 +171,15 @@ export class PortRegistry {
             `PortRegistry: cannot reconcile pod "${podId}" with invalid endpoint ${JSON.stringify(endpoint)}`,
           );
         }
-        const owner = used.get(endpoint.dbPort);
-        if (owner !== undefined) {
-          throw new Error(
-            `PortRegistry: cannot reconcile pod "${podId}" on port ${endpoint.dbPort}; port already assigned to pod "${owner}"`,
-          );
+        for (const port of [endpoint.dbPort, endpoint.apiPort]) {
+          const owner = used.get(port);
+          if (owner !== undefined) {
+            throw new Error(
+              `PortRegistry: cannot reconcile pod "${podId}" on port ${port}; port already assigned to pod "${owner}"`,
+            );
+          }
+          used.set(port, podId);
         }
-        used.set(endpoint.dbPort, podId);
         pods[podId] = { ...endpoint };
       }
       this.state = { pods };

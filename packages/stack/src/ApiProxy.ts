@@ -9,6 +9,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import * as Socket from "effect/unstable/socket/Socket";
 import type { ServiceName } from "./versions.ts";
 
 export interface ProxyConfig {
@@ -29,7 +30,7 @@ export interface ProxyConfig {
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
   /**
-   * When set (lazyServices mode), invoked with a route's owning service before the request is
+   * Invoked with a route's owning service before the request is
    * forwarded. Expected to be idempotent — it should start the service on first call and resolve
    * immediately on later calls once the service is ready.
    */
@@ -135,6 +136,38 @@ interface ProxyHandlerOptions {
   readonly retryColdStart?: boolean;
 }
 
+function ensureServices(
+  config: ProxyConfig,
+  services: ReadonlyArray<ServiceName>,
+): Effect.Effect<HttpServerResponse.HttpServerResponse | undefined> {
+  if (config.ensureService === undefined) {
+    return Effect.succeed(undefined);
+  }
+
+  return Effect.gen(function* () {
+    for (const service of services) {
+      const ensured = yield* Effect.result(Effect.tryPromise(() => config.ensureService!(service)));
+      if (Result.isFailure(ensured)) {
+        return HttpServerResponse.text(`Bad gateway: failed to start ${service}`, {
+          status: 502,
+        });
+      }
+    }
+    return undefined;
+  });
+}
+
+function proxyPath(req: HttpServerRequest.HttpServerRequest, opts: ProxyHandlerOptions): string {
+  if (opts.backendPath !== undefined) {
+    return opts.backendPath;
+  }
+
+  const path = req.url.startsWith(opts.stripPrefix ?? "")
+    ? req.url.slice((opts.stripPrefix ?? "").length)
+    : req.url;
+  return path === "" ? "/" : path;
+}
+
 function makeProxyHandler(
   client: HttpClient.HttpClient,
   config: ProxyConfig,
@@ -142,29 +175,15 @@ function makeProxyHandler(
 ) {
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
-      if (config.ensureService) {
-        for (const service of [opts.service, ...(opts.additionalServices ?? [])]) {
-          const ensured = yield* Effect.result(
-            Effect.tryPromise(() => config.ensureService!(service)),
-          );
-          if (Result.isFailure(ensured)) {
-            return HttpServerResponse.text(`Bad gateway: failed to start ${service}`, {
-              status: 502,
-            });
-          }
-        }
+      const unavailable = yield* ensureServices(config, [
+        opts.service,
+        ...(opts.additionalServices ?? []),
+      ]);
+      if (unavailable !== undefined) {
+        return unavailable;
       }
 
-      let backendPath = opts.backendPath;
-
-      if (backendPath === undefined) {
-        backendPath = req.url.startsWith(opts.stripPrefix ?? "")
-          ? req.url.slice((opts.stripPrefix ?? "").length)
-          : req.url;
-        if (backendPath === "") {
-          backendPath = "/";
-        }
-      }
+      const backendPath = proxyPath(req, opts);
 
       let outHeaders = req.headers;
       if (opts.transformAuth === true) {
@@ -222,6 +241,54 @@ function makeProxyHandler(
         ),
       ),
     );
+}
+
+function makeRealtimeHandler(client: HttpClient.HttpClient, config: ProxyConfig) {
+  const opts: ProxyHandlerOptions = {
+    backendPort: config.realtimePort,
+    service: "realtime",
+    stripPrefix: "/realtime/v1",
+  };
+  const httpHandler = makeProxyHandler(client, config, opts);
+
+  return (req: HttpServerRequest.HttpServerRequest) => {
+    if (req.headers["upgrade"]?.toLowerCase() !== "websocket") {
+      return httpHandler(req);
+    }
+
+    return Effect.gen(function* () {
+      const unavailable = yield* ensureServices(config, ["realtime"]);
+      if (unavailable !== undefined) {
+        return unavailable;
+      }
+
+      const incomingResult = yield* Effect.result(req.upgrade);
+      if (Result.isFailure(incomingResult)) {
+        return HttpServerResponse.text("Bad gateway: websocket upgrade failed", { status: 502 });
+      }
+
+      const protocols = req.headers["sec-websocket-protocol"]
+        ?.split(",")
+        .map((protocol) => protocol.trim())
+        .filter((protocol) => protocol.length > 0);
+      const backend = yield* Socket.makeWebSocket(
+        `ws://127.0.0.1:${config.realtimePort}${proxyPath(req, opts)}`,
+        {
+          closeCodeIsError: (code) => code !== 1000 && code !== 1001,
+          protocols,
+        },
+      ).pipe(Effect.provide(Socket.layerWebSocketConstructorGlobal));
+      const writeIncoming = yield* incomingResult.success.writer;
+      const writeBackend = yield* backend.writer;
+
+      yield* Effect.raceFirst(
+        incomingResult.success.runRaw(writeBackend),
+        backend.runRaw(writeIncoming),
+      ).pipe(Effect.ignore);
+
+      return HttpServerResponse.empty();
+    });
+  };
 }
 
 export class ApiProxy extends Context.Service<
@@ -338,15 +405,7 @@ export class ApiProxy extends Context.Service<
               transformAuth: true,
             }),
           ),
-          HttpRouter.route(
-            "*",
-            "/realtime/v1/*",
-            makeProxyHandler(client, config, {
-              backendPort: config.realtimePort,
-              service: "realtime",
-              stripPrefix: "/realtime/v1",
-            }),
-          ),
+          HttpRouter.route("*", "/realtime/v1/*", makeRealtimeHandler(client, config)),
           HttpRouter.route(
             "*",
             "/storage/v1/s3/*",

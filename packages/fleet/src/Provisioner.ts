@@ -1,12 +1,12 @@
+import { randomBytes } from "node:crypto";
 import { rename, rm } from "node:fs/promises";
 import {
   SERVICE_NAMES,
   validateEnabledServiceDependencies,
-  type ProvisionedServiceName,
-  type ProvisionedStackVersions,
-  type ServiceName,
+  type FunctionsConfig,
   type VersionManifest,
 } from "@supabase/stack";
+import type { ProvisionedServiceName, ProvisionedStackVersions } from "@supabase/stack/provisioned";
 import { cloneDir } from "./cowClone.ts";
 import { resolveTemplateVersions, type PodManifest } from "./PodManifest.ts";
 import type { PodRegistry } from "./PodRegistry.ts";
@@ -18,7 +18,18 @@ function errorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-const NATIVE_FLEET_SERVICES = new Set<ProvisionedServiceName>(["postgrest", "auth"]);
+function throwWithCleanup(
+  primary: unknown,
+  results: ReadonlyArray<PromiseSettledResult<unknown>>,
+  message: string,
+): never {
+  const cleanupErrors = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (cleanupErrors.length === 0) throw primary;
+  throw new AggregateError([primary, ...cleanupErrors], message);
+}
+
 const SERVICE_NAME_SET = new Set<string>(SERVICE_NAMES);
 
 /**
@@ -27,11 +38,13 @@ const SERVICE_NAME_SET = new Set<string>(SERVICE_NAMES);
  * reject the whole manifest on the next read, turning the pod into an
  * unreadable "unknown pod". Reject it up front instead.
  */
-function validateServices(services: Partial<Record<ServiceName, boolean>>): void {
-  for (const [name, enabled] of Object.entries(services)) {
-    if (!SERVICE_NAME_SET.has(name) || typeof enabled !== "boolean") {
-      throw new Error(`invalid service entry: ${name}=${String(enabled)}`);
+function validateServices(services: ReadonlyArray<ProvisionedServiceName>): void {
+  const seen = new Set<string>();
+  for (const name of services) {
+    if (!SERVICE_NAME_SET.has(name) || seen.has(name)) {
+      throw new Error(`invalid service entry: ${String(name)}`);
     }
+    seen.add(name);
   }
 }
 
@@ -47,11 +60,15 @@ function validateVersions(versions: Partial<VersionManifest>): void {
 export interface CreatePodOptions {
   readonly id: string;
   readonly versions: ProvisionedStackVersions;
-  readonly services?: Partial<Record<ServiceName, boolean>>;
+  readonly services?: ReadonlyArray<ProvisionedServiceName>;
   readonly flags?: { readonly supautils?: boolean };
   /** Build/use a warm template (services pre-migrated). Default: base template. */
   readonly warm?: boolean;
+  readonly projectDir?: string;
+  readonly functions?: FunctionsConfig | false;
 }
+
+const randomSecret = (prefix = "") => `${prefix}${randomBytes(32).toString("base64url")}`;
 
 /**
  * Creates, resets, forks, and destroys pods by CoW-cloning template data
@@ -80,25 +97,11 @@ export class Provisioner {
     const pgVersion = opts.versions.postgres;
     if (pgVersion === undefined) throw new Error("versions.postgres is required");
     validateVersions(opts.versions);
-    validateServices(opts.services ?? {});
-    if (opts.services?.postgres === true) {
-      throw new Error(
-        "postgres is always enabled for fleet pods and must not be configured as a service",
-      );
-    }
-    const enabled = SERVICE_NAMES.filter(
-      (name): name is ProvisionedServiceName =>
-        name !== "postgres" && opts.services?.[name] === true,
-    );
+    const enabled = [...(opts.services ?? [])];
+    validateServices(enabled);
     const dependencyError = validateEnabledServiceDependencies(new Set(enabled));
     if (dependencyError !== undefined) {
       throw new Error(dependencyError);
-    }
-    const unsupported = enabled.filter((service) => !NATIVE_FLEET_SERVICES.has(service));
-    if (unsupported.length > 0) {
-      throw new Error(
-        `fleet native mode only supports postgrest and auth pods; unsupported services: ${unsupported.join(", ")}`,
-      );
     }
     const resolvedVersions = resolveTemplateVersions(opts.versions, enabled);
     const template =
@@ -111,20 +114,27 @@ export class Provisioner {
       const manifest: PodManifest = {
         id: opts.id,
         versions: resolvedVersions,
-        services: opts.services ?? {},
+        services: enabled,
         flags: { supautils: opts.flags?.supautils ?? false },
         warm: opts.warm === true,
         dbPort: allocated.dbPort,
+        apiPort: allocated.apiPort,
         postgresPassword,
+        jwtSecret: randomSecret(),
+        publishableKey: randomSecret("sb_publishable_"),
+        secretKey: randomSecret("sb_secret_"),
+        ...(opts.projectDir === undefined ? {} : { projectDir: opts.projectDir }),
+        ...(opts.functions === undefined ? {} : { functions: opts.functions }),
         createdAt: new Date().toISOString(),
       };
       await pods.write(manifest);
       return manifest;
     } catch (err) {
-      await ports.release(opts.id).catch(() => {});
-      await rm(pods.dataDir(opts.id), { recursive: true, force: true }).catch(() => {});
-      await rm(pods.podDir(opts.id), { recursive: true, force: true }).catch(() => {});
-      throw err;
+      const cleanup = await Promise.allSettled([
+        ports.release(opts.id),
+        rm(pods.podDir(opts.id), { recursive: true, force: true }),
+      ]);
+      throwWithCleanup(err, cleanup, `Failed to create and clean up pod ${opts.id}`);
     }
   }
 
@@ -135,10 +145,7 @@ export class Provisioner {
     if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
     const pgVersion = manifest.versions.postgres;
     if (pgVersion === undefined) throw new Error(`pod ${id} has no postgres version`);
-    const enabled = SERVICE_NAMES.filter(
-      (name): name is ProvisionedServiceName =>
-        name !== "postgres" && manifest.services[name] === true,
-    );
+    const enabled = manifest.services;
     const template = manifest.warm
       ? await templates.ensureWarmTemplate(manifest.versions, enabled)
       : await templates.ensureBaseTemplate(pgVersion);
@@ -146,8 +153,8 @@ export class Provisioner {
     const tmpDataDir = `${dataDir}.reset-${process.pid}-${Date.now()}`;
     const backupDataDir = `${dataDir}.backup-${process.pid}-${Date.now()}`;
     let backedUp = false;
-    await cloneDir(template, tmpDataDir);
     try {
+      await cloneDir(template, tmpDataDir);
       await rename(dataDir, backupDataDir).then(
         () => {
           backedUp = true;
@@ -159,18 +166,25 @@ export class Provisioner {
       await rename(tmpDataDir, dataDir);
       await pods.write({ ...manifest, postgresPassword });
     } catch (error) {
+      const cleanup: Array<PromiseSettledResult<unknown>> = [];
       if (backedUp) {
-        await rm(dataDir, { recursive: true, force: true }).catch(() => {});
-        await rename(backupDataDir, dataDir).catch(() => {});
+        const removeNewData = await Promise.allSettled([
+          rm(dataDir, { recursive: true, force: true }),
+        ]);
+        cleanup.push(...removeNewData);
+        if (removeNewData[0]?.status === "fulfilled") {
+          cleanup.push(...(await Promise.allSettled([rename(backupDataDir, dataDir)])));
+        }
       }
-      throw error;
-    } finally {
-      await rm(tmpDataDir, { recursive: true, force: true }).catch(() => {});
+      cleanup.push(
+        ...(await Promise.allSettled([rm(tmpDataDir, { recursive: true, force: true })])),
+      );
+      throwWithCleanup(error, cleanup, `Failed to reset and restore pod ${id}`);
     }
-    // The reset is committed once the manifest is rewritten; a failure to
-    // delete the old data dir must not trigger the rollback above (which
-    // would restore the old data under the new manifest's credentials).
-    await rm(backupDataDir, { recursive: true, force: true }).catch(() => {});
+    await rm(tmpDataDir, { recursive: true, force: true });
+    // The reset is committed once the manifest is rewritten. Cleanup remains
+    // strict, but the old data is never restored after that commit point.
+    await rm(backupDataDir, { recursive: true, force: true });
   }
 
   /** Caller must ensure the source pod is stopped/suspended first. */
@@ -188,15 +202,17 @@ export class Provisioner {
         ...source,
         id: newId,
         dbPort: allocated.dbPort,
+        apiPort: allocated.apiPort,
         createdAt: new Date().toISOString(),
       };
       await pods.write(manifest);
       return manifest;
     } catch (err) {
-      await ports.release(newId).catch(() => {});
-      await rm(pods.dataDir(newId), { recursive: true, force: true }).catch(() => {});
-      await rm(pods.podDir(newId), { recursive: true, force: true }).catch(() => {});
-      throw err;
+      const cleanup = await Promise.allSettled([
+        ports.release(newId),
+        rm(pods.podDir(newId), { recursive: true, force: true }),
+      ]);
+      throwWithCleanup(err, cleanup, `Failed to fork and clean up pod ${newId}`);
     }
   }
 

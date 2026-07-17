@@ -20,13 +20,13 @@ export type {
   VectorConfig,
 } from "./StackBuilder.ts";
 
-export type { ServiceName, VersionManifest } from "./versions.ts";
-export type {
-  ProvisionedServiceName,
-  ProvisionedStackOptions,
-  ProvisionedStackVersions,
-} from "./provisionedStack.ts";
-export { DEFAULT_VERSIONS, fillServiceVersionManifest, SERVICE_NAMES } from "./versions.ts";
+export type { ServiceName, StackServiceName, VersionManifest } from "./versions.ts";
+export {
+  DEFAULT_VERSIONS,
+  fillServiceVersionManifest,
+  SERVICE_NAMES,
+  STACK_SERVICE_NAMES,
+} from "./versions.ts";
 export type { AllocatedPorts } from "./PortAllocator.ts";
 export { PORT_FIELDS } from "./PortAllocator.ts";
 export { postgresConnectionUrl, resolvePostgresPassword } from "./postgresCredentials.ts";
@@ -37,5 +37,3 @@ export type { ReadyOptions, StackHandle } from "./createStack.ts";
 export type { FunctionsConfig, FunctionsRuntimeConfig } from "./functions.ts";
 export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 export { installMicroProfile } from "./pgconf.ts";
-export { configureExtensionPreload } from "./extensionPreload.ts";
-export type { ExtensionPreloadResult } from "./extensionPreload.ts";

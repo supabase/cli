@@ -5,6 +5,8 @@ export interface PodUpstream {
   readonly port: number;
 }
 
+export type PodEndpointKind = "database" | "api";
+
 /**
  * Cap on bytes buffered per client while `wake()` is in flight. Postgres
  * startup packets and HTTP request heads are tiny (low kilobytes at most);
@@ -25,6 +27,7 @@ export interface EdgeProxyEvents {
 }
 
 interface Registration {
+  readonly podId: string;
   readonly server: Server;
   readonly sockets: Set<Socket>;
 }
@@ -63,13 +66,26 @@ export class EdgeProxy {
   constructor(private readonly events: Partial<EdgeProxyEvents> = {}) {}
 
   openConnections(podId: string): number {
-    return this.registrations.get(podId)?.sockets.size ?? 0;
+    let total = 0;
+    for (const registration of this.registrations.values()) {
+      if (registration.podId === podId) total += registration.sockets.size;
+    }
+    return total;
   }
 
-  register(podId: string, listenPort: number, wake: () => Promise<PodUpstream>): Promise<void> {
+  register(
+    podId: string,
+    endpoint: PodEndpointKind,
+    listenPort: number,
+    wake: () => Promise<PodUpstream>,
+  ): Promise<void> {
+    const registrationId = `${podId}:${endpoint}`;
+    if (this.registrations.has(registrationId)) {
+      return Promise.reject(new Error(`edge endpoint already registered: ${registrationId}`));
+    }
     const sockets = new Set<Socket>();
     const emit = (event: "connect" | "data" | "disconnect") =>
-      this.events.onActivity?.(podId, event, sockets.size);
+      this.events.onActivity?.(podId, event, this.openConnections(podId));
 
     const server = createServer((client) => {
       sockets.add(client);
@@ -165,10 +181,10 @@ export class EdgeProxy {
       );
     });
 
-    this.registrations.set(podId, { server, sockets });
+    this.registrations.set(registrationId, { podId, server, sockets });
     return new Promise((resolve, reject) => {
       const onError = (error: Error) => {
-        this.registrations.delete(podId);
+        this.registrations.delete(registrationId);
         for (const sock of sockets) sock.destroy();
         try {
           server.close(() => reject(error));
@@ -184,15 +200,22 @@ export class EdgeProxy {
     });
   }
 
-  async unregister(podId: string): Promise<void> {
-    const reg = this.registrations.get(podId);
+  private async unregisterRegistration(registrationId: string): Promise<void> {
+    const reg = this.registrations.get(registrationId);
     if (!reg) return;
-    this.registrations.delete(podId);
+    this.registrations.delete(registrationId);
     for (const sock of reg.sockets) sock.destroy();
     await new Promise<void>((resolve) => reg.server.close(() => resolve()));
   }
 
+  async unregister(podId: string): Promise<void> {
+    const registrationIds = [...this.registrations]
+      .filter(([, registration]) => registration.podId === podId)
+      .map(([registrationId]) => registrationId);
+    await Promise.all(registrationIds.map((id) => this.unregisterRegistration(id)));
+  }
+
   async close(): Promise<void> {
-    await Promise.all([...this.registrations.keys()].map((id) => this.unregister(id)));
+    await Promise.all([...this.registrations.keys()].map((id) => this.unregisterRegistration(id)));
   }
 }

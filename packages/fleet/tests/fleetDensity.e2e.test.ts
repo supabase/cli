@@ -15,7 +15,13 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("fleet density", () => {
 
     // Registration is cheap: template built once, then CoW clones.
     for (let i = 0; i < REGISTERED; i += 1) {
-      await fleet.createPod({ id: `pod-${i}`, postgresVersion: PG_VERSION });
+      await fleet.createPod({
+        id: `pod-${i}`,
+        versions: { postgres: PG_VERSION },
+        services: [],
+        warmTemplate: false,
+        start: false,
+      });
     }
     const all = await fleet.listPods();
     expect(all).toHaveLength(REGISTERED);

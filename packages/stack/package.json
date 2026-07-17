@@ -8,6 +8,10 @@
       "bun": "./src/bun.ts",
       "default": "./src/node.ts"
     },
+    "./provisioned": {
+      "bun": "./src/provisioned-bun.ts",
+      "default": "./src/provisioned-node.ts"
+    },
     "./effect": "./src/effect.ts",
     "./daemon-bun": "./src/daemon-bun.ts"
   },

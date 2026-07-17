@@ -34,6 +34,7 @@ import {
 import { changedProjectedStates, projectStackStates } from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
+import type { ServiceName } from "./versions.ts";
 
 type LifecyclePhase =
   | "idle"
@@ -46,13 +47,30 @@ type LifecyclePhase =
 
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
-  readonly cleanupTargets: CleanupTargets;
-  readonly graph: ResolvedGraph;
+  cleanupTargets: CleanupTargets;
+  graph: ResolvedGraph;
 }
 
-// postgres/postgres-init are always nodes in the graph (StackBuilder never disables them), so
-// ServiceNotFoundError can't actually occur when lazyServices eager-starts them — map it to
-// StackBuildError only to satisfy start()'s declared error type.
+const serviceDependencies: Partial<Record<ServiceName, ReadonlyArray<ServiceName>>> = {
+  imgproxy: ["storage"],
+  vector: ["analytics"],
+  studio: ["pgmeta"],
+};
+
+const dependencyClosure = (services: ReadonlyArray<ServiceName>): ReadonlyArray<ServiceName> => {
+  const included = new Set<ServiceName>(["postgres"]);
+  const visit = (service: ServiceName): void => {
+    if (included.has(service)) return;
+    for (const dependency of serviceDependencies[service] ?? []) visit(dependency);
+    included.add(service);
+  };
+  for (const service of services) visit(service);
+  return [...included];
+};
+
+// postgres/postgres-init are always installed first, so ServiceNotFoundError cannot occur when
+// the coordinator starts them. Map it to StackBuildError only to preserve the lifecycle error
+// boundary if the graph invariant is ever broken.
 const eagerStartService = (
   orchestrator: Orchestrator["Service"],
   name: string,
@@ -62,16 +80,13 @@ const eagerStartService = (
       "ServiceNotFoundError",
       (error) =>
         new StackBuildError({
-          detail: `lazyServices eager-start: unexpected missing service "${error.name}"`,
+          detail: `eager start: unexpected missing service "${error.name}"`,
         }),
     ),
   );
 
-// Used both for the eager-start set in start() and for waitAllReady()'s started-service set
-// under lazyServices. In both cases the name comes from either the graph's own startOrder or
-// from a name the coordinator already validated via requireKnownService/startService, so
-// ServiceNotFoundError can't actually occur — map it to StackBuildError only to satisfy the
-// declared error types of the callers.
+// Names come from installed graph definitions or from a service already validated by the
+// coordinator. Map an impossible ServiceNotFoundError to StackBuildError at this boundary.
 const waitReadyKnownService = (
   orchestrator: Orchestrator["Service"],
   name: string,
@@ -253,11 +268,10 @@ export class StackLifecycleCoordinator extends Context.Service<
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
         const startInFlightRef = yield* Ref.make(false);
         const ensureExtensionPreloadLock = yield* Semaphore.make(1);
-        // Tracks every service that has actually been asked to start: the eager set from
-        // start() under lazyServices, plus anything started later via startService (the
-        // ApiProxy's ensureService on-demand path) or restartService. Under lazyServices,
-        // waitAllReady() only waits on this set, since never-started ServiceDefs never resolve
-        // their `healthy` deferred and never emit a Failed state either (see waitAllReady below).
+        const disposeLock = yield* Semaphore.make(1);
+        // Tracks services that have actually been asked to start. waitAllReady() only waits on
+        // this set because an available but never-requested sidecar intentionally has no running
+        // process and therefore cannot resolve an orchestrator readiness signal.
         const startedServicesRef = yield* Ref.make<ReadonlySet<string>>(new Set());
         const markStarted = (names: Iterable<string>) =>
           Ref.update(startedServicesRef, (current) => new Set([...current, ...names]));
@@ -303,106 +317,101 @@ export class StackLifecycleCoordinator extends Context.Service<
             }
           });
 
-        let preparedArtifacts: PreparedStackArtifacts | undefined;
-        let prepareDeferred: Deferred.Deferred<PreparedStackArtifacts, StackBuildError> | undefined;
+        let preparedArtifacts: PreparedStackArtifacts = { resolutions: {} };
+        const preparationLock = yield* Semaphore.make(1);
         let runtimeState: RuntimeState | undefined;
         let runtimeDeferred: Deferred.Deferred<RuntimeState, StackBuildError> | undefined;
 
-        const ensurePrepared = Effect.suspend(() => {
-          if (preparedArtifacts !== undefined) {
-            return Effect.succeed(preparedArtifacts);
-          }
-          if (prepareDeferred !== undefined) {
-            return Deferred.await(prepareDeferred);
-          }
+        const ensureServicesPrepared = (requested: ReadonlyArray<ServiceName>) =>
+          preparationLock.withPermits(1)(
+            Effect.gen(function* () {
+              const configured = new Set(enabledServicesForConfig(config));
+              const missing = [...new Set(requested)].filter(
+                (service) =>
+                  configured.has(service) && preparedArtifacts.resolutions[service] === undefined,
+              );
+              if (missing.length === 0) return preparedArtifacts;
 
-          const deferred = Deferred.makeUnsafe<PreparedStackArtifacts, StackBuildError>();
-          prepareDeferred = deferred;
+              const priorPhase = yield* Ref.get(phaseRef);
+              const initialPreparation = priorPhase === "idle";
+              if (initialPreparation) yield* Ref.set(phaseRef, "preparing");
+              yield* validateResolvedConfig(config);
 
-          const effect = Effect.gen(function* () {
-            yield* validateResolvedConfig(config);
-            yield* Ref.set(phaseRef, "preparing");
+              let prepared: PreparedStackArtifacts | undefined;
+              yield* preparation
+                .prepareEvents({
+                  mode: config.mode,
+                  services: missing,
+                  versions: versionsForConfig(config),
+                })
+                .pipe(
+                  Stream.mapError(
+                    (cause) =>
+                      new StackBuildError({
+                        detail: `Failed to prepare stack assets: ${missing.join(", ")}`,
+                        cause,
+                      }),
+                  ),
+                  Stream.runForEach((event) => {
+                    switch (event._tag) {
+                      case "ServiceDownloadStarted":
+                        return updateState(
+                          new StackServiceState({
+                            name: event.service,
+                            status: "Downloading",
+                            pid: null,
+                            exitCode: null,
+                            restartCount: 0,
+                            startedAt: null,
+                            error: null,
+                          }),
+                        );
+                      case "ServiceDownloadFinished":
+                        return updateState(
+                          new StackServiceState({
+                            name: event.service,
+                            status: "Pending",
+                            pid: null,
+                            exitCode: null,
+                            restartCount: 0,
+                            startedAt: null,
+                            error: null,
+                          }),
+                        );
+                      case "PreparationCompleted":
+                        return Effect.sync(() => {
+                          prepared = event.artifacts;
+                        });
+                    }
+                  }),
+                );
 
-            let prepared: PreparedStackArtifacts | undefined;
-            yield* preparation
-              .prepareEvents({
-                mode: config.mode,
-                services: enabledServicesForConfig(config),
-                versions: versionsForConfig(config),
-              })
-              .pipe(
-                Stream.mapError(
-                  (cause) =>
-                    new StackBuildError({
-                      detail: "Failed to prepare stack assets",
-                      cause,
-                    }),
-                ),
-              )
-              .pipe(
-                Stream.runForEach((event) => {
-                  switch (event._tag) {
-                    case "ServiceDownloadStarted":
-                      return updateState(
-                        new StackServiceState({
-                          name: event.service,
-                          status: "Downloading",
-                          pid: null,
-                          exitCode: null,
-                          restartCount: 0,
-                          startedAt: null,
-                          error: null,
-                        }),
-                      );
-                    case "ServiceDownloadFinished":
-                      return updateState(
-                        new StackServiceState({
-                          name: event.service,
-                          status: "Pending",
-                          pid: null,
-                          exitCode: null,
-                          restartCount: 0,
-                          startedAt: null,
-                          error: null,
-                        }),
-                      );
-                    case "PreparationCompleted":
-                      return Effect.sync(() => {
-                        prepared = event.artifacts;
-                      });
+              if (prepared === undefined) {
+                return yield* Effect.fail(
+                  new StackBuildError({
+                    detail: "Stack preparation completed without prepared artifacts",
+                  }),
+                );
+              }
+
+              preparedArtifacts = {
+                resolutions: {
+                  ...preparedArtifacts.resolutions,
+                  ...prepared.resolutions,
+                },
+              };
+              if (initialPreparation) yield* Ref.set(phaseRef, "prepared");
+              return preparedArtifacts;
+            }).pipe(
+              Effect.onError(() =>
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(phaseRef)) === "preparing") {
+                    yield* Ref.set(phaseRef, "idle");
                   }
                 }),
-              );
-
-            if (prepared === undefined) {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: "Stack preparation completed without prepared artifacts",
-                }),
-              );
-            }
-
-            yield* Ref.set(phaseRef, "prepared");
-            return prepared;
-          }).pipe(
-            Effect.tap((value) =>
-              Effect.sync(() => {
-                preparedArtifacts = value;
-              }),
-            ),
-            Effect.onError(() => Ref.set(phaseRef, "idle")),
-            Effect.ensuring(
-              Effect.sync(() => {
-                prepareDeferred = undefined;
-              }),
+              ),
             ),
           );
-
-          return Effect.gen(function* () {
-            yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), scope);
-            return yield* Deferred.await(deferred);
-          });
-        });
 
         const ensureRuntime = Effect.suspend(() => {
           if (runtimeState !== undefined) {
@@ -416,10 +425,11 @@ export class StackLifecycleCoordinator extends Context.Service<
           runtimeDeferred = deferred;
 
           const effect = Effect.gen(function* () {
-            const prepared = yield* ensurePrepared;
+            const prepared = yield* ensureServicesPrepared(["postgres"]);
             const { graph, serviceProjection, cleanupTargets } = yield* builder.build(
               config,
               prepared,
+              ["postgres"],
             );
 
             yield* metadataPersistence.persistCleanupTargets(cleanupTargets).pipe(
@@ -501,11 +511,54 @@ export class StackLifecycleCoordinator extends Context.Service<
           });
         });
 
+        const activationLock = yield* Semaphore.make(1);
+        const activateServices = (runtime: RuntimeState, requested: ReadonlyArray<string>) =>
+          activationLock.withPermits(1)(
+            Effect.gen(function* () {
+              const configured = new Set(enabledServicesForConfig(config));
+              const normalized = enabledServicesForConfig(config).filter((service) =>
+                requested.includes(service),
+              );
+              const closure = dependencyClosure(normalized).filter((service) =>
+                configured.has(service),
+              );
+              yield* ensureServicesPrepared(closure);
+
+              const preparedServices = enabledServicesForConfig(config).filter(
+                (service) => preparedArtifacts.resolutions[service] !== undefined,
+              );
+              const buildResult = yield* builder.build(config, preparedArtifacts, preparedServices);
+              const installed = new Set(runtime.graph.startOrder.map((def) => def.name));
+              const additions = buildResult.graph.startOrder.filter(
+                (def) => !installed.has(def.name),
+              );
+              yield* runtime.orchestrator.addServiceDefinitions(additions).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new StackBuildError({
+                      detail: "Failed to install prepared service definitions",
+                      cause,
+                    }),
+                ),
+              );
+              runtime.graph = buildResult.graph;
+              runtime.cleanupTargets = buildResult.cleanupTargets;
+              yield* metadataPersistence.persistCleanupTargets(runtime.cleanupTargets).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new StackBuildError({
+                      detail: "Failed to persist stack cleanup metadata",
+                      cause,
+                    }),
+                ),
+              );
+            }),
+          );
+
         let disposed = false;
         const runtimeHost = Effect.gen(function* () {
-          const prepared = yield* ensurePrepared;
           const platform = yield* detectPlatform;
-          const edgeRuntimeResolution = prepared.resolutions["edge-runtime"];
+          const edgeRuntimeResolution = preparedArtifacts.resolutions["edge-runtime"];
           return {
             hostname:
               edgeRuntimeResolution?.type === "docker"
@@ -560,7 +613,6 @@ export class StackLifecycleCoordinator extends Context.Service<
               ...base,
               edgeRuntime: {
                 ...config.edgeRuntime,
-                enabled: opts.edgeRuntime.enabled ?? config.edgeRuntime.enabled,
                 inspectorPort: opts.edgeRuntime.inspectorPort ?? config.edgeRuntime.inspectorPort,
                 policy: opts.edgeRuntime.policy ?? config.edgeRuntime.policy,
                 env: opts.edgeRuntime.env ?? config.edgeRuntime.env,
@@ -579,18 +631,22 @@ export class StackLifecycleCoordinator extends Context.Service<
             ),
           );
         const disposeOnce = () =>
-          Effect.gen(function* () {
-            if (disposed) {
-              return;
-            }
-            disposed = true;
-            yield* cleanupLocalStackResources({
-              stop: () =>
-                runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
-              cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
-              config,
-            });
-          });
+          disposeLock.withPermits(1)(
+            Effect.gen(function* () {
+              if (disposed) {
+                return;
+              }
+              yield* cleanupLocalStackResources({
+                stop: () =>
+                  runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
+                cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
+                config,
+              });
+              // Only certify disposal after every cleanup stage succeeds. A
+              // failed attempt remains retryable through StackHandle.dispose().
+              disposed = true;
+            }),
+          );
 
         yield* Effect.addFinalizer(disposeOnce);
 
@@ -603,30 +659,29 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* Ref.set(startInFlightRef, true);
               yield* Ref.set(phaseRef, "starting");
               const runtime = yield* ensureRuntime;
-              yield* Ref.set(phaseRef, "starting");
-              yield* configureFunctions(config);
-              if (config.lazyServices === true) {
-                // Only bring up postgres (and postgres-init, which depends on postgres and
-                // bootstraps the schema once). Every other service stays Pending until the
-                // ApiProxy starts it on demand via startService + waitReady (see ensureService in
-                // ApiProxy.ts / lazyServices.ts).
-                const eagerServices = runtime.graph.startOrder
-                  .map((def) => def.name)
-                  .filter((name) => name === "postgres" || name === "postgres-init");
-                for (const name of eagerServices) {
-                  yield* eagerStartService(runtime.orchestrator, name);
-                }
-                yield* markStarted(eagerServices);
-                yield* Effect.forEach(
-                  eagerServices,
-                  (name) => waitReadyKnownService(runtime.orchestrator, name),
-                  { concurrency: "unbounded" },
-                );
-              } else {
-                yield* runtime.orchestrator.start();
-                yield* markStarted(runtime.graph.startOrder.map((def) => def.name));
-                yield* runtime.orchestrator.waitAllReady();
+              if (config.startServices.length > 0) {
+                yield* activateServices(runtime, config.startServices);
               }
+              yield* Ref.set(phaseRef, "starting");
+              if (config.startServices.includes("edge-runtime")) {
+                yield* configureFunctions(config);
+              }
+              const eagerNames = new Set<string>(["postgres", "postgres-init"]);
+              for (const service of config.startServices) {
+                for (const def of runtime.graph.startOrderFor(service)) eagerNames.add(def.name);
+              }
+              const eagerServices = runtime.graph.startOrder
+                .map((def) => def.name)
+                .filter((name) => eagerNames.has(name));
+              for (const name of eagerServices) {
+                yield* eagerStartService(runtime.orchestrator, name);
+              }
+              yield* markStarted(eagerServices);
+              yield* Effect.forEach(
+                eagerServices,
+                (name) => waitReadyKnownService(runtime.orchestrator, name),
+                { concurrency: "unbounded" },
+              );
               yield* Ref.set(phaseRef, "running");
             }).pipe(
               Effect.onError(() => Ref.set(phaseRef, "stopped")),
@@ -649,6 +704,8 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* requireKnownService(name);
               yield* requireRunningForServiceStart(name);
               const runtime = yield* ensureRuntime;
+              yield* activateServices(runtime, [name]);
+              if (name === "edge-runtime") yield* configureFunctions(config);
               yield* runtime.orchestrator.startService(name);
               // The orchestrator starts the full dependency closure of `name`,
               // so the started set must record every service it brought up —
@@ -671,15 +728,13 @@ export class StackLifecycleCoordinator extends Context.Service<
               // dependency closure — a never-started lazy service would come up
               // waiting on dependencies that stay Pending forever. Reject it,
               // mirroring the waitReady guard; callers want startService here.
-              if (config.lazyServices === true) {
-                const startedServices = yield* Ref.get(startedServicesRef);
-                if (!startedServices.has(name)) {
-                  return yield* Effect.fail(
-                    new StackBuildError({
-                      detail: `Cannot restart service "${name}": it has not been started (lazyServices starts it on the first proxied request or via startService()).`,
-                    }),
-                  );
-                }
+              const startedServices = yield* Ref.get(startedServicesRef);
+              if (!startedServices.has(name)) {
+                return yield* Effect.fail(
+                  new StackBuildError({
+                    detail: `Cannot restart service "${name}": it has not been started yet.`,
+                  }),
+                );
               }
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.restartService(name);
@@ -728,8 +783,14 @@ export class StackLifecycleCoordinator extends Context.Service<
             Effect.gen(function* () {
               yield* requireKnownService("edge-runtime");
               const runtime = yield* ensureRuntime;
+              yield* activateServices(runtime, ["edge-runtime"]);
               yield* configureFunctions(configWithFunctionOptions(opts));
-              yield* runtime.orchestrator.restartService("edge-runtime");
+              const started = yield* Ref.get(startedServicesRef);
+              if (started.has("edge-runtime")) {
+                yield* runtime.orchestrator.restartService("edge-runtime");
+              } else {
+                yield* runtime.orchestrator.startService("edge-runtime");
+              }
               yield* markStarted(["edge-runtime"]);
               yield* runtime.orchestrator.waitReady("edge-runtime");
             }),
@@ -737,9 +798,16 @@ export class StackLifecycleCoordinator extends Context.Service<
             Effect.gen(function* () {
               yield* requireKnownService("edge-runtime");
               const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
-              const prepared = yield* ensurePrepared;
               const runtime = yield* ensureRuntime;
-              const buildResult = yield* builder.build(nextConfig, prepared);
+              yield* activateServices(runtime, ["edge-runtime"]);
+              const preparedServices = enabledServicesForConfig(config).filter(
+                (service) => preparedArtifacts.resolutions[service] !== undefined,
+              );
+              const buildResult = yield* builder.build(
+                nextConfig,
+                preparedArtifacts,
+                preparedServices,
+              );
               const edgeRuntimeDef = buildResult.graph.startOrder.find(
                 (def) => def.name === "edge-runtime",
               );
@@ -760,7 +828,12 @@ export class StackLifecycleCoordinator extends Context.Service<
                       }),
                   ),
                 );
-              yield* runtime.orchestrator.restartService("edge-runtime");
+              const started = yield* Ref.get(startedServicesRef);
+              if (started.has("edge-runtime")) {
+                yield* runtime.orchestrator.restartService("edge-runtime");
+              } else {
+                yield* runtime.orchestrator.startService("edge-runtime");
+              }
               yield* markStarted(["edge-runtime"]);
               yield* runtime.orchestrator.waitReady("edge-runtime");
             }),
@@ -783,18 +856,13 @@ export class StackLifecycleCoordinator extends Context.Service<
           waitReady: (name) =>
             Effect.gen(function* () {
               yield* requireKnownService(name);
-              // Lazy services that were never started keep their health
-              // deferreds unresolved forever, so waiting would hang; fail
-              // with a clear error instead.
-              if (config.lazyServices === true) {
-                const startedServices = yield* Ref.get(startedServicesRef);
-                if (!startedServices.has(name)) {
-                  return yield* Effect.fail(
-                    new StackBuildError({
-                      detail: `Service "${name}" has not been started (lazyServices starts it on the first proxied request or via startService()).`,
-                    }),
-                  );
-                }
+              const startedServices = yield* Ref.get(startedServicesRef);
+              if (!startedServices.has(name)) {
+                return yield* Effect.fail(
+                  new StackBuildError({
+                    detail: `Service "${name}" has not been started yet.`,
+                  }),
+                );
               }
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.waitReady(name);
@@ -802,14 +870,7 @@ export class StackLifecycleCoordinator extends Context.Service<
           waitAllReady: () =>
             Effect.gen(function* () {
               const runtime = yield* ensureRuntime;
-              if (config.lazyServices !== true) {
-                // Non-lazy: identical to pre-lazyServices behavior — every ServiceDef gets
-                // started by start(), so waiting on the full graph is correct and byte-identical
-                // to today.
-                yield* runtime.orchestrator.waitAllReady();
-                return;
-              }
-              // Lazy readiness is only meaningful once start() has completed: before that the
+              // Readiness is only meaningful once start() has completed: before that the
               // started set may still be empty (start() records the eager postgres set only
               // after launching it), so an early snapshot would vacuously report "ready" while
               // postgres is still coming up. Fail instead — the daemon /ready route serializes
@@ -819,7 +880,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               if (phase !== "running") {
                 return yield* Effect.fail(
                   new StackBuildError({
-                    detail: `Stack is not running (phase: "${phase}"); lazy readiness is only defined once start() has completed.`,
+                    detail: `Stack is not running (phase: "${phase}"); readiness is only defined once start() has completed.`,
                   }),
                 );
               }

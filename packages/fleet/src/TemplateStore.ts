@@ -11,13 +11,12 @@ import {
 } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
+import { createStack, installMicroProfile, resolvePostgresPassword } from "@supabase/stack";
 import {
   createProvisionedStack,
-  createStack,
-  installMicroProfile,
-  resolvePostgresPassword,
-} from "@supabase/stack";
-import type { ProvisionedServiceName, ProvisionedStackVersions } from "@supabase/stack";
+  type ProvisionedServiceName,
+  type ProvisionedStackVersions,
+} from "@supabase/stack/provisioned";
 import { cloneDir } from "./cowClone.ts";
 import { baseTemplateKey, resolveTemplateVersions, templateKey } from "./PodManifest.ts";
 
@@ -79,31 +78,15 @@ export class TemplateStore {
           // roles/schemas/baseline migrations exactly as it does for a normal stack.
           const stack = await createStack({
             mode: "native",
+            services: [],
             postgres: {
               version: postgresVersion,
               dataDir: buildDataDir,
               password: postgresPassword,
             },
-            postgrest: false,
-            auth: false,
-            edgeRuntime: false,
-            realtime: false,
-            storage: false,
-            imgproxy: false,
-            mailpit: false,
-            pgmeta: false,
-            studio: false,
-            analytics: false,
-            vector: false,
-            pooler: false,
             functions: false,
           });
-          try {
-            await stack.start();
-            await stack.ready();
-          } finally {
-            await stack.dispose();
-          }
+          await stack.dispose();
         });
         await installMicroProfile(buildDataDir);
         await this.freeze(buildDir, key, {
@@ -148,19 +131,15 @@ export class TemplateStore {
             dataDir: buildDataDir,
             postgresPassword,
             versions: resolvedVersions,
-            enabledServices,
+            services: enabledServices,
+            startServices: enabledServices,
           });
-          try {
-            await stack.start();
-            await stack.ready();
-          } finally {
-            await stack.dispose();
-          }
+          await stack.dispose();
         });
         await this.freeze(buildDir, key, {
           key,
           versions: resolvedVersions,
-          enabledServices,
+          services: enabledServices,
           builtAt: new Date().toISOString(),
         });
         frozen = true;

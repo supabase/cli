@@ -4,7 +4,7 @@ import {
   resolveProjectSubtree,
   type ProjectConfig,
 } from "@supabase/config";
-import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
+import type { EdgeRuntimeReloadOptions } from "@supabase/stack/effect";
 import { Data, Effect, Redacted } from "effect";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 
@@ -30,7 +30,7 @@ export class FunctionsDevEdgeRuntimeDisabledError extends Data.TaggedError(
 }
 
 export interface ResolvedFunctionsDevEdgeRuntimeConfig {
-  readonly config: EdgeRuntimeConfig;
+  readonly config: EdgeRuntimeReloadOptions;
   readonly fingerprint: string;
 }
 
@@ -64,7 +64,7 @@ function stableRecord(
   );
 }
 
-function fingerprintEdgeRuntimeConfig(config: EdgeRuntimeConfig): string {
+function fingerprintEdgeRuntimeConfig(config: EdgeRuntimeReloadOptions): string {
   return JSON.stringify({
     enabled: config.enabled,
     inspectorPort: config.inspectorPort,
@@ -73,7 +73,9 @@ function fingerprintEdgeRuntimeConfig(config: EdgeRuntimeConfig): string {
   });
 }
 
-function toStackEdgeRuntimeConfig(config: ResolvedProjectEdgeRuntimeConfig): EdgeRuntimeConfig {
+function toStackEdgeRuntimeConfig(
+  config: ResolvedProjectEdgeRuntimeConfig,
+): EdgeRuntimeReloadOptions {
   return {
     enabled: config.enabled,
     inspectorPort: config.inspector_port,

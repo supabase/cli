@@ -13,6 +13,9 @@ export type ServiceName =
   | "vector"
   | "pooler";
 
+/** Stack sidecars that callers may opt into; Postgres is always present. */
+export type StackServiceName = Exclude<ServiceName, "postgres">;
+
 export const SERVICE_NAMES = [
   "postgres",
   "postgrest",
@@ -28,6 +31,10 @@ export const SERVICE_NAMES = [
   "vector",
   "pooler",
 ] as const satisfies ReadonlyArray<ServiceName>;
+
+export const STACK_SERVICE_NAMES = SERVICE_NAMES.filter(
+  (service): service is StackServiceName => service !== "postgres",
+);
 
 export interface VersionManifest {
   readonly postgres: string;

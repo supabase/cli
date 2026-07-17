@@ -20,11 +20,15 @@ describe("PodRegistry", () => {
     const manifest = {
       id: "pod-a",
       versions: { postgres: "17.6.1.143" },
-      services: {},
+      services: [],
       flags: { supautils: false },
       warm: false,
       dbPort: 55000,
+      apiPort: 55001,
       postgresPassword: "postgres",
+      jwtSecret: "01234567890123456789012345678901",
+      publishableKey: "sb_publishable_test",
+      secretKey: "sb_secret_test",
       createdAt: "2026-07-08T00:00:00.000Z",
     };
 
@@ -49,10 +53,14 @@ describe("PodRegistry", () => {
     const pods = new PodRegistry(root);
     const base = {
       versions: { postgres: "17.6.1.143" },
-      services: {},
+      services: [],
       flags: { supautils: false },
       warm: false,
       postgresPassword: "postgres",
+      apiPort: 55001,
+      jwtSecret: "01234567890123456789012345678901",
+      publishableKey: "sb_publishable_test",
+      secretKey: "sb_secret_test",
       createdAt: "2026-07-08T00:00:00.000Z",
     };
 
@@ -117,11 +125,15 @@ describe("PodRegistry", () => {
     const invalid = {
       id: "pod-a",
       versions: {},
-      services: {},
+      services: [],
       flags: { supautils: false },
       warm: false,
       dbPort: 55000,
+      apiPort: 55001,
       postgresPassword: "postgres",
+      jwtSecret: "01234567890123456789012345678901",
+      publishableKey: "sb_publishable_test",
+      secretKey: "sb_secret_test",
       createdAt: "2026-07-08T00:00:00.000Z",
     };
 
@@ -135,11 +147,15 @@ describe("PodRegistry", () => {
     const root = await mkdtemp(join(tmpdir(), "pods-"));
     const pods = new PodRegistry(root);
     const base = {
-      services: {},
+      services: [],
       flags: { supautils: false },
       warm: false,
       dbPort: 55000,
+      apiPort: 55001,
       postgresPassword: "postgres",
+      jwtSecret: "01234567890123456789012345678901",
+      publishableKey: "sb_publishable_test",
+      secretKey: "sb_secret_test",
       createdAt: "2026-07-08T00:00:00.000Z",
     };
 
@@ -155,7 +171,7 @@ describe("PodRegistry", () => {
         ...base,
         id: "no-auth-version",
         versions: { postgres: "17.6.1.143" },
-        services: { auth: true },
+        services: ["auth"],
       }),
     );
 

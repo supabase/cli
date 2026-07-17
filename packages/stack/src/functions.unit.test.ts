@@ -60,7 +60,9 @@ describe("stack Functions runtime config", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() => writeProject(cwd));
-      const stackConfig = yield* Effect.promise(() => resolveConfig({ projectDir: cwd }));
+      const stackConfig = yield* Effect.promise(() =>
+        resolveConfig({ projectDir: cwd, services: ["edge-runtime"] }),
+      );
       const config = yield* resolveFunctionsRuntimeConfig(stackConfig, {
         hostname: "127.0.0.1",
       });
@@ -93,6 +95,7 @@ describe("stack Functions runtime config", () => {
       const stackConfig = yield* Effect.promise(() =>
         resolveConfig({
           projectDir: cwd,
+          services: ["edge-runtime"],
           functions: {
             envFile: "custom.env",
             noVerifyJwt: true,
@@ -135,7 +138,9 @@ describe("stack Functions runtime config", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() => writeProject(cwd));
-      const stackConfig = yield* Effect.promise(() => resolveConfig({ projectDir: cwd }));
+      const stackConfig = yield* Effect.promise(() =>
+        resolveConfig({ projectDir: cwd, services: ["edge-runtime"] }),
+      );
       yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" });
       const written = JSON.parse(
         yield* Effect.promise(() =>

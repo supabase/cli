@@ -1,4 +1,5 @@
 import { validateEnabledServiceDependencies } from "./serviceDependencies.ts";
+import type { FunctionsConfig } from "./functions.ts";
 import type { StackConfig } from "./StackBuilder.ts";
 import type { ServiceName, VersionManifest } from "./versions.ts";
 
@@ -16,16 +17,21 @@ export interface ProvisionedStackOptions {
   readonly dataDir: string;
   readonly postgresPassword: string;
   readonly versions: ProvisionedStackVersions;
-  readonly enabledServices?: ReadonlyArray<ProvisionedServiceName>;
+  readonly services?: ReadonlyArray<ProvisionedServiceName>;
   readonly stackRoot?: string;
-  readonly lazyServices?: boolean;
+  readonly startServices?: ReadonlyArray<ProvisionedServiceName>;
+  readonly projectDir?: string;
+  readonly jwtSecret?: string;
+  readonly publishableKey?: string;
+  readonly secretKey?: string;
+  readonly functions?: FunctionsConfig | false;
 }
 
 function versionedService(
   name: ProvisionedServiceName,
   options: ProvisionedStackOptions,
-): { readonly version: string } | false {
-  if (!options.enabledServices?.includes(name)) return false;
+): { readonly version: string } | undefined {
+  if (!options.services?.includes(name)) return undefined;
   const version = options.versions[name];
   if (version === undefined) {
     throw new Error(`versions.${name} is required when ${name} is enabled`);
@@ -35,14 +41,19 @@ function versionedService(
 
 /** Internal resolver kept separate so the deep public constructor stays easy to verify. */
 export function provisionedStackConfig(options: ProvisionedStackOptions): StackConfig {
-  const enabledServices = new Set<ServiceName>(options.enabledServices ?? []);
+  const enabledServices = new Set<ServiceName>(options.services ?? []);
   const dependencyError = validateEnabledServiceDependencies(enabledServices);
   if (dependencyError !== undefined) throw new Error(dependencyError);
 
   return {
-    mode: "native",
+    mode: "auto",
     stackRoot: options.stackRoot,
-    lazyServices: options.lazyServices,
+    startServices: options.startServices,
+    projectDir: options.projectDir,
+    jwtSecret: options.jwtSecret,
+    publishableKey: options.publishableKey,
+    secretKey: options.secretKey,
+    services: options.services,
     postgres: {
       dataDir: options.dataDir,
       version: options.versions.postgres,
@@ -62,6 +73,6 @@ export function provisionedStackConfig(options: ProvisionedStackOptions): StackC
     analytics: versionedService("analytics", options),
     vector: versionedService("vector", options),
     pooler: versionedService("pooler", options),
-    functions: false,
+    functions: options.functions ?? false,
   };
 }

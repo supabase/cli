@@ -850,19 +850,28 @@ metadata persisted separately for crash recovery.
 
 **File:** `src/createStack.ts`
 
-`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function `(apiPort: number) => PlatformLayer` — so the platform-specific HTTP server (Bun or Node.js) can be bound to the already-resolved port. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
+`createStackController` is the platform-agnostic stopped-controller core. It wires all layers and
+delegates to a `ManagedRuntime`. The public `createStack` entry points call `createReadyStack`,
+which starts the controller and returns only after Postgres and the gateway are ready. The core
+takes a `PlatformFactory` parameter so the platform-specific HTTP server can bind the resolved
+gateway port.
 
 `createStack` also owns `resolveConfig()`, the internal async function that turns a raw
 `StackConfig` into a `ResolvedStackConfig`: it allocates ports via `PortAllocator`, generates JWTs
 via `generateJwt()` from `JwtGenerator.ts`, creates an ephemeral temp directory if no `dataDir`
 was specified, and applies all service config defaults.
 
-Once the runtime is built, `stack.start()` now means:
+The initial public `createStack()` call, and `stack.start()` after a later `stop()`, mean:
 
-1. prepare assets via `StackPreparation`
+1. prepare only Postgres via `StackPreparation`
 2. publish synthetic `Downloading` states on cache misses
-3. build the orchestrator through `StackBuilder`
-4. start services and wait for health through `StackLifecycleCoordinator`
+3. build the initial Postgres graph through `StackBuilder`
+4. start Postgres and any explicitly selected `startServices`
+5. wait for started services through `StackLifecycleCoordinator`
+
+Available sidecars are not prepared up front. On first use the gateway asks the coordinator to
+prepare the sidecar and its dependencies, build their definitions, add those definitions to the
+live process-compose orchestrator, start them, and wait for readiness before forwarding traffic.
 
 #### PlatformLayer type
 
@@ -919,7 +928,12 @@ interface Stack extends AsyncDisposable {
   [Symbol.asyncDispose](): Promise<void>;
 }
 
-async function createStack(
+async function createStackController(
+  config: StackConfig | undefined,
+  platformFactory: PlatformFactory,
+): Promise<Stack>;
+
+async function createReadyStack(
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
 ): Promise<Stack>;
@@ -966,19 +980,21 @@ Streams (`statusChanges`, `logs`, `serviceLogs`) are converted to `AsyncIterable
 
 **Files:** `src/bun.ts`, `src/node.ts`
 
-These thin wrappers are the runtime-specific adapters selected by the package root export conditions. Each one constructs the platform-specific layer and delegates to `createStack` from `createStack.ts`.
+These thin wrappers are the runtime-specific adapters selected by the package root export
+conditions. Each constructs the platform layer and delegates to `createReadyStack`.
 
-They expose two constructors. `createStack(config)` is the general interface. `createProvisionedStack(options)` is the deeper pod-runtime interface: `provisionedStack.ts` owns native mode, the micro profile, service disabling, pinned-version mapping, and dependency validation for a pre-initialized data directory. Fleet therefore describes a pod without duplicating StackConfig assembly.
+The package root exposes only the ready `createStack(config)` constructor. The advanced Effect
+entry point names its stopped constructor `createStackController`, making the lifecycle difference
+explicit. The deeper `createProvisionedStack(options)` constructor lives at
+`@supabase/stack/provisioned`; Fleet can use pre-initialized data directories without putting
+infrastructure concerns on the primary API.
 
 ```ts
 // bun.ts
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 
-export async function createStack(config?: StackConfig): Promise<Stack> {
-  return createStackCore(
-    config,
-    (apiPort) => BunHttpServer.layer({ port: apiPort }) as unknown as PlatformLayer,
-  );
+export async function createStack(config?: StackConfig): Promise<StackHandle> {
+  return createReadyStack(config, bunPlatformFactory);
 }
 ```
 
@@ -986,14 +1002,8 @@ export async function createStack(config?: StackConfig): Promise<Stack> {
 // node.ts
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 
-export async function createStack(config?: StackConfig): Promise<Stack> {
-  return createStackCore(config, (apiPort) => {
-    const spawnerLayer = NodeChildProcessSpawnerLayer.pipe(
-      Layer.provide(Layer.mergeAll(NodeFileSystemLayer, NodePathLayer)),
-    );
-    const httpServerLayer = NodeHttpServer.layer(() => createServer(), { port: apiPort });
-    return Layer.mergeAll(httpServerLayer, spawnerLayer) as unknown as PlatformLayer;
-  });
+export async function createStack(config?: StackConfig): Promise<StackHandle> {
+  return createReadyStack(config, nodePlatformFactory);
 }
 ```
 

@@ -16,6 +16,30 @@ export function dockerForceRemove(containerNames: ReadonlyArray<string>): void {
   }
 }
 
+function commandStderr(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("stderr" in error)) return "";
+  const stderr = error.stderr;
+  if (typeof stderr === "string") return stderr;
+  if (stderr instanceof Uint8Array) return new TextDecoder().decode(stderr);
+  return "";
+}
+
+function dockerForceRemoveStrict(containerNames: ReadonlyArray<string>): void {
+  const errors: unknown[] = [];
+  for (const name of containerNames) {
+    try {
+      execFileSync("docker", ["rm", "-f", name], { stdio: "pipe", timeout: 5_000 });
+    } catch (error) {
+      if (commandStderr(error).includes("No such container")) continue;
+      errors.push(new Error(`Failed to remove Docker container ${name}`, { cause: error }));
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "Failed to remove Stack Docker containers");
+  }
+}
+
 export function cleanupAutoManagedPaths(config: ResolvedStackConfig): void {
   if (config.autoManagedPaths.length === 0) {
     return;
@@ -60,6 +84,13 @@ const cleanupAutoManagedPathsWithRetry = (config: ResolvedStackConfig): Effect.E
 
       yield* Effect.sleep(Duration.millis(250));
     }
+
+    const remaining = cleanupTargets
+      .filter((target) => existsSync(target.path))
+      .map((target) => target.path);
+    if (remaining.length > 0) {
+      throw new Error(`Failed to remove Stack runtime paths: ${remaining.join(", ")}`);
+    }
   });
 
 export const cleanupLocalStackResources = (opts: {
@@ -67,18 +98,13 @@ export const cleanupLocalStackResources = (opts: {
   readonly cleanupTargets: CleanupTargets;
   readonly config: ResolvedStackConfig;
 }): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    // Best-effort graceful shutdown — stop() may fail if services already
-    // exited or the scope is partially closed. Make the stop path
-    // uninterruptible so SIGTERM-driven scope closure does not abandon it
-    // mid-shutdown and leak child processes.
-    yield* Effect.uninterruptible(opts.stop()).pipe(Effect.catch(() => Effect.void));
-
-    // Safety net: force-remove any Docker containers that survived
-    // signal-based shutdown. On macOS, killing the `docker run` client
-    // may not stop the container.
-    yield* Effect.sync(() => {
-      dockerForceRemove(opts.cleanupTargets.dockerContainerNames);
-    });
-    yield* cleanupAutoManagedPathsWithRetry(opts.config);
-  });
+  // All cleanup stages run even when an earlier stage fails. `ensuring`
+  // preserves the combined failure cause, so callers never receive a false
+  // success while a service, container, or runtime directory may remain.
+  Effect.uninterruptible(opts.stop()).pipe(
+    Effect.ensuring(
+      Effect.sync(() => dockerForceRemoveStrict(opts.cleanupTargets.dockerContainerNames)).pipe(
+        Effect.ensuring(cleanupAutoManagedPathsWithRetry(opts.config)),
+      ),
+    ),
+  );

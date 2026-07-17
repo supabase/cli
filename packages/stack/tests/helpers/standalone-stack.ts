@@ -2,7 +2,6 @@ import { createStack } from "../../src/node.ts";
 
 const parentPid = readParentPid(process.argv.slice(2));
 const stack = await createStack();
-await stack.start();
 
 // Signal readiness to parent process
 console.log(JSON.stringify({ url: stack.url, dbUrl: stack.dbUrl }));

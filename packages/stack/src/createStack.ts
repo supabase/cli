@@ -32,6 +32,8 @@ import {
   shortTempPrefixRoot,
 } from "./paths.ts";
 import { allocatePorts, DEFAULT_PORTS, PORT_FIELDS, type AllocatedPorts } from "./PortAllocator.ts";
+import type { PortInput } from "./PortAllocator.ts";
+import { acquirePortLease } from "./PortLease.ts";
 import { StackMetadataSchema } from "./StackMetadata.ts";
 import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
 import { Stack } from "./Stack.ts";
@@ -66,7 +68,7 @@ import type {
   StudioConfig,
   VectorConfig,
 } from "./StackBuilder.ts";
-import { DEFAULT_VERSIONS } from "./versions.ts";
+import { DEFAULT_VERSIONS, STACK_SERVICE_NAMES, type StackServiceName } from "./versions.ts";
 
 const StackMetadataFileSchema = Schema.fromJsonString(StackMetadataSchema);
 const decodeStackMetadataFile = Schema.decodeUnknownSync(StackMetadataFileSchema);
@@ -117,6 +119,7 @@ interface ResolveConfigOptions {
   readonly runtimeRoot?: string;
   readonly preferredPorts?: Partial<AllocatedPorts>;
   readonly reservedPorts?: ReadonlySet<number>;
+  readonly allocatedPorts?: AllocatedPorts;
 }
 
 interface ResolvedRoots {
@@ -272,10 +275,8 @@ async function readReservedPortsInStacksRoot(
 
 function resolvePostgrestConfig(
   input: PostgrestConfig | undefined,
-  raw: PostgrestConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedPostgrestConfig | false {
-  if (raw === false) return false;
+): ResolvedPostgrestConfig {
   const cfg = input ?? {};
   return {
     port: ports.postgrestPort,
@@ -289,11 +290,9 @@ function resolvePostgrestConfig(
 
 function resolveAuthConfig(
   input: AuthConfig | undefined,
-  raw: AuthConfig | false | undefined,
   ports: AllocatedPorts,
   apiPort: number,
-): ResolvedAuthConfig | false {
-  if (raw === false) return false;
+): ResolvedAuthConfig {
   const cfg = input ?? {};
   return {
     port: ports.authPort,
@@ -306,10 +305,8 @@ function resolveAuthConfig(
 
 function resolveRealtimeConfig(
   input: RealtimeConfig | undefined,
-  raw: RealtimeConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedRealtimeConfig | false {
-  if (raw === false) return false;
+): ResolvedRealtimeConfig {
   const cfg = input ?? {};
   return {
     port: ports.realtimePort,
@@ -324,13 +321,11 @@ function resolveRealtimeConfig(
 
 function resolveEdgeRuntimeConfig(
   input: EdgeRuntimeConfig | undefined,
-  raw: EdgeRuntimeConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedEdgeRuntimeConfig | false {
-  if (raw === false || raw?.enabled === false) return false;
+): ResolvedEdgeRuntimeConfig {
   const cfg = input ?? {};
   return {
-    enabled: cfg.enabled ?? true,
+    enabled: true,
     port: ports.edgeRuntimePort,
     inspectorPort: ports.edgeRuntimeInspectorPort,
     policy: cfg.policy ?? "per_worker",
@@ -349,11 +344,9 @@ function resolveFunctionsConfig(config: StackConfig) {
 
 function resolveStorageConfig(
   input: StorageConfig | undefined,
-  raw: StorageConfig | false | undefined,
   ports: AllocatedPorts,
   opts: ResolveConfigOptions,
-): ResolvedStorageConfig | false {
-  if (raw === false) return false;
+): ResolvedStorageConfig {
   const cfg = input ?? {};
   return {
     port: ports.storagePort,
@@ -366,10 +359,8 @@ function resolveStorageConfig(
 
 function resolveImgproxyConfig(
   input: ImgproxyConfig | undefined,
-  raw: ImgproxyConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedImgproxyConfig | false {
-  if (raw === false) return false;
+): ResolvedImgproxyConfig {
   const cfg = input ?? {};
   return {
     port: ports.imgproxyPort,
@@ -379,10 +370,8 @@ function resolveImgproxyConfig(
 
 function resolveMailpitConfig(
   input: MailpitConfig | undefined,
-  raw: MailpitConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedMailpitConfig | false {
-  if (raw === false) return false;
+): ResolvedMailpitConfig {
   const cfg = input ?? {};
   return {
     port: ports.mailpitPort,
@@ -396,10 +385,8 @@ function resolveMailpitConfig(
 
 function resolvePgmetaConfig(
   input: PgmetaConfig | undefined,
-  raw: PgmetaConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedPgmetaConfig | false {
-  if (raw === false) return false;
+): ResolvedPgmetaConfig {
   const cfg = input ?? {};
   return {
     port: ports.pgmetaPort,
@@ -409,11 +396,9 @@ function resolvePgmetaConfig(
 
 function resolveStudioConfig(
   input: StudioConfig | undefined,
-  raw: StudioConfig | false | undefined,
   ports: AllocatedPorts,
   apiPort: number,
-): ResolvedStudioConfig | false {
-  if (raw === false) return false;
+): ResolvedStudioConfig {
   const cfg = input ?? {};
   return {
     port: ports.studioPort,
@@ -424,10 +409,8 @@ function resolveStudioConfig(
 
 function resolveAnalyticsConfig(
   input: AnalyticsConfig | undefined,
-  raw: AnalyticsConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedAnalyticsConfig | false {
-  if (raw === false) return false;
+): ResolvedAnalyticsConfig {
   const cfg = input ?? {};
   return {
     port: ports.analyticsPort,
@@ -437,11 +420,7 @@ function resolveAnalyticsConfig(
   };
 }
 
-function resolveVectorConfig(
-  input: VectorConfig | undefined,
-  raw: VectorConfig | false | undefined,
-): ResolvedVectorConfig | false {
-  if (raw === false) return false;
+function resolveVectorConfig(input: VectorConfig | undefined): ResolvedVectorConfig {
   const cfg = input ?? {};
   return {
     version: cfg.version ?? DEFAULT_VERSIONS.vector,
@@ -450,10 +429,8 @@ function resolveVectorConfig(
 
 function resolvePoolerConfig(
   input: PoolerConfig | undefined,
-  raw: PoolerConfig | false | undefined,
   ports: AllocatedPorts,
-): ResolvedPoolerConfig | false {
-  if (raw === false) return false;
+): ResolvedPoolerConfig {
   const cfg = input ?? {};
   return {
     port: ports.poolerPort,
@@ -478,64 +455,84 @@ export async function resolveConfig(
   const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
-  const postgrestInput = config.postgrest !== false ? (config.postgrest ?? undefined) : undefined;
-  const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
-  const edgeRuntimeEnabled =
-    !(resolvedMode === "native" && config.edgeRuntime === undefined) &&
-    config.edgeRuntime !== false &&
-    (config.edgeRuntime?.enabled ?? true) !== false;
-  const realtimeEnabled = config.realtime !== undefined && config.realtime !== false;
-  const storageEnabled = config.storage !== undefined && config.storage !== false;
-  const imgproxyEnabled = config.imgproxy !== undefined && config.imgproxy !== false;
-  const mailpitEnabled = config.mailpit !== undefined && config.mailpit !== false;
-  const pgmetaEnabled = config.pgmeta !== undefined && config.pgmeta !== false;
-  const studioEnabled = config.studio !== undefined && config.studio !== false;
-  const analyticsEnabled = config.analytics !== undefined && config.analytics !== false;
-  const vectorEnabled = config.vector !== undefined && config.vector !== false;
-  const poolerEnabled = config.pooler !== undefined && config.pooler !== false;
-  const edgeRuntimeInput = edgeRuntimeEnabled ? (config.edgeRuntime ?? undefined) : undefined;
-  const realtimeInput = realtimeEnabled ? (config.realtime ?? undefined) : undefined;
-  const storageInput = storageEnabled ? (config.storage ?? undefined) : undefined;
-  const imgproxyInput = imgproxyEnabled ? (config.imgproxy ?? undefined) : undefined;
-  const mailpitInput = mailpitEnabled ? (config.mailpit ?? undefined) : undefined;
-  const pgmetaInput = pgmetaEnabled ? (config.pgmeta ?? undefined) : undefined;
-  const studioInput = studioEnabled ? (config.studio ?? undefined) : undefined;
-  const analyticsInput = analyticsEnabled ? (config.analytics ?? undefined) : undefined;
-  const vectorInput = vectorEnabled ? (config.vector ?? undefined) : undefined;
-  const poolerInput = poolerEnabled ? (config.pooler ?? undefined) : undefined;
+  // Docker-only sidecars cannot be made available in native mode. Keep the native default
+  // useful without silently selecting services that the requested runtime can never start.
+  const requestedServices =
+    config.services ??
+    (resolvedMode === "native"
+      ? (["postgrest", "auth"] satisfies StackServiceName[])
+      : STACK_SERVICE_NAMES);
+  const knownServices = new Set<string>(STACK_SERVICE_NAMES);
+  const enabledServices = new Set<StackServiceName>();
+  for (const service of requestedServices) {
+    if (!knownServices.has(service)) throw new Error(`Unknown stack service: ${service}`);
+    if (enabledServices.has(service)) throw new Error(`Duplicate stack service: ${service}`);
+    enabledServices.add(service);
+  }
+  const serviceInputs = {
+    postgrest: config.postgrest,
+    auth: config.auth,
+    "edge-runtime": config.edgeRuntime,
+    realtime: config.realtime,
+    storage: config.storage,
+    imgproxy: config.imgproxy,
+    mailpit: config.mailpit,
+    pgmeta: config.pgmeta,
+    studio: config.studio,
+    analytics: config.analytics,
+    vector: config.vector,
+    pooler: config.pooler,
+  } satisfies Record<StackServiceName, unknown>;
+  for (const service of STACK_SERVICE_NAMES) {
+    if (serviceInputs[service] !== undefined && !enabledServices.has(service)) {
+      throw new Error(
+        `Configuration for ${service} was provided, but ${service} is not listed in services`,
+      );
+    }
+  }
+  const startServices = config.startServices ?? [];
+  const eagerServices = new Set<StackServiceName>();
+  for (const service of startServices) {
+    if (!knownServices.has(service)) throw new Error(`Unknown start service: ${service}`);
+    if (!enabledServices.has(service)) {
+      throw new Error(`Start service ${service} is not listed in services`);
+    }
+    if (eagerServices.has(service)) throw new Error(`Duplicate start service: ${service}`);
+    eagerServices.add(service);
+  }
+  if (
+    config.functions !== undefined &&
+    config.functions !== false &&
+    !enabledServices.has("edge-runtime")
+  ) {
+    throw new Error('functions configuration requires "edge-runtime" in services');
+  }
+
+  const postgrestEnabled = enabledServices.has("postgrest");
+  const authEnabled = enabledServices.has("auth");
+  const edgeRuntimeEnabled = enabledServices.has("edge-runtime");
+  const realtimeEnabled = enabledServices.has("realtime");
+  const storageEnabled = enabledServices.has("storage");
+  const imgproxyEnabled = enabledServices.has("imgproxy");
+  const mailpitEnabled = enabledServices.has("mailpit");
+  const pgmetaEnabled = enabledServices.has("pgmeta");
+  const studioEnabled = enabledServices.has("studio");
+  const analyticsEnabled = enabledServices.has("analytics");
+  const vectorEnabled = enabledServices.has("vector");
+  const poolerEnabled = enabledServices.has("pooler");
 
   const postgresDataDir = resolveDataDir(postgresInput.dataDir, roots.stackRoot, "postgres");
 
-  const ports = await Effect.runPromise(
-    allocatePorts(
-      {
-        apiPort: config.port,
-        dbPort: postgresInput.port,
-        authPort: authInput?.port,
-        postgrestPort: postgrestInput?.port,
-        postgrestAdminPort: postgrestInput?.adminPort,
-        edgeRuntimePort: edgeRuntimeInput?.port,
-        edgeRuntimeInspectorPort: edgeRuntimeInput?.inspectorPort,
-        realtimePort: realtimeInput?.port,
-        storagePort: storageInput?.port,
-        imgproxyPort: imgproxyInput?.port,
-        mailpitPort: mailpitInput?.port,
-        mailpitSmtpPort: mailpitInput?.smtpPort,
-        mailpitPop3Port: mailpitInput?.pop3Port,
-        pgmetaPort: pgmetaInput?.port,
-        studioPort: studioInput?.port,
-        analyticsPort: analyticsInput?.port,
-        poolerPort: poolerInput?.port,
-        poolerApiPort: poolerInput?.apiPort,
-      },
-      {
+  const ports =
+    opts.allocatedPorts ??
+    (await Effect.runPromise(
+      allocatePorts(portInputForConfig(config), {
         preferred: opts.preferredPorts,
         reserved: opts.reservedPorts,
-      },
-    ),
-  ).catch((error: unknown) => {
-    throw toStackError(error);
-  });
+      }),
+    ).catch((error: unknown) => {
+      throw toStackError(error);
+    }));
 
   const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
   const anonJwt = generateJwt(jwtSecret, "anon");
@@ -548,7 +545,7 @@ export async function resolveConfig(
     projectDir,
     mode: resolvedMode,
     jwtSecret,
-    lazyServices: config.lazyServices === true,
+    startServices: [...eagerServices],
     ports,
     apiPort: ports.apiPort,
     dbPort: ports.dbPort,
@@ -567,33 +564,46 @@ export async function resolveConfig(
       provisioned: postgresInput.provisioned,
       profile: postgresInput.profile,
     },
-    postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
-    auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),
-    edgeRuntime: edgeRuntimeEnabled
-      ? resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
-      : false,
-    realtime: realtimeEnabled
-      ? resolveRealtimeConfig(realtimeInput, config.realtime, ports)
-      : false,
+    postgrest: postgrestEnabled ? resolvePostgrestConfig(config.postgrest, ports) : false,
+    auth: authEnabled ? resolveAuthConfig(config.auth, ports, ports.apiPort) : false,
+    edgeRuntime: edgeRuntimeEnabled ? resolveEdgeRuntimeConfig(config.edgeRuntime, ports) : false,
+    realtime: realtimeEnabled ? resolveRealtimeConfig(config.realtime, ports) : false,
     storage: storageEnabled
-      ? resolveStorageConfig(storageInput, config.storage, ports, {
+      ? resolveStorageConfig(config.storage, ports, {
           ...opts,
           stackRoot: roots.stackRoot,
         })
       : false,
-    imgproxy: imgproxyEnabled
-      ? resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports)
-      : false,
-    mailpit: mailpitEnabled ? resolveMailpitConfig(mailpitInput, config.mailpit, ports) : false,
-    pgmeta: pgmetaEnabled ? resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports) : false,
-    studio: studioEnabled
-      ? resolveStudioConfig(studioInput, config.studio, ports, ports.apiPort)
-      : false,
-    analytics: analyticsEnabled
-      ? resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
-      : false,
-    vector: vectorEnabled ? resolveVectorConfig(vectorInput, config.vector) : false,
-    pooler: poolerEnabled ? resolvePoolerConfig(poolerInput, config.pooler, ports) : false,
+    imgproxy: imgproxyEnabled ? resolveImgproxyConfig(config.imgproxy, ports) : false,
+    mailpit: mailpitEnabled ? resolveMailpitConfig(config.mailpit, ports) : false,
+    pgmeta: pgmetaEnabled ? resolvePgmetaConfig(config.pgmeta, ports) : false,
+    studio: studioEnabled ? resolveStudioConfig(config.studio, ports, ports.apiPort) : false,
+    analytics: analyticsEnabled ? resolveAnalyticsConfig(config.analytics, ports) : false,
+    vector: vectorEnabled ? resolveVectorConfig(config.vector) : false,
+    pooler: poolerEnabled ? resolvePoolerConfig(config.pooler, ports) : false,
+  };
+}
+
+function portInputForConfig(config: StackConfig): PortInput {
+  return {
+    apiPort: config.port,
+    dbPort: config.postgres?.port,
+    authPort: config.auth?.port,
+    postgrestPort: config.postgrest?.port,
+    postgrestAdminPort: config.postgrest?.adminPort,
+    edgeRuntimePort: config.edgeRuntime?.port,
+    edgeRuntimeInspectorPort: config.edgeRuntime?.inspectorPort,
+    realtimePort: config.realtime?.port,
+    storagePort: config.storage?.port,
+    imgproxyPort: config.imgproxy?.port,
+    mailpitPort: config.mailpit?.port,
+    mailpitSmtpPort: config.mailpit?.smtpPort,
+    mailpitPop3Port: config.mailpit?.pop3Port,
+    pgmetaPort: config.pgmeta?.port,
+    studioPort: config.studio?.port,
+    analyticsPort: config.analytics?.port,
+    poolerPort: config.pooler?.port,
+    poolerApiPort: config.pooler?.apiPort,
   };
 }
 
@@ -697,11 +707,29 @@ function possibleCleanupTargetsForConfig(config: ResolvedStackConfig): CleanupTa
   return { dockerContainerNames };
 }
 
-export async function createStack(
+export async function createStackController(
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
 ): Promise<StackHandle> {
-  const resolved = await resolveConfig(config);
+  const rawConfig = config ?? {};
+  const portLease = await acquirePortLease(
+    rawConfig.cacheRoot ?? defaultCacheRoot(),
+    portInputForConfig(rawConfig),
+  );
+  let resolved: ResolvedStackConfig;
+  try {
+    resolved = await resolveConfig(rawConfig, { allocatedPorts: portLease.ports });
+  } catch (error) {
+    try {
+      await portLease.release();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Failed to resolve and clean up stack allocation",
+      );
+    }
+    throw error;
+  }
   const fullLayer = foregroundLayer(resolved, platformFactory);
   const runtime = ManagedRuntime.make(fullLayer);
 
@@ -719,8 +747,25 @@ export async function createStack(
         throw toStackError(error);
       });
 
-    const gracefulDispose = async () => {
-      await runtime.dispose().catch(() => {});
+    let disposed = false;
+    let disposeInFlight: Promise<void> | undefined;
+    const gracefulDispose = (): Promise<void> => {
+      if (disposed) return Promise.resolve();
+      if (disposeInFlight !== undefined) return disposeInFlight;
+      const attempt = (async () => {
+        // Run the retryable lifecycle cleanup before closing its Effect scope.
+        // Once that succeeds, runtime disposal only releases layer resources.
+        await run(localStack.dispose());
+        await runtime.dispose().catch((error: unknown) => {
+          throw toStackError(error);
+        });
+        await portLease.release();
+        disposed = true;
+      })();
+      disposeInFlight = attempt.finally(() => {
+        disposeInFlight = undefined;
+      });
+      return disposeInFlight;
     };
 
     const stack: StackHandle = {
@@ -762,9 +807,42 @@ export async function createStack(
 
     return stack;
   } catch (error: unknown) {
-    await runtime.dispose().catch(() => {});
+    let cleanupError: unknown;
+    await runtime.dispose().catch((cause: unknown) => {
+      cleanupError = toStackError(cause);
+    });
     dockerForceRemove(possibleCleanupTargetsForConfig(resolved).dockerContainerNames);
     cleanupAutoManagedPaths(resolved);
+    if (cleanupError === undefined) {
+      await portLease.release().catch((cause: unknown) => {
+        cleanupError = cause;
+      });
+    }
+    if (cleanupError !== undefined) {
+      throw new AggregateError(
+        [toStackError(error), cleanupError],
+        "Failed to create and clean up stack",
+      );
+    }
     throw toStackError(error);
+  }
+}
+
+/** Public constructor contract: resolve, start, and health-gate before returning. */
+export async function createReadyStack(
+  config: StackConfig | undefined,
+  platformFactory: PlatformFactory,
+): Promise<StackHandle> {
+  const stack = await createStackController(config, platformFactory);
+  try {
+    await stack.start();
+    return stack;
+  } catch (startError) {
+    try {
+      await stack.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([startError, cleanupError], "Failed to start and clean up stack");
+    }
+    throw startError;
   }
 }

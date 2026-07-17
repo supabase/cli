@@ -9,15 +9,10 @@ describe("toStartStackConfig", () => {
   });
 
   it("dedupes excluded services when building stack config", () => {
-    expect(toStartStackConfig(["auth", "auth"], "auto")).toMatchObject({
-      mode: "auto",
-      auth: false,
-    });
-    expect(toStartStackConfig(["auth", "postgrest"], "auto")).toMatchObject({
-      mode: "auto",
-      auth: false,
-      postgrest: false,
-    });
+    expect(toStartStackConfig(["auth", "auth"], "auto").services).not.toContain("auth");
+    expect(toStartStackConfig(["auth", "postgrest"], "auto").services).toEqual(
+      expect.not.arrayContaining(["auth", "postgrest"]),
+    );
   });
 });
 
@@ -39,16 +34,15 @@ describe("withServiceVersions", () => {
       realtime: { version: "2.78.10" },
     });
 
-    expect(
-      withServiceVersions(toStartStackConfig(["auth", "storage"], "auto"), {
-        postgres: "17.6.1.090",
-        auth: "2.187.0",
-        storage: "1.39.2",
-      }),
-    ).toMatchObject({
-      postgres: { version: "17.6.1.090" },
-      auth: false,
-      storage: false,
+    const excluded = withServiceVersions(toStartStackConfig(["auth", "storage"], "auto"), {
+      postgres: "17.6.1.090",
+      auth: "2.187.0",
+      storage: "1.39.2",
     });
+    expect(excluded).toMatchObject({
+      postgres: { version: "17.6.1.090" },
+    });
+    expect(excluded.auth).toBeUndefined();
+    expect(excluded.storage).toBeUndefined();
   });
 });

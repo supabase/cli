@@ -23,7 +23,7 @@ async function freeFleetPort(): Promise<number> {
   const start = 55000 + Math.floor(Math.random() * 8000);
   for (let offset = 0; offset < 200; offset += 1) {
     const candidate = start + offset;
-    if (await tryListen(candidate)) return candidate;
+    if ((await tryListen(candidate)) && (await tryListen(candidate + 1))) return candidate;
   }
   throw new Error("could not find a free port in the fleet public range");
 }
@@ -42,11 +42,15 @@ function manifest(id: string, dbPort: number): PodManifest {
   return {
     id,
     versions: { postgres: "17.6.1.143" },
-    services: {},
+    services: [],
     flags: { supautils: false },
     warm: false,
     dbPort,
+    apiPort: dbPort + 1,
     postgresPassword: "postgres",
+    jwtSecret: "01234567890123456789012345678901",
+    publishableKey: "sb_publishable_test",
+    secretKey: "sb_secret_test",
     createdAt: "2026-07-08T00:00:00.000Z",
   };
 }
@@ -114,9 +118,7 @@ describe("createFleet", () => {
       await expect(fleet.ensureExtensionPreload("pod-a", "pg_cron")).rejects.toThrow(
         "fleet is disposed",
       );
-      await expect(fleet.createPod({ id: "pod-a", postgresVersion: "17.6.1.143" })).rejects.toThrow(
-        "fleet is disposed",
-      );
+      await expect(fleet.createPod({ id: "pod-a" })).rejects.toThrow("fleet is disposed");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

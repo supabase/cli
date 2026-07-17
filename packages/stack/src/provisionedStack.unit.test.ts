@@ -10,9 +10,14 @@ const baseOptions = {
 describe("provisionedStackConfig", () => {
   it("owns the complete postgres-only micro runtime configuration", () => {
     expect(provisionedStackConfig(baseOptions)).toEqual({
-      mode: "native",
+      mode: "auto",
       stackRoot: undefined,
-      lazyServices: undefined,
+      startServices: undefined,
+      projectDir: undefined,
+      jwtSecret: undefined,
+      publishableKey: undefined,
+      secretKey: undefined,
+      services: undefined,
       postgres: {
         dataDir: "/pods/a/data",
         version: "17.6.1.143",
@@ -20,18 +25,18 @@ describe("provisionedStackConfig", () => {
         provisioned: true,
         profile: "micro",
       },
-      postgrest: false,
-      auth: false,
-      edgeRuntime: false,
-      realtime: false,
-      storage: false,
-      imgproxy: false,
-      mailpit: false,
-      pgmeta: false,
-      studio: false,
-      analytics: false,
-      vector: false,
-      pooler: false,
+      postgrest: undefined,
+      auth: undefined,
+      edgeRuntime: undefined,
+      realtime: undefined,
+      storage: undefined,
+      imgproxy: undefined,
+      mailpit: undefined,
+      pgmeta: undefined,
+      studio: undefined,
+      analytics: undefined,
+      vector: undefined,
+      pooler: undefined,
       functions: false,
     });
   });
@@ -40,8 +45,8 @@ describe("provisionedStackConfig", () => {
     const config = provisionedStackConfig({
       ...baseOptions,
       stackRoot: "/pods/a/stack",
-      lazyServices: true,
-      enabledServices: ["postgrest", "auth"],
+      startServices: ["postgrest", "auth"],
+      services: ["postgrest", "auth"],
       versions: {
         postgres: "17.6.1.143",
         postgrest: "14.14",
@@ -50,22 +55,22 @@ describe("provisionedStackConfig", () => {
     });
 
     expect(config.stackRoot).toBe("/pods/a/stack");
-    expect(config.lazyServices).toBe(true);
+    expect(config.startServices).toEqual(["postgrest", "auth"]);
     expect(config.postgrest).toEqual({ version: "14.14" });
     expect(config.auth).toEqual({ version: "2.192.0" });
   });
 
   it("rejects an enabled service without a pinned version", () => {
-    expect(() =>
-      provisionedStackConfig({ ...baseOptions, enabledServices: ["postgrest"] }),
-    ).toThrow("versions.postgrest is required");
+    expect(() => provisionedStackConfig({ ...baseOptions, services: ["postgrest"] })).toThrow(
+      "versions.postgrest is required",
+    );
   });
 
   it("rejects incomplete service dependency sets", () => {
     expect(() =>
       provisionedStackConfig({
         ...baseOptions,
-        enabledServices: ["studio"],
+        services: ["studio"],
         versions: { postgres: "17.6.1.143", studio: "2026.07.07" },
       }),
     ).toThrow("studio requires pgmeta");

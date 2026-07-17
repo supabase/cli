@@ -1,11 +1,8 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  DEFAULT_VERSIONS,
-  type ProvisionedServiceName,
-  type ProvisionedStackVersions,
-} from "@supabase/stack";
+import { DEFAULT_VERSIONS } from "@supabase/stack";
+import type { ProvisionedServiceName, ProvisionedStackVersions } from "@supabase/stack/provisioned";
 import { describe, expect, it } from "vitest";
 import { PodRegistry } from "./PodRegistry.ts";
 import { PortRegistry } from "./PortRegistry.ts";
@@ -68,7 +65,7 @@ describe("Provisioner (unit, fake deps)", () => {
 
       expect(manifest.id).toBe("x");
       expect(manifest.postgresPassword).toBe("secret-password");
-      expect(ports.get("x")).toEqual({ dbPort: manifest.dbPort });
+      expect(ports.get("x")).toEqual({ dbPort: manifest.dbPort, apiPort: manifest.apiPort });
       expect(await pods.read("x")).toEqual(manifest);
     });
 
@@ -117,7 +114,7 @@ describe("Provisioner (unit, fake deps)", () => {
 
       // The duplicate-id pre-check throws before any (re-)allocation, so the
       // original pod's ports must still be intact.
-      expect(ports.get("dup")).toEqual({ dbPort: first.dbPort });
+      expect(ports.get("dup")).toEqual({ dbPort: first.dbPort, apiPort: first.apiPort });
     });
 
     it("records resolved default versions for enabled warm services", async () => {
@@ -128,7 +125,7 @@ describe("Provisioner (unit, fake deps)", () => {
       const manifest = await p.create({
         id: "warm",
         versions: { postgres: PG_VERSION },
-        services: { postgrest: true },
+        services: ["postgrest"],
         warm: true,
       });
 
@@ -147,7 +144,7 @@ describe("Provisioner (unit, fake deps)", () => {
         p.create({
           id: "bad",
           versions: { postgres: PG_VERSION },
-          services: { imgproxy: true },
+          services: ["imgproxy"],
         }),
       ).rejects.toThrow(/imgproxy requires storage/);
 
@@ -167,21 +164,21 @@ describe("Provisioner (unit, fake deps)", () => {
         auth: 123,
       } as unknown as CreatePodOptions["versions"];
       await expect(
-        p.create({ id: "bad", versions: junkVersions, services: { auth: true } }),
+        p.create({ id: "bad", versions: junkVersions, services: ["auth"] }),
       ).rejects.toThrow(/invalid version entry/);
 
       expect(ports.get("bad")).toBeUndefined();
       expect(await podsRootEntries(podsRoot)).not.toContain("bad");
     });
 
-    it("rejects unknown or non-boolean service entries before provisioning", async () => {
+    it("rejects unknown service entries before provisioning", async () => {
       const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
       await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
       const { p, ports, podsRoot } = await makeHarness(templateDir);
 
       // Simulates an untyped JS caller: persisting "postrest" would make the
       // registry's strict parser reject the whole manifest on the next read.
-      const junkServices = { postrest: true } as unknown as CreatePodOptions["services"];
+      const junkServices = ["postrest"] as unknown as CreatePodOptions["services"];
       await expect(
         p.create({ id: "bad", versions: { postgres: PG_VERSION }, services: junkServices }),
       ).rejects.toThrow(/invalid service entry/);
@@ -190,21 +187,19 @@ describe("Provisioner (unit, fake deps)", () => {
       expect(await podsRootEntries(podsRoot)).not.toContain("bad");
     });
 
-    it("rejects services that cannot run in native fleet mode before provisioning", async () => {
+    it("accepts Docker-backed services in the mixed provisioned runtime", async () => {
       const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
       await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
-      const { p, ports, podsRoot } = await makeHarness(templateDir);
+      const { p } = await makeHarness(templateDir);
 
-      await expect(
-        p.create({
-          id: "bad",
-          versions: { postgres: PG_VERSION },
-          services: { storage: true },
-        }),
-      ).rejects.toThrow(/native mode/);
+      const manifest = await p.create({
+        id: "storage",
+        versions: { postgres: PG_VERSION },
+        services: ["storage"],
+      });
 
-      expect(ports.get("bad")).toBeUndefined();
-      expect(await podsRootEntries(podsRoot)).not.toContain("bad");
+      expect(manifest.services).toEqual(["storage"]);
+      expect(manifest.versions.storage).toBe(DEFAULT_VERSIONS.storage);
     });
   });
 
@@ -217,7 +212,7 @@ describe("Provisioner (unit, fake deps)", () => {
       await p.create({
         id: "warm",
         versions: { postgres: PG_VERSION },
-        services: { postgrest: true, auth: true },
+        services: ["postgrest", "auth"],
         warm: true,
       });
       await p.reset("warm");
@@ -233,7 +228,7 @@ describe("Provisioner (unit, fake deps)", () => {
       await p.create({
         id: "cold",
         versions: { postgres: PG_VERSION },
-        services: { postgrest: true },
+        services: ["postgrest"],
       });
       await p.reset("cold");
 
@@ -268,7 +263,7 @@ describe("Provisioner (unit, fake deps)", () => {
 
       expect(forked.id).toBe("dst");
       expect(forked.dbPort).not.toBe(source.dbPort);
-      expect(ports.get("dst")).toEqual({ dbPort: forked.dbPort });
+      expect(ports.get("dst")).toEqual({ dbPort: forked.dbPort, apiPort: forked.apiPort });
       expect(await pods.read("dst")).toEqual(forked);
     });
 
@@ -320,8 +315,8 @@ describe("Provisioner (unit, fake deps)", () => {
 
       // The pre-check for an already-existing target throws before
       // (re-)allocating, so neither pod's ports should be disturbed.
-      expect(ports.get("src")).toEqual({ dbPort: source.dbPort });
-      expect(ports.get("dst")).toEqual({ dbPort: existing.dbPort });
+      expect(ports.get("src")).toEqual({ dbPort: source.dbPort, apiPort: source.apiPort });
+      expect(ports.get("dst")).toEqual({ dbPort: existing.dbPort, apiPort: existing.apiPort });
     });
   });
 });

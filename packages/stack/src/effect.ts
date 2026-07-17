@@ -84,7 +84,7 @@ export type {
 } from "./StackBuilder.ts";
 export { StackBuilder } from "./StackBuilder.ts";
 
-export type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
+export type { EdgeRuntimeReloadConfig, EdgeRuntimeReloadOptions, StackInfo } from "./Stack.ts";
 export { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 export type {
   FunctionsConfig,
@@ -98,7 +98,12 @@ export {
   resolveFunctionsRuntimeConfig,
 } from "./functions.ts";
 
-export type { AvailableServiceVersionUpdate, ServiceName, VersionManifest } from "./versions.ts";
+export type {
+  AvailableServiceVersionUpdate,
+  ServiceName,
+  StackServiceName,
+  VersionManifest,
+} from "./versions.ts";
 export {
   DEFAULT_VERSIONS,
   diffPinnedAndAvailableVersions,
@@ -109,6 +114,7 @@ export {
   normalizeServiceVersion,
   normalizeServiceVersions,
   SERVICE_NAMES,
+  STACK_SERVICE_NAMES,
 } from "./versions.ts";
 export type {
   StackVersionOverride,
@@ -160,7 +166,7 @@ export type {
   StackHandle,
 } from "./createStack.ts";
 export {
-  createStack,
+  createStackController,
   defaultManagedStackName,
   projectDaemonLayer,
   resolveConfig,

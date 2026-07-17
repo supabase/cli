@@ -1,21 +1,29 @@
 import { createHash } from "node:crypto";
 import {
   fillServiceVersionManifest,
-  type ProvisionedStackVersions,
   type ServiceName,
   type VersionManifest,
 } from "@supabase/stack";
+import type { FunctionsConfig } from "@supabase/stack";
+import type { ProvisionedServiceName, ProvisionedStackVersions } from "@supabase/stack/provisioned";
 
 export interface PodManifest {
   readonly id: string;
   readonly versions: ProvisionedStackVersions;
-  readonly services: Partial<Record<ServiceName, boolean>>;
+  readonly services: ReadonlyArray<ProvisionedServiceName>;
   readonly flags: { readonly supautils: boolean };
   /** Whether the pod was provisioned from a warm (service-premigrated) template; reset re-clones the same kind. */
   readonly warm: boolean;
   /** Stable external database endpoint owned by the fleet edge proxy. */
   readonly dbPort: number;
+  /** Stable external Supabase gateway endpoint owned by the fleet edge proxy. */
+  readonly apiPort: number;
   readonly postgresPassword: string;
+  readonly jwtSecret: string;
+  readonly publishableKey: string;
+  readonly secretKey: string;
+  readonly projectDir?: string;
+  readonly functions?: FunctionsConfig | false;
   readonly createdAt: string;
 }
 

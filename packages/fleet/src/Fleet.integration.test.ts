@@ -20,7 +20,13 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("Fleet", () => {
     const root = await mkdtemp(join(tmpdir(), "fleet-e2e-"));
     await using fleet = await createFleet({ root, idleMs: 2000 });
 
-    const a = await fleet.createPod({ id: "a", postgresVersion: PG_VERSION });
+    const a = await fleet.createPod({
+      id: "a",
+      versions: { postgres: PG_VERSION },
+      services: [],
+      warmTemplate: false,
+      start: false,
+    });
     expect(a.state).toBe("suspended");
 
     // First connection wakes the pod transparently.
@@ -49,7 +55,12 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("Fleet", () => {
     const root = await mkdtemp(join(tmpdir(), "fleet-e2e-"));
     await using fleet = await createFleet({ root, idleMs: 60_000 });
 
-    const a = await fleet.createPod({ id: "a", postgresVersion: PG_VERSION });
+    const a = await fleet.createPod({
+      id: "a",
+      versions: { postgres: PG_VERSION },
+      services: [],
+      warmTemplate: false,
+    });
     await query(a.dbUrl, "create table t(x int); insert into t values (1)");
 
     // Wake explicitly, then hammer it with interleaved suspend calls and

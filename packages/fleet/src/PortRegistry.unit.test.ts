@@ -14,6 +14,8 @@ describe("PortRegistry", () => {
     const b = await registry.allocate("pod-b");
 
     expect(a.dbPort).not.toBe(b.dbPort);
+    expect(a.apiPort).not.toBe(b.apiPort);
+    expect(new Set([a.dbPort, a.apiPort, b.dbPort, b.apiPort]).size).toBe(4);
     expect(a.dbPort).toBeGreaterThanOrEqual(55_000);
     const reloaded = await PortRegistry.load(file);
     expect(reloaded.get("pod-a")).toEqual(a);
@@ -46,7 +48,8 @@ describe("PortRegistry", () => {
 
     const endpoints = await Promise.all(ids.map((id) => registry.allocate(id)));
 
-    expect(new Set(endpoints.map((endpoint) => endpoint.dbPort)).size).toBe(ids.length);
+    const allocatedPorts = endpoints.flatMap((endpoint) => [endpoint.dbPort, endpoint.apiPort]);
+    expect(new Set(allocatedPorts).size).toBe(ids.length * 2);
     const reloaded = await PortRegistry.load(file);
     expect(ids.every((id) => reloaded.get(id) !== undefined)).toBe(true);
   });
@@ -84,13 +87,21 @@ describe("PortRegistry", () => {
     const duplicate = join(root, "duplicate.json");
     await writeFile(
       duplicate,
-      JSON.stringify({ pods: { "pod-a": { dbPort: 55_010 }, "pod-b": { dbPort: 55_010 } } }),
+      JSON.stringify({
+        pods: {
+          "pod-a": { dbPort: 55_010, apiPort: 55_011 },
+          "pod-b": { dbPort: 55_010, apiPort: 55_012 },
+        },
+      }),
     );
     const fromDuplicate = await PortRegistry.load(duplicate);
     expect(fromDuplicate.get("pod-a")).toBeUndefined();
 
     const wrongRange = join(root, "wrong-range.json");
-    await writeFile(wrongRange, JSON.stringify({ pods: { "pod-a": { dbPort: 45_000 } } }));
+    await writeFile(
+      wrongRange,
+      JSON.stringify({ pods: { "pod-a": { dbPort: 45_000, apiPort: 55_001 } } }),
+    );
     const fromWrongRange = await PortRegistry.load(wrongRange);
     expect(fromWrongRange.get("pod-a")).toBeUndefined();
   });
@@ -101,22 +112,22 @@ describe("PortRegistry", () => {
 
     await registry.reconcile(
       new Map([
-        ["pod-a", { dbPort: 55_010 }],
-        ["pod-b", { dbPort: 55_011 }],
+        ["pod-a", { dbPort: 55_010, apiPort: 55_011 }],
+        ["pod-b", { dbPort: 55_012, apiPort: 55_013 }],
       ]),
     );
-    expect(registry.get("pod-a")).toEqual({ dbPort: 55_010 });
+    expect(registry.get("pod-a")).toEqual({ dbPort: 55_010, apiPort: 55_011 });
     await expect(
       registry.reconcile(
         new Map([
-          ["pod-a", { dbPort: 55_010 }],
-          ["pod-b", { dbPort: 55_010 }],
+          ["pod-a", { dbPort: 55_010, apiPort: 55_011 }],
+          ["pod-b", { dbPort: 55_012, apiPort: 55_010 }],
         ]),
       ),
     ).rejects.toThrow("already assigned");
-    await expect(registry.reconcile(new Map([["pod-a", { dbPort: 45_000 }]]))).rejects.toThrow(
-      "invalid endpoint",
-    );
+    await expect(
+      registry.reconcile(new Map([["pod-a", { dbPort: 45_000, apiPort: 55_001 }]])),
+    ).rejects.toThrow("invalid endpoint");
   });
 
   it("propagates state-file read errors instead of treating them as missing", async () => {

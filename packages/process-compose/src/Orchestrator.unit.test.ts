@@ -769,6 +769,28 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("adds service definitions after the orchestrator has started", () => {
+    const { layer, proc } = setupOrchestrator([svc("db")], {
+      exitDelay: "5 seconds",
+    });
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("db");
+      yield* proc.waitForSpawn("db");
+
+      yield* orc.addServiceDefinitions([
+        svc("api", {
+          dependencies: [{ service: "db", condition: "healthy" }],
+        }),
+      ]);
+      yield* orc.startService("api");
+      yield* proc.waitForSpawn("api");
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["db", "api"]);
+      expect((yield* orc.getState("api")).status).not.toBe("Pending");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("stateChanges returns a stream of state transitions", () => {
     const { layer } = setupOrchestrator([svc("a")], {
       exitDelay: "200 millis",

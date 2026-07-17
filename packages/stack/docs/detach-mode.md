@@ -167,7 +167,7 @@ There are two layers of API:
 - **`Stack`** (Effect Service) — used by CLI and other Effect consumers.
   Returns `Effect`s and `Stream`s. This is the internal API.
 - **`createStack()` handle** (Promise-based) — used by non-Effect library consumers.
-  Returns `Promise`s and `AsyncIterable`s. This public API is unchanged.
+  Returns a ready Stack with `Promise` methods and `AsyncIterable` streams.
 
 `RemoteStack` implements the same `Stack` Effect Service interface, but backed
 by HTTP/SSE over a Unix socket instead of in-process orchestration. The CLI switches
@@ -188,8 +188,9 @@ Effect.gen(function* () {
 });
 ```
 
-`stack.start()` now means `prepare assets -> publish Downloading when needed -> start services ->
-wait healthy`, so detached mode exposes the same pre-runtime status behavior as foreground mode.
+`stack.start()` means `prepare Postgres -> publish Downloading when needed -> start Postgres and
+startServices -> wait healthy`. Sidecars are prepared and installed into the live supervisor when
+the gateway or caller first requests them.
 `RemoteStack` translates each Effect/Stream method to the corresponding HTTP call:
 
 | Stack method               | RemoteStack transport                                          |

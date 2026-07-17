@@ -44,7 +44,7 @@ const defaultConfig: ResolvedStackConfig = {
   projectDir: "/tmp/supabase-project",
   mode: "native",
   jwtSecret: testJwtSecret,
-  lazyServices: false,
+  startServices: [],
   ports: defaultPorts,
   apiPort: 54321,
   dbPort: 54322,

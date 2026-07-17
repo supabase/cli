@@ -48,17 +48,12 @@ const baseProxyConfig = (config: ResolvedStackConfig): Omit<ProxyConfig, "ensure
 /**
  * Build the ApiProxy layer for a stack.
  *
- * When `config.lazyServices` is on, the layer depends on `Stack` so it can wire
- * `ProxyConfig.ensureService` to `Stack.startService` + `Stack.waitReady`, memoized so concurrent
- * first requests to a route trigger a single start. Otherwise it's the plain config-only layer.
+ * The layer depends on `Stack` so it can wire `ProxyConfig.ensureService` to
+ * `Stack.startService`, memoized so concurrent first requests trigger one preparation/start.
  */
 const makeApiProxyLayer = (
   config: ResolvedStackConfig,
 ): Layer.Layer<ApiProxy, never, HttpServer.HttpServer | HttpClient.HttpClient | Stack> => {
-  if (!config.lazyServices) {
-    return ApiProxy.layer(baseProxyConfig(config));
-  }
-
   return Layer.unwrap(
     Effect.gen(function* () {
       const stack = yield* Stack;
@@ -66,7 +61,6 @@ const makeApiProxyLayer = (
         Effect.runPromise(
           Effect.gen(function* () {
             yield* stack.startService(name);
-            yield* stack.waitReady(name);
           }),
         ),
       );

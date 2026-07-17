@@ -38,7 +38,12 @@ import { makeVectorServiceDocker } from "./services/vector.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
-import { SERVICE_NAMES, type ServiceName, type VersionManifest } from "./versions.ts";
+import {
+  SERVICE_NAMES,
+  type ServiceName,
+  type StackServiceName,
+  type VersionManifest,
+} from "./versions.ts";
 
 export interface PostgresConfig {
   readonly port?: number;
@@ -93,7 +98,6 @@ export interface RealtimeConfig {
 }
 
 export interface EdgeRuntimeConfig {
-  readonly enabled?: boolean;
   readonly port?: number;
   readonly inspectorPort?: number;
   readonly policy?: "oneshot" | "per_worker";
@@ -163,30 +167,28 @@ export interface StackConfig {
   readonly runtimeRoot?: string;
   readonly projectDir?: string;
   readonly mode?: "native" | "auto" | "docker";
+  /** Sidecars available in this stack. Postgres is always enabled. */
+  readonly services?: ReadonlyArray<StackServiceName>;
+  /** Selected sidecars to start before createStack returns. Default: none. */
+  readonly startServices?: ReadonlyArray<StackServiceName>;
   readonly jwtSecret?: string;
   readonly port?: number;
-  /**
-   * When true, `start()` only eagerly starts `postgres` (and `postgres-init` when present); every
-   * other service is started on demand by the ApiProxy on the first request to its route, instead
-   * of starting everything up front. Default false: existing eager-start behavior is unchanged.
-   */
-  readonly lazyServices?: boolean;
   readonly publishableKey?: string;
   readonly secretKey?: string;
   readonly functions?: FunctionsConfig | false;
   readonly postgres?: PostgresConfig;
-  readonly postgrest?: PostgrestConfig | false;
-  readonly auth?: AuthConfig | false;
-  readonly edgeRuntime?: EdgeRuntimeConfig | false;
-  readonly realtime?: RealtimeConfig | false;
-  readonly storage?: StorageConfig | false;
-  readonly imgproxy?: ImgproxyConfig | false;
-  readonly mailpit?: MailpitConfig | false;
-  readonly pgmeta?: PgmetaConfig | false;
-  readonly studio?: StudioConfig | false;
-  readonly analytics?: AnalyticsConfig | false;
-  readonly vector?: VectorConfig | false;
-  readonly pooler?: PoolerConfig | false;
+  readonly postgrest?: PostgrestConfig;
+  readonly auth?: AuthConfig;
+  readonly edgeRuntime?: EdgeRuntimeConfig;
+  readonly realtime?: RealtimeConfig;
+  readonly storage?: StorageConfig;
+  readonly imgproxy?: ImgproxyConfig;
+  readonly mailpit?: MailpitConfig;
+  readonly pgmeta?: PgmetaConfig;
+  readonly studio?: StudioConfig;
+  readonly analytics?: AnalyticsConfig;
+  readonly vector?: VectorConfig;
+  readonly pooler?: PoolerConfig;
 }
 
 export interface ResolvedPostgresConfig {
@@ -297,7 +299,7 @@ export interface ResolvedStackConfig {
   readonly projectDir: string;
   readonly mode: "native" | "auto" | "docker";
   readonly jwtSecret: string;
-  readonly lazyServices: boolean;
+  readonly startServices: ReadonlyArray<StackServiceName>;
   readonly ports: AllocatedPorts;
   readonly apiPort: number;
   readonly dbPort: number;
@@ -404,18 +406,6 @@ export const validateResolvedConfig = (
         }),
       );
     }
-    // Only the native postgres service applies the micro profile; under "auto"
-    // a missing native binary would fall back to a Docker postgres that
-    // silently ignores it, so the profile demands native mode (which fails
-    // fast during preparation instead of falling back).
-    if (config.postgres.profile === "micro" && config.mode !== "native") {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: `postgres.profile "micro" requires mode "native"; mode "${config.mode}" may resolve postgres to Docker, which does not apply the micro conf overlay.`,
-        }),
-      );
-    }
-
     if (config.mode === "native") {
       const enabledDockerOnly = dockerOnlyServices.filter(
         (service) => resolvedConfigForService(config, service) !== false,
@@ -547,30 +537,49 @@ export class StackBuilder extends Context.Service<
     readonly build: (
       config: ResolvedStackConfig,
       prepared: PreparedStackArtifacts,
+      services?: ReadonlyArray<ServiceName>,
     ) => Effect.Effect<BuildResult, StackBuildError>;
   }
 >()("local/StackBuilder") {
   static layer: Layer.Layer<StackBuilder> = Layer.succeed(this, {
-    build: (config: ResolvedStackConfig, prepared: PreparedStackArtifacts) =>
+    build: (
+      config: ResolvedStackConfig,
+      prepared: PreparedStackArtifacts,
+      services?: ReadonlyArray<ServiceName>,
+    ) =>
       Effect.gen(function* () {
         yield* validateResolvedConfig(config);
+
+        const includedServices = new Set<ServiceName>(services ?? enabledServicesForConfig(config));
+        includedServices.add("postgres");
+        const includes = (service: ServiceName): boolean => includedServices.has(service);
 
         const platform = yield* detectPlatform;
         const serviceHost = dockerHostAddress(platform.os);
         const projectDir = config.projectDir;
 
         const postgresResolution = yield* requirePreparedResolution(prepared, "postgres");
+        if (config.postgres.profile === "micro" && postgresResolution.type !== "binary") {
+          return yield* Effect.fail(
+            new StackBuildError({
+              detail:
+                'postgres.profile "micro" requires a native Postgres binary; automatic resolution selected Docker instead.',
+            }),
+          );
+        }
 
         const authResolution =
-          config.auth === false ? false : yield* requirePreparedResolution(prepared, "auth");
+          config.auth === false || !includes("auth")
+            ? false
+            : yield* requirePreparedResolution(prepared, "auth");
 
         const edgeRuntimeResolution =
-          config.edgeRuntime === false
+          config.edgeRuntime === false || !includes("edge-runtime")
             ? false
             : yield* requirePreparedResolution(prepared, "edge-runtime");
 
         const postgrestResolution =
-          config.postgrest === false
+          config.postgrest === false || !includes("postgrest")
             ? false
             : yield* requirePreparedResolution(prepared, "postgrest");
 
@@ -597,15 +606,9 @@ export class StackBuilder extends Context.Service<
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
         const jwtJwks = generateJwks(config.jwtSecret);
 
-        // Every service def stays enabled in the process-compose graph, including under
-        // lazyServices: process-compose's dependency graph excludes `enabled: false` defs
-        // entirely (they're never added as nodes), so a service disabled at build time can never
-        // later be started via `startService` — there's no supported "enable" path once the
-        // orchestrator is built. Instead, laziness is enforced one layer up: when
-        // config.lazyServices is on, StackLifecycleCoordinator.start() only eagerly starts
-        // postgres (and postgres-init); every other service is started on demand by the ApiProxy
-        // via `ensureService`, which calls the ordinary `startService` + `waitReady` coordinator
-        // methods against these same (enabled) defs.
+        // A build may contain only the definitions prepared so far. The lifecycle coordinator
+        // adds sidecar definitions to the running orchestrator after their assets are prepared
+        // on first use.
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
           {
@@ -646,7 +649,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.postgrest !== false && postgrestResolution !== false) {
+        if (config.postgrest !== false && postgrestResolution !== false && includes("postgrest")) {
           defs.push({
             ...(postgrestResolution.type === "binary"
               ? makePostgrestService({
@@ -685,7 +688,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.auth !== false && authResolution !== false) {
+        if (config.auth !== false && authResolution !== false && includes("auth")) {
           defs.push({
             ...(authResolution.type === "binary"
               ? makeAuthServiceNative({
@@ -725,7 +728,11 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.edgeRuntime !== false && edgeRuntimeResolution !== false) {
+        if (
+          config.edgeRuntime !== false &&
+          edgeRuntimeResolution !== false &&
+          includes("edge-runtime")
+        ) {
           defs.push({
             ...(edgeRuntimeResolution.type === "binary"
               ? makeEdgeRuntimeServiceNative({
@@ -753,7 +760,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.mailpit !== false) {
+        if (config.mailpit !== false && includes("mailpit")) {
           const mailpitImage = yield* requirePreparedDockerImage(prepared, "mailpit");
           defs.push({
             ...makeMailpitServiceDocker({
@@ -772,7 +779,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.realtime !== false) {
+        if (config.realtime !== false && includes("realtime")) {
           const realtimeImage = yield* requirePreparedDockerImage(prepared, "realtime");
           defs.push({
             ...makeRealtimeServiceDocker({
@@ -795,7 +802,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.storage !== false) {
+        if (config.storage !== false && includes("storage")) {
           const storageImage = yield* requirePreparedDockerImage(prepared, "storage");
           defs.push({
             ...makeStorageServiceDocker({
@@ -823,7 +830,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.imgproxy !== false) {
+        if (config.imgproxy !== false && includes("imgproxy")) {
           const storageConfig = config.storage;
           const imgproxyImage = yield* requirePreparedDockerImage(prepared, "imgproxy");
           defs.push({
@@ -839,7 +846,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.pgmeta !== false) {
+        if (config.pgmeta !== false && includes("pgmeta")) {
           const pgmetaImage = yield* requirePreparedDockerImage(prepared, "pgmeta");
           defs.push({
             ...makePgmetaServiceDocker({
@@ -856,7 +863,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.analytics !== false) {
+        if (config.analytics !== false && includes("analytics")) {
           const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
           const analyticsRuntimeNetwork = analyticsDockerRuntimeNetwork(
             platform.os,
@@ -884,7 +891,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.vector !== false) {
+        if (config.vector !== false && includes("vector")) {
           const analyticsConfig = config.analytics;
           const vectorImage = yield* requirePreparedDockerImage(prepared, "vector");
           defs.push({
@@ -901,7 +908,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.pooler !== false) {
+        if (config.pooler !== false && includes("pooler")) {
           const poolerImage = yield* requirePreparedDockerImage(prepared, "pooler");
           defs.push({
             ...makePoolerServiceDocker({
@@ -937,7 +944,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.studio !== false) {
+        if (config.studio !== false && includes("studio")) {
           const pgmetaConfig = config.pgmeta;
           const studioImage = yield* requirePreparedDockerImage(prepared, "studio");
           defs.push({

@@ -33,7 +33,7 @@ describe("EdgeProxy", () => {
     const proxy = new EdgeProxy();
     proxies.push(proxy);
     const listenPort = await freePort();
-    await proxy.register("pod-a", listenPort, async () => {
+    await proxy.register("pod-a", "database", listenPort, async () => {
       wakes += 1;
       return { host: "127.0.0.1", port: upstreamPort };
     });
@@ -59,7 +59,7 @@ describe("EdgeProxy", () => {
     });
     proxies.push(proxy);
     const listenPort = await freePort();
-    await proxy.register("pod-b", listenPort, async () => ({
+    await proxy.register("pod-b", "database", listenPort, async () => ({
       host: "127.0.0.1",
       port: upstreamPort,
     }));
@@ -82,7 +82,7 @@ describe("EdgeProxy", () => {
     proxies.push(proxy);
     const listenPort = await freePort();
     let attempts = 0;
-    await proxy.register("pod-c", listenPort, async () => {
+    await proxy.register("pod-c", "database", listenPort, async () => {
       attempts += 1;
       if (attempts === 1) throw new Error("wake failed");
       return { host: "127.0.0.1", port: await freePort() };
@@ -108,7 +108,7 @@ describe("EdgeProxy", () => {
     // for the second wake so we can prove the pipe still works.
     const { server, port: upstreamPort } = await echoServer();
     await proxy.unregister("pod-c");
-    await proxy.register("pod-c", listenPort, async () => ({
+    await proxy.register("pod-c", "database", listenPort, async () => ({
       host: "127.0.0.1",
       port: upstreamPort,
     }));
@@ -131,7 +131,7 @@ describe("EdgeProxy", () => {
     const proxy = new EdgeProxy();
     proxies.push(proxy);
     const listenPort = await freePort();
-    await proxy.register("pod-d", listenPort, async () => {
+    await proxy.register("pod-d", "database", listenPort, async () => {
       wakeCalls += 1;
       // Simulate a suspended pod that takes a bit to wake.
       await new Promise((r) => setTimeout(r, 20));
@@ -164,7 +164,7 @@ describe("EdgeProxy", () => {
     const listenPort = await freePort();
     const upstreamPort = await freePort(); // nothing listening here
 
-    await proxy.register("pod-e", listenPort, async () => {
+    await proxy.register("pod-e", "database", listenPort, async () => {
       await new Promise((r) => setTimeout(r, 100));
       return { host: "127.0.0.1", port: upstreamPort };
     });
@@ -196,7 +196,7 @@ describe("EdgeProxy", () => {
     process.on("unhandledRejection", onUnhandledRejection);
 
     try {
-      await proxy.register("pod-f", listenPort, async () => {
+      await proxy.register("pod-f", "database", listenPort, async () => {
         // Slow wake gives the flooding client plenty of time to exceed the cap.
         await new Promise((r) => setTimeout(r, 200));
         return { host: "127.0.0.1", port: await freePort() };
@@ -222,7 +222,7 @@ describe("EdgeProxy", () => {
       // Proxy must still be usable for a subsequent normal connection.
       const { server, port: upstreamPort } = await echoServer();
       await proxy.unregister("pod-f");
-      await proxy.register("pod-f", listenPort, async () => ({
+      await proxy.register("pod-f", "database", listenPort, async () => ({
         host: "127.0.0.1",
         port: upstreamPort,
       }));
@@ -254,7 +254,7 @@ describe("EdgeProxy", () => {
     process.on("unhandledRejection", onUnhandledRejection);
 
     try {
-      await proxy.register("pod-g", listenPort, async () => ({
+      await proxy.register("pod-g", "database", listenPort, async () => ({
         host: "127.0.0.1",
         port: -1,
       }));
@@ -272,7 +272,7 @@ describe("EdgeProxy", () => {
       // Proxy must still be usable for a subsequent normal connection.
       const { server, port: upstreamPort } = await echoServer();
       await proxy.unregister("pod-g");
-      await proxy.register("pod-g", listenPort, async () => ({
+      await proxy.register("pod-g", "database", listenPort, async () => ({
         host: "127.0.0.1",
         port: upstreamPort,
       }));

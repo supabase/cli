@@ -36,13 +36,6 @@ dockerDescribe("createStack e2e (docker mode)", () => {
       postgres: { dataDir },
     });
 
-    try {
-      await stack.start();
-    } catch (startError) {
-      await stack.dispose().catch(() => {});
-      throw startError;
-    }
-
     const dbPort = parseInt(new URL(stack.dbUrl).port);
     await setupTestTable(dbPort);
 

@@ -1,4 +1,5 @@
-import type { StackConfig, VersionManifest } from "@supabase/stack/effect";
+import { STACK_SERVICE_NAMES } from "@supabase/stack/effect";
+import type { StackConfig, StackServiceName, VersionManifest } from "@supabase/stack/effect";
 
 export const excludedStackServices = [
   "auth",
@@ -22,22 +23,21 @@ export function toStartStackConfig(
   exclude: ReadonlyArray<ExcludedStackService>,
   mode: StartMode,
 ): StackConfig {
-  const excluded = new Set(exclude);
+  const excluded = new Set<string>(exclude);
+  if (excluded.has("storage")) excluded.add("imgproxy");
+  if (excluded.has("pgmeta")) excluded.add("studio");
+  if (excluded.has("analytics")) excluded.add("vector");
+  const services = STACK_SERVICE_NAMES.filter(
+    (service) => service !== "edge-runtime" || mode !== "native",
+  ).filter((service) => !excluded.has(service));
   return {
     mode,
-    realtime: excluded.has("realtime") ? false : {},
-    storage: excluded.has("storage") ? false : {},
-    imgproxy: excluded.has("imgproxy") || excluded.has("storage") ? false : {},
-    mailpit: excluded.has("mailpit") ? false : {},
-    pgmeta: excluded.has("pgmeta") ? false : {},
-    studio: excluded.has("studio") || excluded.has("pgmeta") ? false : {},
-    analytics: excluded.has("analytics") ? false : {},
-    vector: excluded.has("vector") || excluded.has("analytics") ? false : {},
-    pooler: excluded.has("pooler") ? false : {},
-    ...(excluded.has("auth") ? { auth: false } : {}),
-    ...(excluded.has("postgrest") ? { postgrest: false } : {}),
+    services,
   };
 }
+
+const hasService = (stackConfig: StackConfig, service: StackServiceName): boolean =>
+  stackConfig.services?.includes(service) ?? false;
 
 export function withServiceVersions(
   stackConfig: StackConfig,
@@ -50,47 +50,47 @@ export function withServiceVersions(
         ? stackConfig.postgres
         : { ...stackConfig.postgres, version: versions.postgres },
     postgrest:
-      stackConfig.postgrest === false || versions.postgrest === undefined
+      !hasService(stackConfig, "postgrest") || versions.postgrest === undefined
         ? stackConfig.postgrest
         : { ...stackConfig.postgrest, version: versions.postgrest },
     auth:
-      stackConfig.auth === false || versions.auth === undefined
+      !hasService(stackConfig, "auth") || versions.auth === undefined
         ? stackConfig.auth
         : { ...stackConfig.auth, version: versions.auth },
     realtime:
-      stackConfig.realtime === false || versions.realtime === undefined
+      !hasService(stackConfig, "realtime") || versions.realtime === undefined
         ? stackConfig.realtime
         : { ...stackConfig.realtime, version: versions.realtime },
     storage:
-      stackConfig.storage === false || versions.storage === undefined
+      !hasService(stackConfig, "storage") || versions.storage === undefined
         ? stackConfig.storage
         : { ...stackConfig.storage, version: versions.storage },
     imgproxy:
-      stackConfig.imgproxy === false || versions.imgproxy === undefined
+      !hasService(stackConfig, "imgproxy") || versions.imgproxy === undefined
         ? stackConfig.imgproxy
         : { ...stackConfig.imgproxy, version: versions.imgproxy },
     mailpit:
-      stackConfig.mailpit === false || versions.mailpit === undefined
+      !hasService(stackConfig, "mailpit") || versions.mailpit === undefined
         ? stackConfig.mailpit
         : { ...stackConfig.mailpit, version: versions.mailpit },
     pgmeta:
-      stackConfig.pgmeta === false || versions.pgmeta === undefined
+      !hasService(stackConfig, "pgmeta") || versions.pgmeta === undefined
         ? stackConfig.pgmeta
         : { ...stackConfig.pgmeta, version: versions.pgmeta },
     studio:
-      stackConfig.studio === false || versions.studio === undefined
+      !hasService(stackConfig, "studio") || versions.studio === undefined
         ? stackConfig.studio
         : { ...stackConfig.studio, version: versions.studio },
     analytics:
-      stackConfig.analytics === false || versions.analytics === undefined
+      !hasService(stackConfig, "analytics") || versions.analytics === undefined
         ? stackConfig.analytics
         : { ...stackConfig.analytics, version: versions.analytics },
     vector:
-      stackConfig.vector === false || versions.vector === undefined
+      !hasService(stackConfig, "vector") || versions.vector === undefined
         ? stackConfig.vector
         : { ...stackConfig.vector, version: versions.vector },
     pooler:
-      stackConfig.pooler === false || versions.pooler === undefined
+      !hasService(stackConfig, "pooler") || versions.pooler === undefined
         ? stackConfig.pooler
         : { ...stackConfig.pooler, version: versions.pooler },
   };

@@ -213,20 +213,24 @@ describe("resolveConfig edge runtime defaults", () => {
     expect(config.edgeRuntime).toBe(false);
   });
 
-  it("enables edge runtime when omitted in auto mode", async () => {
+  it("makes every sidecar available but starts none eagerly in auto mode", async () => {
     const config = await resolveConfig();
 
     expect(config.mode).toBe("auto");
-    expect(config.edgeRuntime).toEqual(
-      expect.objectContaining({
-        enabled: true,
-        version: DEFAULT_VERSIONS["edge-runtime"],
-      }),
-    );
+    expect(config.postgrest).not.toBe(false);
+    expect(config.auth).not.toBe(false);
+    expect(config.edgeRuntime).not.toBe(false);
+    expect(config.realtime).not.toBe(false);
+    expect(config.storage).not.toBe(false);
+    expect(config.startServices).toEqual([]);
   });
 
-  it("preserves explicit edge runtime opt-in in native mode for builder validation", async () => {
-    const config = await resolveConfig({ mode: "native", edgeRuntime: {} });
+  it("preserves explicit edge runtime selection in native mode for builder validation", async () => {
+    const config = await resolveConfig({
+      mode: "native",
+      services: ["edge-runtime"],
+      edgeRuntime: {},
+    });
 
     expect(config.mode).toBe("native");
     expect(config.edgeRuntime).toEqual(

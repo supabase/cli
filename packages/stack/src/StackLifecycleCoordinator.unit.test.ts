@@ -66,7 +66,7 @@ function makeConfig(dataDir: string): ResolvedStackConfig {
     projectDir: "/tmp/supabase-project",
     mode: "native",
     jwtSecret: testJwtSecret,
-    lazyServices: false,
+    startServices: [],
     ports: defaultPorts,
     apiPort: 54321,
     dbPort: 54322,
@@ -119,13 +119,13 @@ function setupLayer(config: ResolvedStackConfig) {
     Layer.provide(NodeServices.layer),
   );
 
-  return { layer, spawner };
+  return { layer, resolver, spawner };
 }
 
 function makeLazyConfig(dataDir: string, postgrestPort: number): ResolvedStackConfig {
   return {
     ...makeConfig(dataDir),
-    lazyServices: true,
+    startServices: [],
     // postgrest's health check is a real HTTP probe against 127.0.0.1:postgrestPort; the test
     // below binds a fake listener there so waitReady can actually resolve once startService
     // spawns it (spawning itself is satisfied generically by the mocked ChildProcessSpawner).
@@ -225,7 +225,7 @@ describe("StackLifecycleCoordinator ensureExtensionPreload", () => {
   it.live("lazy waitAllReady fails before start() completes instead of reporting ready", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-ready-test-"));
     writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
-    const config: ResolvedStackConfig = { ...makeConfig(dataDir), lazyServices: true };
+    const config: ResolvedStackConfig = { ...makeConfig(dataDir), startServices: [] };
     const { layer } = setupLayer(config);
 
     return Effect.gen(function* () {
@@ -363,7 +363,7 @@ describe("StackLifecycleCoordinator ensureExtensionPreload", () => {
   });
 });
 
-describe("StackLifecycleCoordinator lazyServices", () => {
+describe("StackLifecycleCoordinator lazy service activation", () => {
   // it.live: the mocked ChildProcessSpawner and postgres's health-check probe both resolve via a
   // real `Effect.sleep`, which needs the real clock to progress (same reason as the
   // ensureExtensionPreload test above).
@@ -373,7 +373,7 @@ describe("StackLifecycleCoordinator lazyServices", () => {
     return Effect.promise(() => startFakeHealthyServer()).pipe(
       Effect.flatMap((fakeServer) => {
         const config = makeLazyConfig(dataDir, fakeServer.port);
-        const { layer, spawner } = setupLayer(config);
+        const { layer, resolver, spawner } = setupLayer(config);
 
         const isPostgrestPayload = (s: { args: ReadonlyArray<string> }) => {
           const encoded = s.args.at(-1);
@@ -392,8 +392,9 @@ describe("StackLifecycleCoordinator lazyServices", () => {
           const stack = yield* Stack;
           yield* stack.start();
 
-          // postgrest must not have been spawned by start() itself.
+          // Starting the stack prepares and launches only Postgres.
           expect(spawner.spawned.some(isPostgrestPayload)).toBe(false);
+          expect(resolver.resolved.map(({ service }) => service)).toEqual(["postgres"]);
 
           const postgrestState = yield* stack.getState("postgrest");
           expect(postgrestState.status).toBe("Pending");
@@ -404,6 +405,10 @@ describe("StackLifecycleCoordinator lazyServices", () => {
           yield* stack.waitReady("postgrest");
 
           expect(spawner.spawned.some(isPostgrestPayload)).toBe(true);
+          expect(resolver.resolved.map(({ service }) => service)).toEqual([
+            "postgres",
+            "postgrest",
+          ]);
           // waitReady already proved the service reached a ready state — that's the actual
           // assertion above. The projected status only settles eventually; see helper doc.
           yield* waitForReadyStatus(stack.getState("postgrest"));
@@ -453,7 +458,7 @@ describe("StackLifecycleCoordinator lazyServices", () => {
   });
 
   // Regression test: waitAllReady() used to unconditionally delegate to
-  // orchestrator.waitAllReady() over the FULL graph startOrder. Under lazyServices, services
+  // orchestrator.waitAllReady() over the full graph startOrder. Lazily activated services
   // that were never started (e.g. postgrest, which stays "Pending" until the ApiProxy's
   // ensureService calls startService on first request) never resolve their `healthy` deferred
   // and never emit a Failed state either, so the old implementation hung forever. This is the

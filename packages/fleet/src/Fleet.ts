@@ -1,13 +1,21 @@
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  configureExtensionPreload,
-  createProvisionedStack,
+  DEFAULT_VERSIONS,
+  STACK_SERVICE_NAMES,
   postgresConnectionUrl,
   resolvePostgresPassword,
+  type FunctionsConfig,
   type StackHandle,
+  type VersionManifest,
 } from "@supabase/stack";
-import { EdgeProxy, type PodUpstream } from "./EdgeProxy.ts";
+import {
+  configureExtensionPreload,
+  createProvisionedStack,
+  type ProvisionedServiceName,
+} from "@supabase/stack/provisioned";
+import { EdgeProxy } from "./EdgeProxy.ts";
 import { acquireFleetLock } from "./fleetLock.ts";
 import { IdleMonitor } from "./IdleMonitor.ts";
 import type { PodManifest } from "./PodManifest.ts";
@@ -24,8 +32,15 @@ export interface FleetOptions {
 }
 
 export interface CreatePodOptions {
-  readonly id: string;
-  readonly postgresVersion: string;
+  readonly id?: string;
+  readonly services?: ReadonlyArray<ProvisionedServiceName>;
+  readonly versions?: Partial<VersionManifest>;
+  /** Pre-migrate enabled services into the cached template. Default: true. */
+  readonly warmTemplate?: boolean;
+  /** Start Postgres before returning. Other enabled services stay lazy. Default: true. */
+  readonly start?: boolean;
+  readonly projectDir?: string;
+  readonly functions?: FunctionsConfig | false;
 }
 
 export type PodState = "suspended" | "waking" | "warm" | "suspending";
@@ -33,11 +48,14 @@ export type PodState = "suspended" | "waking" | "warm" | "suspending";
 export interface PodStatus {
   readonly id: string;
   readonly state: PodState;
+  readonly url: string;
   readonly dbUrl: string;
+  readonly publishableKey: string;
+  readonly secretKey: string;
 }
 
 export interface FleetHandle extends AsyncDisposable {
-  createPod(opts: CreatePodOptions): Promise<PodStatus>;
+  createPod(opts?: CreatePodOptions): Promise<PodStatus>;
   destroyPod(id: string): Promise<void>;
   resetPod(id: string): Promise<void>;
   forkPod(sourceId: string, newId: string): Promise<PodStatus>;
@@ -51,6 +69,7 @@ export interface FleetHandle extends AsyncDisposable {
 interface WarmPod {
   readonly stack: StackHandle;
   readonly internalDbPort: number;
+  readonly internalApiPort: number;
 }
 
 /**
@@ -82,10 +101,9 @@ interface WarmPod {
  *   `<dataDir>/postmaster.pid` (see `reapStalePostmaster.ts`) since
  *   process-compose/`createStack` spawn postgres `detached: true` — its own
  *   process group, not the daemon's — so killing `-daemonPid` would miss it
- *   entirely. Phase 1 only ever runs postgres under a fleet pod (no HTTP
- *   edge yet), so reaping the postmaster's process group covers every
- *   process a stale pod could have left behind. This is a phase-1
- *   kill-then-suspend policy, not adoption: the spec's long-term goal is to
+ *   entirely. Reaping the postmaster's process group is the final verification
+ *   after Stack performs strict cleanup of every service it owns. This is a
+ *   kill-then-suspend policy, not adoption: the long-term goal is to
  *   adopt still-live pods across daemon restarts, but that requires
  *   reattaching the in-process StackHandle to an externally running set of
  *   processes, which isn't supported yet. Killing and letting the next
@@ -111,18 +129,41 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   try {
     ports = await PortRegistry.load(join(root, "fleet-state.json"));
   } catch (error) {
-    await fleetLock.release().catch(() => {});
-    throw error;
+    const release = await Promise.allSettled([fleetLock.release()]);
+    throwWithCleanup(error, release, "Failed to initialize and release Fleet lock");
   }
   const provisioner = new Provisioner({ templates, pods, ports, postgresPassword });
 
   const states = new Map<string, PodState>();
   const warm = new Map<string, WarmPod>();
-  const wakesInFlight = new Map<string, Promise<PodUpstream>>();
+  const wakesInFlight = new Map<string, Promise<WarmPod>>();
   const operationsInFlight = new Set<Promise<unknown>>();
   const podLocks = new PodLock();
   let disposed = false;
   let disposeInFlight: Promise<void> | undefined;
+
+  function throwWithCleanup(
+    primary: unknown,
+    results: ReadonlyArray<PromiseSettledResult<unknown>>,
+    message: string,
+  ): never {
+    const cleanupErrors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (cleanupErrors.length === 0) throw primary;
+    throw new AggregateError([primary, ...cleanupErrors], message);
+  }
+
+  function assertCleanup(
+    results: ReadonlyArray<PromiseSettledResult<unknown>>,
+    message: string,
+  ): void {
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, message);
+  }
 
   function runOperation<T>(body: () => Promise<T>): Promise<T> {
     if (disposed) return Promise.reject(new Error("fleet is disposed"));
@@ -172,17 +213,17 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   }
 
   async function rollbackProvisionedPod(id: string): Promise<void> {
-    await proxy.unregister(id).catch(() => {});
-    await provisioner.destroy(id).catch(() => {});
+    const results = await Promise.allSettled([proxy.unregister(id), provisioner.destroy(id)]);
     states.delete(id);
+    assertCleanup(results, `Failed to roll back pod ${id}`);
   }
 
   /** Starts a pod while its lifecycle lock is already held. */
-  async function wakeUpstreamLocked(id: string): Promise<PodUpstream> {
+  async function wakeUpstreamLocked(id: string): Promise<WarmPod> {
     const lockedExisting = warm.get(id);
     if (lockedExisting !== undefined) {
       if (states.get(id) === "warm") {
-        return { host: "127.0.0.1", port: lockedExisting.internalDbPort };
+        return lockedExisting;
       }
       throw new Error(`pod ${id} has not finished suspending; retry the suspend operation`);
     }
@@ -190,41 +231,53 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
     states.set(id, "waking");
     let stack: StackHandle | undefined;
+    let internalDbPort = 0;
+    let internalApiPort = 0;
     try {
-      const enabledServices = (["postgrest", "auth"] as const).filter(
-        (service) => manifest.services[service] === true,
-      );
       stack = await createProvisionedStack({
         stackRoot: join(pods.podDir(id), "stack"),
         dataDir: pods.dataDir(id),
         postgresPassword: manifest.postgresPassword,
+        jwtSecret: manifest.jwtSecret,
+        publishableKey: manifest.publishableKey,
+        secretKey: manifest.secretKey,
         versions: manifest.versions,
-        enabledServices,
-        lazyServices: true,
+        services: manifest.services,
+        projectDir: manifest.projectDir ?? pods.podDir(id),
+        functions: manifest.functions,
       });
-      const internalDbPort = Number(new URL(stack.dbUrl).port);
+      internalDbPort = Number(new URL(stack.dbUrl).port);
+      internalApiPort = Number(new URL(stack.url).port);
       if (!Number.isInteger(internalDbPort) || internalDbPort <= 0) {
         throw new Error(`stack returned an invalid database URL for pod ${id}: ${stack.dbUrl}`);
       }
-      await stack.start();
-      await stack.serviceReady("postgres");
-      warm.set(id, { stack, internalDbPort });
+      if (!Number.isInteger(internalApiPort) || internalApiPort <= 0) {
+        throw new Error(`stack returned an invalid API URL for pod ${id}: ${stack.url}`);
+      }
+      const pod = { stack, internalDbPort, internalApiPort };
+      warm.set(id, pod);
       states.set(id, "warm");
       monitor.track(id);
       monitor.recordActivity(id, proxy.openConnections(id));
-      return { host: "127.0.0.1", port: internalDbPort };
+      return pod;
     } catch (err) {
-      await stack?.dispose().catch(() => {});
+      const cleanup = await Promise.allSettled(stack === undefined ? [] : [stack.dispose()]);
+      if (cleanup.some((result) => result.status === "rejected") && stack !== undefined) {
+        // Preserve the failed runtime so an explicit suspend/dispose can retry strict cleanup.
+        warm.set(id, { stack, internalDbPort, internalApiPort });
+        states.set(id, "suspending");
+        throwWithCleanup(err, cleanup, `Failed to wake and clean up pod ${id}`);
+      }
       states.set(id, "suspended");
       throw err;
     }
   }
 
-  async function wakeUpstream(id: string): Promise<PodUpstream> {
+  async function wakeUpstream(id: string): Promise<WarmPod> {
     if (disposed) throw new Error("fleet is disposed");
     const existing = warm.get(id);
     if (existing && states.get(id) === "warm") {
-      return { host: "127.0.0.1", port: existing.internalDbPort };
+      return existing;
     }
     // Dedup deliberately stays OUTSIDE podLocks: EdgeProxy may invoke wake()
     // once per connection, and every such caller should share the SAME wake
@@ -241,7 +294,19 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
 
   async function registerEdge(manifest: PodManifest): Promise<void> {
     states.set(manifest.id, "suspended");
-    await proxy.register(manifest.id, manifest.dbPort, () => wakeUpstream(manifest.id));
+    try {
+      await proxy.register(manifest.id, "database", manifest.dbPort, async () => {
+        const pod = await wakeUpstream(manifest.id);
+        return { host: "127.0.0.1", port: pod.internalDbPort };
+      });
+      await proxy.register(manifest.id, "api", manifest.apiPort, async () => {
+        const pod = await wakeUpstream(manifest.id);
+        return { host: "127.0.0.1", port: pod.internalApiPort };
+      });
+    } catch (error) {
+      const cleanup = await Promise.allSettled([proxy.unregister(manifest.id)]);
+      throwWithCleanup(error, cleanup, `Failed to register and roll back pod ${manifest.id}`);
+    }
   }
 
   async function suspend(id: string): Promise<void> {
@@ -278,9 +343,8 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     states.set(id, "suspending");
     monitor.untrack(id);
     await pod.stack.dispose();
-    // StackHandle.dispose() is deliberately best-effort. The fleet's stronger
-    // lifecycle invariant is that a suspended pod owns no processes, so verify
-    // that invariant and reap any postmaster that survived stack shutdown.
+    // StackHandle.dispose() is strict. Reaping the postmaster is an additional
+    // fleet-level verification because a suspended pod must own no processes.
     await reapStalePostmaster(pods.dataDir(id));
     warm.delete(id);
     states.set(id, "suspended");
@@ -290,18 +354,19 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     return {
       id: manifest.id,
       state: states.get(manifest.id) ?? "suspended",
+      url: `http://127.0.0.1:${manifest.apiPort}`,
       dbUrl: dbUrl(manifest),
+      publishableKey: manifest.publishableKey,
+      secretKey: manifest.secretKey,
     };
   }
 
-  // Startup reconciliation: phase 1 policy is kill-then-suspend, not adoption
+  // Startup reconciliation uses kill-then-suspend, not adoption
   // (see class doc above). The kill decision keys off postgres's own ground
   // truth, `<dataDir>/postmaster.pid`, whose first
   // line is the postmaster's pid; the postmaster is always its own
   // process-group leader, so `reapStalePostmaster` can reliably signal the
-  // whole tree via `-pid`. Phase 1 only ever runs postgres under a fleet pod
-  // (postgres-only ready gate; no HTTP edge yet), so this fully covers what
-  // a stale pod could have left behind. The pod port registry is reconciled
+  // whole tree via `-pid`. The pod port registry is reconciled
   // to exactly the valid manifests on disk so stale allocations from deleted
   // or skipped pods are pruned during startup.
   try {
@@ -314,31 +379,43 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     }
     const manifests = await pods.list();
     await ports.reconcile(
-      new Map(manifests.map((manifest) => [manifest.id, { dbPort: manifest.dbPort }])),
+      new Map(
+        manifests.map((manifest) => [
+          manifest.id,
+          { dbPort: manifest.dbPort, apiPort: manifest.apiPort },
+        ]),
+      ),
     );
     for (const manifest of manifests) {
       await registerEdge(manifest);
     }
   } catch (err) {
-    await proxy.close().catch(() => {});
-    await fleetLock.release().catch(() => {});
-    throw err;
+    const cleanup = await Promise.allSettled([proxy.close(), fleetLock.release()]);
+    throwWithCleanup(err, cleanup, "Failed to initialize and clean up Fleet");
   }
 
   const handle: FleetHandle = {
-    createPod(opts) {
+    createPod(opts = {}) {
+      const id = opts.id ?? randomUUID();
       return runOperation(() =>
-        podLocks.withLock(opts.id, async () => {
+        podLocks.withLock(id, async () => {
           const manifest = await provisioner.create({
-            id: opts.id,
-            versions: { postgres: opts.postgresVersion },
+            id,
+            versions: { ...DEFAULT_VERSIONS, ...opts.versions },
+            services: opts.services ?? STACK_SERVICE_NAMES,
+            warm: opts.warmTemplate ?? true,
+            projectDir: opts.projectDir,
+            functions: opts.functions,
           });
           try {
             await registerEdge(manifest);
+            if (opts.start !== false) {
+              await wakeUpstreamLocked(manifest.id);
+            }
             return status(manifest);
           } catch (err) {
-            await rollbackProvisionedPod(manifest.id);
-            throw err;
+            const cleanup = await Promise.allSettled([rollbackProvisionedPod(manifest.id)]);
+            throwWithCleanup(err, cleanup, `Failed to create and roll back pod ${manifest.id}`);
           }
         }),
       );
@@ -361,8 +438,10 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     resetPod(id) {
       return runOperation(() =>
         podLocks.withLock(id, async () => {
+          const wasWarm = states.get(id) === "warm";
           await suspendLocked(id);
           await provisioner.reset(id);
+          if (wasWarm) await wakeUpstreamLocked(id);
         }),
       );
     },
@@ -381,10 +460,11 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
             // source pod's observable lifecycle state after the clone is done.
             if (sourceWasWarm) await wakeUpstreamLocked(sourceId);
             await registerEdge(forked);
+            await wakeUpstreamLocked(forked.id);
             return forked;
           } catch (err) {
-            await rollbackProvisionedPod(forked.id);
-            throw err;
+            const cleanup = await Promise.allSettled([rollbackProvisionedPod(forked.id)]);
+            throwWithCleanup(err, cleanup, `Failed to fork and roll back pod ${forked.id}`);
           }
         });
         return status(manifest);
