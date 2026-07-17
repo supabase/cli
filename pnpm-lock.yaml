@@ -10,17 +10,17 @@ catalogs:
       specifier: 4.0.0-beta.94
       version: 4.0.0-beta.94
     '@effect/platform-bun':
-      specifier: 4.0.0-beta.94
-      version: 4.0.0-beta.94
+      specifier: 4.0.0-beta.97
+      version: 4.0.0-beta.97
     '@effect/platform-node':
-      specifier: 4.0.0-beta.94
-      version: 4.0.0-beta.94
+      specifier: 4.0.0-beta.97
+      version: 4.0.0-beta.97
     '@effect/sql-pg':
-      specifier: 4.0.0-beta.94
-      version: 4.0.0-beta.94
+      specifier: 4.0.0-beta.97
+      version: 4.0.0-beta.97
     '@effect/vitest':
-      specifier: ^4.0.0-beta.97
-      version: 4.0.0-beta.98
+      specifier: 4.0.0-beta.97
+      version: 4.0.0-beta.97
     '@nx/devkit':
       specifier: ^23.0.0
       version: 23.0.1
@@ -67,22 +67,28 @@ catalogs:
       specifier: ^4.1.10
       version: 4.1.10
 
+overrides:
+  '@effect/platform-node-shared': 4.0.0-beta.97
+
 importers:
 
   .:
     devDependencies:
       '@swc-node/register':
         specifier: 'catalog:'
-        version: 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2)
+        version: 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3)
       '@swc/core':
         specifier: 'catalog:'
         version: 1.15.43
       nx:
         specifier: 'catalog:'
-        version: 23.0.1(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2))(@swc/core@1.15.43)
+        version: 23.0.1(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.43)
       pkg-pr-new:
         specifier: 0.0.75
         version: 0.0.75
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       verdaccio:
         specifier: ^6.7.4
         version: 6.7.4(typanion@3.14.0)
@@ -110,13 +116,13 @@ importers:
         version: 4.0.0-beta.94(effect@4.0.0-beta.97)(react@19.2.7)(scheduler@0.27.0)
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)
       '@effect/sql-pg':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-beta.98(effect@4.0.0-beta.97)(vitest@4.1.10)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)(vitest@4.1.10)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -206,7 +212,7 @@ importers:
         version: 7.0.1
       semantic-release:
         specifier: ^25.0.5
-        version: 25.0.5(typescript@7.0.2)
+        version: 25.0.5(typescript@6.0.3)
       smol-toml:
         specifier: ^1.7.0
         version: 1.7.0
@@ -313,17 +319,17 @@ importers:
         specifier: ^19.1.6
         version: 19.2.3(@types/react@19.2.17)
       typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
+        specifier: ^6.0.3
+        version: 6.0.3
 
   packages/api:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)(ioredis@5.11.0)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)(ioredis@5.11.0)
       effect:
         specifier: 'catalog:'
         version: 4.0.0-beta.97
@@ -409,10 +415,10 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)(ioredis@5.11.0)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)(ioredis@5.11.0)
       dedent:
         specifier: ^1.7.2
         version: 1.7.2
@@ -455,14 +461,14 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)
       effect:
         specifier: 'catalog:'
         version: 4.0.0-beta.97
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-beta.98(effect@4.0.0-beta.97)(vitest@4.1.10)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)(vitest@4.1.10)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.10
@@ -495,10 +501,10 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.0-beta.94(effect@4.0.0-beta.97)(ioredis@5.11.0)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)(ioredis@5.11.0)
       '@supabase/config':
         specifier: workspace:*
         version: link:../config
@@ -511,7 +517,7 @@ importers:
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-beta.98(effect@4.0.0-beta.97)(vitest@4.1.10)
+        version: 4.0.0-beta.97(effect@4.0.0-beta.97)(vitest@4.1.10)
       '@supabase/supabase-js':
         specifier: ^2.110.2
         version: 2.110.2
@@ -547,7 +553,7 @@ importers:
     dependencies:
       '@nx/devkit':
         specifier: 'catalog:'
-        version: 23.0.1(nx@23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2))(@swc/core@1.15.43))
+        version: 23.0.1(nx@23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.43))
       vitest:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.1.1)(@vitest/coverage-istanbul@4.1.10)(vite@8.0.14(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
@@ -731,33 +737,33 @@ packages:
       react: ^19.2.4
       scheduler: '*'
 
-  '@effect/platform-bun@4.0.0-beta.94':
-    resolution: {integrity: sha512-+jCvnlSlCDmxJ9sv0yw6FQ4wlM8HYzvFugIJ8w2jD85k4iJwS4rQIHiJ9OfUo2hVwaufVS52jOHXaLrBpoq+Yg==}
+  '@effect/platform-bun@4.0.0-beta.97':
+    resolution: {integrity: sha512-WYjC7nKiWfNywIz1zeBEXnrpuHJM86DOi3lSZSSBeHCPz8HYw7IT2FL7u+aaJHHsJCyFiZVAgg2KFS8aMFSJBQ==}
     peerDependencies:
-      effect: ^4.0.0-beta.94
+      effect: ^4.0.0-beta.97
 
-  '@effect/platform-node-shared@4.0.0-beta.98':
-    resolution: {integrity: sha512-iySXaffnCJX1sNAIp79ghhIeui9E5qwUQyqd1VLPkB9UNO4vdpd9B5fTEXwe7S/GusL4jsk9vSvX38XJgRFG1w==}
+  '@effect/platform-node-shared@4.0.0-beta.97':
+    resolution: {integrity: sha512-sAlygOlDLLERk7fC24f7Aa4G3wkEbGyyMEileHTHU2fThiPYSGMqNRK1LLnNr17m2+JR7BHbycwXkJkM18BAQw==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      effect: ^4.0.0-beta.98
+      effect: ^4.0.0-beta.97
 
-  '@effect/platform-node@4.0.0-beta.94':
-    resolution: {integrity: sha512-3WhV5ZN2pTPcOtEQlM66Ve0/B4EzF88sYBml97NnRV7BA5Kx0FYLSslc/4aWoaXj6XwuWOxmoXeGGeFzw4gbMQ==}
+  '@effect/platform-node@4.0.0-beta.97':
+    resolution: {integrity: sha512-Vd40VLh+Y08Bs37KWtbe9AgO2+t3RKZKGX9YC6ZKAcswu4tXR3CwSI7V2MN+GgS+ez/GLmqH1WrzDDlaIAxKPA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      effect: ^4.0.0-beta.94
+      effect: ^4.0.0-beta.97
       ioredis: ^5.7.0
 
-  '@effect/sql-pg@4.0.0-beta.94':
-    resolution: {integrity: sha512-70LcCeOrfsq+NAaiVIl2uknGzRG1VnvbxsBHuPuIV3LuTDGKS6H/Jei4+jgyySMdyeKRC6EPaRuNEIAPgvTBEg==}
+  '@effect/sql-pg@4.0.0-beta.97':
+    resolution: {integrity: sha512-q0SZRN63Spm4lM72b1Aji0HZHEZgQxqp3mdYSVaskqXQxdZGyFxni+c19mzFNTYp+op8N+2PGoFzwqUdxFrxZA==}
     peerDependencies:
-      effect: ^4.0.0-beta.94
+      effect: ^4.0.0-beta.97
 
-  '@effect/vitest@4.0.0-beta.98':
-    resolution: {integrity: sha512-uXRPuN8Y6v43/OVmQwKOd/VFDh+dipaxGKdWPr1bdnM+4bl8NZlYYRJi5omgXLFZ6ZbleduXKcmLM3NeePe69w==}
+  '@effect/vitest@4.0.0-beta.97':
+    resolution: {integrity: sha512-1dH6LBWSZyqnTV7ZO+yIpPGPf/xd7RtFfvQ4ZpTy9elzFN+wr1YBFpHSCr8+BfXOml6b8g9Mtj5eDy1qjbizUA==}
     peerDependencies:
-      effect: ^4.0.0-beta.98
+      effect: ^4.0.0-beta.97
       vitest: ^3.0.0 || ^4.0.0
 
   '@emnapi/core@1.10.0':
@@ -2967,126 +2973,6 @@ packages:
     resolution: {integrity: sha512-oUGp+Rep/hqMhPunyinsALUwSlzHINSxitifPiSaeqoKOKD2OlR9NE3TaPqwsl4NlGslsOSUXI1JotWQzpYCPg==}
     engines: {node: '>=16.20.0'}
     hasBin: true
-
-  '@typescript/typescript-aix-ppc64@7.0.2':
-    resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [ppc64]
-    os: [aix]
-
-  '@typescript/typescript-darwin-arm64@7.0.2':
-    resolution: {integrity: sha512-gowzar9MwS/aRWp6f3a4KUqzRjAZjOsmGNCM6LcTgXum+dBfgsBVMN+AgvOCCbguXyick6LJhpBszxMebJ8syA==}
-    engines: {node: '>=16.20.0'}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@typescript/typescript-darwin-x64@7.0.2':
-    resolution: {integrity: sha512-SZ9xZInqApNlNGc9s0W1VSsktYSOe9cFqNOIqmN1Gs8SmkjKZYFt017G4VwPxASInODuAdbTW7sXiFUf893RgA==}
-    engines: {node: '>=16.20.0'}
-    cpu: [x64]
-    os: [darwin]
-
-  '@typescript/typescript-freebsd-arm64@7.0.2':
-    resolution: {integrity: sha512-W5NH4y/J0plIIS5b2xvTEkU7JFxyqdMAOgf+Ilhl0vHQXKO5dZoxd+C/jEtq56c4F3wk71RB4BMRQ2XdI+bwYQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [arm64]
-    os: [freebsd]
-
-  '@typescript/typescript-freebsd-x64@7.0.2':
-    resolution: {integrity: sha512-UMGDx5sTpzNw3WiPebH7l90IWfJggEd+egHt/q6p7/Cm3zqoV7VxkGXt+3DxPIw8CcmvAB0j3sVVfbhX+M4Tpw==}
-    engines: {node: '>=16.20.0'}
-    cpu: [x64]
-    os: [freebsd]
-
-  '@typescript/typescript-linux-arm64@7.0.2':
-    resolution: {integrity: sha512-Qh4eU4/y3yDjnfjjyPYihMj5/ODIlmt+Bzu17OI+fiSRDW57QmU5SiN63exPRNJPKUzcc1INa1NXdrJ+MqHjUQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [arm64]
-    os: [linux]
-
-  '@typescript/typescript-linux-arm@7.0.2':
-    resolution: {integrity: sha512-gffT3xPz9sR7j/YJExkyPntrI0P2EP9XbOyWzth2/Gs0RstK+90RBcO0ncXoXy/beYll1SXw846Nf2zdnEz0QQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [arm]
-    os: [linux]
-
-  '@typescript/typescript-linux-loong64@7.0.2':
-    resolution: {integrity: sha512-uEHck9i8hoAzXPiYRib1O7miOnz23SxIeVl6F4LXox+qov1K35jHcEW6VHKvZI+pyvl7fZEP4MCU5LYvIq1GuQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [loong64]
-    os: [linux]
-
-  '@typescript/typescript-linux-mips64el@7.0.2':
-    resolution: {integrity: sha512-R4KvAMnE43W5Qeqb0Ly56O3mWMWIAgsMyz36DCaycd5nbg/9kzm0liw3JocfRqyJY0KPmzFjbswozXyW0DnIYA==}
-    engines: {node: '>=16.20.0'}
-    cpu: [mips64el]
-    os: [linux]
-
-  '@typescript/typescript-linux-ppc64@7.0.2':
-    resolution: {integrity: sha512-DORx5b3sd/4S7eayxm4FQv+A7CrkUIGRaHiwI8oiHTAI1fAPWhF4J0vAlkC8biAlHSVVwxMQ3tjZ2/DVbnQiiA==}
-    engines: {node: '>=16.20.0'}
-    cpu: [ppc64]
-    os: [linux]
-
-  '@typescript/typescript-linux-riscv64@7.0.2':
-    resolution: {integrity: sha512-wf0jqEDOjrPRnKwYRyyJDRo11KMbvMFrU+q4zqKyChODBzvlkbhNQfKvLxQCcwTpdDaXSHZTVuh0JoCrKCUMHQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [riscv64]
-    os: [linux]
-
-  '@typescript/typescript-linux-s390x@7.0.2':
-    resolution: {integrity: sha512-IkwJc3L7yhytWd/ewjyxNDfOmswCm9GWMJT/ue/dU4aZNbwZeYAetq42VyLmsmSjvoX7z74X6ZaYCtzAr0EuGw==}
-    engines: {node: '>=16.20.0'}
-    cpu: [s390x]
-    os: [linux]
-
-  '@typescript/typescript-linux-x64@7.0.2':
-    resolution: {integrity: sha512-EYdf2cNg7rgCWJnxCdJ+F3V39O8ihb37eHAu1LK8oAFizgTQbPOK7zHHXbPt8rX24COqODXeI3sIf0fCXG7H/A==}
-    engines: {node: '>=16.20.0'}
-    cpu: [x64]
-    os: [linux]
-
-  '@typescript/typescript-netbsd-arm64@7.0.2':
-    resolution: {integrity: sha512-+polYF4MF04aPpO5FTkHran9yUQDSXqy5GiSDKpsll5jy3l3+g9QLhpf39T+ePtefhXLOGrLl0QIjkQP6VnelA==}
-    engines: {node: '>=16.20.0'}
-    cpu: [arm64]
-    os: [netbsd]
-
-  '@typescript/typescript-netbsd-x64@7.0.2':
-    resolution: {integrity: sha512-8YIT0EHM/3dq10ZOVF/A7pc/YSMtbcecct4rWtexrnSCHOPcpC2KTLXfTCR6vDpnSiY12heNb1GiN/wu+T/FyA==}
-    engines: {node: '>=16.20.0'}
-    cpu: [x64]
-    os: [netbsd]
-
-  '@typescript/typescript-openbsd-arm64@7.0.2':
-    resolution: {integrity: sha512-APT8+ClYnuYm1u9+kgGXoMj2VzWzcymwh2gNSQVySHfkRDGOTVkoWLjCmOQSaO+PoqQ57B0flRp9SA+7GnnkzQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [arm64]
-    os: [openbsd]
-
-  '@typescript/typescript-openbsd-x64@7.0.2':
-    resolution: {integrity: sha512-yX7s+Q0Dln0Dt9tEzZsAjXXR/+ytBM7AlglaqyeMPxQszJ1JhlJdZ6jLA+IzldHtflX81em7lDao1xXu+aRRkg==}
-    engines: {node: '>=16.20.0'}
-    cpu: [x64]
-    os: [openbsd]
-
-  '@typescript/typescript-sunos-x64@7.0.2':
-    resolution: {integrity: sha512-dLJDGaLZ1D4HPQn62u1n8mBDkJREwMsAkCdkwd4Ieqw+x3TUyTsqY0YiBCtE6H6OzzgGk3iuZ3vFWRS+E8/d1g==}
-    engines: {node: '>=16.20.0'}
-    cpu: [x64]
-    os: [sunos]
-
-  '@typescript/typescript-win32-arm64@7.0.2':
-    resolution: {integrity: sha512-Gyl1Vy6OsWesLzmq+EP0Fb7b4Nid5232AvcA2SFcdYreldpNtYFFofPjnt62y9hQy7VTaZp65ICJjuAQRaVcIQ==}
-    engines: {node: '>=16.20.0'}
-    cpu: [arm64]
-    os: [win32]
-
-  '@typescript/typescript-win32-x64@7.0.2':
-    resolution: {integrity: sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g==}
-    engines: {node: '>=16.20.0'}
-    cpu: [x64]
-    os: [win32]
 
   '@ungap/structured-clone@1.3.3':
     resolution: {integrity: sha512-60YRaenCQcVjYEKOcG824+DRGGIQ3VKErcBoAEDJZz5bKIs2ZG+X/H9Nk+Q6EVkwJk5QNApxbrc5QtBSwtrXAg==}
@@ -5721,17 +5607,14 @@ packages:
   pg-cloudflare@1.4.0:
     resolution: {integrity: sha512-Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A==}
 
-  pg-connection-string@2.12.0:
-    resolution: {integrity: sha512-U7qg+bpswf3Cs5xLzRqbXbQl85ng0mfSV/J0nnA31MCLgvEaAo7CIhmeyrmJpOr7o+zm0rXK+hNnT5l9RHkCkQ==}
-
   pg-connection-string@2.14.0:
     resolution: {integrity: sha512-XwWDGcLRGCXAR8F/AM5bG7Q+A3Wm2s6QeEjlOKZLlH3UYcguiqCWKyWXVag5TLTIjR7oOJUY8kcADaZgWPyLeg==}
 
   pg-copy-streams@7.0.0:
     resolution: {integrity: sha512-zBvnY6wtaBRE2ae2xXWOOGMaNVPkXh1vhypAkNSKgMdciJeTyIQAHZaEeRAxUjs/p1El5jgzYmwG5u871Zj3dQ==}
 
-  pg-cursor@2.20.0:
-    resolution: {integrity: sha512-HP/EbUafheaUOs7DxlG6tda/rhmsX2hCTJJJ+gCnhljGyNEs6pBHddbNuomlW3DqEhP3zYD+GqBWkYnJPIZ4tA==}
+  pg-cursor@2.21.0:
+    resolution: {integrity: sha512-IYvk/j+Suhtbo/C3uOf4JLsLK/gWxOTUOmYbDsbKnLaVJDq+KwhwK6ngpRfiCk8eDMS3AmGQABZCv0cREEzHQw==}
     peerDependencies:
       pg: ^8
 
@@ -6631,9 +6514,9 @@ packages:
     resolution: {integrity: sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==}
     engines: {node: '>= 18'}
 
-  typescript@7.0.2:
-    resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
-    engines: {node: '>=16.20.0'}
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
+    engines: {node: '>=14.17'}
     hasBin: true
 
   uglify-js@3.19.3:
@@ -7246,15 +7129,15 @@ snapshots:
       react: 19.2.7
       scheduler: 0.27.0
 
-  '@effect/platform-bun@4.0.0-beta.94(effect@4.0.0-beta.97)':
+  '@effect/platform-bun@4.0.0-beta.97(effect@4.0.0-beta.97)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-beta.98(effect@4.0.0-beta.97)
+      '@effect/platform-node-shared': 4.0.0-beta.97(effect@4.0.0-beta.97)
       effect: 4.0.0-beta.97
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.0.0-beta.98(effect@4.0.0-beta.97)':
+  '@effect/platform-node-shared@4.0.0-beta.97(effect@4.0.0-beta.97)':
     dependencies:
       '@types/ws': 8.18.1
       effect: 4.0.0-beta.97
@@ -7263,9 +7146,9 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.0-beta.94(effect@4.0.0-beta.97)(ioredis@5.11.0)':
+  '@effect/platform-node@4.0.0-beta.97(effect@4.0.0-beta.97)(ioredis@5.11.0)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-beta.98(effect@4.0.0-beta.97)
+      '@effect/platform-node-shared': 4.0.0-beta.97(effect@4.0.0-beta.97)
       effect: 4.0.0-beta.97
       ioredis: 5.11.0
       mime: 4.1.0
@@ -7274,18 +7157,18 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.0.0-beta.94(effect@4.0.0-beta.97)':
+  '@effect/sql-pg@4.0.0-beta.97(effect@4.0.0-beta.97)':
     dependencies:
       effect: 4.0.0-beta.97
       pg: 8.22.0
-      pg-connection-string: 2.12.0
-      pg-cursor: 2.20.0(pg@8.22.0)
+      pg-connection-string: 2.14.0
+      pg-cursor: 2.21.0(pg@8.22.0)
       pg-pool: 3.14.0(pg@8.22.0)
       pg-types: 4.1.0
     transitivePeerDependencies:
       - pg-native
 
-  '@effect/vitest@4.0.0-beta.98(effect@4.0.0-beta.97)(vitest@4.1.10)':
+  '@effect/vitest@4.0.0-beta.97(effect@4.0.0-beta.97)(vitest@4.1.10)':
     dependencies:
       effect: 4.0.0-beta.97
       vitest: 4.1.10(@types/node@26.1.1)(@vitest/coverage-istanbul@4.1.10)(vite@8.0.14(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
@@ -7772,13 +7655,13 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@nx/devkit@23.0.1(nx@23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2))(@swc/core@1.15.43))':
+  '@nx/devkit@23.0.1(nx@23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.43))':
     dependencies:
       '@zkochan/js-yaml': 0.0.7
       ejs: 5.0.1
       enquirer: 2.3.6
       minimatch: 10.2.5
-      nx: 23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2))(@swc/core@1.15.43)
+      nx: 23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.43)
       semver: 7.8.5
       tslib: 2.8.1
       yargs-parser: 21.1.1
@@ -8648,7 +8531,7 @@ snapshots:
 
   '@sec-ant/readable-stream@0.4.1': {}
 
-  '@semantic-release/commit-analyzer@13.0.1(semantic-release@25.0.5(typescript@7.0.2))':
+  '@semantic-release/commit-analyzer@13.0.1(semantic-release@25.0.5(typescript@6.0.3))':
     dependencies:
       conventional-changelog-angular: 8.3.1
       conventional-changelog-writer: 8.4.0
@@ -8658,13 +8541,13 @@ snapshots:
       import-from-esm: 2.0.0
       lodash-es: 4.18.1
       micromatch: 4.0.8
-      semantic-release: 25.0.5(typescript@7.0.2)
+      semantic-release: 25.0.5(typescript@6.0.3)
     transitivePeerDependencies:
       - supports-color
 
   '@semantic-release/error@4.0.0': {}
 
-  '@semantic-release/github@12.0.8(semantic-release@25.0.5(typescript@7.0.2))':
+  '@semantic-release/github@12.0.8(semantic-release@25.0.5(typescript@6.0.3))':
     dependencies:
       '@octokit/core': 7.0.6
       '@octokit/plugin-paginate-rest': 14.0.0(@octokit/core@7.0.6)
@@ -8680,7 +8563,7 @@ snapshots:
       lodash-es: 4.18.1
       mime: 4.1.0
       p-filter: 4.1.0
-      semantic-release: 25.0.5(typescript@7.0.2)
+      semantic-release: 25.0.5(typescript@6.0.3)
       tinyglobby: 0.2.17
       undici: 7.28.0
       url-join: 5.0.0
@@ -8688,7 +8571,7 @@ snapshots:
       - kerberos
       - supports-color
 
-  '@semantic-release/npm@13.1.5(semantic-release@25.0.5(typescript@7.0.2))':
+  '@semantic-release/npm@13.1.5(semantic-release@25.0.5(typescript@6.0.3))':
     dependencies:
       '@actions/core': 3.0.1
       '@semantic-release/error': 4.0.0
@@ -8703,11 +8586,11 @@ snapshots:
       rc: 1.2.8
       read-pkg: 10.1.0
       registry-auth-token: 5.1.1
-      semantic-release: 25.0.5(typescript@7.0.2)
+      semantic-release: 25.0.5(typescript@6.0.3)
       semver: 7.8.5
       tempy: 3.2.0
 
-  '@semantic-release/release-notes-generator@14.1.1(semantic-release@25.0.5(typescript@7.0.2))':
+  '@semantic-release/release-notes-generator@14.1.1(semantic-release@25.0.5(typescript@6.0.3))':
     dependencies:
       conventional-changelog-angular: 8.3.1
       conventional-changelog-writer: 8.4.0
@@ -8717,7 +8600,7 @@ snapshots:
       import-from-esm: 2.0.0
       lodash-es: 4.18.1
       read-package-up: 11.0.0
-      semantic-release: 25.0.5(typescript@7.0.2)
+      semantic-release: 25.0.5(typescript@6.0.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -8808,7 +8691,7 @@ snapshots:
       '@swc/core': 1.15.43
       '@swc/types': 0.1.27
 
-  '@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2)':
+  '@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3)':
     dependencies:
       '@swc-node/core': 1.14.1(@swc/core@1.15.43)(@swc/types@0.1.27)
       '@swc-node/sourcemap-support': 0.6.1
@@ -8818,7 +8701,7 @@ snapshots:
       oxc-resolver: 11.21.3
       pirates: 4.0.7
       tslib: 2.8.1
-      typescript: 7.0.2
+      typescript: 6.0.3
     transitivePeerDependencies:
       - '@swc/types'
       - supports-color
@@ -9015,66 +8898,6 @@ snapshots:
       '@typescript/native-preview-linux-x64': 7.0.0-dev.20260707.2
       '@typescript/native-preview-win32-arm64': 7.0.0-dev.20260707.2
       '@typescript/native-preview-win32-x64': 7.0.0-dev.20260707.2
-
-  '@typescript/typescript-aix-ppc64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-darwin-arm64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-darwin-x64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-freebsd-arm64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-freebsd-x64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-arm64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-arm@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-loong64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-mips64el@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-ppc64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-riscv64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-s390x@7.0.2':
-    optional: true
-
-  '@typescript/typescript-linux-x64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-netbsd-arm64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-netbsd-x64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-openbsd-arm64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-openbsd-x64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-sunos-x64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-win32-arm64@7.0.2':
-    optional: true
-
-  '@typescript/typescript-win32-x64@7.0.2':
-    optional: true
 
   '@ungap/structured-clone@1.3.3': {}
 
@@ -9778,14 +9601,14 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
 
-  cosmiconfig@9.0.2(typescript@7.0.2):
+  cosmiconfig@9.0.2(typescript@6.0.3):
     dependencies:
       env-paths: 2.2.1
       import-fresh: 3.3.1
       js-yaml: 4.3.0
       parse-json: 5.2.0
     optionalDependencies:
-      typescript: 7.0.2
+      typescript: 6.0.3
 
   cross-spawn@7.0.6:
     dependencies:
@@ -11856,7 +11679,7 @@ snapshots:
 
   npm@11.17.0: {}
 
-  nx@23.0.1(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2))(@swc/core@1.15.43):
+  nx@23.0.1(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.43):
     dependencies:
       '@emnapi/core': 1.4.5
       '@emnapi/runtime': 1.4.5
@@ -11980,12 +11803,12 @@ snapshots:
       '@nx/nx-linux-x64-musl': 23.0.1
       '@nx/nx-win32-arm64-msvc': 23.0.1
       '@nx/nx-win32-x64-msvc': 23.0.1
-      '@swc-node/register': 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2)
+      '@swc-node/register': 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3)
       '@swc/core': 1.15.43
     transitivePeerDependencies:
       - debug
 
-  nx@23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2))(@swc/core@1.15.43):
+  nx@23.1.0(@swc-node/register@1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.43):
     dependencies:
       '@emnapi/core': 1.4.5
       '@emnapi/runtime': 1.4.5
@@ -12113,7 +11936,7 @@ snapshots:
       '@nx/nx-linux-x64-musl': 23.1.0
       '@nx/nx-win32-arm64-msvc': 23.1.0
       '@nx/nx-win32-x64-msvc': 23.1.0
-      '@swc-node/register': 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@7.0.2)
+      '@swc-node/register': 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@6.0.3)
       '@swc/core': 1.15.43
 
   object-assign@4.1.1: {}
@@ -12378,13 +12201,11 @@ snapshots:
   pg-cloudflare@1.4.0:
     optional: true
 
-  pg-connection-string@2.12.0: {}
-
   pg-connection-string@2.14.0: {}
 
   pg-copy-streams@7.0.0: {}
 
-  pg-cursor@2.20.0(pg@8.22.0):
+  pg-cursor@2.21.0(pg@8.22.0):
     dependencies:
       pg: 8.22.0
 
@@ -12896,15 +12717,15 @@ snapshots:
     dependencies:
       compute-scroll-into-view: 3.1.1
 
-  semantic-release@25.0.5(typescript@7.0.2):
+  semantic-release@25.0.5(typescript@6.0.3):
     dependencies:
-      '@semantic-release/commit-analyzer': 13.0.1(semantic-release@25.0.5(typescript@7.0.2))
+      '@semantic-release/commit-analyzer': 13.0.1(semantic-release@25.0.5(typescript@6.0.3))
       '@semantic-release/error': 4.0.0
-      '@semantic-release/github': 12.0.8(semantic-release@25.0.5(typescript@7.0.2))
-      '@semantic-release/npm': 13.1.5(semantic-release@25.0.5(typescript@7.0.2))
-      '@semantic-release/release-notes-generator': 14.1.1(semantic-release@25.0.5(typescript@7.0.2))
+      '@semantic-release/github': 12.0.8(semantic-release@25.0.5(typescript@6.0.3))
+      '@semantic-release/npm': 13.1.5(semantic-release@25.0.5(typescript@6.0.3))
+      '@semantic-release/release-notes-generator': 14.1.1(semantic-release@25.0.5(typescript@6.0.3))
       aggregate-error: 5.0.0
-      cosmiconfig: 9.0.2(typescript@7.0.2)
+      cosmiconfig: 9.0.2(typescript@6.0.3)
       debug: 4.4.3(supports-color@7.2.0)
       env-ci: 11.2.0
       execa: 9.6.1
@@ -13428,28 +13249,7 @@ snapshots:
       media-typer: 1.1.0
       mime-types: 3.0.2
 
-  typescript@7.0.2:
-    optionalDependencies:
-      '@typescript/typescript-aix-ppc64': 7.0.2
-      '@typescript/typescript-darwin-arm64': 7.0.2
-      '@typescript/typescript-darwin-x64': 7.0.2
-      '@typescript/typescript-freebsd-arm64': 7.0.2
-      '@typescript/typescript-freebsd-x64': 7.0.2
-      '@typescript/typescript-linux-arm': 7.0.2
-      '@typescript/typescript-linux-arm64': 7.0.2
-      '@typescript/typescript-linux-loong64': 7.0.2
-      '@typescript/typescript-linux-mips64el': 7.0.2
-      '@typescript/typescript-linux-ppc64': 7.0.2
-      '@typescript/typescript-linux-riscv64': 7.0.2
-      '@typescript/typescript-linux-s390x': 7.0.2
-      '@typescript/typescript-linux-x64': 7.0.2
-      '@typescript/typescript-netbsd-arm64': 7.0.2
-      '@typescript/typescript-netbsd-x64': 7.0.2
-      '@typescript/typescript-openbsd-arm64': 7.0.2
-      '@typescript/typescript-openbsd-x64': 7.0.2
-      '@typescript/typescript-sunos-x64': 7.0.2
-      '@typescript/typescript-win32-arm64': 7.0.2
-      '@typescript/typescript-win32-x64': 7.0.2
+  typescript@6.0.3: {}
 
   uglify-js@3.19.3:
     optional: true

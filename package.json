@@ -24,6 +24,7 @@
     "@swc/core": "catalog:",
     "nx": "catalog:",
     "pkg-pr-new": "0.0.75",
+    "typescript": "^6.0.3",
     "verdaccio": "^6.7.4"
   }
 }

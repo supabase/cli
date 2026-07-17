@@ -13,10 +13,10 @@ allowBuilds:
 
 catalog:
   "@effect/atom-react": "4.0.0-beta.94"
-  "@effect/platform-bun": "4.0.0-beta.94"
-  "@effect/platform-node": "4.0.0-beta.94"
-  "@effect/sql-pg": "4.0.0-beta.94"
-  "@effect/vitest": "^4.0.0-beta.97"
+  "@effect/platform-bun": "4.0.0-beta.97"
+  "@effect/platform-node": "4.0.0-beta.97"
+  "@effect/sql-pg": "4.0.0-beta.97"
+  "@effect/vitest": "4.0.0-beta.97"
   "@nx/devkit": "^23.0.0"
   "@swc-node/register": "^1.10.9"
   "@swc/core": "^1.15.43"
@@ -34,6 +34,9 @@ catalog:
   "vitest": "^4.1.10"
 
 blockExoticSubdeps: true
+
+overrides:
+  "@effect/platform-node-shared": "4.0.0-beta.97"
 
 minimumReleaseAge: 0
 
