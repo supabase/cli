@@ -14424,6 +14424,7 @@ type V1GetBackupScheduleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *V1BackupScheduleResponse
+	JSON402      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -14446,6 +14447,7 @@ type V1UpdateBackupScheduleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *V1BackupScheduleResponse
+	JSON402      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15421,6 +15423,7 @@ func (r V1RemoveAReadReplicaResponse) StatusCode() int {
 type V1SetupAReadReplicaResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON402      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15810,6 +15813,7 @@ type V1GetVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VanitySubdomainConfigResponse
+	JSON400      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15832,6 +15836,7 @@ type V1ActivateVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *ActivateVanitySubdomainResponse
+	JSON400      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15854,6 +15859,7 @@ type V1CheckVanitySubdomainAvailabilityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *SubdomainAvailabilityResponse
+	JSON400      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -20377,6 +20383,13 @@ func ParseV1GetBackupScheduleResponse(rsp *http.Response) (*V1GetBackupScheduleR
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	}
 
 	return response, nil
@@ -20402,6 +20415,13 @@ func ParseV1UpdateBackupScheduleResponse(rsp *http.Response) (*V1UpdateBackupSch
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	}
 
@@ -21425,6 +21445,16 @@ func ParseV1SetupAReadReplicaResponse(rsp *http.Response) (*V1SetupAReadReplicaR
 		HTTPResponse: rsp,
 	}
 
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	}
+
 	return response, nil
 }
 
@@ -21821,6 +21851,13 @@ func ParseV1GetVanitySubdomainConfigResponse(rsp *http.Response) (*V1GetVanitySu
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	}
 
 	return response, nil
@@ -21847,6 +21884,13 @@ func ParseV1ActivateVanitySubdomainConfigResponse(rsp *http.Response) (*V1Activa
 		}
 		response.JSON201 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	}
 
 	return response, nil
@@ -21872,6 +21916,13 @@ func ParseV1CheckVanitySubdomainAvailabilityResponse(rsp *http.Response) (*V1Che
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 
