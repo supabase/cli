@@ -1,5 +1,9 @@
 # Micro Stacks Phase 1 — `@supabase/stack` Changes + `@supabase/fleet` Daemon
 
+> **Implementation note:** Fleet was ultimately folded into the Stack package and is exported from
+> `@supabase/stack/fleet`. Paths and package names below describe the original implementation plan;
+> see `packages/stack/docs/fleet.md` for the current interface and ownership model.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `@supabase/stack` pods template-provisioned, micro-tuned, and lazily started, and add a new `@supabase/fleet` package: a host-level daemon giving 100+ registered pods with suspend-on-idle, wake-on-connect, and CoW fork/reset.

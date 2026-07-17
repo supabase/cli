@@ -1,17 +1,19 @@
-# @supabase/fleet
+# Fleet
 
-Host-level daemon for running many isolated local Supabase stacks. Fleet adds copy-on-write data
+Host-level manager for running many isolated local Supabase stacks. Fleet adds copy-on-write data
 templates, stable wake proxies, whole-stack scale-to-zero, idle suspension, reset, and fork on top
-of `@supabase/stack`.
+of the direct Stack runtime. It is exported from `@supabase/stack/fleet` and is designed to run
+inside a long-lived host such as the Supabase CLI daemon.
 
-Use `@supabase/stack` for ordinary programmatic integration tests. Use Fleet when pods need stable
-endpoints while suspended or when a long-lived host manages many test environments.
+Use `createStack()` for ordinary programmatic and parallel integration tests. Use Fleet when named
+pods need stable endpoints while suspended, when environments need cheap reset/fork operations, or
+when a long-lived host manages many more registered environments than it keeps warm.
 
 ## Quick start
 
 ```ts
 import { createClient } from "@supabase/supabase-js";
-import { createFleet } from "@supabase/fleet";
+import { createFleet } from "@supabase/stack/fleet";
 
 await using fleet = await createFleet();
 const pod = await fleet.createPod();
@@ -23,6 +25,26 @@ const { data } = await supabase.from("todos").select();
 `createPod()` returns a ready pod by default. Postgres and the stack-owned gateway are running;
 sidecars are prepared and started lazily by the inner Stack on first HTTP or Realtime WebSocket
 request. Every pod gets stable database and API endpoints that survive Fleet suspend/wake cycles.
+
+`createFleet()` owns its root exclusively and remains attached to the calling process. It does not
+discover or launch a global daemon. A CLI daemon can host one Fleet and expose a remote control
+interface to other processes without making that indirection part of `createStack()`.
+
+## Tests
+
+Prefer one directly owned `createStack()` per test worker or suite. Stack already provides
+cross-process port leases, isolated temporary data directories, lazy sidecars, and strict cleanup,
+so it is the simplest interface for many genuinely concurrent warm stacks.
+
+Fleet is useful in tests with a different shape:
+
+- hundreds of registered environments but only a small warm working set;
+- repeated reset or copy-on-write fork from an expensive database fixture;
+- external subprocesses that need endpoints to remain stable across suspend/wake;
+- density, lifecycle, or CLI-daemon integration tests for Fleet itself.
+
+Do not create a Fleet per parallel test worker against the same root. Fleet intentionally has one
+owner per root; cross-process consumers should talk to a single daemon-hosted Fleet instead.
 
 ## Explicit services
 

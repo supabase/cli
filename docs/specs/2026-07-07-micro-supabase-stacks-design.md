@@ -147,14 +147,14 @@ On-disk layout follows the existing `~/.supabase` convention (where the binary c
 - **HTTP services:** one shared gateway port, host/path-routed (`<pod-id>.localhost:<port>/rest/v1/…`) — also where lazy start hooks in. On cloud free tier, where pods have their own network identity, the same proxy binds per-pod addresses.
 - Connection strings printed by the CLI match Supabase-CLI conventions.
 
-## Orchestrator: evolve `@supabase/stack` + new fleet daemon
+## Orchestrator: evolve `@supabase/stack` with a Fleet module
 
 `@supabase/stack` (in the Bun CLI monorepo, `packages/stack`) is viable and is kept. It already provides: native-binary resolution with Docker fallback (shared cache at `~/.supabase/bin` — which *is* the shared install tree), dependency-ordered supervision via `@supabase/process-compose`, health-gated readiness, the key-translating API proxy, per-service `startService`/`stopService` (the substrate lazy start needs), port allocation, daemon/connect modes, and parallel-stack E2E tests.
 
 ### Division of responsibilities
 
 - **`@supabase/stack` = pod runtime.** "Given a prepared data dir and version manifest, run this stack": ServiceDefs, supervision, health checks, API proxy, per-service start/stop, log streaming.
-- **Fleet daemon = new thin host-level layer** owning everything that must exist when pods don't: pod registry and manifests, template store + CoW provisioning + `fork`, persistent port registry, the always-listening network edge, idle timers, wake/suspend policy. Hosts warm pods as in-process `StackHandle`s inside one Bun process. Programmatic TypeScript API (`fleet.create()`, `fleet.wake()`, `fleet.fork()`, `fleet.suspend()`); `supabase start/stop` become thin calls over it.
+- **Fleet = host-level module exported from `@supabase/stack/fleet`** owning everything that must exist when pods don't: pod registry and manifests, template store + CoW provisioning + `fork`, persistent port registry, the always-listening network edge, idle timers, wake/suspend policy. A CLI daemon hosts warm pods as in-process `StackHandle`s inside one Bun process. The programmatic TypeScript interface (`fleet.createPod()`, `fleet.wake()`, `fleet.forkPod()`, `fleet.suspend()`) remains explicit; `createStack()` does not implicitly discover or launch a global daemon.
 
 This replaces the current daemon-per-stack fork model (100 pods must not mean 100 daemons, and a suspended pod must cost zero processes — only a shared daemon holding its port delivers that) and replaces `readReservedPorts()`'s per-create filesystem scan with an owned registry.
 

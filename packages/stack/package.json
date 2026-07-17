@@ -12,6 +12,7 @@
       "bun": "./src/provisioned-bun.ts",
       "default": "./src/provisioned-node.ts"
     },
+    "./fleet": "./src/fleet/index.ts",
     "./effect": "./src/effect.ts",
     "./daemon-bun": "./src/daemon-bun.ts"
   },

@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createFleet } from "../src/Fleet.ts";
+import { createFleet } from "../src/fleet/index.ts";
 
 const PG_VERSION = "17.6.1.143";
 const REGISTERED = Number(process.env.FLEET_E2E_PODS ?? 20); // 100+ locally, 20 in CI

@@ -986,8 +986,14 @@ conditions. Each constructs the platform layer and delegates to `createReadyStac
 The package root exposes only the ready `createStack(config)` constructor. The advanced Effect
 entry point names its stopped constructor `createStackController`, making the lifecycle difference
 explicit. The deeper `createProvisionedStack(options)` constructor lives at
-`@supabase/stack/provisioned`; Fleet can use pre-initialized data directories without putting
-infrastructure concerns on the primary API.
+`@supabase/stack/provisioned`; the Fleet module can use pre-initialized data directories without
+putting infrastructure concerns on the primary interface.
+
+Fleet is part of this package but stays behind the `@supabase/stack/fleet` subpath. Its
+implementation lives in `src/fleet/` and owns host-level manifests, templates, stable outer ports,
+idle suspension, reset, and fork. It consumes Stack through the same public and provisioned
+interfaces as any other long-lived host, keeping service-level activation local to Stack while
+leaving the root interface optimized for directly owned runtimes.
 
 ```ts
 // bun.ts

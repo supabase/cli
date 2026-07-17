@@ -190,6 +190,19 @@ const stack = await createProvisionedStack({
 Effect consumers can use `@supabase/stack/effect` for the lower-level stopped controller and
 layer APIs.
 
+Long-lived hosts that manage many named stacks can use Fleet. It keeps stable database and API
+endpoints while entire stacks suspend, and adds copy-on-write provisioning, reset, and fork:
+
+```ts
+import { createFleet } from "@supabase/stack/fleet";
+
+await using fleet = await createFleet();
+const pod = await fleet.createPod({ start: false });
+```
+
+Fleet is intended for CLI-daemon and environment-hosting workloads. Prefer direct `createStack()`
+instances for ordinary parallel tests; see [Fleet](./docs/fleet.md) for the decision guide.
+
 ## Errors
 
 Public methods reject with `StackError`, whose `code` distinguishes failures such as
@@ -199,5 +212,6 @@ Public methods reject with `StackError`, whose `code` distinguishes failures suc
 ## Architecture
 
 - [Architecture](./docs/architecture.md)
+- [Fleet](./docs/fleet.md)
 - [Detached mode](./docs/detach-mode.md)
 - [Resource cleanup](./docs/resource-leak-mitigations.md)
