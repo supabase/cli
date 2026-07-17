@@ -929,11 +929,12 @@ describe("legacyReadDbToml", () => {
     );
   });
 
-  it.effect("keeps [api] auto_expose_new_tables tri-state None when absent", () => {
-    const dir = withConfig("[api]\n");
+  it.effect("decodes empty api schemas while keeping auto_expose_new_tables absent", () => {
+    const dir = withConfig('[api]\nschemas = ""\n');
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
+          expect(v.apiSchemas).toEqual([]);
           expect(Option.isNone(v.baseline.apiAutoExposeNewTables)).toBe(true);
           rmSync(dir, { recursive: true, force: true });
         }),

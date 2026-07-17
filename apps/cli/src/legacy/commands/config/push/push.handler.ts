@@ -8,9 +8,13 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyAssertDecryptableSecrets,
+  legacyLoadProjectEnv,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyCollectDotenvPrivateKeys } from "../../../shared/legacy-vault-decrypt.ts";
 import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
 import {
   applyRemoteAuthConfig,
@@ -101,6 +105,19 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+  // dotenvx private keys for decrypting `encrypted:` secrets (Go's
+  // `DecryptSecretHookFunc`), from the shell + project env — same source/precedence
+  // as `legacy-db-config.toml-read.ts` (`process.env` wins over `supabase/.env`).
+  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+  // Only reached by `legacyAssertDecryptableSecrets` below for an `env(VAR)` literal that
+  // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
+  // when this wider env source (matching Go's `loadNestedEnv`) resolves `VAR` but
+  // `@supabase/config`'s narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
+  // unreachable in the same narrow way the CLI-1489 comment below already documents for
+  // non-secret fields; kept for parity with the shared function's other caller
+  // (`legacy-db-config.toml-read.ts`, whose pre-interpolation document relies on this).
+  const secretEnvLookup = (name: string): string | undefined =>
+    process.env[name] ?? projectEnv[name];
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -143,6 +160,33 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     }
     const projectId = ref;
     const config = loaded.config;
+
+    // 1b. Assert every `config.Secret`-typed `encrypted:` value in the document
+    // (not just auth.*) can be decrypted, mirroring Go's global
+    // `DecryptSecretHookFunc`, which runs as part of `config.Load` — before
+    // `internal/config/push.Run` ever reads the cost matrix (`push.go:16` vs.
+    // `push.go:25`) or touches any service. An undecryptable secret anywhere in
+    // the document (even one `config push` never itself pushes, e.g.
+    // `studio.openai_api_key`) aborts here with Go's own `failed to parse
+    // config: <cause>` message, before any remote service is read or updated.
+    //
+    // `loaded.document` has already had Go's deprecated `auth.external.{linkedin,slack}`
+    // blocks stripped by `@supabase/config` (`normalizeDeprecatedExternalProviders`), but
+    // Go's decrypt hook runs at decode time — before its own later `external.validate()`
+    // deletes those blocks — so an `encrypted:` secret hiding in one of them still aborts
+    // Go's load. Fold `removedDeprecatedExternalProviders` back into a synthetic
+    // `auth.external` view and scan that too, reusing the same path list rather than a
+    // second scanner.
+    const secretError =
+      legacyAssertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
+      legacyAssertDecryptableSecrets(
+        { auth: { external: loaded.removedDeprecatedExternalProviders ?? {} } },
+        secretEnvLookup,
+        dotenvPrivateKeys,
+      );
+    if (secretError !== undefined) {
+      return yield* new LegacyConfigPushLoadConfigError({ message: secretError });
+    }
 
     // Optional `*pointer` sections (ssl_enforcement, image_transformation,
     // s3_protocol) are defaulted-present by @supabase/config and cannot be
@@ -363,7 +407,19 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             }),
           ),
         );
-        let local = authSubsetFromConfig(config, projectId, presence.auth, authEmailContent);
+        // `dotenvPrivateKeys` decrypts any `encrypted:` auth secret before it's
+        // hashed/copied into the update body. The document-wide check above
+        // (step 1b) already scanned every `config.Secret` path — including every
+        // field `authSubsetFromConfig` reads — and would have aborted by now if
+        // any were undecryptable, so the decrypt calls inside it are unreachable
+        // failure paths here, not a real branch to guard with `Effect.try`.
+        let local = authSubsetFromConfig(
+          config,
+          projectId,
+          presence.auth,
+          authEmailContent,
+          dotenvPrivateKeys,
+        );
         const projected = applyRemoteAuthConfig(local, remote);
         // MFA phone/webauthn are paid addons: confirm cost before enabling.
         if (mfaPhoneNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_phone"))) {

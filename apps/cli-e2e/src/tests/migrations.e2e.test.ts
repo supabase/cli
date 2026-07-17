@@ -45,7 +45,10 @@ describe("migrations", () => {
     testBehaviour("exits non-zero without name argument", async ({ run }) => {
       const result = await run(["migration", "new"]);
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout).toContain("migration name");
+      // CLI-1901: a missing positional argument's usage block now prints to
+      // stderr (never stdout) instead of being duplicated across both.
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("migration name");
     });
   });
 
@@ -90,7 +93,11 @@ describe("migrations", () => {
     testBehaviour("exits non-zero when --status flag is missing", async ({ run }) => {
       const result = await run(["migration", "repair", "--local", "20230101000000"]);
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("--status");
+      // CLI-1901: a missing required flag now drops the vendored library's
+      // duplicate usage dump entirely (Go's cobra suppresses usage for this
+      // case too), leaving only this repo's existing Go-parity error line,
+      // which spells the flag name without its `--` prefix.
+      expect(result.stderr).toContain('"status" not set');
     });
 
     testBehaviour("exits non-zero on connection refused", async ({ run }) => {

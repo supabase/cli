@@ -29,6 +29,31 @@ function writeConfig(toml: string): void {
   writeFileSync(join(dir, "config.toml"), toml);
 }
 
+// Go's test vector — `apps/cli-go/pkg/config/secret_test.go:9-19` (same one
+// `legacy-vault-decrypt.unit.test.ts` and `config-sync.secret.unit.test.ts` use).
+// Decrypts to the plaintext "value".
+const DOTENVX_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+const DOTENVX_ENCRYPTED_VALUE =
+  "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
+/** Save/restore `DOTENV_PRIVATE_KEY` around a test — mirrors the SUPABASE_YES pattern below. */
+function withDotenvPrivateKey<A, E, R>(
+  value: string | undefined,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  const prev = process.env["DOTENV_PRIVATE_KEY"];
+  if (value === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+  else process.env["DOTENV_PRIVATE_KEY"] = value;
+  return effect.pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (prev === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+        else process.env["DOTENV_PRIVATE_KEY"] = prev;
+      }),
+    ),
+  );
+}
+
 // Schema-valid PostgREST GET response with the api disabled remotely (empty
 // schema). The real API client validates GET bodies against the generated
 // output schema, so every postgrest GET must carry these fields.
@@ -721,6 +746,172 @@ secret = "my-plaintext-secret"
         expect(input["security_captcha_secret"]).toBe("my-plaintext-secret");
         expect(String(input["security_captcha_secret"])).not.toContain("hash:");
       }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "decrypts a dotenvx encrypted: captcha secret and pushes the plaintext (CLI-1881)",
+    () => {
+      const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "${DOTENVX_ENCRYPTED_VALUE}"
+`;
+      const { layer, apiMock } = setupService({
+        toml,
+        yes: true,
+        v1: {
+          getAuthServiceConfig: () => Effect.succeed({}),
+          updateAuthServiceConfig: () => Effect.succeed({}),
+        },
+      });
+      return withDotenvPrivateKey(
+        DOTENVX_PRIVATE_KEY,
+        Effect.gen(function* () {
+          yield* legacyConfigPush({ projectRef: Option.none() });
+          const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+          expect(update).toBeDefined();
+          const input = update?.input as Record<string, unknown>;
+          // Go decrypts before hashing/pushing — the plaintext goes to the API,
+          // never the dotenvx ciphertext.
+          expect(input["security_captcha_secret"]).toBe("value");
+        }).pipe(Effect.provide(layer)),
+      );
+    },
+  );
+
+  it.live(
+    "aborts before any network call when an encrypted: secret cannot be decrypted (CLI-1881)",
+    () => {
+      // `auth.enabled = false` on purpose: Go's decrypt hook runs for every
+      // `config.Secret` field during `config.Load`, before any feature gate is
+      // consulted — an undecryptable secret aborts even when the section that
+      // contains it would otherwise be skipped entirely.
+      const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = false
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "${DOTENVX_ENCRYPTED_VALUE}"
+`;
+      const { layer, api } = setup({ toml, yes: true });
+      return withDotenvPrivateKey(
+        undefined,
+        Effect.gen(function* () {
+          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+            Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+              Effect.succeed(error.message),
+            ),
+          );
+          expect(message).toBe("failed to parse config: missing private key");
+          // The guard runs during config load, before any network call — not
+          // even the cost-matrix (list-addons) request that normally runs first.
+          expect(api.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer)),
+      );
+    },
+  );
+
+  it.live(
+    "aborts on an undecryptable secret config push never itself reads or pushes (CLI-1881)",
+    () => {
+      // `studio.openai_api_key` is a `config.Secret` field Go's `DecryptSecretHookFunc`
+      // still decrypts during `config.Load` — but no `config-sync/*.sync.ts` file (api,
+      // db, auth, storage, experimental) ever reads `studio.*`, so this proves the
+      // pre-check is genuinely document-wide, not merely reachable via `auth.*`.
+      const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = false
+[studio]
+openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
+`;
+      const { layer, api } = setup({ toml, yes: true });
+      return withDotenvPrivateKey(
+        undefined,
+        Effect.gen(function* () {
+          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+            Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+              Effect.succeed(error.message),
+            ),
+          );
+          expect(message).toBe("failed to parse config: missing private key");
+          expect(api.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer)),
+      );
+    },
+  );
+
+  it.live("aborts on an undecryptable [db.vault] secret (CLI-1881)", () => {
+    // `db.vault` decodes as `map[string]Secret` in Go (`pkg/config/db.go:96`), so Go's
+    // decrypt hook covers it during `config.Load` — but the shared
+    // `legacyAssertDecryptableSecrets` path list used to omit `db.vault` on the theory
+    // that only the db-config reader's own downstream vault loop needed it. `config push`
+    // never runs that downstream loop, so this proves the shared path list now covers
+    // `db.vault` for every caller.
+    const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = false
+[db.vault]
+my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
+`;
+    const { layer, api } = setup({ toml, yes: true });
+    return withDotenvPrivateKey(
+      undefined,
+      Effect.gen(function* () {
+        const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+            Effect.succeed(error.message),
+          ),
+        );
+        expect(message).toBe("failed to parse config: missing private key");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
+  it.live(
+    "aborts on an undecryptable secret in a deprecated [auth.external.slack] block (CLI-1881)",
+    () => {
+      // `@supabase/config` strips `auth.external.{linkedin,slack}` from `loaded.document`
+      // before returning it (`normalizeDeprecatedExternalProviders`), matching Go's
+      // `external.validate()` — but Go's decrypt hook runs at DECODE time, strictly before
+      // that later validate-time deletion, so a `secret` hiding in one of these deprecated
+      // blocks still aborts Go's load. This proves the pre-check folds
+      // `removedDeprecatedExternalProviders` back in rather than missing it.
+      const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = false
+[auth.external.slack]
+secret = "${DOTENVX_ENCRYPTED_VALUE}"
+`;
+      const { layer, api } = setup({ toml, yes: true });
+      return withDotenvPrivateKey(
+        undefined,
+        Effect.gen(function* () {
+          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+            Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+              Effect.succeed(error.message),
+            ),
+          );
+          expect(message).toBe("failed to parse config: missing private key");
+          expect(api.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer)),
+      );
     },
   );
 

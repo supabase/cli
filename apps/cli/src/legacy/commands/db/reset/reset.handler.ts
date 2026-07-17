@@ -30,11 +30,8 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
 import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
-import {
-  legacyGetPendingSeeds,
-  legacyMatchPattern,
-  legacySeedData,
-} from "../shared/legacy-seed-ops.ts";
+import { legacyGetPendingSeeds, legacySeedData } from "../shared/legacy-seed-ops.ts";
+import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
 import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
@@ -206,7 +203,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       const entries = yield* fs
         .readDirectory(migrationsDir)
         .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
-      const found = entries.some((name) => legacyMatchPattern(`${v}_*.sql`, path.basename(name)));
+      const found = entries.some(
+        (name) => legacyPathMatch(`${v}_*.sql`, path.basename(name)).matched,
+      );
       if (!found) {
         return yield* Effect.fail(
           new LegacyDbResetMigrationFileError({

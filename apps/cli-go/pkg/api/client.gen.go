@@ -221,6 +221,9 @@ type ClientInterface interface {
 	// V1GetProjectLogsAll request
 	V1GetProjectLogsAll(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1ScrapeProjectMetrics request
+	V1ScrapeProjectMetrics(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetProjectUsageApiCount request
 	V1GetProjectUsageApiCount(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1272,6 +1275,18 @@ func (c *Client) V1GetProjectLogs(ctx context.Context, ref string, params *V1Get
 
 func (c *Client) V1GetProjectLogsAll(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetProjectLogsAllRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ScrapeProjectMetrics(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ScrapeProjectMetricsRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -5481,6 +5496,40 @@ func NewV1GetProjectLogsAllRequest(server string, ref string, params *V1GetProje
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ScrapeProjectMetricsRequest generates requests for V1ScrapeProjectMetrics
+func NewV1ScrapeProjectMetricsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/analytics/endpoints/metrics", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -11668,6 +11717,9 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectLogsAllWithResponse request
 	V1GetProjectLogsAllWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsAllResponse, error)
 
+	// V1ScrapeProjectMetricsWithResponse request
+	V1ScrapeProjectMetricsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ScrapeProjectMetricsResponse, error)
+
 	// V1GetProjectUsageApiCountWithResponse request
 	V1GetProjectUsageApiCountWithResponse(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*V1GetProjectUsageApiCountResponse, error)
 
@@ -12966,6 +13018,27 @@ func (r V1GetProjectLogsAllResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetProjectLogsAllResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ScrapeProjectMetricsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ScrapeProjectMetricsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ScrapeProjectMetricsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -14351,6 +14424,7 @@ type V1GetBackupScheduleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *V1BackupScheduleResponse
+	JSON402      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -14373,6 +14447,7 @@ type V1UpdateBackupScheduleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *V1BackupScheduleResponse
+	JSON402      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15348,6 +15423,7 @@ func (r V1RemoveAReadReplicaResponse) StatusCode() int {
 type V1SetupAReadReplicaResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON402      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15737,6 +15813,7 @@ type V1GetVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VanitySubdomainConfigResponse
+	JSON400      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15759,6 +15836,7 @@ type V1ActivateVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *ActivateVanitySubdomainResponse
+	JSON400      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -15781,6 +15859,7 @@ type V1CheckVanitySubdomainAvailabilityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *SubdomainAvailabilityResponse
+	JSON400      *PlanGateErrorBody
 }
 
 // Status returns HTTPResponse.Status
@@ -16254,6 +16333,15 @@ func (c *ClientWithResponses) V1GetProjectLogsAllWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseV1GetProjectLogsAllResponse(rsp)
+}
+
+// V1ScrapeProjectMetricsWithResponse request returning *V1ScrapeProjectMetricsResponse
+func (c *ClientWithResponses) V1ScrapeProjectMetricsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ScrapeProjectMetricsResponse, error) {
+	rsp, err := c.V1ScrapeProjectMetrics(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ScrapeProjectMetricsResponse(rsp)
 }
 
 // V1GetProjectUsageApiCountWithResponse request returning *V1GetProjectUsageApiCountResponse
@@ -18730,6 +18818,22 @@ func ParseV1GetProjectLogsAllResponse(rsp *http.Response) (*V1GetProjectLogsAllR
 	return response, nil
 }
 
+// ParseV1ScrapeProjectMetricsResponse parses an HTTP response from a V1ScrapeProjectMetricsWithResponse call
+func ParseV1ScrapeProjectMetricsResponse(rsp *http.Response) (*V1ScrapeProjectMetricsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ScrapeProjectMetricsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseV1GetProjectUsageApiCountResponse parses an HTTP response from a V1GetProjectUsageApiCountWithResponse call
 func ParseV1GetProjectUsageApiCountResponse(rsp *http.Response) (*V1GetProjectUsageApiCountResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -20279,6 +20383,13 @@ func ParseV1GetBackupScheduleResponse(rsp *http.Response) (*V1GetBackupScheduleR
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	}
 
 	return response, nil
@@ -20304,6 +20415,13 @@ func ParseV1UpdateBackupScheduleResponse(rsp *http.Response) (*V1UpdateBackupSch
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	}
 
@@ -21327,6 +21445,16 @@ func ParseV1SetupAReadReplicaResponse(rsp *http.Response) (*V1SetupAReadReplicaR
 		HTTPResponse: rsp,
 	}
 
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	}
+
 	return response, nil
 }
 
@@ -21723,6 +21851,13 @@ func ParseV1GetVanitySubdomainConfigResponse(rsp *http.Response) (*V1GetVanitySu
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	}
 
 	return response, nil
@@ -21749,6 +21884,13 @@ func ParseV1ActivateVanitySubdomainConfigResponse(rsp *http.Response) (*V1Activa
 		}
 		response.JSON201 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	}
 
 	return response, nil
@@ -21774,6 +21916,13 @@ func ParseV1CheckVanitySubdomainAvailabilityResponse(rsp *http.Response) (*V1Che
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest PlanGateErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 

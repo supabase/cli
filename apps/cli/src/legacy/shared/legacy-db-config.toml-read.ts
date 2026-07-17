@@ -43,6 +43,7 @@ type EnvLookup = (name: string) => string | undefined;
  * and aborts the command rather than running against the default local database).
  */
 interface LegacyDbTomlValues {
+  readonly projectEnv: Readonly<Record<string, string>>;
   /**
    * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)
    * wins, then the loaded project `.env*` files (non-empty), else undefined.
@@ -51,6 +52,7 @@ interface LegacyDbTomlValues {
    * rather than `process.env` alone (e.g. `SUPABASE_EXPERIMENTAL_PG_DELTA`).
    */
   readonly envLookup: (name: string) => string | undefined;
+  readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
   /** `[db] shadow_port`, default 54320. */
@@ -169,6 +171,7 @@ const DEFAULT_PORT = 54322;
 const DEFAULT_SHADOW_PORT = 54320;
 const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
+const DEFAULT_API_SCHEMAS = ["public", "graphql_public"] as const;
 /** `[edge_runtime] deno_version` default (`config.toml` template). 2 → the current edge-runtime image. */
 const DEFAULT_DENO_VERSION = 2;
 
@@ -273,6 +276,7 @@ function legacyResolveValidatedRemoteProjectId(
  * `AutomaticEnv` — `config.go:635-637`), so the block value must beat the env override.
  */
 const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
+  "api.schemas",
   "db.port",
   "db.shadow_port",
   "db.major_version",
@@ -470,6 +474,22 @@ function resolveConfigInt(value: unknown, lookup: EnvLookup): number | "absent" 
   return "invalid";
 }
 
+function resolveStringSlice(
+  value: unknown,
+  fallback: ReadonlyArray<string>,
+  lookup: EnvLookup,
+): ReadonlyArray<string> | undefined {
+  if (value === undefined) return fallback;
+  if (typeof value === "string") {
+    const expanded = legacyExpandEnv(value, lookup);
+    return expanded.length === 0 ? [] : expanded.split(",");
+  }
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
+    return undefined;
+  }
+  return value.map((item) => legacyExpandEnv(item, lookup));
+}
+
 /**
  * Replicates Go's `path.Join("supabase", pattern)` for a relative seed `sql_paths`
  * entry (`pkg/config/config.go:881-886`). Go's `path.Join` runs `path.Clean`, which
@@ -603,9 +623,12 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
  * re-checks). The `acquireRelease` finalizer deletes only the keys it set when the
  * scope closes, so in-process test workers don't leak env between cases.
  */
-export const legacyApplyProjectEnv = (loaded: Record<string, string>) =>
+export const legacyApplyProjectEnv = (
+  loaded: Readonly<Record<string, string>>,
+  keys: ReadonlyArray<string> = LEGACY_PROCESS_ENV_APPLY_KEYS,
+) =>
   Effect.forEach(
-    LEGACY_PROCESS_ENV_APPLY_KEYS,
+    keys,
     (key) => {
       const value = loaded[key];
       if (value === undefined || process.env[key] !== undefined) {
@@ -736,13 +759,20 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
  * Dotted paths of every `config.Secret`-typed field Go decrypts via its global
  * `DecryptSecretHookFunc` (`pkg/config/secret.go`, `config.go:730`) — the hook only runs
  * while decoding INTO a `config.Secret`, never over arbitrary strings. `*` matches any map
- * key (`auth.external.<provider>`, `auth.hook.<name>`). `[db.vault]` (a `map[string]Secret`)
- * is intentionally omitted — the reader decrypts it directly in the body with the same
- * fail-on-undecryptable behaviour. Derived from the Go structs (`auth.go`, `db.go`,
- * `config.go`); update alongside any new `Secret` field.
+ * key (`auth.external.<provider>`, `auth.hook.<name>`, `db.vault.<name>`). `[db.vault]`
+ * (a `map[string]Secret`, `pkg/config/db.go:96`) IS included — the db-config reader below
+ * also decrypts it directly in its own body ({@link legacyReadDbToml}'s `vault` loop) with
+ * the same fail-on-undecryptable behaviour, so for that caller this just detects the same
+ * failure a little earlier (no observable difference: same `legacyDecryptSecret` call, same
+ * `failed to parse config: <cause>` message). For `config push` — the other caller of
+ * {@link legacyAssertDecryptableSecrets}, which has no such downstream vault pass — omitting
+ * `db.vault` here would let an undecryptable vault secret through to the API calls, unlike Go.
+ * Derived from the Go structs (`auth.go`, `db.go`, `config.go`); update alongside any new
+ * `Secret` field.
  */
 const LEGACY_SECRET_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "root_key"],
+  ["db", "vault", "*"],
   ["auth", "publishable_key"],
   ["auth", "secret_key"],
   ["auth", "jwt_secret"],
@@ -786,19 +816,17 @@ const legacyCollectSecretStrings = (
   }
 };
 
-/** Fails when a single `encrypted:` secret value cannot be decrypted (Go's hook error). */
+/** Returns Go's hook-error message when a single `encrypted:` secret value cannot be decrypted. */
 const legacyAssertSecretValue = (
   value: string,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
-): LegacyDbConfigLoadError | undefined => {
+): string | undefined => {
   const expanded = legacyExpandEnv(value, lookup);
   // Unset `env(...)` and plain strings are returned verbatim by Go's hook (no error).
   if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
   const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
-  return decrypted.ok
-    ? undefined
-    : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
+  return decrypted.ok ? undefined : `failed to parse config: ${decrypted.error}`;
 };
 
 /**
@@ -808,15 +836,27 @@ const legacyAssertSecretValue = (
  * `Secret` field paths ({@link LEGACY_SECRET_PATHS}) are scanned — a non-secret string that
  * merely starts with `encrypted:` (e.g. an auth email-template `subject`) stays plain text
  * in Go and must not block the load. Go decodes every `[remotes.<name>]` block into the same
- * struct, so the same paths are checked under each remote too. Returns the failure (or
- * `undefined`); the caller surfaces it via `Effect.fail`.
+ * struct, so the same paths are checked under each remote too. Returns Go's error message (or
+ * `undefined`); callers surface it as their own domain error (e.g. `Effect.fail`).
+ *
+ * Shared across command families: the db-config reader below uses it for `db push`/`db
+ * reset`/`migration up|down`/etc, and `config push`'s handler reuses it directly against its
+ * own (`@supabase/config`-decoded) document — both need the exact same "decrypt-or-abort before
+ * anything else runs" behaviour Go gets for free from `config.Load`.
+ *
+ * The "check every `[remotes.<name>]` block too" part of that contract only holds when `doc`
+ * still has an intact `remotes` key. The db-config reader's own remote-merge keeps it (so this
+ * function really does check every declared remote there), but `@supabase/config`'s
+ * `loadProjectConfig` strips `remotes` from the document once a block matches the target ref —
+ * so for `config push`, an undecryptable secret hiding in a *different, non-matching* remote
+ * block goes unchecked (see that command's SIDE_EFFECTS.md KNOWN GAPS).
  */
-const legacyAssertDecryptableSecrets = (
+export const legacyAssertDecryptableSecrets = (
   doc: unknown,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
-): LegacyDbConfigLoadError | undefined => {
-  const scan = (node: unknown): LegacyDbConfigLoadError | undefined => {
+): string | undefined => {
+  const scan = (node: unknown): string | undefined => {
     for (const segs of LEGACY_SECRET_PATHS) {
       const values: Array<string> = [];
       legacyCollectSecretStrings(node, segs, 0, values);
@@ -990,11 +1030,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
     // in the merged config that cannot be decrypted (e.g. no DOTENV_PRIVATE_KEY) aborts the
     // load with `failed to parse config: <error>` (secret.go:34,103; config.go:704) — before
-    // Validate and before connecting. The reader otherwise only decrypts `[db.vault]`, so
-    // assert decryptability across the whole document to match Go (a recursive scan tracks
-    // Go's "decode the entire config" better than a hand-listed set of Secret paths).
+    // Validate and before connecting. This also covers `[db.vault]` (see
+    // `LEGACY_SECRET_PATHS`), so the vault loop below never actually reaches an
+    // undecryptable value — it just decrypts-and-populates the already-asserted-valid ones.
     const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys);
-    if (secretError !== undefined) return yield* Effect.fail(secretError);
+    if (secretError !== undefined) {
+      return yield* Effect.fail(new LegacyDbConfigLoadError({ message: secretError }));
+    }
   }
 
   // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
@@ -1815,9 +1857,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     apiRaw?.["auto_expose_new_tables"],
     lookup,
   );
+  const apiSchemas = resolveStringSlice(
+    (remoteOverrideKeys.has("api.schemas") ? undefined : envOverride("SUPABASE_API_SCHEMAS")) ??
+      apiRaw?.["schemas"],
+    DEFAULT_API_SCHEMAS,
+    lookup,
+  );
+  if (apiSchemas === undefined) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({ message: "failed to parse config: invalid api.schemas." }),
+    );
+  }
 
   const values: LegacyDbTomlValues = {
+    projectEnv,
     envLookup: envOverride,
+    apiSchemas,
     port,
     shadowPort,
     password: passwordRaw !== undefined ? legacyExpandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
