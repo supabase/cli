@@ -77,7 +77,10 @@ function getAuthErrorResponse({ code, message }: AuthFailure) {
     { code, message, msg: message },
     {
       status: 401,
-      headers: { "sb-error-code": code },
+      headers: {
+        "sb-error-code": code,
+        "Access-Control-Expose-Headers": "sb-error-code",
+      },
     },
   );
 }

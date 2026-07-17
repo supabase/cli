@@ -214,6 +214,7 @@ describe("stack Functions runtime auth", () => {
       expect(response.status).toBe(401);
       expect(response.headers.get("content-type")).toContain("application/json");
       expect(response.headers.get("sb-error-code")).toBe(code);
+      expect(response.headers.get("access-control-expose-headers")).toBe("sb-error-code");
       expect(await response.json()).toEqual({ code, message, msg: message });
     });
   }

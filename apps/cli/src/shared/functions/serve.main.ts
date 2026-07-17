@@ -112,6 +112,7 @@ function getResponse(payload: any, status: number, customHeaders = {}) {
 function getAuthErrorResponse({ code, message }: AuthFailure) {
   return getResponse({ code, message, msg: message }, STATUS_CODE.Unauthorized, {
     "sb-error-code": code,
+    "Access-Control-Expose-Headers": "sb-error-code",
   });
 }
 

@@ -178,9 +178,6 @@ services:
           - /functions/v1/
     plugins:
       - name: cors
-        config:
-          exposed_headers:
-            - sb-error-code
       - name: request-transformer
         config:
           add:
