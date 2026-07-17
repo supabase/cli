@@ -7,11 +7,8 @@ const delivered = {
   json: () => Promise.resolve({}),
 };
 
-// posthog-node prints delivery failures through hardcoded console.error calls
-// (no logger hook) and retries them with multi-second delays; reporting every
-// attempt as delivered keeps failures silent and off the critical path. The
-// 2s requestTimeout bounds how long a blackholed connection can hold process
-// exit, since shutdown awaits in-flight sends.
+// posthog-node has no logger hook: delivery failures hit hardcoded
+// console.error calls and multi-second retries, so report them as delivered.
 export const fireAndForgetFetch: NonNullable<PostHogOptions["fetch"]> = async (url, options) => {
   try {
     const response = await globalThis.fetch(url, options);
@@ -33,9 +30,7 @@ export const scopedPosthogClient = (apiKey: string, host: string) =>
           fetch: fireAndForgetFetch,
         }),
     ),
-    // The rejection must be caught on the promise itself: Effect.promise turns
-    // a rejection into a defect, which Effect.ignore does not swallow, so a
-    // shutdown timeout would fail the whole command (exit 1 with an
-    // UnknownError, observed on v2.109.1 whenever PostHog was unreachable).
+    // Catch on the promise: Effect.promise turns rejections into defects,
+    // which escape Effect.ignore and fail the command.
     (client) => Effect.promise(() => client._shutdown(5_000).catch(() => undefined)),
   );
