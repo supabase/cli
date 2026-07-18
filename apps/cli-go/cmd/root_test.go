@@ -61,6 +61,25 @@ func TestCommandAnalyticsContext(t *testing.T) {
 	assert.NotEmpty(t, ctx.RunID)
 }
 
+func TestUpdateNotifierEnabled(t *testing.T) {
+	for value, wantEnabled := range map[string]bool{
+		"":      true,
+		"0":     true,
+		"false": true,
+		"1":     false,
+		"true":  false,
+		"t":     false,
+		"TRUE":  false,
+		"yes":   true,
+	} {
+		t.Run("value "+value, func(t *testing.T) {
+			t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", value)
+
+			assert.Equal(t, wantEnabled, updateNotifierEnabled())
+		})
+	}
+}
+
 func TestCommandName(t *testing.T) {
 	root := &cobra.Command{Use: "supabase"}
 	parent := &cobra.Command{Use: "db"}
