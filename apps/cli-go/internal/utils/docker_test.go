@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -383,4 +384,51 @@ func TestExecOnce(t *testing.T) {
 	})
 
 	// TODO: mock tcp hijack
+}
+
+func TestHasProjectContainers(t *testing.T) {
+	t.Run("returns true when containers exist", func(t *testing.T) {
+		// Setup mock server
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		gock.New(Docker.DaemonHost()).
+			Get("/v" + Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]container.Summary{{ID: "supabase_db_test"}})
+		// Run test
+		exists, err := HasProjectContainers(context.Background(), "test")
+		// Check error
+		assert.NoError(t, err)
+		assert.True(t, exists)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("returns false when no containers exist", func(t *testing.T) {
+		// Setup mock server
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		gock.New(Docker.DaemonHost()).
+			Get("/v" + Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]container.Summary{})
+		// Run test
+		exists, err := HasProjectContainers(context.Background(), "test")
+		// Check error
+		assert.NoError(t, err)
+		assert.False(t, exists)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on failure to list containers", func(t *testing.T) {
+		// Setup mock server
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		gock.New(Docker.DaemonHost()).
+			Get("/v" + Docker.ClientVersion() + "/containers/json").
+			ReplyError(errors.New("network error"))
+		// Run test
+		_, err := HasProjectContainers(context.Background(), "test")
+		// Check error
+		assert.ErrorContains(t, err, "failed to list containers")
+	})
 }

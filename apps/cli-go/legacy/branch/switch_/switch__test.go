@@ -34,7 +34,9 @@ func TestSwitchCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
@@ -99,7 +101,9 @@ func TestSwitchCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Run test
 		err := Run(context.Background(), "postgres", fsys)
 		// Check error
@@ -117,7 +121,9 @@ func TestSwitchCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Run test
 		err := Run(context.Background(), "main", fsys)
 		// Check error
@@ -135,7 +141,9 @@ func TestSwitchCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Setup target branch
 		branch := "main"
 		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
@@ -159,7 +167,9 @@ func TestSwitchCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Setup target branch
 		branch := "target"
 		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
@@ -183,7 +193,9 @@ func TestSwitchCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Setup target branch
 		branch := "main"
 		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)

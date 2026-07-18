@@ -196,7 +196,9 @@ func TestStartCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Run test
 		err := Run(context.Background(), "", fsys)
 		// Check error

@@ -146,7 +146,8 @@ func AssertSupabaseDbIsRunning() error {
 }
 
 func AssertServiceIsRunning(ctx context.Context, containerId string) error {
-	if _, err := Docker.ContainerInspect(ctx, containerId); err != nil {
+	resp, err := Docker.ContainerInspect(ctx, containerId)
+	if err != nil {
 		if errdefs.IsNotFound(err) {
 			return errors.New(ErrNotRunning)
 		}
@@ -154,6 +155,12 @@ func AssertServiceIsRunning(ctx context.Context, containerId string) error {
 			CmdSuggestion = suggestDockerInstall
 		}
 		return errors.Errorf("failed to inspect service: %w", err)
+	}
+	// A container that exists but has exited (e.g. Docker Desktop restarted
+	// without honouring restart policies) is not running, even though
+	// ContainerInspect succeeds.
+	if resp.ContainerJSONBase == nil || resp.State == nil || !resp.State.Running {
+		return errors.New(ErrNotRunning)
 	}
 	return nil
 }

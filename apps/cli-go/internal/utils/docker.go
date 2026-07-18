@@ -145,6 +145,22 @@ func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	return nil
 }
 
+// HasProjectContainers returns true if any docker containers exist for the
+// given project, running or not. Used to distinguish a project that was
+// never started (nothing to recover) from one whose containers exist but
+// exited, e.g. after Docker Desktop restarts without honouring restart
+// policies.
+func HasProjectContainers(ctx context.Context, projectId string) (bool, error) {
+	containers, err := Docker.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: CliProjectFilter(projectId),
+	})
+	if err != nil {
+		return false, errors.Errorf("failed to list containers: %w", err)
+	}
+	return len(containers) > 0, nil
+}
+
 func CliProjectFilter(projectId string) filters.Args {
 	if len(projectId) == 0 {
 		return filters.NewArgs(

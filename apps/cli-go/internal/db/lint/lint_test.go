@@ -38,7 +38,9 @@ func TestLintCommand(t *testing.T) {
 	gock.New(utils.Docker.DaemonHost()).
 		Get("/v" + utils.Docker.ClientVersion() + "/containers").
 		Reply(http.StatusOK).
-		JSON(container.InspectResponse{})
+		JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			State: &container.State{Running: true},
+		}})
 	// Setup db response
 	expected := Result{
 		Function: "22751",

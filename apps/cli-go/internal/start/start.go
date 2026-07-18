@@ -58,6 +58,20 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}
+		// The project's containers may exist but be stopped rather than
+		// missing entirely, e.g. when Docker Desktop restarts without
+		// honouring container restart policies. Clear out any leftover
+		// containers from a previous session so the ContainerCreate calls
+		// below don't collide on name, while preserving named volumes so
+		// local data survives the restart.
+		if exists, err := utils.HasProjectContainers(ctx, utils.Config.ProjectId); err != nil {
+			return err
+		} else if exists {
+			fmt.Fprintln(os.Stderr, "Found stopped containers from a previous session, cleaning up before restart...")
+			if err := utils.DockerRemoveAll(ctx, os.Stderr, utils.Config.ProjectId); err != nil {
+				return err
+			}
+		}
 		if err := flags.LoadProjectRef(fsys); err == nil {
 			_ = services.CheckVersions(ctx, fsys)
 		}

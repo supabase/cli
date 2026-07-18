@@ -1,15 +1,20 @@
 package utils
 
 import (
+	"context"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -197,6 +202,53 @@ func TestWriteFile(t *testing.T) {
 		written, err := afero.ReadFile(fsys, path)
 		assert.NoError(t, err)
 		assert.Equal(t, updated, written)
+	})
+}
+
+func TestAssertServiceIsRunning(t *testing.T) {
+	t.Run("returns nil when container is running", func(t *testing.T) {
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		gock.New(Docker.DaemonHost()).
+			Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
+
+		err := AssertServiceIsRunning(context.Background(), containerId)
+
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("returns ErrNotRunning when container exists but exited", func(t *testing.T) {
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		gock.New(Docker.DaemonHost()).
+			Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: false, Status: "exited"},
+			}})
+
+		err := AssertServiceIsRunning(context.Background(), containerId)
+
+		assert.ErrorIs(t, err, ErrNotRunning)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("returns ErrNotRunning when container does not exist", func(t *testing.T) {
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		gock.New(Docker.DaemonHost()).
+			Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
+			Reply(http.StatusNotFound)
+
+		err := AssertServiceIsRunning(context.Background(), containerId)
+
+		assert.ErrorIs(t, err, ErrNotRunning)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 

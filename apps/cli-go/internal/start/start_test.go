@@ -100,7 +100,9 @@ func TestStartCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/json").
@@ -121,6 +123,55 @@ func TestStartCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("cleans up stopped containers before restarting", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Db container exists but exited, e.g. after Docker Desktop restarts
+		// without honouring restart policies.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: false, Status: "exited"},
+			}})
+		// HasProjectContainers finds leftover containers from a previous session.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]container.Summary{{ID: "supabase_db_start"}})
+		// DockerRemoveAll re-lists, stops, and prunes them.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]container.Summary{{ID: "supabase_db_start"}})
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/stop").
+			Reply(http.StatusNoContent)
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
+			Reply(http.StatusOK).
+			JSON(container.PruneReport{})
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
+			Reply(http.StatusOK).
+			JSON(network.PruneReport{})
+		// Let the flow fail deterministically once it reaches image pulling,
+		// well past the recovery logic under test.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/").
+			ReplyError(errors.New("network error"))
+		// Run test
+		err := Run(context.Background(), fsys, []string{}, false)
+		// Check error
+		assert.Error(t, err)
+		assert.NotErrorIs(t, err, utils.ErrNotRunning)
+		assert.NotContains(t, err.Error(), "already running")
+	})
+
 	t.Run("show status without health check if database is already running and ignored", func(t *testing.T) {
 		var running []container.Summary
 		for _, name := range utils.GetDockerIds() {
@@ -137,7 +188,9 @@ func TestStartCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/json").

@@ -38,7 +38,9 @@ func TestServeCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		containerId := "supabase_edge_runtime_test"
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
@@ -100,7 +102,9 @@ func TestServeCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Run test
 		err := Run(context.Background(), ".env", nil, "", RuntimeOption{}, fsys)
 		// Check error
@@ -120,7 +124,9 @@ func TestServeCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		// Run test
 		err := Run(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
 		// Check error

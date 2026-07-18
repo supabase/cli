@@ -46,7 +46,9 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK)
@@ -145,7 +147,9 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{})
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			ReplyError(errors.New("network error"))
