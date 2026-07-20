@@ -1623,6 +1623,48 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+
+    it.live(
+      "does not pick up an unrelated ancestor project's functions for a config-less --workdir subdirectory",
+      () => {
+        // `--workdir`/`SUPABASE_WORKDIR` pointing at a subdirectory with no
+        // `supabase/config.toml` of its own is a legitimate, reachable state
+        // (see `start.e2e.test.ts`'s "absent config" comment) — `start` still
+        // proceeds, resolving the main config with `search: false`
+        // (`legacy-local-project-context.ts`). `inferFunctionsManifest`'s own
+        // `search: false` here (CLI-1323 functions-manifest fix) must keep an
+        // UNRELATED ancestor project's `supabase/functions` from silently
+        // winning for this workdir, mirroring that same `search: false`.
+        const ancestorRoot = tempRoot.current;
+        mkdirSync(join(ancestorRoot, "supabase", "functions", "foo"), { recursive: true });
+        writeFileSync(
+          join(ancestorRoot, "supabase", "functions", "foo", "index.ts"),
+          "export {};\n",
+        );
+        writeFileSync(
+          join(ancestorRoot, "supabase", "config.toml"),
+          'project_id = "ancestor"\n[functions.foo]\nenabled = true\n',
+        );
+        const workdir = join(ancestorRoot, "nested", "workdir");
+        mkdirSync(workdir, { recursive: true });
+
+        const { layer, out, child } = setup({ workdir, skipConfig: true });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
+          const bindValues = runArgs.flatMap((arg, i) => (runArgs[i - 1] === "-v" ? [arg] : []));
+          expect(bindValues.some((bind) => bind.includes(join("functions", "foo")))).toBe(false);
+          expect(out.stderrText).not.toContain("foo");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              rmSync(join(ancestorRoot, "supabase", "functions"), { recursive: true, force: true });
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("image pull", () => {

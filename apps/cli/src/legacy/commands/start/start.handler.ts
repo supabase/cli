@@ -1029,6 +1029,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const configFunctions = yield* inferFunctionsManifest({
       cwd: cliConfig.workdir,
       config: { ...config, functions: configDeclaredFunctions },
+      // `search: false`: `cliConfig.workdir` is already Go's fully-resolved chdir target (same
+      // reasoning as `legacy-local-project-context.ts`'s `loadProjectEnvironment` call) — letting
+      // `findProjectPaths` climb ancestors again here would let an unrelated ancestor project's
+      // `supabase/functions` win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
+      // no `supabase/config.toml` of its own.
+      search: false,
     });
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
 
