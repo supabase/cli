@@ -1191,7 +1191,7 @@ function shouldUseDenoJsonDiscovery(entrypoint: string, importMap: string) {
   return isDenoConfigFile(importMap) && dirname(importMap) === dirname(entrypoint);
 }
 
-function isUserDefinedDockerNetwork(networkMode: string) {
+export function isUserDefinedDockerNetwork(networkMode: string) {
   return (
     networkMode.length > 0 &&
     networkMode !== "default" &&

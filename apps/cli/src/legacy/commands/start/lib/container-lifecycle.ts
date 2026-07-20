@@ -30,6 +30,7 @@ import {
   LEGACY_CLI_PROJECT_LABEL,
   LEGACY_CLI_WORKDIR_LABEL,
 } from "../../../shared/legacy-docker-ids.ts";
+import { isUserDefinedDockerNetwork } from "../../../../shared/functions/deploy.ts";
 import {
   buildLegacyStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
@@ -220,12 +221,25 @@ function legacyPortConflictSuggestion(hostPort: string, serviceLabel: string): s
  * one process, never interleaved with an external network deletion, so the
  * network is guaranteed to still exist for every later `legacyStartContainer`
  * call in the same run.
+ *
+ * Mirrors Go's own `isUserDefined(mode)` guard (`docker.go:65`,
+ * `docker_linux.go:10` and platform siblings) that runs first inside
+ * `DockerNetworkCreateIfNotExists` itself: `--network-id default|bridge|host|
+ * none` names a built-in Docker network that already exists and cannot be
+ * created (`docker network create host` errors with "operation is not
+ * permitted on predefined host network"), so this returns immediately without
+ * spawning `docker network create` at all for those names, reusing the same
+ * `isUserDefinedDockerNetwork` check `shared/functions/deploy.ts` already
+ * applies for the unrelated `functions deploy` extension-gateway network.
  */
 export function legacyEnsureStartNetwork(
   spawner: Spawner,
   networkId: string,
   labels: Readonly<Record<string, string>>,
 ): Effect.Effect<void, LegacyStartNetworkCreateError> {
+  if (!isUserDefinedDockerNetwork(networkId)) {
+    return Effect.void;
+  }
   return Effect.scoped(
     Effect.gen(function* () {
       const args = [

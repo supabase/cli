@@ -610,6 +610,21 @@ describe("legacyEnsureStartNetwork", () => {
       }),
     );
   });
+
+  it.live.each(["default", "bridge", "host", "none"])(
+    "skips docker network create for the built-in %s network",
+    (networkId) => {
+      const mock = mockSpawner(() => ({
+        exitCode: 1,
+        stderr: "operation is not permitted on predefined host network",
+      }));
+      return legacyEnsureStartNetwork(mock.spawner, networkId, {}).pipe(
+        Effect.map(() => {
+          expect(mock.spawned).toEqual([]);
+        }),
+      );
+    },
+  );
 });
 
 describe("legacyEnsureStartVolume", () => {
