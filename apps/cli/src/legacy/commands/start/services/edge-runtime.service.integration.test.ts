@@ -198,6 +198,23 @@ describe("legacyStartEdgeRuntimeContainer", () => {
   );
 
   it.effect(
+    "stamps its own com.supabase.cli.workdir label so a later stop from a different cwd can reclaim this container's staged-secret directory",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
+
+        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+        );
+
+        const runCall = mock.runCall!;
+        expect(runCall.args).toContain(`com.supabase.cli.workdir=${tempWorkdir.current}`);
+      }),
+  );
+
+  it.effect(
     "joins the caller-supplied network id and uses the already-resolved image, unmodified",
     () =>
       Effect.gen(function* () {

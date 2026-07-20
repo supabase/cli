@@ -249,6 +249,16 @@ export function localDockerId(name: string, projectId: string) {
 
 const dockerCliProjectLabel = "com.supabase.cli.project";
 const dockerComposeProjectLabel = "com.docker.compose.project";
+/**
+ * Must stay in sync with `LEGACY_CLI_WORKDIR_LABEL`
+ * (`legacy/shared/legacy-docker-ids.ts:95`) — same string literal, kept as a
+ * separate copy here rather than imported to respect the `next`/`legacy`
+ * isolation boundary (this file has no Go equivalent for the other two
+ * labels either). Read back by `legacyCleanupStartSecrets` so a later
+ * `stop`/`legacyRollbackStart` can reclaim this container's staged-secret
+ * directory using its OWN workdir rather than the caller's cwd.
+ */
+export const dockerWorkdirLabel = "com.supabase.cli.workdir";
 const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"] as const;
 
 export function dockerProjectLabels(projectId: string) {
