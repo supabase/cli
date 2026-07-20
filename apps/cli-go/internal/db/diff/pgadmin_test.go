@@ -61,4 +61,28 @@ func TestSaveDiff(t *testing.T) {
 		entries, _ := afero.ReadDir(fsys, utils.MigrationsDir)
 		assert.Empty(t, entries)
 	})
+
+	t.Run("creates nested parent directories for a nested single-unit name", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, SaveDiff(DatabaseDiff{SQL: "create table a ();"}, "snapshots/remote", fsys))
+		matches, err := afero.Glob(fsys, utils.MigrationsDir+"/*_snapshots/remote.sql")
+		require.NoError(t, err)
+		require.Len(t, matches, 1)
+		contents, err := afero.ReadFile(fsys, matches[0])
+		require.NoError(t, err)
+		assert.Equal(t, "create table a ();", string(contents))
+	})
+
+	t.Run("creates nested parent directories for a nested multi-unit name", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		files := []PgDeltaPlanFile{
+			{Order: 1, Name: "schema_changes", TransactionMode: "transactional", SQL: "alter type mood add value 'ok';"},
+			{Order: 2, Name: "after_enum_values", TransactionMode: "transactional", SQL: "insert into t values ('ok');"},
+		}
+		result := DatabaseDiff{SQL: joinPgDeltaFiles(files), Files: files}
+		require.NoError(t, SaveDiff(result, "snapshots/remote", fsys))
+		matches, err := afero.Glob(fsys, utils.MigrationsDir+"/*_snapshots/remote_*.sql")
+		require.NoError(t, err)
+		require.Len(t, matches, 2)
+	})
 }

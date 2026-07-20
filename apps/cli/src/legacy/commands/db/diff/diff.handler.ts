@@ -27,6 +27,7 @@ import {
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
@@ -459,41 +460,33 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // rather than writing a `<timestamp>_.sql` migration with no name.
     } else if (Option.isSome(flags.file) && flags.file.value.length > 0) {
       const fileName = flags.file.value;
-      const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
-      yield* legacyMakeDir(fs, migrationsDir).pipe(
-        Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
-      );
       // A pg-delta plan that crosses a transaction boundary yields more than one
       // ordered unit; writing them into a single migration file would later fail
       // when `db push`/`reset` applies it as one transaction. Write one migration
-      // file per unit in that case, using pull's naming/timestamp scheme (Go's
+      // file per unit in that case via the shared writer (Go's
       // `WritePgDeltaMigrations`, `internal/db/diff/pgdelta_migrations.go`): each
-      // file appends the unit name and gets a strictly increasing timestamp (real
-      // time arithmetic on the base, never string increment). A single-unit plan
-      // (and the migra engine) keeps the exact `<ts>_<name>.sql` file, byte-identical
-      // to before.
+      // file appends the unit name and gets a strictly increasing timestamp, the
+      // full set is collision-checked against existing migrations, and every file is
+      // written exclusively so a pre-existing migration is never overwritten. A
+      // single-unit plan (and the migra engine) keeps the exact `<ts>_<name>.sql`
+      // file (Go's `utils.WriteFile`), byte-identical to before.
       const planFiles = diffResult.files ?? [];
       if (planFiles.length > 1) {
-        const nowMillis = yield* Clock.currentTimeMillis;
-        for (let i = 0; i < planFiles.length; i++) {
-          const file = planFiles[i];
-          const version = legacyFormatMigrationTimestamp(nowMillis + i * 1000);
-          const unitPath = legacyGetMigrationPath(
-            path,
-            cliConfig.workdir,
-            version,
-            `${fileName}_${file?.name ?? ""}`,
-          );
-          yield* fs
-            .writeFileString(unitPath, `${file?.sql ?? ""}\n`)
-            .pipe(
-              Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
-            );
-          writtenFiles.push(unitPath);
-        }
+        const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
+          workdir: cliConfig.workdir,
+          baseMillis: yield* Clock.currentTimeMillis,
+          name: fileName,
+          files: planFiles.map((file) => ({ name: file.name, sql: file.sql })),
+        }).pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+        for (const unit of writtenUnits) writtenFiles.push(unit.path);
       } else {
         const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
         const migrationPath = legacyGetMigrationPath(path, cliConfig.workdir, timestamp, fileName);
+        // Create parent dirs per written path (mirroring Go's `utils.WriteFile`), so a
+        // nested `--file snapshots/remote` name creates `<ts>_snapshots/` first.
+        yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
+          Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
+        );
         yield* fs
           .writeFileString(migrationPath, out)
           .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));

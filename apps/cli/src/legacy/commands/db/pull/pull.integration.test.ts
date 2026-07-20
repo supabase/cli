@@ -5,6 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
 import {
+  legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
@@ -93,6 +94,8 @@ interface SetupOpts {
   // `--declarative` and `--use-pg-delta` are present, to replay pflag's
   // last-occurrence-wins ordering; defaults to empty.
   readonly args?: ReadonlyArray<string>;
+  // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
+  readonly failWriteOnCall?: number;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -237,7 +240,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  const layer = Layer.mergeAll(
+  const baseLayer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     cache.layer,
@@ -265,6 +268,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockRuntimeInfo(),
     BunServices.layer,
   );
+  // Merged last so its `FileSystem` overrides `BunServices` (last-wins); `Path`
+  // still resolves from `BunServices`.
+  const layer =
+    opts.failWriteOnCall === undefined
+      ? baseLayer
+      : Layer.merge(baseLayer, legacyFailWriteStringOnNthCallFsLayer(opts.failWriteOnCall));
 
   return {
     layer,
@@ -426,6 +435,33 @@ describe("legacy db pull", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("removes already-written unit files when a later pg-delta unit write fails", () => {
+    // A mid-loop write failure best-effort removes every migration file this
+    // invocation already wrote, so no partial multi-file pull is left behind.
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      failWriteOnCall: 2,
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([
+        { name: "schema_changes", sql: "alter type mood add value 'ok';" },
+        { name: "after_enum_values", sql: "insert into t values ('ok');" },
+      ]),
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const dir = join(tmp.current, "supabase", "migrations");
+      // Only the pre-seeded local migration remains; the first written unit was
+      // rolled back and the failing second unit never landed.
+      expect(readdirSync(dir)).toEqual(["20240101000000_local.sql"]);
+      // No history rows were upserted because the write failed before the prompt.
+      expect(s.historyUpserts.length).toBe(0);
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("a malformed pg-delta diff envelope surfaces a parse error, not 'in sync'", () => {
     seedMigration(tmp.current, "20240101000000");

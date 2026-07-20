@@ -44,6 +44,7 @@ import {
   legacyShouldUsePgDelta,
 } from "../shared/legacy-diff-engine.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyDumpOptions, legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
 import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
 import {
@@ -686,33 +687,26 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // execution-aware plan unit.
         const writtenMigrations: Array<{ path: string; version: string }> = [];
         if (usePgDeltaDiff) {
-          // pg-delta: one migration file per plan unit. A single-unit plan (the
-          // common case) keeps the exact `<ts>_<name>.sql` filename; multi-unit
-          // plans append the unit name and give each file a strictly increasing
-          // timestamp (real time arithmetic on the base, never string increment) so
-          // execution + migration-history order stay stable. Mirrors Go's
-          // `writePgDeltaMigrations` (`internal/db/pull/pull.go`). Empty plans are
-          // handled by the `diffEmpty` in-sync branch above, so `planFiles` is
-          // non-empty here.
+          // pg-delta: one migration file per plan unit via the shared writer. A
+          // single-unit plan (the common case) keeps the exact `<ts>_<name>.sql`
+          // filename; multi-unit plans append the unit name and give each file a
+          // strictly increasing timestamp so execution + migration-history order stay
+          // stable. The full set is collision-checked against existing migrations and
+          // each file is written exclusively so a pre-existing migration is never
+          // overwritten. Mirrors Go's `WritePgDeltaMigrations`
+          // (`internal/db/diff/pgdelta_migrations.go`). Empty plans are handled by the
+          // `diffEmpty` in-sync branch above, so `planFiles` is non-empty here.
           const planFiles = diffOutcome.files ?? [];
-          const single = planFiles.length === 1;
-          yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
+          const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
+            workdir: cliConfig.workdir,
+            baseMillis: nowMillis,
+            name,
+            files: planFiles.map((file) => ({ name: file.name, sql: file.sql })),
+          }).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
-          for (let i = 0; i < planFiles.length; i++) {
-            const file = planFiles[i];
-            const version = legacyFormatMigrationTimestamp(nowMillis + i * 1000);
-            const unitName = single ? name : `${name}_${file?.name ?? ""}`;
-            const unitPath = legacyGetMigrationPath(path, cliConfig.workdir, version, unitName);
-            yield* fs.writeFileString(unitPath, `${file?.sql ?? ""}\n`).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new LegacyDbPullWriteError({
-                    message: `failed to write migration file: ${cause.message}`,
-                  }),
-              ),
-            );
-            writtenMigrations.push({ path: unitPath, version });
+          for (const unit of writtenUnits) {
+            writtenMigrations.push({ path: unit.path, version: unit.version });
           }
         } else {
           if (!diffEmpty) {
