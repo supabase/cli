@@ -1,7 +1,7 @@
 /**
  * Studio env + container spec builder — port of Go's "Start Studio" block
  * (`apps/cli-go/internal/start/start.go:1148-1191`) and its `buildStudioEnv`
- * helper (`start.go:1319-1347`), ported faithfully as {@link buildLegacyStudioEnv}
+ * helper (`start.go:1319-1347`), ported faithfully as {@link legacyBuildStudioEnv}
  * — see `apps/cli-go/internal/start/start_test.go:522 TestBuildStudioEnv`,
  * ported in `studio.service.unit.test.ts`. Gated in Go by `config.studio.enabled`
  * and `!isContainerExcluded(config.studio.image, excluded)` — see
@@ -21,8 +21,8 @@
  * reads/writes, meant to persist, not a cache). `containerSnippetsPath` is
  * that host path translated to its in-container mount form
  * (`utils.ToDockerPath` — see {@link legacyToDockerPath}), computed once by
- * {@link buildLegacyStudioContainerSpec} and threaded into both the bind mount
- * and {@link buildLegacyStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`, mirroring
+ * {@link legacyBuildStudioContainerSpec} and threaded into both the bind mount
+ * and {@link legacyBuildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`, mirroring
  * Go's `run()` computing it once for both uses.
  */
 
@@ -126,7 +126,7 @@ export interface LegacyBuildStudioEnvInput {
  * so every env var mapping is unit-testable in isolation; ported test:
  * `apps/cli-go/internal/start/start_test.go:522 TestBuildStudioEnv`.
  */
-export function buildLegacyStudioEnv(input: LegacyBuildStudioEnvInput): Record<string, string> {
+export function legacyBuildStudioEnv(input: LegacyBuildStudioEnvInput): Record<string, string> {
   return {
     CURRENT_CLI_VERSION: input.cliVersion,
     STUDIO_PG_META_URL: `http://${input.pgMetaContainerName}:8080`,
@@ -176,7 +176,7 @@ export interface LegacyStudioContainerInput {
    * supplies these.
    */
   readonly functionBinds: ReadonlyArray<string>;
-  /** Every value {@link buildLegacyStudioEnv} needs, minus the path this builder derives itself. */
+  /** Every value {@link legacyBuildStudioEnv} needs, minus the path this builder derives itself. */
   readonly env: Omit<LegacyBuildStudioEnvInput, "containerSnippetsPath">;
 }
 
@@ -184,9 +184,9 @@ export interface LegacyStudioContainerInput {
  * Assembles Studio's {@link LegacyStartContainerSpec}, including the snippets
  * bind mount and its Docker-path form Go derives from `workdir` once
  * (`start.go:1150-1159`) and reuses for both the bind and
- * {@link buildLegacyStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
+ * {@link legacyBuildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
  */
-export function buildLegacyStudioContainerSpec(
+export function legacyBuildStudioContainerSpec(
   input: LegacyStudioContainerInput,
 ): LegacyStartContainerSpec {
   const hostSnippetsPath = join(input.env.workdir, "supabase", "snippets");
@@ -201,7 +201,7 @@ export function buildLegacyStudioContainerSpec(
   return {
     image: input.image,
     containerName: input.containerName,
-    env: buildLegacyStudioEnv({ ...input.env, containerSnippetsPath }),
+    env: legacyBuildStudioEnv({ ...input.env, containerSnippetsPath }),
     binds,
     healthcheck: {
       test: [

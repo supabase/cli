@@ -1688,7 +1688,7 @@ content_path = "./templates/custom_notice.html"
       "fails and rolls back on a malformed auth.email.max_frequency instead of crashing past rollback",
       () => {
         // `auth.email.max_frequency` is a plain, unvalidated string in `@supabase/config`'s
-        // schema, so a malformed Go-duration value reaches `buildLegacyGotrueEnv`'s
+        // schema, so a malformed Go-duration value reaches `legacyBuildGotrueEnv`'s
         // `legacyParseGoDuration` call unchecked. That call is a synchronous throw, not a
         // typed Effect failure — without `Effect.catchDefect` around the per-service spec
         // builder in `start.handler.ts`, this would surface as an uncaught defect that

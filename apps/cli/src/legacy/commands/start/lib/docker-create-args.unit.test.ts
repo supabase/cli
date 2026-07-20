@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  buildLegacyStartContainerCreateArgs,
+  legacyBuildStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
   legacyBuildHealthCmdArg,
   legacyIsDockerClientEnvKey,
@@ -42,9 +42,9 @@ const full: LegacyStartContainerSpec = {
   },
 };
 
-describe("buildLegacyStartContainerCreateArgs", () => {
+describe("legacyBuildStartContainerCreateArgs", () => {
   test("assembles full-option argv in the documented fixed order", () => {
-    expect(buildLegacyStartContainerCreateArgs(full)).toEqual([
+    expect(legacyBuildStartContainerCreateArgs(full)).toEqual([
       "create",
       "--name",
       "supabase_analytics_proj",
@@ -105,7 +105,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
       networkId: "supabase_network_proj",
       labels: {},
     };
-    expect(buildLegacyStartContainerCreateArgs(minimal)).toEqual([
+    expect(legacyBuildStartContainerCreateArgs(minimal)).toEqual([
       "create",
       "--name",
       "supabase_pg_meta_proj",
@@ -116,7 +116,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
   });
 
   test("never serializes env values into argv (CWE-214: secrets must not leak to ps)", () => {
-    const args = buildLegacyStartContainerCreateArgs(full);
+    const args = legacyBuildStartContainerCreateArgs(full);
     expect(args).toContain("DB_PASSWORD");
     expect(args.some((a) => a.includes("super-secret"))).toBe(false);
     // Every -e argument is a bare key: no '=' anywhere in an -e value.
@@ -133,7 +133,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
       networkId: "supabase_network_proj",
       labels: {},
     };
-    const args = buildLegacyStartContainerCreateArgs(spec);
+    const args = legacyBuildStartContainerCreateArgs(spec);
     expect(args).toContain("-e");
     const dockerHostIndex = args.indexOf("DOCKER_HOST=http://host.docker.internal:2375");
     expect(dockerHostIndex).toBeGreaterThan(-1);
@@ -167,7 +167,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
       ],
       exposedPorts: [{ containerPort: "9999" }, { containerPort: "9998", protocol: "udp" }],
     };
-    const args = buildLegacyStartContainerCreateArgs(spec);
+    const args = legacyBuildStartContainerCreateArgs(spec);
     expect(args).toEqual(
       expect.arrayContaining([
         "-p",
@@ -194,7 +194,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
       labels: {},
       tmpfs: { "/tmp/bare": "", "/tmp/opts": "rw,size=100m" },
     };
-    const args = buildLegacyStartContainerCreateArgs(spec);
+    const args = legacyBuildStartContainerCreateArgs(spec);
     expect(args).toEqual(
       expect.arrayContaining(["--tmpfs", "/tmp/bare", "--tmpfs", "/tmp/opts:rw,size=100m"]),
     );
@@ -210,7 +210,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
       labels: {},
       cmd: ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/server"],
     };
-    const args = buildLegacyStartContainerCreateArgs(spec);
+    const args = legacyBuildStartContainerCreateArgs(spec);
     expect(args).not.toContain("--entrypoint");
     const imageIdx = args.indexOf("supabase/supavisor:2.0.0");
     expect(args.slice(imageIdx)).toEqual([
@@ -230,7 +230,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
       networkId: "net",
       labels: {},
     };
-    const args = buildLegacyStartContainerCreateArgs(spec);
+    const args = legacyBuildStartContainerCreateArgs(spec);
     expect(args.some((a) => a.startsWith("--health"))).toBe(false);
   });
 
@@ -244,7 +244,7 @@ describe("buildLegacyStartContainerCreateArgs", () => {
       labels: {},
       secretFiles: [{ containerPath: "/etc/secret.yml", content: "top-secret-content" }],
     };
-    const args = buildLegacyStartContainerCreateArgs(spec);
+    const args = legacyBuildStartContainerCreateArgs(spec);
     expect(args.some((a) => a.includes("top-secret-content"))).toBe(false);
     expect(args.some((a) => a.includes("/etc/secret.yml"))).toBe(false);
     // Only the spec's own `binds` entries are ever emitted — secretFiles contributes nothing.

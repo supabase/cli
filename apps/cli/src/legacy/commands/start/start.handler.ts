@@ -163,7 +163,7 @@ import {
   type LegacyEdgeRuntimeBringUpInput,
 } from "./services/edge-runtime.service.ts";
 import {
-  buildLegacyGotrueContainerSpec,
+  legacyBuildGotrueContainerSpec,
   type LegacyBuildGotrueEnvInput,
 } from "./services/gotrue.service.ts";
 import { legacyBuildMailpitContainerSpec } from "./services/mailpit.service.ts";
@@ -175,8 +175,8 @@ import { legacyBuildPostgrestContainerSpec } from "./services/postgrest.service.
 import { legacyBuildStorageContainerSpec } from "./services/storage.service.ts";
 import { legacyBuildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
 import { legacyBuildPostgresStartContainerSpec } from "./services/postgres.service.ts";
-import { buildLegacyPgMetaContainerSpec } from "./services/pg-meta.service.ts";
-import { buildLegacyStudioContainerSpec } from "./services/studio.service.ts";
+import { legacyBuildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
+import { legacyBuildStudioContainerSpec } from "./services/studio.service.ts";
 import { legacyBuildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 
 /**
@@ -483,7 +483,7 @@ function resolveGotrueOAuthServer(
 }
 
 /**
- * Every value {@link buildLegacyGotrueContainerSpec} needs from `config`/
+ * Every value {@link legacyBuildGotrueContainerSpec} needs from `config`/
  * `values`, minus `dbHost`/`dbPassword` (which that builder derives itself
  * from `projectId`/`dbUrl`). See this module's header for the `@supabase/
  * config` schema gaps (`captcha`/`passkey`/`webauthn`/`email.smtp` presence,
@@ -1393,7 +1393,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "gotrue":
           return {
-            spec: buildLegacyGotrueContainerSpec({
+            spec: legacyBuildGotrueContainerSpec({
               image,
               projectId,
               networkId,
@@ -1482,7 +1482,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "pgMeta":
           return {
-            spec: buildLegacyPgMetaContainerSpec({
+            spec: legacyBuildPgMetaContainerSpec({
               image,
               containerName: pgMetaContainerName,
               dbHost,
@@ -1511,7 +1511,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             cliConfig.workdir,
           );
           return {
-            spec: buildLegacyStudioContainerSpec({
+            spec: legacyBuildStudioContainerSpec({
               image,
               containerName: studioContainerName,
               networkId,

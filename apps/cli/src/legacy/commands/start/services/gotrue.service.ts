@@ -10,7 +10,7 @@
  * assembles the env/container spec once the caller has already decided to
  * start it.
  *
- * {@link buildLegacyGotrueEnv} deliberately reproduces the FULL env surface
+ * {@link legacyBuildGotrueEnv} deliberately reproduces the FULL env surface
  * Go's container actually receives — not just Go's narrowly-named
  * `buildGotrueEnv()` return value, but every conditional env var the
  * surrounding "Start GoTrue" block in `run()` appends on top of it (JWT
@@ -85,7 +85,7 @@ const LEGACY_GOTRUE_DB_ROLE = "supabase_auth_admin";
 /**
  * RFC 7517 JWK fields Go's `JWK` struct round-trips
  * (`apps/cli-go/pkg/config/auth.go:88-108`), in the exact `json:"..."` field
- * declaration order — needed so {@link buildLegacyGotrueEnv}'s
+ * declaration order — needed so {@link legacyBuildGotrueEnv}'s
  * `JSON.stringify` reproduces Go's `encoding/json.Marshal` byte-for-byte
  * (both languages serialize object/struct keys in declaration order).
  * Structurally near-identical to `legacy/shared/legacy-go-jwt.ts`'s `LegacyJwk`
@@ -177,7 +177,7 @@ export interface LegacyGotrueWebauthnInput {
 /**
  * One already-presence-filtered `[auth.external.<name>]` entry — see this
  * module's header for why the caller must filter the whole map by TOML
- * presence before calling {@link buildLegacyGotrueEnv}.
+ * presence before calling {@link legacyBuildGotrueEnv}.
  */
 export interface LegacyGotrueExternalProviderInput {
   readonly enabled: boolean;
@@ -412,7 +412,7 @@ function legacyFileExt(path: string): string {
  * full rationale and the `@supabase/config` schema gaps this input type works
  * around. No Effect, no I/O — every field is a plain, already-resolved value.
  */
-export function buildLegacyGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<string, string> {
+export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<string, string> {
   const authExternalUrl =
     input.authExternalUrl !== undefined && input.authExternalUrl.length > 0
       ? input.authExternalUrl
@@ -656,7 +656,7 @@ export interface LegacyGotrueContainerSpecInput {
   readonly networkId: string;
   /** `LegacyLocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password (see {@link legacyStartInternalDbPassword}). */
   readonly dbUrl: string;
-  /** Every value {@link buildLegacyGotrueEnv} needs, minus the two this builder derives itself (`dbHost`/`dbPassword`). */
+  /** Every value {@link legacyBuildGotrueEnv} needs, minus the two this builder derives itself (`dbHost`/`dbPassword`). */
   readonly env: Omit<LegacyBuildGotrueEnvInput, "dbHost" | "dbPassword">;
 }
 
@@ -665,12 +665,12 @@ export interface LegacyGotrueContainerSpecInput {
  * (`start.go:820-850`). No `ports` (host-published) entry — GoTrue, like
  * Realtime, only ever `ExposedPorts` its port on the Docker network.
  */
-export function buildLegacyGotrueContainerSpec(
+export function legacyBuildGotrueContainerSpec(
   input: LegacyGotrueContainerSpecInput,
 ): LegacyStartContainerSpec {
   const dbHost = legacyServiceContainerName("db", input.projectId);
   const dbPassword = legacyStartInternalDbPassword(input.dbUrl);
-  const env = buildLegacyGotrueEnv({ ...input.env, dbHost, dbPassword });
+  const env = legacyBuildGotrueEnv({ ...input.env, dbHost, dbPassword });
 
   return {
     image: input.image,

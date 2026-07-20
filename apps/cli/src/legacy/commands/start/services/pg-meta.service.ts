@@ -11,9 +11,9 @@
  * `docker-create-args.ts`'s "image already resolved/pulled" contract.
  *
  * No separately-tested pure env function the way Studio has
- * (`buildLegacyStudioEnv`): pg-meta's env is 6 straight `KEY=value`
+ * (`legacyBuildStudioEnv`): pg-meta's env is 6 straight `KEY=value`
  * assignments with no derived formatting or conditional logic, so
- * {@link buildLegacyPgMetaContainerSpec} is the only exported entry point.
+ * {@link legacyBuildPgMetaContainerSpec} is the only exported entry point.
  */
 
 import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
@@ -50,7 +50,7 @@ export interface LegacyPgMetaContainerInput {
  * Assembles pg-meta's {@link LegacyStartContainerSpec}. Pure — no Effect or
  * I/O — matching `docker-create-args.ts`'s own builder shape.
  */
-export function buildLegacyPgMetaContainerSpec(
+export function legacyBuildPgMetaContainerSpec(
   input: LegacyPgMetaContainerInput,
 ): LegacyStartContainerSpec {
   return {

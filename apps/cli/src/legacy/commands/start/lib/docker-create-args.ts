@@ -12,7 +12,7 @@
  *
  * Unlike the Engine API, `docker create`'s argv has no inherent "field order"
  * — Docker parses flags independently of position. The order emitted by
- * {@link buildLegacyStartContainerCreateArgs} below is therefore this module's
+ * {@link legacyBuildStartContainerCreateArgs} below is therefore this module's
  * own fixed, deterministic convention (grouped: identity → env → volumes →
  * ports → healthcheck → restart/security → network → labels →
  * entrypoint/image/cmd), chosen for readability and stable unit-test
@@ -136,7 +136,7 @@ export interface LegacyStartContainerSpec {
   /**
    * `container.Config.Env`, reshaped from Go's `KEY=value` string slice into a
    * map. Emitted as the key-only `-e KEY` form — see the doc comment on
-   * {@link buildLegacyStartContainerCreateArgs} — so secret values (JWT
+   * {@link legacyBuildStartContainerCreateArgs} — so secret values (JWT
    * secrets, SMTP passwords, API keys — every one of these containers carries
    * at least one) never appear in this process's own argv.
    */
@@ -152,7 +152,7 @@ export interface LegacyStartContainerSpec {
    * or `Cmd` — safe in Go's Engine-API architecture (never a subprocess's own
    * argv) but not in this port's, which shells out to a real `docker create`.
    *
-   * NOT consumed here: {@link buildLegacyStartContainerCreateArgs} stays
+   * NOT consumed here: {@link legacyBuildStartContainerCreateArgs} stays
    * pure/no-I/O and never reads this field. `container-lifecycle.ts`'s
    * `legacyStartContainer` is the sole consumer — it writes each entry's
    * `content` to a HOST-side temp file (mode `0644` — world-readable, so the
@@ -403,7 +403,7 @@ export function legacyIsDockerClientEnvKey(key: string): boolean {
  * The exception is {@link legacyIsDockerClientEnvKey} keys, which are emitted
  * inline as `-e KEY=value` instead — see that function's doc comment.
  */
-export function buildLegacyStartContainerCreateArgs(
+export function legacyBuildStartContainerCreateArgs(
   spec: LegacyStartContainerSpec,
 ): ReadonlyArray<string> {
   return [

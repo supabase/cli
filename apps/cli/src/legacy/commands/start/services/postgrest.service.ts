@@ -16,7 +16,7 @@
  * (`legacyCheckHttpReady`/`LEGACY_POSTGREST_READY_PATH`, `../lib/health-check.ts`,
  * itself porting `status.go:159-229`'s "PostgREST does not support native
  * health checks" branch) — this builder correctly omits `healthcheck` so
- * `buildLegacyStartContainerCreateArgs` never emits a `--health-*` flag for
+ * `legacyBuildStartContainerCreateArgs` never emits a `--health-*` flag for
  * this container, matching `docker-create-args.ts`'s own documented
  * PostgREST exception.
  */

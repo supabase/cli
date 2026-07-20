@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { buildLegacyPgMetaContainerSpec } from "./pg-meta.service.ts";
+import { legacyBuildPgMetaContainerSpec } from "./pg-meta.service.ts";
 
-describe("buildLegacyPgMetaContainerSpec", () => {
+describe("legacyBuildPgMetaContainerSpec", () => {
   test("assembles the full container spec from resolved inputs", () => {
-    const spec = buildLegacyPgMetaContainerSpec({
+    const spec = legacyBuildPgMetaContainerSpec({
       image: "supabase/postgres-meta:v0.96.6",
       containerName: "supabase_pg_meta_proj",
       dbHost: "supabase_db_proj",
@@ -44,7 +44,7 @@ describe("buildLegacyPgMetaContainerSpec", () => {
   });
 
   test("reflects a non-default db host/port/password in env, while the healthcheck stays on the fixed container port", () => {
-    const spec = buildLegacyPgMetaContainerSpec({
+    const spec = legacyBuildPgMetaContainerSpec({
       image: "supabase/postgres-meta:v0.96.6",
       containerName: "supabase_pg_meta_proj",
       dbHost: "custom-db-host",

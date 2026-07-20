@@ -32,7 +32,7 @@ import {
 } from "../../../shared/legacy-docker-ids.ts";
 import { isUserDefinedDockerNetwork } from "../../../../shared/functions/deploy.ts";
 import {
-  buildLegacyStartContainerCreateArgs,
+  legacyBuildStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
   legacyIsDockerClientEnvKey,
   type LegacyStartContainerSpec,
@@ -424,7 +424,7 @@ function legacyDockerCreateContainer(
       // Callers must have already stripped `legacyIsDockerClientEnvKey` keys (e.g. a
       // container-facing `DOCKER_HOST`, set by Vector's spec for a tcp/npipe daemon host) from
       // `env` before calling this function — those are emitted inline as `-e KEY=value` by
-      // `buildLegacyStartContainerCreateArgs` instead, since `extendEnv: true` merges `env` INTO
+      // `legacyBuildStartContainerCreateArgs` instead, since `extendEnv: true` merges `env` INTO
       // this spawned process's own environment (per Effect's `ChildProcess` semantics,
       // prioritizing `env`'s values), and that same environment is what the `docker`/`podman`
       // CLI client itself reads `DOCKER_HOST` from to pick which daemon to talk to. Letting a
@@ -685,9 +685,9 @@ export function legacyStartContainer(
         : { ...finalSpec, binds: [...finalSpec.binds, ...secretBinds] };
 
     return yield* Effect.gen(function* () {
-      const createArgs = buildLegacyStartContainerCreateArgs(specWithSecretBinds);
+      const createArgs = legacyBuildStartContainerCreateArgs(specWithSecretBinds);
       // `legacyIsDockerClientEnvKey` keys (e.g. Vector's container-facing `DOCKER_HOST`) are
-      // already emitted inline as `-e KEY=value` by `buildLegacyStartContainerCreateArgs` above —
+      // already emitted inline as `-e KEY=value` by `legacyBuildStartContainerCreateArgs` above —
       // see `legacyDockerCreateContainer`'s doc comment for why they must not also reach the
       // spawned `docker create` process's own environment.
       const createProcessEnv = Object.fromEntries(
