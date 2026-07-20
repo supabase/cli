@@ -90,4 +90,20 @@ describe("legacyFormatGoDuration", () => {
     expect(legacyFormatGoDuration(legacyParseGoDuration("1h"))).toBe("1h0m0s");
     expect(legacyFormatGoDuration(legacyParseGoDuration("90s"))).toBe("1m30s");
   });
+
+  // A sub-second remainder must still be included when minutes/hours are
+  // present, matching Go's `Duration.String()`, which computes the
+  // fractional-seconds string from the FULL nanosecond count before peeling
+  // off minutes/hours — not just when seconds is the only component.
+  it("includes a sub-second fraction alongside minutes", () => {
+    expect(legacyFormatGoDuration(legacyParseGoDuration("1m0.5s"))).toBe("1m0.5s");
+  });
+
+  it("includes a sub-second fraction alongside hours", () => {
+    expect(legacyFormatGoDuration(legacyParseGoDuration("1h0.5s"))).toBe("1h0m0.5s");
+  });
+
+  it("includes a sub-second fraction alongside hours and minutes", () => {
+    expect(legacyFormatGoDuration(legacyParseGoDuration("1h1m0.5s"))).toBe("1h1m0.5s");
+  });
 });

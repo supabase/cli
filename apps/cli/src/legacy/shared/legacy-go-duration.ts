@@ -136,8 +136,14 @@ export function legacyFormatGoDuration(nanoseconds: number): string {
 
   const sign = neg ? "-" : "";
 
-  if (hours > 0) return `${sign}${hours}h${minutes}m${secs}s`;
-  if (minutes > 0) return `${sign}${minutes}m${secs}s`;
+  if (hours > 0 || minutes > 0) {
+    const secsStr =
+      ms > 0 || us > 0 || ns > 0
+        ? formatFraction(secs * NS_PER_SECOND + ms * NS_PER_MS + us * NS_PER_US + ns, NS_PER_SECOND)
+        : `${secs}`;
+    if (hours > 0) return `${sign}${hours}h${minutes}m${secsStr}s`;
+    return `${sign}${minutes}m${secsStr}s`;
+  }
   if (secs > 0) {
     if (ms > 0 || us > 0 || ns > 0) {
       const totalNs = secs * NS_PER_SECOND + ms * NS_PER_MS + us * NS_PER_US + ns;
