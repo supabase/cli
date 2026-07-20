@@ -1531,6 +1531,34 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+
+    it.live(
+      "logs 'Skipped serving Function' for a disabled function via Studio's bind mounts, even with Edge Runtime excluded",
+      () => {
+        // `resolveFunctionBindMounts` backs Studio's function bind mounts
+        // unconditionally of Edge Runtime being enabled (see
+        // `start.handler.ts`'s "studio" case doc comment) — Go's
+        // `PopulatePerFunctionConfigs` still logs the skip line via that path
+        // alone here, since Edge Runtime itself never runs to log it too.
+        const workdir = tempRoot.current;
+        mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", "functions", "foo", "index.ts"), "export {};\n");
+        const { layer, out } = setup({
+          configContents: 'project_id = "demo"\n[functions.foo]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(out.stderrText).toContain("Skipped serving Function: foo");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              rmSync(join(workdir, "supabase", "functions"), { recursive: true, force: true });
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("image pull", () => {

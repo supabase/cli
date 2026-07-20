@@ -1281,11 +1281,15 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
  * enabled function under `supabase/functions/**` — Go's
  * `serve.PopulatePerFunctionConfigs` (`internal/functions/serve/serve.go:
  * 277-318`), called both from Edge Runtime bring-up below (as part of its
- * own loop, which additionally serializes `functionsConfig` and logs skipped
- * functions — that logging is specific to actually *serving* a function, so
- * it stays there) and, standalone, from `start`'s Studio container spec
+ * own loop) and, standalone, from `start`'s Studio container spec
  * (`internal/start/start.go:1149-1159`), which needs only the bind mounts,
  * unconditionally of whether Edge Runtime itself is enabled or excluded.
+ * `PopulatePerFunctionConfigs` logs `Skipped serving Function: <slug>`
+ * unconditionally for every disabled function, regardless of which of its
+ * two callers invoked it — so this shared helper reproduces that logging
+ * too. Note this means Go (and this port) genuinely double-prints the
+ * message when both Edge Runtime and Studio are enabled, since both call
+ * sites fire; don't dedupe it, that would itself diverge from Go.
  */
 export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBindMounts")(
   function* (
@@ -1300,6 +1304,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     noVerifyJwtOverride: Option.Option<boolean>,
     flagCwd: string,
   ) {
+    const output = yield* Output;
     const functionConfigs = yield* resolveServeFunctionConfigs(
       projectRoot,
       supabaseDir,
@@ -1313,7 +1318,10 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     const binds = new Set<string>();
 
     for (const fnConfig of functionConfigs) {
-      if (!fnConfig.enabled) continue;
+      if (!fnConfig.enabled) {
+        yield* output.raw(`Skipped serving Function: ${fnConfig.slug}\n`, "stderr");
+        continue;
+      }
 
       const bindWarnings: string[] = [];
       for (const bind of yield* Effect.promise(() =>
