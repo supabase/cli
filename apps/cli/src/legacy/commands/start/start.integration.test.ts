@@ -2203,6 +2203,33 @@ content_path = "./templates/custom_notice.html"
     });
   });
 
+  describe("SUPABASE_LOCAL_SMTP_SMTP_PORT override", () => {
+    it.live(
+      "fails with a typed config error, before any container is created, on an invalid SUPABASE_LOCAL_SMTP_SMTP_PORT",
+      () => {
+        const previous = process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"];
+        process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"] = "not-a-port";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"];
+              else process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+  });
+
   describe("SUPABASE_AUTH_SMS_<PROVIDER>_* overrides", () => {
     it.live(
       "honors env overrides enabling Twilio SMS even when config.toml has it disabled",
@@ -2569,6 +2596,31 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+
+    it.live(
+      "fails with a typed config error, before any container is created, on an invalid SUPABASE_REALTIME_IP_VERSION",
+      () => {
+        const previous = process.env["SUPABASE_REALTIME_IP_VERSION"];
+        process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv5";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_REALTIME_IP_VERSION"];
+              else process.env["SUPABASE_REALTIME_IP_VERSION"] = previous;
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("Studio API URL normalization", () => {
@@ -2811,6 +2863,31 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+
+    it.live(
+      "fails with a typed config error, before any container is created, on an invalid SUPABASE_API_ENABLED",
+      () => {
+        const previous = process.env["SUPABASE_API_ENABLED"];
+        process.env["SUPABASE_API_ENABLED"] = "not-a-bool";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_API_ENABLED"];
+              else process.env["SUPABASE_API_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("SUPABASE_AUTH_JWT_EXPIRY reaches Postgres init", () => {
@@ -2983,6 +3060,31 @@ content_path = "./templates/custom_notice.html"
         ),
       );
     });
+
+    it.live(
+      "fails with a typed config error, before any container is created, on an invalid SUPABASE_API_MAX_ROWS",
+      () => {
+        const previous = process.env["SUPABASE_API_MAX_ROWS"];
+        process.env["SUPABASE_API_MAX_ROWS"] = "not-a-number";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_API_MAX_ROWS"];
+              else process.env["SUPABASE_API_MAX_ROWS"] = previous;
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("SUPABASE_DB_POOLER_* env overrides reach Supavisor", () => {

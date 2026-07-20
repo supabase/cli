@@ -209,6 +209,26 @@ function isContainerNotFoundMessage(message: string): boolean {
 }
 
 /**
+ * Wraps a synchronous `envOverride*`/`legacyEnvOverride*` config-override read that throws on a
+ * malformed value into a typed `LegacyStartInvalidConfigError` failure, matching Go's
+ * `Config.Load` hard-failing on a bad Viper decode (`pkg/config/config.go:749-756`) before any
+ * Docker work runs — instead of leaking an untyped Effect defect that bypasses this pipeline's
+ * rollback `tapError` and `withJsonErrorHandling`'s `Effect.catch`.
+ */
+function wrapConfigOverride<T>(
+  dottedFieldPath: string,
+  thunk: () => T,
+): Effect.Effect<T, LegacyStartInvalidConfigError> {
+  return Effect.try({
+    try: thunk,
+    catch: (cause) =>
+      new LegacyStartInvalidConfigError({
+        message: `invalid config for ${dottedFieldPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+  });
+}
+
+/**
  * Go's `Db.HealthTimeout` (`internal/db/start/start.go:180`) — a duration
  * STRING (`"2m"` default, `packages/config/src/db.ts`), unlike every other
  * `start` health wait, which uses the fixed 30s `serviceTimeout` global
@@ -1055,11 +1075,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `apiEnabled` `legacyResolveStartGates` (`start.gates.ts:87-92`) computes for its own
     // `gates.postgrest` — that one is additionally ANDed with `--exclude postgrest`, which has no
     // equivalent in Go's `Validate()` — so this is resolved separately here.
-    const apiEnabled = legacyEnvOverrideBool(
-      "SUPABASE_API_ENABLED",
-      config.api.enabled,
-      "api.enabled",
-      projectEnvValues,
+    const apiEnabled = yield* wrapConfigOverride("api.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_API_ENABLED",
+        config.api.enabled,
+        "api.enabled",
+        projectEnvValues,
+      ),
     );
     // Hoisted out of the "kong" case below (it used to be computed only
     // there): the post-bring-up health-probe CA-trust lookup near the end of
@@ -1070,11 +1092,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // and `status.NewKongClient`'s trust pool + its health probe's target URL
     // both read that same already-overridden global (`internal/status/
     // status.go:181-229`).
-    const apiTlsEnabled = legacyEnvOverrideBool(
-      "SUPABASE_API_TLS_ENABLED",
-      config.api.tls.enabled,
-      "api.tls.enabled",
-      projectEnvValues,
+    const apiTlsEnabled = yield* wrapConfigOverride("api.tls.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_API_TLS_ENABLED",
+        config.api.tls.enabled,
+        "api.tls.enabled",
+        projectEnvValues,
+      ),
     );
     // Same generic-Viper-override gap as `apiTlsEnabled` above, for the two
     // custom cert/key path fields — Go's `Config.Load` applies
@@ -1100,13 +1124,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // already-overridden values, matching Go's single `utils.Config.Realtime`
     // source of truth (`internal/start/start.go:922,928`,
     // `internal/db/start/start.go:283,290`).
-    const realtimeIpVersion = legacyEnvOverrideRealtimeIpVersion(
-      config.realtime.ip_version,
-      projectEnvValues,
+    const realtimeIpVersion = yield* wrapConfigOverride("realtime.ip_version", () =>
+      legacyEnvOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues),
     );
-    const realtimeMaxHeaderLength = legacyEnvOverrideRealtimeMaxHeaderLength(
-      config.realtime.max_header_length,
-      projectEnvValues,
+    const realtimeMaxHeaderLength = yield* wrapConfigOverride("realtime.max_header_length", () =>
+      legacyEnvOverrideRealtimeMaxHeaderLength(config.realtime.max_header_length, projectEnvValues),
     );
 
     // Same gap for Storage's file-size limit — both the long-running
@@ -1126,11 +1148,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // splice further down must see the same already-overridden value (Go's
     // `internal/seed/buckets/buckets.go:54` reads the single
     // `utils.Config.Storage.VectorBuckets.Enabled`).
-    const storageVectorEnabled = legacyEnvOverrideBool(
-      "SUPABASE_STORAGE_VECTOR_ENABLED",
-      config.storage.vector.enabled,
-      "storage.vector.enabled",
-      projectEnvValues,
+    const storageVectorEnabled = yield* wrapConfigOverride("storage.vector.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_STORAGE_VECTOR_ENABLED",
+        config.storage.vector.enabled,
+        "storage.vector.enabled",
+        projectEnvValues,
+      ),
     );
 
     // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` — both
@@ -1152,7 +1176,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       apiExtraSearchPathOverride !== undefined
         ? apiExtraSearchPathOverride.split(",")
         : config.api.extra_search_path;
-    const apiMaxRows = legacyEnvOverrideApiMaxRows(config.api.max_rows, projectEnvValues);
+    const apiMaxRows = yield* wrapConfigOverride("api.max_rows", () =>
+      legacyEnvOverrideApiMaxRows(config.api.max_rows, projectEnvValues),
+    );
 
     // Same gap for Mailpit's three ports — Go's Config.Load applies
     // SUPABASE_LOCAL_SMTP_PORT/_SMTP_PORT/_POP3_PORT generically
@@ -1161,34 +1187,42 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // port bindings. `smtp_port`/`pop3_port` have no TOML default (Go's
     // zero-value uint16), matching mailpit.service.ts's own `!== 0` publish
     // guard, so `?? 0` here preserves that "unconfigured" signal.
-    const mailpitPort = envOverridePort(
-      "SUPABASE_LOCAL_SMTP_PORT",
-      config.local_smtp.port,
-      "local_smtp.port",
-      projectEnvValues,
+    const mailpitPort = yield* wrapConfigOverride("local_smtp.port", () =>
+      envOverridePort(
+        "SUPABASE_LOCAL_SMTP_PORT",
+        config.local_smtp.port,
+        "local_smtp.port",
+        projectEnvValues,
+      ),
     );
-    const mailpitSmtpPort = envOverridePort(
-      "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-      config.local_smtp.smtp_port ?? 0,
-      "local_smtp.smtp_port",
-      projectEnvValues,
+    const mailpitSmtpPort = yield* wrapConfigOverride("local_smtp.smtp_port", () =>
+      envOverridePort(
+        "SUPABASE_LOCAL_SMTP_SMTP_PORT",
+        config.local_smtp.smtp_port ?? 0,
+        "local_smtp.smtp_port",
+        projectEnvValues,
+      ),
     );
-    const mailpitPop3Port = envOverridePort(
-      "SUPABASE_LOCAL_SMTP_POP3_PORT",
-      config.local_smtp.pop3_port ?? 0,
-      "local_smtp.pop3_port",
-      projectEnvValues,
+    const mailpitPop3Port = yield* wrapConfigOverride("local_smtp.pop3_port", () =>
+      envOverridePort(
+        "SUPABASE_LOCAL_SMTP_POP3_PORT",
+        config.local_smtp.pop3_port ?? 0,
+        "local_smtp.pop3_port",
+        projectEnvValues,
+      ),
     );
 
     // Same gap for Logflare's port — Go's Config.Load applies
     // SUPABASE_ANALYTICS_PORT generically (pkg/config/config.go:582-586)
     // before start.go:378 reads utils.Config.Analytics.Port to build
     // Logflare's HostPort.
-    const analyticsPort = envOverridePort(
-      "SUPABASE_ANALYTICS_PORT",
-      config.analytics.port,
-      "analytics.port",
-      projectEnvValues,
+    const analyticsPort = yield* wrapConfigOverride("analytics.port", () =>
+      envOverridePort(
+        "SUPABASE_ANALYTICS_PORT",
+        config.analytics.port,
+        "analytics.port",
+        projectEnvValues,
+      ),
     );
 
     // Same gap for Supavisor's pooler fields — Go's Config.Load applies
@@ -1196,48 +1230,30 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // start.go:1194-1211 reads utils.Config.Db.Pooler.{Port,PoolMode,
     // DefaultPoolSize,MaxClientConn}; PoolMode specifically decides the
     // published host port (5432 session vs 6543 transaction). All four throw
-    // synchronously on a malformed override — wrapped in `Effect.try` so a bad
+    // synchronously on a malformed override — wrapped via `wrapConfigOverride` so a bad
     // value fails as a typed `LegacyStartInvalidConfigError` (matching Go's
     // `Config.Load` rejecting it before any Docker work) instead of an
     // untyped Effect defect bypassing the rollback `tapError` and
     // `withJsonErrorHandling`'s `Effect.catch` — same bug class already fixed
     // for `dbHealthTimeoutSeconds`/`db.settings`/the Edge Runtime
     // `policy`/`inspector_port` overrides elsewhere in this function.
-    const poolerPort = yield* Effect.try({
-      try: () =>
-        envOverridePort(
-          "SUPABASE_DB_POOLER_PORT",
-          config.db.pooler.port,
-          "db.pooler.port",
-          projectEnvValues,
-        ),
-      catch: (cause) =>
-        new LegacyStartInvalidConfigError({
-          message: `invalid config for db.pooler.port: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
-    const poolMode = yield* Effect.try({
-      try: () => legacyEnvOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues),
-      catch: (cause) =>
-        new LegacyStartInvalidConfigError({
-          message: `invalid config for db.pooler.pool_mode: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
-    const poolerDefaultPoolSize = yield* Effect.try({
-      try: () =>
-        legacyEnvOverrideDefaultPoolSize(config.db.pooler.default_pool_size, projectEnvValues),
-      catch: (cause) =>
-        new LegacyStartInvalidConfigError({
-          message: `invalid config for db.pooler.default_pool_size: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
-    const poolerMaxClientConn = yield* Effect.try({
-      try: () => legacyEnvOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
-      catch: (cause) =>
-        new LegacyStartInvalidConfigError({
-          message: `invalid config for db.pooler.max_client_conn: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
+    const poolerPort = yield* wrapConfigOverride("db.pooler.port", () =>
+      envOverridePort(
+        "SUPABASE_DB_POOLER_PORT",
+        config.db.pooler.port,
+        "db.pooler.port",
+        projectEnvValues,
+      ),
+    );
+    const poolMode = yield* wrapConfigOverride("db.pooler.pool_mode", () =>
+      legacyEnvOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues),
+    );
+    const poolerDefaultPoolSize = yield* wrapConfigOverride("db.pooler.default_pool_size", () =>
+      legacyEnvOverrideDefaultPoolSize(config.db.pooler.default_pool_size, projectEnvValues),
+    );
+    const poolerMaxClientConn = yield* wrapConfigOverride("db.pooler.max_client_conn", () =>
+      legacyEnvOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
+    );
 
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
