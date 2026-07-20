@@ -2094,7 +2094,7 @@ content_path = "./templates/custom_notice.html"
               s.args[1] === "inspect" &&
               (s.args[2] ?? "").includes("storage"),
           );
-          expect(storageImageInspect?.args[2]).toMatch(/:v1\.2\.3$/);
+          expect(storageImageInspect?.args[2]).toMatch(/:1\.2\.3$/);
         }).pipe(Effect.provide(layer));
       },
     );

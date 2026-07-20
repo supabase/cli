@@ -3,7 +3,6 @@ import type { ProjectConfig } from "@supabase/config";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import {
   replaceImageTag,
-  tagForServiceVersion,
   type LocalServiceVersionName,
   type LocalServiceVersionOverrides,
 } from "../../../shared/services/services.shared.ts";
@@ -242,9 +241,7 @@ export function legacyResolvePinnedImage(
 ): string {
   const baseImage = dockerfileServiceImage(alias);
   const pinnedVersion = serviceVersions[localServiceName];
-  return pinnedVersion === undefined
-    ? baseImage
-    : replaceImageTag(baseImage, tagForServiceVersion(localServiceName, pinnedVersion));
+  return pinnedVersion === undefined ? baseImage : replaceImageTag(baseImage, pinnedVersion);
 }
 
 export interface LegacyStartImagePlanEntry {
