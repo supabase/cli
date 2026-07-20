@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -7,6 +8,7 @@ import { Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { vi } from "vitest";
 
 import {
   mockAnalytics,
@@ -44,6 +46,36 @@ import {
   LEGACY_KONG_LOCAL_TLS_CERT,
   LEGACY_KONG_LOCAL_TLS_KEY,
 } from "./templates/kong-local-tls.ts";
+
+/**
+ * Counts real invocations of `legacyResolveLocalConfigValues` across this
+ * whole file — every test transparently delegates to the real
+ * implementation, so this is purely an observation point. It exists for the
+ * "resolved once, reused everywhere" regression test below (CLI-1323's
+ * status-print/bring-up JWT divergence): `start`'s success-path status print
+ * must reuse the SAME resolved `values` bring-up already used to build every
+ * container spec, not call this a second time — a second call re-signs
+ * `auth.signing_keys_path` JWTs with a different `exp` claim
+ * ({@link legacyGenerateAsymmetricGoJwt}), producing a byte-different
+ * anon/service-role key than the one already baked into the running
+ * containers.
+ */
+const legacyResolveLocalConfigValuesCalls = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock("../../shared/legacy-local-config-values.ts", async () => {
+  const actual = await vi.importActual<typeof import("../../shared/legacy-local-config-values.ts")>(
+    "../../shared/legacy-local-config-values.ts",
+  );
+  return {
+    ...actual,
+    legacyResolveLocalConfigValues: (
+      ...args: Parameters<typeof actual.legacyResolveLocalConfigValues>
+    ) => {
+      legacyResolveLocalConfigValuesCalls.count++;
+      return actual.legacyResolveLocalConfigValues(...args);
+    },
+  };
+});
 
 const tempRoot = useLegacyTempWorkdir("supabase-start-int-");
 
@@ -822,6 +854,38 @@ describe("legacy start integration", () => {
         expect(stackStartedEvents).toEqual([{ event: "cli_stack_started", properties: {} }]);
       }).pipe(Effect.provide(layer));
     });
+
+    it.live(
+      "reuses the bring-up-resolved local config values for the final status print instead of re-deriving them",
+      () => {
+        // Regression test for the CLI-1323 status-print/bring-up divergence:
+        // `legacyResolveLocalConfigValues` embeds a fresh `exp` claim
+        // (`Date.now()`-derived) into the anon/service-role key every time it
+        // asymmetrically signs them via `auth.signing_keys_path`
+        // (`legacyGenerateAsymmetricGoJwt`, `legacy-go-jwt.ts:212`). A second,
+        // independent resolution for the final status print — rather than
+        // reusing the SAME `values` already used to build every container
+        // spec — would mint a byte-different key than the one baked into the
+        // already-running containers. Asserting a single resolution call is
+        // both the most direct way to pin this invariant and immune to the
+        // test itself racing real wall-clock time (unlike comparing two
+        // independently-generated JWTs, which could coincidentally still
+        // match if both calls land within the same clock second).
+        const { layer, workdir } = setup({
+          format: "json",
+          configContents: 'project_id = "demo"\n[auth]\nsigning_keys_path = "signing_keys.json"\n',
+        });
+        const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+        const jwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "test-kid" };
+        writeFileSync(join(workdir, "supabase", "signing_keys.json"), JSON.stringify([jwk]));
+        legacyResolveLocalConfigValuesCalls.count = 0;
+
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          expect(legacyResolveLocalConfigValuesCalls.count).toBe(1);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("config-driven container-spec branches", () => {

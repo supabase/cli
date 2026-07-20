@@ -718,7 +718,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // success path at the end (Go's direct `status.PrettyPrint`/`toValues`
     // call, no re-health-check — see each call site's own comment for why
     // they differ).
-    const buildStatusValues = Effect.fnUntraced(function* (excluded: ReadonlyArray<string>) {
+    //
+    // `precomputedLocal` is only ever passed by the success-path call: Go's
+    // already-running branch delegates to `status.Run`, which calls
+    // `flags.LoadConfig` (and therefore re-derives keys) a SECOND time in that
+    // same process (`start.go:51` then `status.go:101`), so recomputing here
+    // matches Go exactly. The success path, by contrast, never calls
+    // `LoadConfig` again after bring-up — it prints straight from the
+    // already-populated config (`start.go:85`) — so it must reuse the SAME
+    // `values` that were already used to build every container spec, instead
+    // of re-deriving (and, for asymmetric JWTs, re-signing with a new `exp`) a
+    // second time. See {@link legacyResolveStatusLocalState}'s
+    // `precomputedLocal` param doc for why a second derivation is unsafe.
+    const buildStatusValues = Effect.fnUntraced(function* (
+      excluded: ReadonlyArray<string>,
+      precomputedLocal?: LegacyLocalConfigValues,
+    ) {
       const localState = yield* Effect.try({
         try: () =>
           legacyResolveStatusLocalState(
@@ -727,6 +742,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             cliConfig.workdir,
             context.projectEnvValues,
             context.loaded?.document,
+            precomputedLocal,
           ),
         catch: (cause) =>
           new LegacyStatusInvalidConfigError({
@@ -2213,12 +2229,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // Called DIRECTLY, unlike the already-running branch's `status.Run`: no
       // re-health-check, no "stopped services" diffing, just the raw
       // `--exclude` values against the config/values already resolved (and
-      // just health-checked) above.
-      const { values: statusValues, names } = yield* buildStatusValues(statusExcluded);
+      // just health-checked) above. `values` is passed through as
+      // `precomputedLocal` so this reuses the exact keys already baked into
+      // the containers `bringUp` just created, instead of re-deriving them.
+      const { values: statusValues, names } = yield* buildStatusValues(statusExcluded, values);
       yield* output.raw(legacyRenderStatusPretty(statusValues, names));
       yield* output.raw(legacyStartSecurityNotice(), "stderr");
     } else {
-      const { values: statusValues } = yield* buildStatusValues(statusExcluded);
+      const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
       yield* output.success("", statusValues);
     }
   }).pipe(Effect.ensuring(telemetryState.flush));
