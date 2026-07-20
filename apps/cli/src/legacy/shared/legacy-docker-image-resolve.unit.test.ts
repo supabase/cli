@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Sink, Stream } from "effect";
+import type * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -11,6 +12,7 @@ function mockSpawner(
   pullResults: ReadonlyArray<{ readonly exitCode: number; readonly stderr?: string }>,
 ) {
   const pulls: Array<string> = [];
+  const imageInspectOptions: Array<ChildProcess.CommandOptions> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
@@ -19,6 +21,7 @@ function mockSpawner(
       if (args[0] === "image" && args[1] === "inspect") {
         // Force every candidate through the pull path instead of the
         // already-cached shortcut.
+        if (command._tag === "StandardCommand") imageInspectOptions.push(command.options);
         const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
         yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(1));
         return ChildProcessSpawner.makeHandle({
@@ -64,6 +67,9 @@ function mockSpawner(
     get pulls() {
       return pulls;
     },
+    get imageInspectOptions() {
+      return imageInspectOptions;
+    },
   };
 }
 
@@ -106,6 +112,14 @@ describe("legacyMakeDockerImageResolver", () => {
           expect(mock.pulls).toHaveLength(3);
           expect(error.message).toContain("no space left on device");
           expect(error.message).toContain("attempt 3");
+          // `image inspect`'s stdio must be fully ignored: nothing here reads
+          // it, and the default `"pipe"` stdio risks a write-buffer deadlock
+          // on a cache hit (see the doc comment in
+          // `legacy-docker-image-resolve.ts`).
+          expect(mock.imageInspectOptions.length).toBeGreaterThan(0);
+          for (const options of mock.imageInspectOptions) {
+            expect(options).toMatchObject({ stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+          }
         } finally {
           globalThis.process.stderr.write = originalWrite;
           if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];

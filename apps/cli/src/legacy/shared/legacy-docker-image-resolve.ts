@@ -55,7 +55,16 @@ export function legacyMakeDockerImageResolver(
   projectEnvValues?: Readonly<Record<string, string>>,
 ): (image: string) => Effect.Effect<string, LegacyDockerRunError> {
   const hasLocalImage = (image: string): Effect.Effect<boolean> =>
-    containerCliExitCode(spawner, ["image", "inspect", image]).pipe(
+    // `stdin`/`stdout`/`stderr: "ignore"`: this only awaits the exit code, but
+    // `docker image inspect` writes the full image JSON to stdout on a cache
+    // hit, which can exceed the OS pipe buffer and deadlock the child against
+    // an unread default `"pipe"` stdio — see `legacy-docker-remove-all.ts`'s
+    // fuller explanation of this same hazard.
+    containerCliExitCode(spawner, ["image", "inspect", image], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).pipe(
       Effect.map((exitCode) => exitCode === 0),
       Effect.catch(() => Effect.succeed(false)),
     );
