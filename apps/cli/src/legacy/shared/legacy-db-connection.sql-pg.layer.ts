@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
-import { Duration, Effect, Layer, type Scope } from "effect";
+import { Duration, Effect, Exit, Layer, Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 // `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly only
@@ -443,6 +443,69 @@ export function legacyInstallPoolErrorSwallow(pool: LegacyPoolErrorSource): void
   pool.on("error", () => {});
 }
 
+// Minimal structural view of the `pg.Pool` surface `legacyAcquireProbedPool`
+// drives — a real `pg.Pool` satisfies it (its `on`/`query`/`end` signatures are
+// wider), and a tiny fake can stand in at the driver boundary for unit tests.
+interface LegacyProbePool extends LegacyPoolErrorSource {
+  readonly query: (sql: string) => Promise<unknown>;
+  readonly end: () => Promise<void>;
+}
+
+/**
+ * Acquire a `pg` pool and probe it with `SELECT 1`, guaranteeing the pool is
+ * `.end()`ed on EVERY non-success path — a probe rejection, a
+ * `connectTimeoutSeconds` timeout, or an interruption.
+ *
+ * The pool.end() finalizer is registered the MOMENT the pool is constructed, via
+ * `Effect.acquireRelease` with a synchronous (never-failing) resource step, BEFORE
+ * the probe runs. So even if the probe rejects or the outer timeout fires (a
+ * black-holed host), the finalizer is already installed and closes the pool along
+ * with its in-flight dial (sockets/timers) when the scope unwinds. Upstream
+ * `@effect/sql-pg`'s `PgClient.make` instead probes INSIDE the acquireRelease
+ * acquire, so a failed/timed-out probe never installs the finalizer and leaks the
+ * pool — we deliberately diverge to fix that leak while keeping the SqlError /
+ * ConnectionError shapes identical.
+ *
+ * The probe pool is generic so tests can inject a lightweight fake at the driver
+ * boundary; a real `pg.Pool` is returned unchanged for `PgClient.fromPool`.
+ */
+export const legacyAcquireProbedPool = <P extends LegacyProbePool>(
+  makePool: () => P,
+  connectTimeoutSeconds: number,
+): Effect.Effect<P, SqlError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const pool = yield* Effect.acquireRelease(Effect.sync(makePool), (pool) =>
+      Effect.promise(() => pool.end()).pipe(Effect.timeoutOption(1000)),
+    );
+    legacyInstallPoolErrorSwallow(pool);
+    yield* Effect.tryPromise({
+      try: () => pool.query("SELECT 1"),
+      catch: (cause) =>
+        new SqlError({
+          reason: new ConnectionError({
+            cause,
+            message: "PgClient: Failed to connect",
+            operation: "connect",
+          }),
+        }),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(connectTimeoutSeconds),
+        orElse: () =>
+          Effect.fail(
+            new SqlError({
+              reason: new ConnectionError({
+                cause: new Error("Connection timed out"),
+                message: "PgClient: Connection timed out",
+                operation: "connect",
+              }),
+            }),
+          ),
+      }),
+    );
+    return pool;
+  });
+
 /**
  * Default `LegacyDbConnection` layer, backed by `@effect/sql-pg` (pure-JS `pg`
  * driver, no native addon — bundles under `bun build --compile`). Each
@@ -490,57 +553,30 @@ const connect = (
     // behaviors `PgClient.make` does not expose: `idleTimeoutMillis: 0` (never reap
     // the single pooled connection — see `legacyBuildPoolConfig`; the fix for the
     // `db pull` step-down loss) and the per-connection role step-down `verify` hook
-    // (see `legacyPoolStepDownVerify`). The `acquire` mirrors `PgClient.make`'s:
-    // probe with `SELECT 1`, close the pool on scope exit, and bound the whole
-    // connect by `connectTimeoutSeconds`.
+    // (see `legacyPoolStepDownVerify`). The `acquire` uses `legacyAcquireProbedPool`:
+    // probe with `SELECT 1`, bound the connect by `connectTimeoutSeconds`, and close
+    // the pool on scope exit AND on every failure/timeout (the leak `PgClient.make`
+    // has). `probe` (below) runs each attempt in a forked scope so a failed fallback
+    // attempt's pool closes immediately, before the next host is dialed.
     const makeClient = (
       dialHost: string,
       port: number,
       sslOption: boolean | ConnectionOptions | undefined,
     ) => {
-      const acquire = Effect.gen(function* () {
-        const pool = new Pg.Pool(
-          legacyBuildPoolConfig(
-            cfg,
-            dialHost,
-            port,
-            sslOption,
-            connectTimeoutSeconds,
-            stepDownRequired,
+      const acquire = legacyAcquireProbedPool(
+        () =>
+          new Pg.Pool(
+            legacyBuildPoolConfig(
+              cfg,
+              dialHost,
+              port,
+              sslOption,
+              connectTimeoutSeconds,
+              stepDownRequired,
+            ),
           ),
-        );
-        legacyInstallPoolErrorSwallow(pool);
-        yield* Effect.acquireRelease(
-          Effect.tryPromise({
-            try: () => pool.query("SELECT 1"),
-            catch: (cause) =>
-              new SqlError({
-                reason: new ConnectionError({
-                  cause,
-                  message: "PgClient: Failed to connect",
-                  operation: "connect",
-                }),
-              }),
-          }),
-          () => Effect.promise(() => pool.end()).pipe(Effect.timeoutOption(1000)),
-          { interruptible: true },
-        ).pipe(
-          Effect.timeoutOrElse({
-            duration: Duration.seconds(connectTimeoutSeconds),
-            orElse: () =>
-              Effect.fail(
-                new SqlError({
-                  reason: new ConnectionError({
-                    cause: new Error("Connection timed out"),
-                    message: "PgClient: Connection timed out",
-                    operation: "connect",
-                  }),
-                }),
-              ),
-          }),
-        );
-        return pool;
-      });
+        connectTimeoutSeconds,
+      );
       return PgClient.fromPool({ acquire }).pipe(Effect.provide(Reactivity.layer));
     };
 
@@ -636,10 +672,26 @@ const connect = (
     // follow-up query. The winning attempt's `rawConfig` is carried out so `copyToCsv`
     // can reuse the exact dial target the primary connection succeeded against.
     const probe = (attempt: (typeof attempts)[number]) =>
-      attempt.client.pipe(
-        Effect.tap((candidate) => candidate`select 1`),
-        Effect.map((candidate) => ({ candidate, rawConfig: attempt.rawConfig })),
-      );
+      Effect.gen(function* () {
+        // Run each attempt's pool in its OWN scope, forked from the session scope.
+        // Forking (not a detached `Scope.make`) means an abandoned winner — e.g. a
+        // later step-down failure — is still closed when the session scope unwinds.
+        // On a probe FAILURE we close the child immediately, so a failed fallback
+        // attempt's pool (and its in-flight dial) is released before the next host is
+        // dialed, not left open until session end. On SUCCESS we leave the child open
+        // (a child of the session scope), so the winning pool lives for the whole
+        // session and closes with it.
+        const sessionScope = yield* Scope.Scope;
+        const attemptScope = yield* Scope.fork(sessionScope);
+        return yield* attempt.client.pipe(
+          Effect.tap((candidate) => candidate`select 1`),
+          Effect.map((candidate) => ({ candidate, rawConfig: attempt.rawConfig })),
+          Scope.provide(attemptScope),
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, exit),
+          ),
+        );
+      });
     const lastIndex = attempts.length - 1;
     const { candidate: client, rawConfig: winningRawConfig } = yield* attempts
       .slice(0, lastIndex)

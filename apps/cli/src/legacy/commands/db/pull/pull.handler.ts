@@ -787,7 +787,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         if (output.format !== "text") {
           yield* output.success("Schema pulled.", {
             declarative: false,
+            // `schemaWritten` keeps the first written path for released consumers that
+            // read the string field; `schemaFiles` lists EVERY written migration path
+            // in write order (a pg-delta plan writes one file per unit), so machine
+            // callers see all of them, not just the first.
             schemaWritten: writtenMigrations[0]?.path ?? migrationPath,
+            schemaFiles: writtenMigrations.map((written) => written.path),
             remoteHistoryUpdated,
             engine: usePgDeltaDiff ? "pg-delta" : "migra",
           });

@@ -1,7 +1,9 @@
 import { EventEmitter } from "node:events";
+import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
+  legacyAcquireProbedPool,
   legacyBuildConnectionUrl,
   legacyBuildPoolConfig,
   legacyBuildRawPgConfig,
@@ -395,6 +397,63 @@ describe("legacyInstallPoolErrorSwallow", () => {
     legacyInstallPoolErrorSwallow(pool);
     expect(pool.listenerCount("error")).toBe(1);
     expect(() => pool.emit("error", new Error("idle client boom"))).not.toThrow();
+  });
+});
+
+describe("legacyAcquireProbedPool", () => {
+  // Tiny fake at the driver boundary: records query/end calls. Standing in for a
+  // real `pg.Pool` proves the pool is always `.end()`ed — the leak this fixes.
+  function makeFakePool(query: () => Promise<unknown>) {
+    const calls = { query: 0, end: 0 };
+    const pool = {
+      query: (_sql: string) => {
+        calls.query += 1;
+        return query();
+      },
+      end: () => {
+        calls.end += 1;
+        return Promise.resolve();
+      },
+      on: (_event: "error", _listener: (error: Error) => void) => undefined,
+    };
+    return { pool, calls };
+  }
+
+  it("ends the pool when the connect probe rejects", async () => {
+    const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
+    const exit = await Effect.runPromiseExit(
+      legacyAcquireProbedPool(() => fake.pool, 2).pipe(Effect.scoped),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(fake.calls.query).toBe(1);
+    // The finalizer, installed the moment the pool exists, closes it on failure.
+    expect(fake.calls.end).toBe(1);
+  });
+
+  it("ends the pool when the connect probe times out (black-holed host)", async () => {
+    // A never-resolving probe models a black-holed host: `timeoutOrElse` fires and
+    // the already-installed finalizer still closes the pool + its in-flight dial.
+    const fake = makeFakePool(() => new Promise<unknown>(() => {}));
+    const exit = await Effect.runPromiseExit(
+      legacyAcquireProbedPool(() => fake.pool, 0.05).pipe(Effect.scoped),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(fake.calls.end).toBe(1);
+  });
+
+  it("keeps the pool open until the scope closes on a successful probe", async () => {
+    const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const pool = yield* legacyAcquireProbedPool(() => fake.pool, 2);
+        // While the scope is open the pool is live and not yet ended.
+        return { isSamePool: pool === fake.pool, endWhileOpen: fake.calls.end };
+      }).pipe(Effect.scoped),
+    );
+    expect(observed.isSamePool).toBe(true);
+    expect(observed.endWhileOpen).toBe(0);
+    // Closing the scope ends the pool exactly once.
+    expect(fake.calls.end).toBe(1);
   });
 });
 

@@ -391,6 +391,42 @@ describe("legacy db pull", () => {
     },
   );
 
+  it.effect(
+    "a multi-unit pg-delta pull reports every written migration path in the json payload",
+    () => {
+      // The structured payload must list ALL written migration files in write order,
+      // not just the first (`schemaWritten`). A pg-delta plan writes one file per unit.
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        format: "json",
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "-- unit 1\n\nalter type mood add value 'ok';" },
+          { name: "after_enum_values", sql: "-- unit 2\n\ninsert into t values ('ok');" },
+          {
+            name: "non_transactional",
+            transactionMode: "none",
+            sql: "-- unit 3\n\ncreate index concurrently i on t (c);",
+          },
+        ]),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+        const success = s.out.messages.find((m) => m.type === "success");
+        const data = success?.data as
+          | { schemaWritten?: string; schemaFiles?: Array<string> }
+          | undefined;
+        expect(data?.schemaFiles).toHaveLength(3);
+        // Paths appear in write order, each carrying its unit name.
+        expect(data?.schemaFiles?.[0]).toMatch(/_remote_schema_schema_changes\.sql$/u);
+        expect(data?.schemaFiles?.[1]).toMatch(/_remote_schema_after_enum_values\.sql$/u);
+        expect(data?.schemaFiles?.[2]).toMatch(/_remote_schema_non_transactional\.sql$/u);
+        // `schemaWritten` stays the first written path (unchanged string contract).
+        expect(data?.schemaWritten).toBe(data?.schemaFiles?.[0]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("a malformed pg-delta diff envelope surfaces a parse error, not 'in sync'", () => {
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
@@ -617,8 +653,14 @@ describe("legacy db pull", () => {
         remoteHistoryUpdated: true,
         engine: "migra",
       });
-      const data = success?.data as { schemaWritten?: string } | undefined;
+      const data = success?.data as
+        | { schemaWritten?: string; schemaFiles?: Array<string> }
+        | undefined;
       expect(data?.schemaWritten).toMatch(/_remote_schema\.sql$/u);
+      // The single-unit case lists exactly one written migration path, and it is the
+      // same path as the singular `schemaWritten` field.
+      expect(data?.schemaFiles).toHaveLength(1);
+      expect(data?.schemaFiles?.[0]).toBe(data?.schemaWritten);
     }).pipe(Effect.provide(s.layer));
   });
 
