@@ -824,12 +824,16 @@ async function writeDockerMultilineEnvScript(
   containerDir: string,
   dir: string,
 ) {
+  // Self-healing — see the matching comment in `writeDockerEnvFile` above.
+  // Runs unconditionally, before the `env.length === 0` check, so a stale
+  // directory left by an earlier invocation that DID need multiline secrets
+  // is still reclaimed even when the current invocation doesn't.
+  await rm(dir, { recursive: true, force: true });
+
   if (env.length === 0) {
     return undefined;
   }
 
-  // Self-healing — see the matching comment in `writeDockerEnvFile` above.
-  await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const scriptName = "multiline-env.sh";
   const path = join(dir, scriptName);

@@ -637,6 +637,87 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live(
+    "cleans up a stale multiline-env directory from a previous run even when this run has no multiline secrets",
+    () => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([
+        {
+          exitCode: 1,
+          stderr: "error running container: exit 1",
+        },
+      ]);
+
+      const staleMultilineEnvDir = join(
+        tempRoot.current,
+        "supabase",
+        ".temp",
+        "start-secrets",
+        "supabase_edge_runtime_test-project",
+        "multiline-env",
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() =>
+          writeProjectFile(join("supabase", "functions", ".env"), ["HELLO=WORLD", ""].join("\n")),
+        );
+        // Simulate a stale directory left behind by an earlier run that DID have multiline secrets.
+        yield* Effect.promise(async () => {
+          await mkdir(join(staleMultilineEnvDir, "values"), { recursive: true, mode: 0o700 });
+          await writeFile(join(staleMultilineEnvDir, "multiline-env.sh"), "stale script\n");
+          await writeFile(join(staleMultilineEnvDir, "values", "env-0"), "stale secret\n");
+        });
+
+        const { layer } = setupServe({ childSpawner });
+
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(Error);
+
+        expect(existsSync(staleMultilineEnvDir)).toBe(false);
+
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker run call");
+        }
+        expect(
+          extractFlagValues(dockerRun.args, "-v").some((value) =>
+            value.endsWith(":/root/.supabase/multiline-env:ro"),
+          ),
+        ).toBe(false);
+      });
+    },
+  );
+
   it.live("fails before startup when a multiline env name is not a shell identifier", () => {
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
