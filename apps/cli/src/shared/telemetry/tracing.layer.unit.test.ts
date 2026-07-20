@@ -242,6 +242,33 @@ describe("tracingLayer – span behaviour", () => {
     );
   });
 
+  it.live("does not write API keys to trace files", () => {
+    const home = makeTempDir();
+    const tracesDir = path.join(home, ".supabase", "traces");
+    const secretKey = `sb_secret_${"a".repeat(40)}`;
+    return Effect.gen(function* () {
+      const tracer = yield* Tracer.Tracer;
+      const span = tracer.span(makeSpanOptions());
+      span.attribute("http.request.header.apikey", secretKey);
+      span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
+    }).pipe(
+      Effect.provide(buildTracingLayer({ home })),
+      Effect.ensuring(
+        Effect.sync(() => {
+          try {
+            const traceFile = readdirSync(tracesDir).find((file) => file.endsWith(".ndjson"));
+            expect(traceFile).toBeDefined();
+            const trace = readFileSync(path.join(tracesDir, traceFile!), "utf8");
+            expect(trace).not.toContain(secretKey);
+            expect(trace).not.toContain("http.request.header.apikey");
+          } finally {
+            rmSync(home, { recursive: true, force: true });
+          }
+        }),
+      ),
+    );
+  });
+
   it.live("span end does NOT export to NDJSON when SUPABASE_TELEMETRY_DISABLED=1", () => {
     const home = makeTempDir();
     const configDir = path.join(home, ".supabase");
