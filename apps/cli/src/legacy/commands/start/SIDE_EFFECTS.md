@@ -168,20 +168,21 @@ not implemented.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                      |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — every started container passed its health check                                                                                                                                      |
-| `0`  | the stack was already running — shows status instead of restarting                                                                                                                             |
-| `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                           |
-| `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag              |
-| `1`  | malformed `config.toml` / `Config.Validate` failure                                                                                                                                            |
-| `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                  |
-| `1`  | image pull exhausted across every registry candidate                                                                                                                                           |
-| `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                               |
-| `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                          |
-| `1`  | Postgres itself fails to start or become healthy — rolls back (no `--ignore-health-check` leniency at this stage; only the later bulk health check over the other 11 services honors the flag) |
-| `1`  | fresh-volume DB setup failure (schema SQL / one-shot migrate job / vault upsert / roles seed / migration-apply) — rolls back                                                                   |
-| `1`  | fresh-volume bucket-seeding failure — rolls back                                                                                                                                               |
+| Code | Condition                                                                                                                                                                                                                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — every started container passed its health check                                                                                                                                                                                                                                                      |
+| `0`  | the stack was already running — shows status instead of restarting                                                                                                                                                                                                                                             |
+| `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                                                                                                                                           |
+| `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                              |
+| `1`  | malformed `config.toml` / `Config.Validate` failure                                                                                                                                                                                                                                                            |
+| `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                  |
+| `1`  | image pull exhausted across every registry candidate                                                                                                                                                                                                                                                           |
+| `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                               |
+| `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                          |
+| `1`  | Postgres itself fails to start or its own health wait times out, **without** `--ignore-health-check` — rolls back                                                                                                                                                                                              |
+| `0`  | `--ignore-health-check` set and Postgres's own health wait times out — the failure is printed and swallowed, no rollback; no OTHER service is ever created (Postgres's failure is returned before any other bring-up step runs), but the command still prints "Started..." + the (config-derived) status table |
+| `1`  | fresh-volume DB setup failure (schema SQL / one-shot migrate job / vault upsert / roles seed / migration-apply) — rolls back                                                                                                                                                                                   |
+| `1`  | fresh-volume bucket-seeding failure — rolls back                                                                                                                                                                                                                                                               |
 
 Rollback (`legacyRollbackStart`) tears down everything created so far by Docker label,
 matching Go's `DockerRemoveAll`, and never masks the original failure — a rollback error
@@ -202,10 +203,10 @@ a normal (non-rollback) teardown — see `stop`'s own `SIDE_EFFECTS.md`.
 
 ## Telemetry Events Fired
 
-| Event                  | When                                                                                                                                                                                                   | Notable properties / groups         |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via `withLegacyCommandInstrumentation`)                                                                                                                                  | `exit_code`, `duration_ms`, `flags` |
-| `cli_stack_started`    | once, only on a genuine bulk health-check success — never fires on the `--ignore-health-check` downgrade-to-warning path, matching Go's capture sitting after the error-return block (`start.go:1287`) | no properties                       |
+| Event                  | When                                                                                                                                                                                                                                            | Notable properties / groups         |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via `withLegacyCommandInstrumentation`)                                                                                                                                                                           | `exit_code`, `duration_ms`, `flags` |
+| `cli_stack_started`    | once, only on a genuine bulk health-check success — never fires on an `--ignore-health-check` downgrade-to-warning path, Postgres's own or the later bulk check's, matching Go's capture sitting after the error-return block (`start.go:1287`) | no properties                       |
 
 ## Output
 
@@ -239,14 +240,18 @@ text above is suppressed in these modes — stdout stays payload-only.
   `realtime`, `storage-api`, `imgproxy`, `kong`, `mailpit`, `postgrest`, `postgres-meta`,
   `studio`, `edge-runtime`, `logflare`, `vector`, `supavisor`) — `db`/`postgres` is never
   excludable, matching Go. An invalid value warns and proceeds; it never fails the command.
-- `--ignore-health-check` only affects the final bulk health check over the 11
-  non-Postgres, non-excluded services (including Edge Runtime) — it does not relax
-  Postgres's own startup health wait, and it never skips rollback for a _creation_
-  failure, only for a health _timeout_. On the downgrade path, if this run also freshly
-  created the Postgres volume and Storage started, a narrower Storage-only recheck runs
-  and, if Storage is healthy, buckets are seeded anyway — a failure in THAT seed step
-  still rolls back and fails the command despite the flag (see "Storage bucket seeding"
-  and the `Exit Codes` table).
+- `--ignore-health-check` applies uniformly to EVERY service's health wait, Postgres
+  included — matching Go's `Run()`, which downgrades whatever `run()` returns as a whole,
+  not just the later bulk health check. It never skips rollback for a _creation_ failure,
+  only for a health _timeout_. When Postgres's OWN wait times out and the flag is set, no
+  other service is ever created (Postgres's failure returns before any later bring-up step
+  runs), yet the command still falls through to the "Started..." tail and the
+  (config-derived) status table, exactly like Go. When it's instead the LATER bulk health
+  check that times out with the flag set, and this run also freshly created the Postgres
+  volume and Storage started, a narrower Storage-only recheck runs and, if Storage is
+  healthy, buckets are seeded anyway — a failure in THAT seed step still rolls back and
+  fails the command despite the flag (see "Storage bucket seeding" and the `Exit Codes`
+  table).
 - `--preview` is a hidden, parsed-but-inert flag, matching Go exactly (never read by
   Go's own `start.Run`).
 - The already-running check is a plain container-existence check (`docker container

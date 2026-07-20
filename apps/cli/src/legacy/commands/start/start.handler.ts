@@ -1585,15 +1585,27 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // computed mid-effect into a sibling failure handler.
     let isFreshVolume = false;
 
-    // 8. Bring-up: network -> Postgres (+ its own health wait, no
-    // `--ignore-health-check` leniency, `start.go:294-298` ->
-    // `db/start/start.go:180`) -> the fresh-volume-gated `SetupLocalDatabase`
-    // equivalent (`db/start/start.go:184-188`, BEFORE any other service starts)
-    // -> the 12 remaining enabled+non-excluded services plus Edge Runtime, in
-    // Go's real start order (`start.gates.ts`'s `imagePlan` + `edgeRuntime`).
-    // ANY failure in this whole phase rolls back and fails the command
-    // outright (Go's per-block `if err != nil { return err }`, propagated to
-    // `Run`'s rollback branch, `start.go:73-81`).
+    // 8. Bring-up: network -> Postgres (+ its own health wait, GATED on
+    // `--ignore-health-check` exactly like every other service's wait below —
+    // Go's `Run()` checks `ignoreHealthCheck && IsUnhealthyError(err)` against
+    // whatever `run()` returns AS A WHOLE (`start.go:73-81`), and `run()`
+    // propagates `StartDatabase`'s error immediately (`start.go:294-298` ->
+    // `db/start/start.go:180`), before "Starting containers..." even prints —
+    // there is no Postgres-specific carve-out anywhere in Go) -> the
+    // fresh-volume-gated `SetupLocalDatabase` equivalent (`db/start/
+    // start.go:184-188`, BEFORE any other service starts) -> the 12 remaining
+    // enabled+non-excluded services plus Edge Runtime, in Go's real start
+    // order (`start.gates.ts`'s `imagePlan` + `edgeRuntime`). Any OTHER
+    // failure in this whole phase (including a NON-ignored Postgres timeout)
+    // rolls back and fails the command outright (Go's per-block `if err !=
+    // nil { return err }`, propagated to `Run`'s rollback branch, `start.go:
+    // 73-81`). An IGNORED Postgres timeout instead short-circuits to `{ kind:
+    // "postgresUnhealthyIgnored" }` below — skipping every later step in this
+    // phase, and the bulk health check/bucket seeding/`cli_stack_started`
+    // capture after it — while still letting the command reach the final
+    // "Started..." tail, matching Go's `Run()`, which prints the warning and
+    // falls through to that SAME unconditional tail (`start.go:74-87`) rather
+    // than returning early from the whole command.
     const bringUp = Effect.gen(function* () {
       yield* legacyEnsureStartNetwork(spawner, networkId, {
         [LEGACY_CLI_PROJECT_LABEL]: projectId,
@@ -1668,9 +1680,31 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             message: `failed to parse config: ${cause instanceof Error ? cause.message : String(cause)}`,
           }),
       });
-      yield* legacyWaitForHealthyServices(spawner, [postgresContainerId], {
-        timeoutSeconds: dbHealthTimeoutSeconds,
-      });
+      const postgresHealthResult = yield* legacyWaitForHealthyServices(
+        spawner,
+        [postgresContainerId],
+        { timeoutSeconds: dbHealthTimeoutSeconds },
+      ).pipe(Effect.result);
+      if (Result.isFailure(postgresHealthResult)) {
+        const error = postgresHealthResult.failure;
+        if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
+          // Go's outer `Run()` check (`ignoreHealthCheck &&
+          // IsUnhealthyError(err)`, `start.go:74-75`) applies uniformly to
+          // whatever `run()` returns AS A WHOLE — including Postgres's own
+          // health-wait error, which `run()` propagates immediately via
+          // `StartDatabase`'s `if err != nil { return err }` (`start.go:
+          // 294-296`), before any of the steps below (fresh-volume setup,
+          // `initCurrentBranch`, every other service, the bulk health check)
+          // ever run. Downgrade to a warning and short-circuit the rest of
+          // this phase — matching Go's `Run()`, which prints the warning and
+          // falls through to the SAME unconditional tail every other path
+          // reaches (`start.go:84-87`), not an early return from the whole
+          // command.
+          yield* output.raw(`${error.message}\n`, "stderr");
+          return { kind: "postgresUnhealthyIgnored" as const };
+        }
+        return yield* Effect.fail(error);
+      }
 
       // Go's `if utils.NoBackupVolume { SetupLocalDatabase(...) }` (`db/start/
       // start.go:184-188`) — runs immediately after Postgres's OWN health wait,
@@ -1940,7 +1974,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
       }
 
-      return { started, postgrestGateway, edgeRuntimeGateway, storageContainerId };
+      return {
+        kind: "started" as const,
+        started,
+        postgrestGateway,
+        edgeRuntimeGateway,
+        storageContainerId,
+      };
     }).pipe(
       // Go's `DockerRemoveAll`'s real `utils.NoBackupVolume` value
       // (`docker.go:94,126`) — `true` only when this run's Postgres volume was
@@ -1952,201 +1992,220 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
 
-    const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId } = yield* bringUp;
+    const bringUpResult = yield* bringUp;
 
-    // 9. Bulk health check over every non-Postgres started container, at the
-    // generic 30s `serviceTimeout` (`start.go:161,1270-1271`).
-    if (output.format === "text") {
-      yield* output.raw(LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
-    }
-    // The PostgREST/Edge Runtime readiness probes go through Kong over HTTP(S) —
-    // when `api.tls.enabled`, Kong's local cert is self-signed, so the root
-    // runtime's `HttpClient.HttpClient` (built from `FetchHttpClient.layer` over
-    // plain `fetch`) would fail TLS verification on every probe and the health
-    // check would exhaust its full timeout even though the services are
-    // actually healthy. Resolve the same local Kong CA `legacySeedBucketsRun`'s
-    // own gateway calls already trust (`projectRef: ""` never touches the
-    // network — see `legacyResolveStorageCredentials`'s local branch) and
-    // override just the underlying `FetchHttpClient.Fetch` primitive — NOT the
-    // whole `HttpClient.HttpClient` layer — so this only takes effect for a
-    // `FetchHttpClient`-backed client (production) and is a no-op against a
-    // hand-rolled `HttpClient.make(...)` mock (this file's own integration
-    // tests), which never reads `FetchHttpClient.Fetch` at all.
-    //
-    // Folds the hoisted, env-overridden `apiEnabled`/`apiPort`/`apiTlsEnabled`/
-    // `apiTlsCertPath`/`apiTlsKeyPath`/`values.apiUrl` into `config` (not the
-    // raw values) so a `SUPABASE_API_ENABLED`/`SUPABASE_API_PORT`/
-    // `SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL`
-    // override that actually brought Kong up on a different port/TLS/cert/
-    // external URL also reaches every local Storage-gateway caller below —
-    // otherwise `resolveLocalBaseUrl` derives its URL from the un-overridden
-    // `config.api.{port,tls.enabled,external_url}` and points at a
-    // port/scheme/host nothing is actually listening on, and
-    // `validateLocalKongTls`'s own `opts.config.api.enabled &&
-    // opts.config.api.tls.enabled` gate (`legacy-storage-credentials.ts`)
-    // validates against a cert/key path Kong itself isn't actually serving
-    // from when `api.enabled` disagrees with the raw config (Kong's own spec
-    // uses these same resolved `apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`
-    // locals). Also folds in the
-    // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
-    // env/dotenv-overridden — the same values the real GoTrue/Storage containers
-    // were started with) instead of the raw `config.auth.*`
-    // `legacyResolveStorageCredentials`'s local branch would otherwise
-    // re-derive from a narrower, dotenv-blind `process.env`-only check —
-    // mirroring Go's single `utils.Config.Auth.*.Value`/`Api.ExternalUrl` read
-    // by both the container env and `newLocalClient` (`internal/storage/
-    // client/api.go:30-37`). Also folds in `storageFileSizeLimit`/
-    // `storageVectorEnabled` so `legacySeedBucketsRun` (which reads
-    // `config.storage.file_size_limit`/`config.storage.vector.enabled` to fill
-    // bucket defaults and gate vector-upsert seeding, `legacy-seed-buckets.ts`)
-    // sees the same values the real Storage container was started with, not the
-    // raw un-overridden config — mirroring Go's `internal/seed/buckets/
-    // buckets.go:54` and `pkg/config/config.go:919-920`, both reading the
-    // single `utils.Config.Storage.{FileSizeLimit,VectorBuckets.Enabled}`.
-    // Reused for both this health-check CA lookup and the two
-    // `legacySeedBucketsRun` calls below (`resolvedConfig`), so bucket
-    // seeding never independently reloads config.toml and silently drops
-    // these same overrides — mirroring Go's `buckets.Run` reading the single
-    // process-wide `utils.Config` instead of reloading.
-    const effectiveLocalStorageConfig = {
-      ...config,
-      api: {
-        ...config.api,
-        enabled: apiEnabled,
-        port: values.apiPort,
-        external_url: values.apiUrl,
-        tls: {
-          ...config.api.tls,
-          enabled: apiTlsEnabled,
-          cert_path: apiTlsCertPath,
-          key_path: apiTlsKeyPath,
+    // Only reached when Postgres itself became healthy (or the volume already
+    // existed) — the `postgresUnhealthyIgnored` short-circuit above skips this
+    // entire block, matching Go's `Run()`, which falls through to the tail
+    // below either way but never re-enters `run()`'s later steps once
+    // `StartDatabase` has already returned.
+    if (bringUpResult.kind === "started") {
+      const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId } = bringUpResult;
+
+      // 9. Bulk health check over every non-Postgres started container, at the
+      // generic 30s `serviceTimeout` (`start.go:161,1270-1271`).
+      if (output.format === "text") {
+        yield* output.raw(LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
+      }
+      // The PostgREST/Edge Runtime readiness probes go through Kong over HTTP(S) —
+      // when `api.tls.enabled`, Kong's local cert is self-signed, so the root
+      // runtime's `HttpClient.HttpClient` (built from `FetchHttpClient.layer` over
+      // plain `fetch`) would fail TLS verification on every probe and the health
+      // check would exhaust its full timeout even though the services are
+      // actually healthy. Resolve the same local Kong CA `legacySeedBucketsRun`'s
+      // own gateway calls already trust (`projectRef: ""` never touches the
+      // network — see `legacyResolveStorageCredentials`'s local branch) and
+      // override just the underlying `FetchHttpClient.Fetch` primitive — NOT the
+      // whole `HttpClient.HttpClient` layer — so this only takes effect for a
+      // `FetchHttpClient`-backed client (production) and is a no-op against a
+      // hand-rolled `HttpClient.make(...)` mock (this file's own integration
+      // tests), which never reads `FetchHttpClient.Fetch` at all.
+      //
+      // Folds the hoisted, env-overridden `apiEnabled`/`apiPort`/`apiTlsEnabled`/
+      // `apiTlsCertPath`/`apiTlsKeyPath`/`values.apiUrl` into `config` (not the
+      // raw values) so a `SUPABASE_API_ENABLED`/`SUPABASE_API_PORT`/
+      // `SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL`
+      // override that actually brought Kong up on a different port/TLS/cert/
+      // external URL also reaches every local Storage-gateway caller below —
+      // otherwise `resolveLocalBaseUrl` derives its URL from the un-overridden
+      // `config.api.{port,tls.enabled,external_url}` and points at a
+      // port/scheme/host nothing is actually listening on, and
+      // `validateLocalKongTls`'s own `opts.config.api.enabled &&
+      // opts.config.api.tls.enabled` gate (`legacy-storage-credentials.ts`)
+      // validates against a cert/key path Kong itself isn't actually serving
+      // from when `api.enabled` disagrees with the raw config (Kong's own spec
+      // uses these same resolved `apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`
+      // locals). Also folds in the
+      // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
+      // env/dotenv-overridden — the same values the real GoTrue/Storage containers
+      // were started with) instead of the raw `config.auth.*`
+      // `legacyResolveStorageCredentials`'s local branch would otherwise
+      // re-derive from a narrower, dotenv-blind `process.env`-only check —
+      // mirroring Go's single `utils.Config.Auth.*.Value`/`Api.ExternalUrl` read
+      // by both the container env and `newLocalClient` (`internal/storage/
+      // client/api.go:30-37`). Also folds in `storageFileSizeLimit`/
+      // `storageVectorEnabled` so `legacySeedBucketsRun` (which reads
+      // `config.storage.file_size_limit`/`config.storage.vector.enabled` to fill
+      // bucket defaults and gate vector-upsert seeding, `legacy-seed-buckets.ts`)
+      // sees the same values the real Storage container was started with, not the
+      // raw un-overridden config — mirroring Go's `internal/seed/buckets/
+      // buckets.go:54` and `pkg/config/config.go:919-920`, both reading the
+      // single `utils.Config.Storage.{FileSizeLimit,VectorBuckets.Enabled}`.
+      // Reused for both this health-check CA lookup and the two
+      // `legacySeedBucketsRun` calls below (`resolvedConfig`), so bucket
+      // seeding never independently reloads config.toml and silently drops
+      // these same overrides — mirroring Go's `buckets.Run` reading the single
+      // process-wide `utils.Config` instead of reloading.
+      const effectiveLocalStorageConfig = {
+        ...config,
+        api: {
+          ...config.api,
+          enabled: apiEnabled,
+          port: values.apiPort,
+          external_url: values.apiUrl,
+          tls: {
+            ...config.api.tls,
+            enabled: apiTlsEnabled,
+            cert_path: apiTlsCertPath,
+            key_path: apiTlsKeyPath,
+          },
         },
-      },
-      auth: {
-        ...config.auth,
-        jwt_secret: values.jwtSecret,
-        service_role_key: values.serviceRoleKey,
-      },
-      storage: {
-        ...config.storage,
-        file_size_limit: storageFileSizeLimit,
-        vector: {
-          ...config.storage.vector,
-          enabled: storageVectorEnabled,
+        auth: {
+          ...config.auth,
+          jwt_secret: values.jwtSecret,
+          service_role_key: values.serviceRoleKey,
         },
-      },
-    };
-    const { localKongCa } = yield* legacyResolveStorageCredentials({
-      projectRef: "",
-      config: effectiveLocalStorageConfig,
-    });
-    const healthResult = yield* legacyWaitForHealthyServices(spawner, started, {
-      postgrest: postgrestGateway,
-      edgeRuntime: edgeRuntimeGateway,
-    }).pipe(
-      Effect.result,
-      localKongCa !== undefined
-        ? Effect.provideService(FetchHttpClient.Fetch, legacyStorageGatewayFetch(localKongCa))
-        : (effect) => effect,
-    );
-    if (Result.isFailure(healthResult)) {
-      const error = healthResult.failure;
-      if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
-        // `ignoreHealthCheck`/`IsUnhealthyError` only gates THIS wait
-        // (`start.go:1271`), not Postgres's own earlier one. Go additionally
-        // runs a narrower, storage-only recheck-and-seed here (`start.go:
-        // 1272-1277`): when it's a fresh volume and Storage was among the
-        // started containers, wait for Storage alone to become healthy, and
-        // if it does, seed buckets. A seed FAILURE there REPLACES this
-        // original health error and hard-fails (with rollback) — Go's
-        // `return seedErr` — since a plain seed error never satisfies
-        // `IsUnhealthyError` and so never gets this branch's own
-        // downgrade-to-warning treatment. A seed SUCCESS (or a storage
-        // recheck that never turns healthy) changes nothing: fall through to
-        // the same downgrade-to-warning as every other ignored-unhealthy
-        // failure.
-        if (isFreshVolume && storageContainerId !== undefined) {
-          const storageHealthResult = yield* legacyWaitForHealthyServices(spawner, [
-            storageContainerId,
-          ]).pipe(Effect.result);
-          if (Result.isSuccess(storageHealthResult)) {
-            const seedResult = yield* legacySeedBucketsRun({
-              projectRef: "",
-              emitSummary: false,
-              interactive: false,
-              yes: true,
-              resolvedConfig: {
-                config: effectiveLocalStorageConfig,
-                document: context.loaded?.document,
-              },
-            }).pipe(Effect.result);
-            if (Result.isFailure(seedResult)) {
-              yield* legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir);
-              return yield* Effect.fail(seedResult.failure);
+        storage: {
+          ...config.storage,
+          file_size_limit: storageFileSizeLimit,
+          vector: {
+            ...config.storage.vector,
+            enabled: storageVectorEnabled,
+          },
+        },
+      };
+      const { localKongCa } = yield* legacyResolveStorageCredentials({
+        projectRef: "",
+        config: effectiveLocalStorageConfig,
+      });
+      const healthResult = yield* legacyWaitForHealthyServices(spawner, started, {
+        postgrest: postgrestGateway,
+        edgeRuntime: edgeRuntimeGateway,
+      }).pipe(
+        Effect.result,
+        localKongCa !== undefined
+          ? Effect.provideService(FetchHttpClient.Fetch, legacyStorageGatewayFetch(localKongCa))
+          : (effect) => effect,
+      );
+      if (Result.isFailure(healthResult)) {
+        const error = healthResult.failure;
+        if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
+          // `ignoreHealthCheck`/`IsUnhealthyError` only gates THIS wait
+          // (`start.go:1271`), not Postgres's own earlier one. Go additionally
+          // runs a narrower, storage-only recheck-and-seed here (`start.go:
+          // 1272-1277`): when it's a fresh volume and Storage was among the
+          // started containers, wait for Storage alone to become healthy, and
+          // if it does, seed buckets. A seed FAILURE there REPLACES this
+          // original health error and hard-fails (with rollback) — Go's
+          // `return seedErr` — since a plain seed error never satisfies
+          // `IsUnhealthyError` and so never gets this branch's own
+          // downgrade-to-warning treatment. A seed SUCCESS (or a storage
+          // recheck that never turns healthy) changes nothing: fall through to
+          // the same downgrade-to-warning as every other ignored-unhealthy
+          // failure.
+          if (isFreshVolume && storageContainerId !== undefined) {
+            const storageHealthResult = yield* legacyWaitForHealthyServices(spawner, [
+              storageContainerId,
+            ]).pipe(Effect.result);
+            if (Result.isSuccess(storageHealthResult)) {
+              const seedResult = yield* legacySeedBucketsRun({
+                projectRef: "",
+                emitSummary: false,
+                interactive: false,
+                yes: true,
+                resolvedConfig: {
+                  config: effectiveLocalStorageConfig,
+                  document: context.loaded?.document,
+                },
+              }).pipe(Effect.result);
+              if (Result.isFailure(seedResult)) {
+                yield* legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir);
+                return yield* Effect.fail(seedResult.failure);
+              }
             }
           }
+          // Downgrade to a warning and fall through to the success path, no rollback.
+          yield* output.raw(`${error.message}\n`, "stderr");
+        } else {
+          yield* legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir);
+          return yield* Effect.fail(error);
         }
-        // Downgrade to a warning and fall through to the success path, no rollback.
-        yield* output.raw(`${error.message}\n`, "stderr");
-      } else {
-        yield* legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir);
-        return yield* Effect.fail(error);
       }
-    }
 
-    // 10. Go's `buckets.Run(...)` storage-bucket seeding (`start.go:1281-
-    // 1286`), gated on `utils.NoBackupVolume && slices.Contains(started,
-    // utils.StorageId)` — only when the Postgres data volume was freshly
-    // created this run AND Storage actually started. Reached only on a
-    // genuine health-check SUCCESS (`Result.isSuccess`): Go's simple
-    // `buckets.Run` call sits AFTER the `if err != nil { ...; return err }`
-    // block above (`start.go:1271-1280`), so it's unreachable on the
-    // `--ignore-health-check` downgrade-to-warning fallthrough — that
-    // fallthrough still `return`s the original unhealthy error before ever
-    // reaching it (mutually exclusive with the narrower storage-only
-    // recheck-and-seed path implemented above, inside the
-    // `Result.isFailure(healthResult)` branch: that branch only runs when
-    // this one's `Result.isSuccess(healthResult)` guard is false).
-    //
-    // A seeding failure propagates as a normal command failure and still
-    // rolls back: Go's top-level `Run()` (`start.go:73-81`) wraps `run()`'s
-    // ENTIRE body — including this tail — in the same `DockerRemoveAll`-on-
-    // error branch, and a plain seed error (unlike the health-check timeout
-    // above) never satisfies `IsUnhealthyError`, so it always takes that
-    // branch regardless of `--ignore-health-check`.
-    if (Result.isSuccess(healthResult) && isFreshVolume && storageContainerId !== undefined) {
-      yield* legacySeedBucketsRun({
-        projectRef: "",
-        emitSummary: false,
-        interactive: false,
-        yes: true,
-        resolvedConfig: { config: effectiveLocalStorageConfig, document: context.loaded?.document },
-      }).pipe(
-        Effect.tapError(() =>
-          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
-        ),
-      );
-    }
+      // 10. Go's `buckets.Run(...)` storage-bucket seeding (`start.go:1281-
+      // 1286`), gated on `utils.NoBackupVolume && slices.Contains(started,
+      // utils.StorageId)` — only when the Postgres data volume was freshly
+      // created this run AND Storage actually started. Reached only on a
+      // genuine health-check SUCCESS (`Result.isSuccess`): Go's simple
+      // `buckets.Run` call sits AFTER the `if err != nil { ...; return err }`
+      // block above (`start.go:1271-1280`), so it's unreachable on the
+      // `--ignore-health-check` downgrade-to-warning fallthrough — that
+      // fallthrough still `return`s the original unhealthy error before ever
+      // reaching it (mutually exclusive with the narrower storage-only
+      // recheck-and-seed path implemented above, inside the
+      // `Result.isFailure(healthResult)` branch: that branch only runs when
+      // this one's `Result.isSuccess(healthResult)` guard is false).
+      //
+      // A seeding failure propagates as a normal command failure and still
+      // rolls back: Go's top-level `Run()` (`start.go:73-81`) wraps `run()`'s
+      // ENTIRE body — including this tail — in the same `DockerRemoveAll`-on-
+      // error branch, and a plain seed error (unlike the health-check timeout
+      // above) never satisfies `IsUnhealthyError`, so it always takes that
+      // branch regardless of `--ignore-health-check`.
+      if (Result.isSuccess(healthResult) && isFreshVolume && storageContainerId !== undefined) {
+        yield* legacySeedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+          yes: true,
+          resolvedConfig: {
+            config: effectiveLocalStorageConfig,
+            document: context.loaded?.document,
+          },
+        }).pipe(
+          Effect.tapError(() =>
+            legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+          ),
+        );
+      }
 
-    // 11. Success ONLY: fire `cli_stack_started` exactly once, no
-    // properties/groups, matching Go's real tail order (`start.go:1287`) —
-    // that capture sits AFTER the entire `if err != nil { ...; return err }`
-    // block (including the ignore-health-check downgrade path above), so a
-    // genuine bulk-health-check failure never reaches it even when
-    // `--ignore-health-check` downgrades it to a warning: Go's `run()`
-    // itself still returns that error, and its caller (`Run()`) downgrades
-    // it without ever re-invoking this capture.
-    if (Result.isSuccess(healthResult)) {
-      yield* analytics.capture(EventStackStarted, {});
+      // 11. Success ONLY: fire `cli_stack_started` exactly once, no
+      // properties/groups, matching Go's real tail order (`start.go:1287`) —
+      // that capture sits AFTER the entire `if err != nil { ...; return err }`
+      // block (including the ignore-health-check downgrade path above), so a
+      // genuine bulk-health-check failure never reaches it even when
+      // `--ignore-health-check` downgrades it to a warning: Go's `run()`
+      // itself still returns that error, and its caller (`Run()`) downgrades
+      // it without ever re-invoking this capture.
+      if (Result.isSuccess(healthResult)) {
+        yield* analytics.capture(EventStackStarted, {});
+      }
     }
 
     // Go's `status.PrettyPrint(os.Stdout, excludedContainers...)` (`start.go:85`)
     // trusts "config-enabled + not --exclude'd" as a proxy for "actually
-    // running" — a true invariant in Go, since `run()` would have already
-    // failed and rolled back before reaching here if any enabled, non-excluded
-    // container's `DockerStart` failed. Edge Runtime now genuinely starts under
-    // that same gate (no more force-exclusion from status rendering), so the
-    // raw `--exclude` values are enough on their own.
+    // running" — true whenever `run()` reaches this line normally (it would
+    // have already failed and rolled back before getting here if any enabled,
+    // non-excluded container's `DockerStart` failed). The one exception, in Go
+    // and here alike: an IGNORED Postgres health-check timeout
+    // (`bringUpResult.kind === "postgresUnhealthyIgnored"` above) reaches this
+    // same tail via the SAME fallthrough Go's `Run()` uses (`start.go:74-87`)
+    // even though every OTHER enabled, non-excluded container was never even
+    // created — `status.PrettyPrint`/`buildStatusValues` render them anyway,
+    // purely from config, with no Docker query to contradict it. Edge Runtime
+    // now genuinely starts under that same "config-enabled" gate (no more
+    // force-exclusion from status rendering), so the raw `--exclude` values
+    // are enough on their own.
     const statusExcluded = flags.exclude;
 
     if (output.format === "text") {

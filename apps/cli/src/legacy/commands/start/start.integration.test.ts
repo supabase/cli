@@ -1743,6 +1743,45 @@ content_path = "./templates/custom_notice.html"
       10_000,
     );
 
+    it.live(
+      "exits 0 on --ignore-health-check when Postgres itself never becomes healthy, without rolling back and without starting any other service",
+      () => {
+        // Mirrors the regression test above, but with `--ignore-health-check` set — Go's
+        // `Run()` (`start.go:74-75`) applies `ignoreHealthCheck && IsUnhealthyError(err)`
+        // uniformly to whatever `run()` returns, including Postgres's own health-wait
+        // failure, which `run()` propagates immediately (`start.go:294-296`) before any
+        // other service is even created.
+        const neverHealthy = new Set<string>();
+        const base = defaultRoute({ neverHealthy });
+        const route = (args: ReadonlyArray<string>): RouteResult => {
+          if (args[0] === "create") {
+            const name = containerNameFromCreateArgs(args);
+            if (name.includes("_db_")) neverHealthy.add(name);
+          }
+          return base(args);
+        };
+        const { layer, out, child, analytics } = setup({
+          configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "2s"\n',
+          route,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ ignoreHealthCheck: true }));
+          expect(out.stderrText).toContain("is not ready");
+          expect(out.stderrText).toContain("Started");
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+          // No other service's container is ever created — Go's `StartDatabase`
+          // returns before `run()`'s "Starting containers..." message or any other
+          // service's bring-up even begins.
+          expect(createdContainerNames(child.spawned)).toEqual([expect.stringContaining("_db_")]);
+          // Go never fires `cli_stack_started` on this fallthrough either — the
+          // capture sits after the entire bring-up + bulk health check, neither of
+          // which is reached once Postgres's own wait is downgraded to a warning.
+          expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+      10_000,
+    );
+
     // Real time, not `it.effect`/`TestClock`: same constraint as the `--ignore-health-check`
     // scenario below — `legacyStart` performs genuine async I/O that never resolves under a
     // virtualized clock. Unlike Postgres's own wait above, this second bulk health check has no
