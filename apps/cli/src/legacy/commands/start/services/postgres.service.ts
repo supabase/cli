@@ -228,7 +228,10 @@ function legacyPostgresExtraEnv(
  * out. THIS PORT SHELLS OUT to a real `docker create`, so it deliberately
  * diverges here: the pgsodium root key travels via
  * {@link LegacyStartContainerSpec.secretFiles} instead (a HOST temp file,
- * mode `0600`, bind-mounted read-only at that exact path — see
+ * mode `0644` — world-readable, because Postgres's entrypoint drops root and
+ * reads this file back as the `postgres` user, and a Linux/Podman bind mount
+ * preserves the host file's mode verbatim; see `legacyStageStartSecretFiles`'s
+ * doc comment — bind-mounted read-only at that exact path — see
  * {@link legacyBuildPostgresStartContainerSpec}), so it never appears in this
  * process's own `docker create` argv (CWE-214/522).
  *

@@ -24,8 +24,12 @@
  * argv. THIS PORT SHELLS OUT to a real `docker create`, so it deliberately
  * diverges: the rendered script travels via
  * {@link LegacyStartContainerSpec.secretFiles} instead (a HOST temp file,
- * mode `0600`, bind-mounted read-only at
- * {@link LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH}), and
+ * mode `0644`, bind-mounted read-only at
+ * {@link LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH}) — Supavisor itself
+ * runs fully as root in Go's image, so it is unaffected by the non-root
+ * bind-mount read issue that motivates `0644` for Kong/Postgres (see
+ * `legacyStageStartSecretFiles`'s doc comment); the file mode is simply
+ * widened here for consistency with the other staged secrets, and
  * {@link legacyBuildSupavisorStartCmd} only ever references that FIXED path —
  * never the secret content itself (CWE-214/522). See that function's doc
  * comment for the resulting quoting nuance. {@link legacyBuildSupavisorStartCmd}

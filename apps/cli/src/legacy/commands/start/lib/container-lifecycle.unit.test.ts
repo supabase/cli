@@ -343,7 +343,7 @@ describe("legacyStartContainer", () => {
 
 describe("legacyStartContainer secretFiles", () => {
   it.live(
-    "stages a secretFile as a mode-0600 HOST file under a mode-0700 deterministic, per-container directory, bind-mounts it read-only at the exact containerPath, keeps the raw content out of argv, and PERSISTS the file after a successful start so a `restartPolicy: unless-stopped` container can survive a host/daemon restart (CWE-214/522)",
+    "stages a secretFile as a mode-0644 HOST file (readable by non-root container users) under a mode-0700 deterministic, per-container directory, bind-mounts it read-only at the exact containerPath, keeps the raw content out of argv, and PERSISTS the file after a successful start so a `restartPolicy: unless-stopped` container can survive a host/daemon restart (CWE-214/522)",
     () => {
       let hostPath: string | undefined;
       let modeAtCreateTime: number | undefined;
@@ -379,7 +379,7 @@ describe("legacyStartContainer secretFiles", () => {
           expect(create?.some((a) => a.includes("super-secret-content"))).toBe(false);
 
           expect(hostPath).toBeDefined();
-          expect(modeAtCreateTime).toBe(0o600);
+          expect(modeAtCreateTime).toBe(0o644);
           expect(dirModeAtCreateTime).toBe(0o700);
           expect(create).toContain(`${hostPath}:/etc/kong/kong.yml:ro`);
 

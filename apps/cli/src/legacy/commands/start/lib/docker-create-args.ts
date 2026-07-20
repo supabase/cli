@@ -155,7 +155,10 @@ export interface LegacyStartContainerSpec {
    * NOT consumed here: {@link buildLegacyStartContainerCreateArgs} stays
    * pure/no-I/O and never reads this field. `container-lifecycle.ts`'s
    * `legacyStartContainer` is the sole consumer — it writes each entry's
-   * `content` to a HOST-side temp file (mode `0600`, in a fresh temp
+   * `content` to a HOST-side temp file (mode `0644` — world-readable, so the
+   * non-root in-container user reading it (e.g. Kong, Postgres) doesn't hit
+   * `EACCES` once the bind mount preserves this host mode verbatim; see
+   * `legacyStageStartSecretFiles`'s doc comment — in a fresh temp
    * directory) and appends a `<tempHostPath>:<containerPath>:ro` bind (the
    * bind's SOURCE is a generated temp-file path, never the secret itself —
    * safe in argv) to {@link binds} BEFORE this builder ever sees the spec,

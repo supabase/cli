@@ -110,7 +110,9 @@ Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supaviso
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively) and are instead
 written to `<workdir>/supabase/.temp/start-secrets/<containerName>/` (directory mode
-`0700`, files mode `0600`) and
+`0700`, files mode `0644` — world-readable, since Kong (uid 100) and Postgres's
+post-privilege-drop `postgres` user read these bind-mounted files as non-root, and a
+Linux/Podman bind mount preserves the host file's mode verbatim) and
 bind-mounted `:ro` into the container at the exact path each container's
 entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
 doc comment for the full rationale (CWE-214/522: keeping secret content out of the

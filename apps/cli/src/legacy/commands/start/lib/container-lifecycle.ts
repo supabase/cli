@@ -508,10 +508,19 @@ function legacyDockerStartContainer(
  * `<workdir>/supabase/.temp/start-secrets/<containerName>/` (matching this
  * codebase's existing `<workdir>/supabase/.temp/` convention for CLI-owned
  * scratch state — see `legacy-linked-project-cache.layer.ts`), directory mode
- * `0700` and one file per entry at mode `0600` — both owner-only, so no other
- * local user on the host can even list the staged file names/count (let
- * alone read their contents) while they exist — then returns the
- * `<hostPath>:<containerPath>:ro`
+ * `0700` and one file per entry at mode `0644` — the directory stays
+ * owner-only (the kernel checks execute/search permission on this ancestor
+ * directory before it ever checks a file's own mode, so no other local user
+ * on the host can list the staged file names/count or read their contents
+ * while they exist), but each file is world-readable: it is bind-mounted
+ * `:ro` into a container that reads it as a NON-ROOT in-container user
+ * (Kong's image runs as uid 100 `kong`; Postgres's entrypoint drops root and
+ * reads `pgsodium_root.key` as the `postgres` user), and a Linux/Podman bind
+ * mount preserves the host file's uid/mode verbatim inside the container, so
+ * an arbitrary host-invoking uid at `0600` would get `EACCES` there — Go's
+ * own equivalent (heredoc'd directly into the container by a root-authored
+ * entrypoint script) already lands at world-readable `0644`, matching this
+ * exactly — then returns the `<hostPath>:<containerPath>:ro`
  * bind for each. Mirrors this same session's `-e KEY`-only env fix
  * (`legacyDockerCreateContainer`'s doc comment) for entrypoint/`Cmd`-bound
  * secret content instead of env values: the file's HOST path is the only
@@ -562,7 +571,7 @@ function legacyStageStartSecretFiles(
         const binds = await Promise.all(
           secretFiles.map(async (secretFile, index) => {
             const hostPath = join(dir, `secret-${index}`);
-            await writeFile(hostPath, secretFile.content, { mode: 0o600 });
+            await writeFile(hostPath, secretFile.content, { mode: 0o644 });
             return `${hostPath}:${secretFile.containerPath}:ro`;
           }),
         );
