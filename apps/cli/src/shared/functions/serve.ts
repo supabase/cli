@@ -1334,7 +1334,11 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
  * pass already-resolved values/strings into this shared core — see
  * `serve.go:141-151` vs. `start.go:66-72`), no file-watching, and no log
  * streaming (`serveFunctions`'s own loop, below, still owns both of those for
- * the standalone command).
+ * the standalone command). Also excludes the Kong reload: `ServeFunctions`
+ * itself never reloads Kong — that only happens in `restartEdgeRuntime`
+ * (`startEdgeRuntime` below), after this core succeeds, so `start`'s own
+ * bring-up (which calls this core directly) correctly never reloads Kong
+ * either.
  */
 export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeContainer")(
   function* (input: StartEdgeRuntimeContainerInput) {
@@ -1509,8 +1513,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         return yield* Effect.fail(new Error(message));
       }
 
-      yield* reloadKong(projectId);
-
       return {
         containerId,
         cleanup: cleanupRuntimeArtifacts,
@@ -1538,7 +1540,10 @@ const legacyDefaultServeDbUrl = "postgresql://postgres:postgres@db:5432/postgres
  * resolves `functions serve`'s own config/secrets/image independently on
  * every (re)start, then delegates the actual bring-up to
  * {@link startEdgeRuntimeContainer} (Go's `ServeFunctions`) exactly like
- * `start`'s own bring-up will.
+ * `start`'s own bring-up will. Once that bring-up succeeds, this wrapper — and
+ * only this wrapper, matching Go's `restartEdgeRuntime` — reloads Kong
+ * (`serve.go:126-131`) so Kong's routing table picks up the freshly
+ * (re)started container.
  */
 const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   readonly flags: FunctionsServeFlags;
@@ -1587,7 +1592,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     yield* bestEffortRemoveContainer(containerId);
     ownsRuntime = true;
 
-    return yield* startEdgeRuntimeContainer({
+    const startedRuntime = yield* startEdgeRuntimeContainer({
       config: {
         projectId,
         apiPort: resolved.apiPort,
@@ -1613,6 +1618,10 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       inspectMode: input.inspectMode,
       inspectMain: input.flags.inspectMain,
     });
+
+    yield* reloadKong(projectId);
+
+    return startedRuntime;
   }).pipe(
     Effect.onInterrupt(() => (ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void)),
   );

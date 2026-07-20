@@ -17,12 +17,16 @@ import {
  * A spawner that answers every `docker` invocation
  * `legacyStartEdgeRuntimeContainer`'s call chain makes
  * (`ensureDockerNamedVolume`/`ensureDockerNetwork`/the `docker run -d` bring-up
- * itself/`reloadKong`'s `docker exec`) with success, recording every
- * invocation's argv for assertions — same shape as
- * `health-check.unit.test.ts`'s `mockHealthSpawner`. Secret values are
- * delivered to the `run -d` call via `--env-file`/a bind-mounted script, not
- * this spawned process's own environment (see `edge-runtime.service.ts`'s
- * header for why), so there is nothing to capture beyond argv.
+ * itself) with success, recording every invocation's argv for assertions —
+ * same shape as `health-check.unit.test.ts`'s `mockHealthSpawner`. Secret
+ * values are delivered to the `run -d` call via `--env-file`/a bind-mounted
+ * script, not this spawned process's own environment (see
+ * `edge-runtime.service.ts`'s header for why), so there is nothing to capture
+ * beyond argv. Note `legacyStartEdgeRuntimeContainer` never issues a
+ * `docker exec ... kong reload` — that only happens in `functions serve`'s own
+ * `restartEdgeRuntime`-equivalent wrapper (`shared/functions/serve.ts`'s
+ * `startEdgeRuntime`), not in the shared bring-up core this module calls
+ * directly — see the "does not reload Kong" test below.
  */
 function mockDockerSpawner() {
   const calls: Array<{ args: ReadonlyArray<string> }> = [];
@@ -231,6 +235,24 @@ describe("legacyStartEdgeRuntimeContainer", () => {
 
         expect(started.containerId).toBe("supabase_edge_runtime_proj");
         yield* started.cleanup;
+      }),
+  );
+
+  it.effect(
+    "never reloads Kong — Go's `start` bring-up (`ServeFunctions`) never does, unlike `functions serve`'s own restart wrapper",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
+
+        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+        );
+
+        expect(
+          mock.calls.some((call) => call.args[0] === "exec" && call.args.includes("kong")),
+        ).toBe(false);
       }),
   );
 });

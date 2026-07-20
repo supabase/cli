@@ -1024,6 +1024,19 @@ describe("legacy functions serve integration", () => {
         ),
       ).toHaveLength(2);
       expect(out.stderrText).toContain("File change detected:");
+
+      // `functions serve`'s restart wrapper (`startEdgeRuntime`, Go's
+      // `restartEdgeRuntime`) reloads Kong after each successful bring-up —
+      // once for the initial start, once for the file-change-triggered restart.
+      expect(
+        deployMockState.runCalls.filter(
+          (call) =>
+            call.command === "docker" &&
+            call.args[0] === "exec" &&
+            call.args.includes("supabase_kong_test-project") &&
+            call.args.includes("reload"),
+        ),
+      ).toHaveLength(2);
     });
   });
 
