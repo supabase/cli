@@ -302,6 +302,18 @@ var (
 			case "start":
 				// Mirror start.Run minus the "already running?" check, which the TS
 				// caller performs (and prints "Postgres database is already running.").
+				// The db container may still exist but be stopped (e.g. Docker Desktop
+				// restarted without honouring restart policies); clean up any leftover
+				// container first so StartDatabase's ContainerCreate doesn't collide on
+				// name, while preserving named volumes so local data survives.
+				if exists, err := utils.HasProjectContainers(cmd.Context(), utils.Config.ProjectId); err != nil {
+					return err
+				} else if exists {
+					fmt.Fprintln(os.Stderr, "Found stopped containers from a previous session, cleaning up before restart...")
+					if err := utils.DockerRemoveAll(cmd.Context(), os.Stderr, utils.Config.ProjectId); err != nil {
+						return err
+					}
+				}
 				if err := start.StartDatabase(cmd.Context(), bootstrapFromBackup, fsys, os.Stderr); err != nil {
 					if rmErr := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); rmErr != nil {
 						fmt.Fprintln(os.Stderr, rmErr)

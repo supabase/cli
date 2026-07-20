@@ -51,6 +51,19 @@ func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
 	} else if !errors.Is(err, utils.ErrNotRunning) {
 		return err
 	}
+	// The db container may exist but be stopped rather than missing entirely
+	// (e.g. Docker Desktop restarted without honouring restart policies).
+	// Clean up any leftover container so StartDatabase's ContainerCreate
+	// below doesn't collide on name, while preserving named volumes so local
+	// data survives.
+	if exists, err := utils.HasProjectContainers(ctx, utils.Config.ProjectId); err != nil {
+		return err
+	} else if exists {
+		fmt.Fprintln(os.Stderr, "Found stopped containers from a previous session, cleaning up before restart...")
+		if err := utils.DockerRemoveAll(ctx, os.Stderr, utils.Config.ProjectId); err != nil {
+			return err
+		}
+	}
 	err := StartDatabase(ctx, fromBackup, fsys, os.Stderr)
 	if err != nil {
 		if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {

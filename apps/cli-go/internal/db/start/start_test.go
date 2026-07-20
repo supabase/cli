@@ -216,6 +216,11 @@ func TestStartCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
 			Reply(http.StatusNotFound)
+		// HasProjectContainers finds no leftover containers to clean up.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]container.Summary{})
 		// Fail to start
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/").
@@ -230,6 +235,41 @@ func TestStartCommand(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("cleans up stopped container before starting", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Db container exists but exited.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: false, Status: "exited"},
+			}})
+		// HasProjectContainers finds the leftover container.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]container.Summary{{ID: utils.DbId}})
+		// DockerRemoveAll cleans it up.
+		apitest.MockDockerStop(utils.Docker)
+		// Fail to start, deterministically, right after cleanup.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes/").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
+			ReplyError(errors.New("network error"))
+		// Run test
+		err := Run(context.Background(), "", fsys)
+		// Check error
+		assert.ErrorContains(t, err, "network error")
+		assert.NotErrorIs(t, err, utils.ErrNotRunning)
 	})
 }
 
