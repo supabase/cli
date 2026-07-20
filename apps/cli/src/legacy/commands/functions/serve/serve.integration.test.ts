@@ -1531,6 +1531,98 @@ describe("legacy functions serve integration", () => {
     },
   );
 
+  it.live(
+    "does not fail startup on a malformed third-party provider config when auth is disabled",
+    () => {
+      // Go's `Auth.ThirdParty.validate()` (the "required field" check) only runs inside
+      // `Config.Validate`'s `if Auth.Enabled` block — `functions serve`'s own JWKS resolution
+      // discards `ResolveJWKS`'s error unconditionally, regardless of `auth.enabled`. So a
+      // workos provider enabled without an `issuer_url` must not block startup here.
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "jwks logs failed" }]);
+
+      return Effect.gen(function* () {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            fetchMock.mockRestore();
+          }),
+        );
+
+        yield* Effect.promise(() =>
+          writeProjectConfig(
+            [
+              'project_id = "test-project"',
+              "",
+              "[auth]",
+              "enabled = false",
+              "",
+              "[auth.third_party.workos]",
+              "enabled = true",
+              "",
+            ].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        const { layer } = setupServe({ childSpawner });
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toContain("jwks logs failed");
+        }
+        expect(fetchMock).not.toHaveBeenCalled();
+
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker run call");
+        }
+
+        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+        const jwks = envs.find((entry) => entry.startsWith("SUPABASE_JWKS="));
+        expect(jwks).toBeDefined();
+        if (jwks === undefined) {
+          throw new Error("missing SUPABASE_JWKS");
+        }
+        expect(JSON.parse(jwks.slice("SUPABASE_JWKS=".length))).toEqual({
+          keys: expect.arrayContaining([
+            expect.objectContaining({ kid: "b81269f1-21d8-4f2e-b719-c2240a840d90" }),
+            expect.objectContaining({ kty: "oct" }),
+          ]),
+        });
+      });
+    },
+  );
+
   it.live("includes config-defined edge runtime secrets in the runtime env", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {

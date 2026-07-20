@@ -26,7 +26,12 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
-import { resolveRemoteJwks, resolveThirdPartyIssuerUrl, toPublicJwk } from "../auth/jwks.ts";
+import {
+  resolveRemoteJwks,
+  resolveThirdPartyIssuerUrl,
+  thirdPartyIssuerUrlUnchecked,
+  toPublicJwk,
+} from "../auth/jwks.ts";
 import { Output } from "../output/output.service.ts";
 import {
   FileWatcher,
@@ -130,6 +135,7 @@ export interface FunctionsServeDependencies {
 }
 
 interface PlainServeAuthConfig {
+  readonly enabled: boolean;
   readonly signing_keys_path?: string;
   readonly publishable_key?: string;
   readonly secret_key?: string;
@@ -340,6 +346,7 @@ function toPlainAuthConfig(
   auth: ProjectConfig["auth"] | ResolvedProjectValue<ProjectConfig["auth"]>,
 ): PlainServeAuthConfig {
   return {
+    enabled: auth.enabled,
     signing_keys_path: reveal(auth.signing_keys_path),
     publishable_key: reveal(auth.publishable_key),
     secret_key: reveal(auth.secret_key),
@@ -532,7 +539,15 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
   const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
 
   const keys: unknown[] = [];
-  const issuerUrl = resolveThirdPartyIssuerUrl(auth.third_party);
+  // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
+  // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
+  // c.Auth.Enabled` block (`config.go:1087-1153`), but `functions serve`'s own JWKS resolution
+  // (`serve.go:141`) discards `ResolveJWKS`'s error unconditionally, regardless of `auth.enabled`.
+  // So a malformed/multi-enabled third-party config must not throw here when auth is disabled —
+  // use the unchecked, no-throw `IssuerURL()`-only builder instead, matching Go exactly.
+  const issuerUrl = auth.enabled
+    ? resolveThirdPartyIssuerUrl(auth.third_party)
+    : thirdPartyIssuerUrlUnchecked(auth.third_party);
   if (issuerUrl !== undefined) {
     const remoteJwks = yield* Effect.tryPromise({
       try: () => resolveRemoteJwks(issuerUrl),
