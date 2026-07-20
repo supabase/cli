@@ -1,6 +1,8 @@
 import { Effect } from "effect";
 import { PostHog, type PostHogOptions } from "posthog-node";
 
+const EXIT_DELAY_CAP_MS = 2_000;
+
 const delivered = {
   status: 200,
   text: () => Promise.resolve(""),
@@ -26,11 +28,11 @@ export const scopedPosthogClient = (apiKey: string, host: string) =>
           host,
           flushAt: 1,
           flushInterval: 0,
-          requestTimeout: 2_000,
+          requestTimeout: EXIT_DELAY_CAP_MS,
           fetch: fireAndForgetFetch,
         }),
     ),
     // Catch on the promise: Effect.promise turns rejections into defects,
     // which escape Effect.ignore and fail the command.
-    (client) => Effect.promise(() => client._shutdown(5_000).catch(() => undefined)),
+    (client) => Effect.promise(() => client._shutdown(EXIT_DELAY_CAP_MS).catch(() => undefined)),
   );

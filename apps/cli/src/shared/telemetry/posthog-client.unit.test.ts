@@ -47,11 +47,47 @@ describe("fireAndForgetFetch", () => {
 });
 
 describe("scopedPosthogClient", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it.live("captures and shuts down cleanly against an unreachable host", () =>
     Effect.gen(function* () {
       const client = yield* scopedPosthogClient("phc_test", "http://127.0.0.1:9");
       expect(client).toBeInstanceOf(PostHog);
       client.capture({ event: "verify_event", distinctId: "device-1" });
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "bounds the whole shutdown when a request is in flight and another event is queued",
+    () =>
+      Effect.gen(function* () {
+        let requestStarted = () => {};
+        const firstRequestInFlight = new Promise<void>((resolve) => {
+          requestStarted = resolve;
+        });
+        vi.stubGlobal(
+          "fetch",
+          (_url: string, options: { signal?: AbortSignal }) =>
+            new Promise<Response>((_resolve, reject) => {
+              requestStarted();
+              options.signal?.addEventListener("abort", () =>
+                reject(new DOMException("The operation was aborted.", "AbortError")),
+              );
+            }),
+        );
+
+        const startedAt = performance.now();
+        yield* Effect.gen(function* () {
+          const client = yield* scopedPosthogClient("phc_test", "https://blackhole.invalid");
+          client.capture({ event: "first_event", distinctId: "device-1" });
+          yield* Effect.promise(() => firstRequestInFlight);
+          client.capture({ event: "second_event", distinctId: "device-1" });
+        }).pipe(Effect.scoped);
+
+        expect(performance.now() - startedAt).toBeLessThan(3_000);
+      }),
+    10_000,
   );
 });
