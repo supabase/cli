@@ -1334,7 +1334,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             apiEnabled &&
             apiTlsEnabled &&
             apiTlsCertPath !== undefined &&
-            apiTlsKeyPath !== undefined
+            apiTlsCertPath.length > 0 &&
+            apiTlsKeyPath !== undefined &&
+            apiTlsKeyPath.length > 0
           ) {
             tlsCertContent = yield* fs
               .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))

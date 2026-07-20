@@ -2772,6 +2772,30 @@ content_path = "./templates/custom_notice.html"
         }).pipe(Effect.provide(layer));
       },
     );
+
+    // Go's `len(c.Api.Tls.CertPath) > 0` gate (`pkg/config/config.go:1006-1027`) treats an empty
+    // but present `cert_path`/`key_path` the same as absent — it must NOT attempt a disk read.
+    it.live(
+      "falls back to the embedded default cert/key when cert_path/key_path are present but empty",
+      () => {
+        const { layer, child, workdir } = setup({
+          configContents:
+            'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = ""\nkey_path = ""\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const kongCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
+          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
+          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
+          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
+          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("SUPABASE_API_TLS_CERT_PATH/_KEY_PATH overrides", () => {
