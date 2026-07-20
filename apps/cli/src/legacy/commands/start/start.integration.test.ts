@@ -1600,7 +1600,7 @@ content_path = "./templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
         }).pipe(Effect.provide(layer));
       },
-      10_000,
+      45_000,
     );
   });
 

@@ -7,19 +7,7 @@ import { legacyGetRegistryImageUrlCandidates } from "./legacy-docker-registry.ts
 
 type Spawner = ChildProcessSpawner["Service"];
 
-const DOCKER_PULL_RETRY_DELAYS_MS = [500] as const;
-
-const RETRYABLE_PULL_PATTERNS = [
-  /toomanyrequests/i,
-  /rate exceeded/i,
-  /429\b/i,
-  /timeout/i,
-  /temporarily unavailable/i,
-  /temporary failure/i,
-  /connection reset/i,
-  /tls handshake timeout/i,
-  /i\/o timeout/i,
-] as const;
+const DOCKER_PULL_RETRY_DELAYS_MS = [4_000, 8_000] as const;
 
 const spawnError = () =>
   // Never embed the spawn error verbatim: it can leak the full argv and
@@ -40,17 +28,21 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   return bytes;
 };
 
-const shouldRetryPull = (message: string): boolean =>
-  RETRYABLE_PULL_PATTERNS.some((pattern) => pattern.test(message));
-
 /**
  * Builds a Docker image resolver bound to `spawner`: given an image, finds the
  * best registry candidate (already-local first, then pulled with retry),
- * mirroring Go's `pullImage` (`apps/cli-go/internal/utils/docker.go`). Used by
- * both the foreground `db dump`-style run-to-completion containers
- * (`legacy-docker-run.layer.ts`) and `start`'s detached, long-running service
- * containers — the resolve/pull/retry algorithm is identical for both, only
- * the caller's process lifecycle differs.
+ * mirroring Go's `DockerResolveImageIfNotCached` /
+ * `DockerImagePullWithRetry` (`apps/cli-go/internal/utils/docker.go:304-343`).
+ * A pull failure is retried unconditionally — Go retries on any non-nil error
+ * as long as the context wasn't canceled, with no message-pattern gating — up
+ * to 2 times per candidate (3 total attempts) with an escalating 4s/8s
+ * backoff (`DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds
+ * for `i` in `0,1`. A spawn failure (the Docker/Podman binary itself
+ * couldn't be run) is a different, non-retryable case — see `spawnError`
+ * below. Used by both the foreground `db dump`-style run-to-completion
+ * containers (`legacy-docker-run.layer.ts`) and `start`'s detached,
+ * long-running service containers — the resolve/pull/retry algorithm is
+ * identical for both, only the caller's process lifecycle differs.
  *
  * `projectEnvValues` is optional (see `legacy-docker-registry.ts`'s doc
  * comment) — only `start` currently threads it through, since its caller
@@ -83,9 +75,9 @@ export function legacyMakeDockerImageResolver(
       // uncached pull does not look frozen — Go streams the same progress via
       // `jsonmessage.DisplayJSONMessagesToStream`. Progress goes to stderr so
       // it never corrupts the captured stdout of the `db dump` run path. The
-      // buffered copies are kept only to classify retryable failures and to
-      // report the error on a non-zero exit. Decode each stream separately so
-      // a multi-byte UTF-8 sequence is never split across interleaved chunks.
+      // buffered copies are kept only to report the error message on a
+      // non-zero exit. Decode each stream separately so a multi-byte UTF-8
+      // sequence is never split across interleaved chunks.
       const stdoutChunks: Array<Uint8Array> = [];
       const stderrChunks: Array<Uint8Array> = [];
       yield* Effect.all(
@@ -141,7 +133,7 @@ export function legacyMakeDockerImageResolver(
                 ? result.value.stderr
                 : `docker pull exited with code ${result.value.exitCode}`;
             failures.push(`${candidate} attempt ${attempt}: ${message}`);
-            if (!shouldRetryPull(message) || attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
+            if (attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
               break;
             }
           } else {
