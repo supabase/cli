@@ -80,6 +80,21 @@ export function localNetworkId(projectId: string) {
 export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
 
 /**
+ * TS-port-only Docker label (no Go equivalent — Go never stages secrets on host disk in
+ * the first place, see `legacy-start-secrets-cleanup.ts`'s doc comment) recording the
+ * absolute `LegacyCliConfig.workdir` a container was created under, set on every
+ * container `start` creates (`container-lifecycle.ts`'s `legacyStartContainer`).
+ *
+ * Read back by `legacyListContainerIdsAndNames` (`legacy-docker-lifecycle.ts`) so a later
+ * `stop`/`legacyRollbackStart` can reclaim `legacyCleanupStartSecrets`'s staged-secret
+ * directory using the CONTAINER's OWN workdir, rather than the caller's own cwd/
+ * `--workdir` — those can differ when tearing down another project's containers (e.g.
+ * `stop --all`/`stop --project-id <other>`), which would otherwise look in the wrong
+ * directory and orphan that project's staged secret files on disk forever.
+ */
+export const LEGACY_CLI_WORKDIR_LABEL = "com.supabase.cli.workdir";
+
+/**
  * Go's `utils.GetDockerIds()` (`apps/cli-go/internal/utils/config.go:82-98`) — the
  * 13 service container ids (excludes `db`, `network`, and the `differ` shadow
  * container, which are not part of the "expected running services" set). Order and

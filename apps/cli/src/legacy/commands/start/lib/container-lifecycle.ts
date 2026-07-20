@@ -26,7 +26,10 @@ import {
   legacyBindMountSpecSource,
   legacyIsBindMountSource,
 } from "../../../shared/legacy-docker-bind-classify.ts";
-import { LEGACY_CLI_PROJECT_LABEL } from "../../../shared/legacy-docker-ids.ts";
+import {
+  LEGACY_CLI_PROJECT_LABEL,
+  LEGACY_CLI_WORKDIR_LABEL,
+} from "../../../shared/legacy-docker-ids.ts";
 import {
   buildLegacyStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
@@ -107,11 +110,15 @@ export interface LegacyStartContainerOpts {
    */
   readonly isBitbucketPipeline: boolean;
   /**
-   * `LegacyCliConfig.workdir` — the project's own working directory. Used
-   * exclusively to root {@link legacyStageStartSecretFiles}'s deterministic,
-   * persistent host directory (`<workdir>/supabase/.temp/start-secrets/<containerName>/`)
-   * so staged secret files survive a host/Docker-daemon restart — see that
-   * function's doc comment for why.
+   * `LegacyCliConfig.workdir` — the project's own working directory. Roots
+   * {@link legacyStageStartSecretFiles}'s deterministic, persistent host directory
+   * (`<workdir>/supabase/.temp/start-secrets/<containerName>/`) so staged secret files
+   * survive a host/Docker-daemon restart — see that function's doc comment for why.
+   *
+   * Also stamped onto every created container as {@link LEGACY_CLI_WORKDIR_LABEL} (see
+   * that constant's doc comment) so a later `stop`/{@link legacyRollbackStart} can find
+   * this exact directory again from the container's own label, without depending on
+   * being invoked from the same cwd/`--workdir` `start` was.
    */
   readonly workdir: string;
   /**
@@ -628,9 +635,17 @@ export function legacyStartContainer(
       [LEGACY_CLI_PROJECT_LABEL]: opts.projectId,
       [LEGACY_COMPOSE_PROJECT_LABEL]: opts.projectId,
     };
+    // The workdir label is stamped on the CONTAINER only, not on its named volumes below
+    // (`legacyEnsureStartVolume` is passed `labels`, not `containerLabels`) — a volume's own
+    // name already carries the project id, and nothing ever reads a workdir label back off a
+    // volume the way `legacyListContainerIdsAndNames` does for containers.
+    const containerLabels: Record<string, string> = {
+      ...labels,
+      [LEGACY_CLI_WORKDIR_LABEL]: opts.workdir,
+    };
     const labeledSpec: LegacyStartContainerSpec = {
       ...spec,
-      labels,
+      labels: containerLabels,
       extraHosts: [...(spec.extraHosts ?? []), ...opts.extraHosts],
     };
 

@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import type { LegacyContainerIdName } from "../../shared/legacy-docker-lifecycle.ts";
 import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
 import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
 import { LegacyHealthCheckTimeoutError } from "./lib/health-check.ts";
@@ -47,11 +48,18 @@ export function legacyIsUnhealthyStartError(
  * Also reclaims any {@link legacyCleanupStartSecrets} staged-secret
  * directories for the containers this run created — a TS-port-only hygiene
  * step with no Go equivalent (see that function's doc comment). The matching
- * container names come from {@link legacyDockerRemoveAll}'s own
- * `onContainersListed` hook, captured BEFORE teardown from that function's
- * single internal `docker ps` listing — never a second, separately listed
- * call, which would cost an extra real Docker Engine API request Go never
- * makes (see that function's doc comment for the parity rationale).
+ * containers come from {@link legacyDockerRemoveAll}'s own
+ * `onContainersRemoved` hook, which fires only once `container prune` has
+ * CONFIRMED they're actually gone — not merely listed, and not before the
+ * stop/prune stages have run — from that function's single internal `docker
+ * ps` listing, never a second, separately listed call, which would cost an
+ * extra real Docker Engine API request Go never makes (see that function's
+ * doc comment for the parity rationale). `workdir` (this run's own
+ * `LegacyCliConfig.workdir`) is passed through only as
+ * {@link legacyCleanupStartSecrets}'s fallback — every container this same
+ * `start` run just created carries its own matching `LEGACY_CLI_WORKDIR_LABEL`
+ * (see `container-lifecycle.ts`), so the fallback path is only ever exercised
+ * by a container created before that label existed.
  */
 export const legacyRollbackStart = (
   spawner: Spawner,
@@ -60,9 +68,9 @@ export const legacyRollbackStart = (
   workdir: string,
 ): Effect.Effect<void, never> =>
   Effect.gen(function* () {
-    let containerNames: ReadonlyArray<string> = [];
+    let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
     yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes, (containers) => {
-      containerNames = containers.map((container) => container.name);
+      removedContainers = containers;
     }).pipe(
       Effect.catch((error) =>
         Effect.sync(() => {
@@ -70,5 +78,5 @@ export const legacyRollbackStart = (
         }),
       ),
     );
-    yield* legacyCleanupStartSecrets(workdir, containerNames);
+    yield* legacyCleanupStartSecrets(removedContainers, workdir);
   });

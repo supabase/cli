@@ -27,14 +27,30 @@ JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) on host
 disk because this port shells out to `docker create`/`docker run` instead of using the
 Docker Engine API directly; without this cleanup those directories would survive `stop`
-indefinitely. The container names to clean are captured via `legacyDockerRemoveAll`'s own
-`onContainersListed` hook, fed by that function's single internal `docker ps` listing (no
-separate, second `docker ps` call — see that function's doc comment for the parity
-rationale), so cleanup targets exactly the containers this run tore down — never a blanket
-delete of the whole `start-secrets/` parent (unsafe if a workdir's project id ever changes
-across `start` runs without an intervening `stop`). Best-effort: a missing directory (every
-service besides Kong/Postgres/Supavisor/Edge Runtime) is a no-op, and a real deletion error
-does not fail the command.
+indefinitely. The containers to clean are captured via `legacyDockerRemoveAll`'s own
+`onContainersRemoved` hook, which fires only once `docker container prune` has CONFIRMED
+they're actually gone — not at the initial `docker ps` listing, and not before the
+stop/prune stages have even run — so a container the stop stage itself failed on (meaning
+`container prune` never ran and nothing was actually removed) keeps its secrets, and a
+container still running after a later, unrelated failure (volume/network prune) is never
+touched. The hook is fed by `legacyDockerRemoveAll`'s single internal `docker ps` listing
+(no separate, second `docker ps` call — see that function's doc comment for the parity
+rationale), so cleanup targets exactly the containers this run actually tore down — never
+a blanket delete of the whole `start-secrets/` parent (unsafe if a workdir's project id
+ever changes across `start` runs without an intervening `stop`).
+
+Each container's own directory is resolved using THAT container's `com.supabase.cli.workdir`
+label (stamped on every container `start` creates, `container-lifecycle.ts`) rather than
+this invocation's own `<workdir>`: `stop --all`/`stop --project-id <other>` can tear down a
+DIFFERENT project's containers than the one this invocation's own cwd/`--workdir` points
+at, and using this invocation's workdir unconditionally would look in the wrong directory,
+silently orphaning that other project's staged secret files forever (the containers are
+now gone, so no future `stop` could rediscover them via `docker ps` either). This
+invocation's own `<workdir>` is used only as a fallback, for a container with no such label
+(created before this label existed).
+
+Best-effort: a missing directory (every service besides Kong/Postgres/Supavisor/Edge
+Runtime) is a no-op, and a real deletion error does not fail the command.
 
 ## API Routes
 

@@ -64,21 +64,30 @@ export type LegacyDockerRemoveAllError =
  * {@link legacyDockerSupportsVolumePruneAllFlag}, Docker API >= 1.42) -> `network prune --force
  * --filter label=<filterValue>`.
  *
- * `onContainersListed`, if given, fires synchronously right after the initial listing succeeds
- * (before any container is stopped) with the exact containers found — a TS-port-only hook with no
- * Go equivalent, for callers (`stop.handler.ts`, `start.rollback.ts`) that need those same
- * container NAMES for {@link legacyCleanupStartSecrets} (Go itself doesn't stage host-disk
- * secrets, so it has no reason to know them). It exists so those callers get names from THIS
- * function's own single `docker ps` listing instead of issuing a second, separately-formatted
- * `docker ps` call, which would double the real Docker Engine API request count relative to Go
- * and fail the cli-e2e-ci request-log parity check. Fires even if a later stop/prune stage then
- * fails, matching the "snapshot before touching anything" semantics those callers rely on.
+ * `onContainersRemoved`, if given, fires synchronously once `container prune` (the actual
+ * removal step below) has EXITED SUCCESSFULLY — not at the initial listing, and not before
+ * containers are even stopped — with the exact containers that listing found, id/name/workdir
+ * together. A TS-port-only hook with no Go equivalent, for callers (`stop.handler.ts`,
+ * `start.rollback.ts`) that need those same containers for {@link legacyCleanupStartSecrets}
+ * (Go itself doesn't stage host-disk secrets, so it has no reason to know them). It exists so
+ * those callers get this data from THIS function's own single `docker ps` listing instead of
+ * issuing a second, separately-formatted `docker ps` call, which would double the real Docker
+ * Engine API request count relative to Go and fail the cli-e2e-ci request-log parity check.
+ *
+ * Firing AFTER `container prune` succeeds (rather than at listing time) matters: the listing
+ * only snapshots what MIGHT be torn down, before the stop/prune stages have actually run — firing
+ * there let a caller reclaim a container's staged-secret directory even when the stop stage fails
+ * outright (so `container prune` never even runs and nothing was actually removed) or a
+ * still-running container survives. Firing here instead means a caller only ever reclaims
+ * secrets for containers `container prune` has ACTUALLY removed. It still fires even if a LATER
+ * stage (volume/network prune) then fails, so those confirmed-removed containers' secrets are
+ * still reclaimed on that partial failure — matching the fix landed in `983eab92`.
  */
 export const legacyDockerRemoveAll = (
   spawner: Spawner,
   filterValue: string,
   deleteVolumes: boolean,
-  onContainersListed?: (containers: ReadonlyArray<LegacyContainerIdName>) => void,
+  onContainersRemoved?: (containers: ReadonlyArray<LegacyContainerIdName>) => void,
 ): Effect.Effect<void, LegacyDockerRemoveAllError> =>
   Effect.gen(function* () {
     const containers = yield* legacyListContainerIdsAndNames(spawner, {
@@ -87,7 +96,6 @@ export const legacyDockerRemoveAll = (
     }).pipe(
       Effect.mapError((cause) => new LegacyDockerRemoveAllListError({ message: cause.message })),
     );
-    onContainersListed?.(containers);
     const containerIds = containers.map((container) => container.id);
 
     // Go stops containers concurrently via `WaitAll`, joining every failure rather than
@@ -141,6 +149,10 @@ export const legacyDockerRemoveAll = (
         new LegacyDockerRemoveAllContainerPruneError({ message: "failed to prune containers" }),
       );
     }
+    // Containers are now CONFIRMED removed — see `onContainersRemoved`'s doc comment for why this
+    // must fire here rather than at the listing above, and why it still must fire even if a later
+    // stage (volume/network prune, below) goes on to fail.
+    onContainersRemoved?.(containers);
 
     if (deleteVolumes) {
       // Go gates the `--all` filter arg on Docker API >= 1.42 (`docker.go:126-133`,

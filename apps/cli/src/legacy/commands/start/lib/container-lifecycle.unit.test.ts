@@ -163,6 +163,32 @@ describe("legacyStartContainer", () => {
   );
 
   it.live(
+    "stamps the container (but not its named volumes) with a com.supabase.cli.workdir label matching opts.workdir",
+    () => {
+      // Read back later by `legacyListContainerIdsAndNames` so a subsequent `stop`/rollback can
+      // reclaim `legacyCleanupStartSecrets`'s staged-secret directory from the CONTAINER's own
+      // label rather than the invoking caller's own cwd/`--workdir` (see that label's doc
+      // comment, `legacy-docker-ids.ts`). Volumes deliberately do NOT get this label — nothing
+      // ever reads it back off a volume, and the "merges project + compose labels..." test above
+      // already pins the volume's label list to exactly the two project-identity labels via
+      // `toEqual`, so a regression that leaked the workdir label onto volumes too would fail that
+      // test's exact-match assertion.
+      const mock = alwaysSucceed();
+      return legacyStartContainer(mock.spawner, baseSpec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+      }).pipe(
+        Effect.map(() => {
+          const create = mock.spawned.find((args) => args[0] === "create");
+          expect(create).toContain(`com.supabase.cli.workdir=${workdir}`);
+        }),
+      );
+    },
+  );
+
+  it.live(
     "passes the spec's env values through the spawned process's own environment, extending it",
     () => {
       // `docker-create-args.ts` emits the key-only `-e KEY` form (never `-e KEY=value`) so

@@ -191,10 +191,14 @@ first-ever `start` prunes its own empty volume too), `false` otherwise (never to
 pre-existing user's data on a failed restart). Rollback also reclaims this run's own
 `<workdir>/supabase/.temp/start-secrets/<containerName>` directories (via
 `legacyCleanupStartSecrets`, `legacy/shared/legacy-start-secrets-cleanup.ts`) once
-teardown completes — the matching container names are snapshotted immediately before
-teardown runs, so cleanup only ever targets containers this failed run itself created.
-A later successful `stop` reclaims the same directories for a normal (non-rollback)
-teardown — see `stop`'s own `SIDE_EFFECTS.md`.
+teardown is CONFIRMED complete — the matching containers come from
+`legacyDockerRemoveAll`'s `onContainersRemoved` hook, which fires only once `docker
+container prune` has actually removed them (not at the initial listing), so cleanup only
+ever targets containers this failed run itself created AND actually tore down. Each
+container's directory is located via its own `com.supabase.cli.workdir` label (stamped on
+every container `start` creates); this run's own workdir is only the fallback for a
+container missing that label. A later successful `stop` reclaims the same directories for
+a normal (non-rollback) teardown — see `stop`'s own `SIDE_EFFECTS.md`.
 
 ## Telemetry Events Fired
 
