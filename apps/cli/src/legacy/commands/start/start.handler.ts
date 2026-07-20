@@ -125,6 +125,7 @@ import {
   legacyEnsureStartNetwork,
   legacyStartContainer,
   legacyStartVolumeExists,
+  LEGACY_COMPOSE_PROJECT_LABEL,
   type LegacyStartContainerOpts,
 } from "./lib/container-lifecycle.ts";
 import {
@@ -1578,6 +1579,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const bringUp = Effect.gen(function* () {
       yield* legacyEnsureStartNetwork(spawner, networkId, {
         [LEGACY_CLI_PROJECT_LABEL]: projectId,
+        [LEGACY_COMPOSE_PROJECT_LABEL]: projectId,
       });
 
       // Go's pre-create volume-existence check (`internal/db/start/start.go:

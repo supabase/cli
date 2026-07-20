@@ -54,7 +54,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * `functions deploy` Docker Desktop extension gateway) but is neither exported
  * nor in the same Docker-usage domain as `start` — not hoisted from there.
  */
-const LEGACY_COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
+export const LEGACY_COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
 /** `docker network create --label ...`/`docker volume create --label ...` failed. */
 export class LegacyStartNetworkCreateError extends Data.TaggedError(
