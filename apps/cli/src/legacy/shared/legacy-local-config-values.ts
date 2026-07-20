@@ -2147,11 +2147,20 @@ export function legacyResolveLocalConfigValues(
   // (`apps/cli-go/internal/db/start/start.go:100`), going through the same
   // `Secret`/`DecryptSecretHookFunc` decode every other secret field gets
   // (`pkg/config/secret.go:30-109`, wired at `pkg/config/config.go:781`).
-  const rawRootKey = envOverride(
-    "SUPABASE_DB_ROOT_KEY",
-    asRecord(document?.["db"])?.["root_key"] as string | undefined,
-    projectEnvValues,
-  );
+  const rawRootKeyValue = asRecord(document?.["db"])?.["root_key"];
+  // Go's `DecryptSecretHookFunc` only intercepts a STRING source value
+  // (`secret.go:86-89`); any other raw TOML kind (integer, bool, array, ...)
+  // falls through untouched and mapstructure then rejects decoding a scalar
+  // into the `Secret{Value, SHA256}` struct with exactly this message
+  // (`config.go:748-751` wraps it as `failed to parse config: %w`) — same
+  // "decoding failed due to the following error(s):" wrapper already used for
+  // `auth.captcha.provider`/`analytics.backend` above.
+  if (rawRootKeyValue !== undefined && typeof rawRootKeyValue !== "string") {
+    throw new LegacyConfigValidateError(
+      "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
+    );
+  }
+  const rawRootKey = envOverride("SUPABASE_DB_ROOT_KEY", rawRootKeyValue, projectEnvValues);
   const rootKey =
     rawRootKey === undefined || rawRootKey.length === 0
       ? LEGACY_POSTGRES_DEFAULT_ROOT_KEY

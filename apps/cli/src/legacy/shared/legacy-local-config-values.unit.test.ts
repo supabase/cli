@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import {
+  LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
   LegacyInvalidAnalyticsBackendEnvOverrideError,
   LegacyInvalidBoolEnvOverrideError,
   LegacyInvalidEdgeRuntimePolicyEnvOverrideError,
@@ -664,6 +665,41 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_DB_MAJOR_VERSION"] = "";
       const config = baseConfig({ db: { major_version: 17 } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("db.root_key (unmodeled raw-document field)", () => {
+    it("falls back to the default root key when absent", () => {
+      const config = baseConfig();
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.rootKey).toBe(LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
+    });
+
+    it("uses a configured string root_key verbatim", () => {
+      const config = baseConfig();
+      const document = { db: { root_key: "custom-root-key" } };
+      const values = legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        document,
+      );
+      expect(values.rootKey).toBe("custom-root-key");
+    });
+
+    it("rejects a non-string root_key (e.g. a bare TOML integer), matching Go's Secret decode failure", () => {
+      // `db.root_key` isn't modeled in `@supabase/config`'s schema, so Go's own
+      // decode failure (mapstructure rejecting a scalar into the `Secret` struct,
+      // `config.go:748-751`) must be reproduced here rather than letting the raw
+      // number flow unguarded into `envOverride`/`legacyDecryptAuthSecret`.
+      const config = baseConfig();
+      const document = { db: { root_key: 12345 } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(
+        "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
+      );
     });
   });
 
