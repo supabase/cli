@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -35,6 +35,9 @@ interface SetupOpts {
   readonly isLocal?: boolean;
   readonly linkedRef?: string;
   readonly diffSql?: string;
+  // When set, the pg-delta edge mock emits a multi-unit plan envelope (one file
+  // per entry) instead of the single-unit wrap of `diffSql`.
+  readonly diffFiles?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
   readonly targetOverride?: string;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
@@ -92,19 +95,21 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
       // single-unit envelope so `legacyDiffPgDelta` parses it. The migra script
       // returns raw SQL unchanged.
+      const isPgDelta = runOpts.script.includes("renderPlanFiles");
+      const planFiles =
+        opts.diffFiles !== undefined
+          ? opts.diffFiles.map((file, i) => ({
+              order: i + 1,
+              name: file.name,
+              transactionMode: "transactional",
+              sql: file.sql,
+            }))
+          : diffSql.length > 0
+            ? [{ order: 1, name: "schema_changes", transactionMode: "transactional", sql: diffSql }]
+            : [];
       const stdout =
-        runOpts.script.includes("renderPlanFiles") && diffSql.length > 0
-          ? JSON.stringify({
-              version: 1,
-              files: [
-                {
-                  order: 1,
-                  name: "schema_changes",
-                  transactionMode: "transactional",
-                  sql: diffSql,
-                },
-              ],
-            })
+        isPgDelta && planFiles.length > 0
+          ? JSON.stringify({ version: 1, files: planFiles })
           : diffSql;
       return Effect.succeed({ stdout, stderr: "" });
     },
@@ -454,6 +459,36 @@ describe("legacy db diff", () => {
       const files = readdirSync(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("writes one migration file per unit for a multi-unit pg-delta plan", () => {
+    // A pg-delta plan that crosses a transaction boundary yields more than one
+    // ordered unit; writing them into one migration would fail when db push/reset
+    // applies it as a single transaction. Each unit becomes its own file (Go's
+    // WritePgDeltaMigrations), named `<name>_<unit>` with strictly increasing
+    // timestamps, and the machine payload's `files` lists them all.
+    const s = setup(tmp.current, {
+      format: "json",
+      diffFiles: [
+        { name: "schema_changes", sql: "alter type mood add value 'ok';" },
+        { name: "after_enum_values", sql: "insert into t values ('ok');" },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
+      const dir = join(tmp.current, "supabase", "migrations");
+      const files = readdirSync(dir).sort();
+      expect(files).toHaveLength(2);
+      expect(files[0]).toMatch(/^\d{14}_my_diff_schema_changes\.sql$/);
+      expect(files[1]).toMatch(/^\d{14}_my_diff_after_enum_values\.sql$/);
+      // Each unit's file carries only that unit's SQL, terminated with a newline.
+      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("alter type mood add value 'ok';\n");
+      const success = s.out.messages.find((m) => m.type === "success");
+      const data = success?.data as { file: string; files: ReadonlyArray<string> };
+      expect(data.files).toHaveLength(2);
+      // `file` stays the first written path for released string-field consumers.
+      expect(data.file).toBe(data.files[0]);
     }).pipe(Effect.provide(s.layer));
   });
 

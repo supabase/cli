@@ -84,13 +84,6 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	return nil
 }
 
-// writtenMigration is a migration file produced by a pull, paired with the
-// version to record in the remote migration history.
-type writtenMigration struct {
-	Path    string
-	Version string
-}
-
 // pullDeclarativePgDelta exports remote schema into declarative SQL files by
 // diffing against an empty shadow baseline with pg-delta declarative export.
 //
@@ -127,7 +120,7 @@ func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.
 	return nil
 }
 
-func run(ctx context.Context, schema []string, base time.Time, name string, conn *pgx.Conn, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) ([]writtenMigration, error) {
+func run(ctx context.Context, schema []string, base time.Time, name string, conn *pgx.Conn, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) ([]diff.WrittenMigration, error) {
 	config := conn.Config().Config
 	timestamp := utils.GetVersionTimestamp(base)
 	path := new.GetMigrationPath(timestamp, name)
@@ -154,7 +147,7 @@ func run(ctx context.Context, schema []string, base time.Time, name string, conn
 		// The migra initial pull seeds `path` with a pg_dump even when the follow-up
 		// diff is empty and swallowed above, so record that single migration.
 		if !usePgDeltaDiff && len(written) == 0 {
-			written = []writtenMigration{{Path: path, Version: timestamp}}
+			written = []diff.WrittenMigration{{Path: path, Version: timestamp}}
 		}
 		return written, nil
 	} else if err != nil {
@@ -180,7 +173,7 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 	})
 }
 
-func diffRemoteSchema(ctx context.Context, schema []string, base time.Time, name string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) ([]writtenMigration, error) {
+func diffRemoteSchema(ctx context.Context, schema []string, base time.Time, name string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) ([]diff.WrittenMigration, error) {
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
 	result, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff, options...)
 	if err != nil {
@@ -207,7 +200,7 @@ func diffRemoteSchema(ctx context.Context, schema []string, base time.Time, name
 			}
 			return nil, errors.New(errInSync)
 		}
-		return writePgDeltaMigrations(result.Files, base, name, fsys)
+		return diff.WritePgDeltaMigrations(result.Files, base, name, fsys)
 	}
 	// migra path: a single migration file, appended when seeded by dumpRemoteSchema.
 	output := result.SQL
@@ -229,39 +222,7 @@ func diffRemoteSchema(ctx context.Context, schema []string, base time.Time, name
 	if _, err := f.WriteString(output); err != nil {
 		return nil, errors.Errorf("failed to write migration file: %w", err)
 	}
-	return []writtenMigration{{Path: path, Version: timestamp}}, nil
-}
-
-// writePgDeltaMigrations writes one ordered migration file per plan unit. A
-// single-unit plan (the common case) keeps the exact `<ts>_<name>.sql` filename;
-// multi-unit plans append the unit name and give each file a strictly increasing
-// timestamp (real time arithmetic on the base, never string increment) so their
-// execution order and migration-history order stay stable.
-func writePgDeltaMigrations(files []diff.PgDeltaPlanFile, base time.Time, name string, fsys afero.Fs) ([]writtenMigration, error) {
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-		return nil, err
-	}
-	single := len(files) == 1
-	written := make([]writtenMigration, 0, len(files))
-	for i, file := range files {
-		version := utils.GetVersionTimestamp(base.Add(time.Duration(i) * time.Second))
-		fileName := name
-		if !single {
-			fileName = name + "_" + file.Name
-		}
-		path := new.GetMigrationPath(version, fileName)
-		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-		if err != nil {
-			return nil, errors.Errorf("failed to open migration file: %w", err)
-		}
-		if _, err := f.WriteString(file.SQL + "\n"); err != nil {
-			f.Close()
-			return nil, errors.Errorf("failed to write migration file: %w", err)
-		}
-		f.Close()
-		written = append(written, writtenMigration{Path: path, Version: version})
-	}
-	return written, nil
+	return []diff.WrittenMigration{{Path: path, Version: timestamp}}, nil
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {

@@ -38,7 +38,7 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	out := result.SQL
 	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
-	if err := SaveDiff(out, file, fsys); err != nil {
+	if err := SaveDiff(result, file, fsys); err != nil {
 		return err
 	}
 	drops := findDropStatements(out)

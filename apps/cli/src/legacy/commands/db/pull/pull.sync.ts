@@ -58,12 +58,32 @@ export const legacyUpdateMigrationHistory = (
       });
     }
     yield* Effect.gen(function* () {
+      // Create the history schema/table first, in its OWN transaction — Go runs
+      // `CreateMigrationTable` before the upsert batch (`repair.go:59`). Keeping it
+      // outside the upsert transaction below avoids nesting BEGINs
+      // (`legacyCreateMigrationTable` issues its own BEGIN/COMMIT).
       yield* legacyCreateMigrationTable(session);
-      for (const entry of resolved) {
-        const content = yield* fs.readFileString(entry.migrationPath);
-        const statements = legacySplitAndTrim(content);
-        yield* session.query(UPSERT_MIGRATION_VERSION, [entry.version, entry.name, statements]);
-      }
+      // Record every version in ONE explicit transaction: a mid-loop failure
+      // (dropped connection, unreadable migration file) must record NONE of them.
+      // Go queues all upserts in a single `pgx.Batch` (`repair.go:63-83`), which
+      // Postgres executes as one implicit transaction; without a transaction here
+      // each UPSERT autocommits, so a failure partway through would leave partial
+      // remote history that fails the next pull's sync check.
+      yield* Effect.gen(function* () {
+        yield* session.exec("BEGIN");
+        for (const entry of resolved) {
+          const content = yield* fs.readFileString(entry.migrationPath);
+          const statements = legacySplitAndTrim(content);
+          yield* session.query(UPSERT_MIGRATION_VERSION, [entry.version, entry.name, statements]);
+        }
+        yield* session.exec("COMMIT");
+      }).pipe(
+        // Roll back on ANY failure inside the transaction — including a migration
+        // file read that fails after BEGIN. `Effect.ignore` keeps a ROLLBACK
+        // failure from masking the original error (`tapError` re-raises the
+        // original). Mirrors `legacyCreateMigrationTable`'s rollback handling.
+        Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
+      );
     }).pipe(
       Effect.mapError(
         (cause) =>
