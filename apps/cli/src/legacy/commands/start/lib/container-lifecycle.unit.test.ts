@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach } from "vitest";
 
@@ -520,6 +520,82 @@ describe("legacyStartContainer secretFiles", () => {
           expect(existsSync(hostPath ?? "")).toBe(false);
         }),
       );
+    },
+  );
+
+  it.live(
+    "cleans up the staged file on a SIGINT-style interruption mid-`docker create`, matching Go's no-orphaned-secrets guarantee",
+    () => {
+      // Go never writes these secrets to a host file at all (see `legacyStageStartSecretFiles`'s
+      // doc comment), so this is judged on its own correctness/security merits, not Go parity:
+      // a SIGINT landing after staging but before `docker create` returns must not leave a
+      // plaintext secret file behind indefinitely. `Effect.tapError` (the previous wiring) never
+      // sees a pure fiber interrupt — only `Effect.onError` does — same class of gap already
+      // fixed for the top-level bring-up rollback in `start.handler.ts`.
+      const createStarted = Deferred.makeUnsafe<void>();
+      const hangForever = Deferred.makeUnsafe<ChildProcessSpawner.ExitCode>();
+      let hostPath: string | undefined;
+      const encoder = new TextEncoder();
+
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = command._tag === "StandardCommand" ? command.args : [];
+          if (args[0] === "create") {
+            const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
+            hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
+            yield* Deferred.succeed(createStarted, undefined);
+            // Never resolves on its own — only interruption ends this "process".
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Deferred.await(hangForever),
+              isRunning: Effect.succeed(true),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }
+          const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            stdout: Stream.fromIterable([encoder.encode("")]),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Deferred.await(exitDeferred),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        binds: [],
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      };
+
+      return Effect.gen(function* () {
+        const fiber = yield* legacyStartContainer(spawner, spec, {
+          projectId: "proj",
+          isBitbucketPipeline: false,
+          workdir,
+          extraHosts: [],
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(createStarted);
+        expect(hostPath).toBeDefined();
+        expect(existsSync(hostPath ?? "")).toBe(true);
+        yield* Fiber.interrupt(fiber);
+        expect(existsSync(hostPath ?? "")).toBe(false);
+      });
     },
   );
 

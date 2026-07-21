@@ -629,12 +629,18 @@ function legacyStageStartSecretFiles(
  *    lifetime so a `restartPolicy: "unless-stopped"` restart (dockerd
  *    re-attaching bind mounts after a host reboot, long after this process
  *    has exited) can still read them; see `legacyStageStartSecretFiles`'s doc
- *    comment. Only cleaned up (best-effort, `Effect.tapError`) when `docker
- *    create`/`docker start` itself FAILS and the container never successfully
- *    starts — nothing is depending on the files at that point. Once the
- *    container is actually torn down (a failed-start rollback, or a later
- *    `stop`), `legacyCleanupStartSecrets` (`legacy-start-secrets-cleanup.ts`)
- *    reclaims the staged directory then instead.
+ *    comment. Only cleaned up (best-effort, `Effect.onError` — not
+ *    `Effect.tapError`, which is built on `Cause.findError` and never sees a
+ *    pure SIGINT/SIGTERM interrupt, the same gap already fixed for the
+ *    top-level bring-up rollback in `start.handler.ts`) when `docker
+ *    create`/`docker start` itself FAILS, is interrupted, or the container
+ *    never successfully starts — nothing is depending on the files at that
+ *    point, and this fires regardless of whether a container was ever
+ *    created, so it doesn't depend on `docker ps`-based discovery the way
+ *    `legacyCleanupStartSecrets` does. Once the container is actually torn
+ *    down (a failed-start rollback, or a later `stop`),
+ *    `legacyCleanupStartSecrets` (`legacy-start-secrets-cleanup.ts`) reclaims
+ *    the staged directory then instead.
  *
  * Resolves to the created container's id/name on success.
  */
@@ -697,7 +703,7 @@ export function legacyStartContainer(
       yield* legacyDockerStartContainer(spawner, containerId, specWithSecretBinds);
       return containerId;
     }).pipe(
-      Effect.tapError(() =>
+      Effect.onError(() =>
         Effect.promise(cleanupSecretFiles).pipe(Effect.catchCause(() => Effect.void)),
       ),
     );
