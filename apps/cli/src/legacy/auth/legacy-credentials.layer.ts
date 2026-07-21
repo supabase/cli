@@ -123,14 +123,9 @@ function readGoWindowsTarget(module: KeyringModule, account: string): string | n
   }
 }
 
-// Existence check for the Windows target-shaped credential. Deliberately
-// does NOT use `Entry.withTarget` here: constructing it writes an empty
-// placeholder credential as a side effect on Windows (napi-rs/keyring
-// entry.rs), which would fabricate the very credential being probed for.
-// `findCredentials` has no such side effect — it's a plain `CredEnumerateW`
-// read. Scoped to an exact target, a genuinely absent credential yields an
-// empty result (not a throw); a throw means the target was found but its
-// blob isn't valid UTF-16 (Go writes raw UTF-8 bytes), i.e. it exists.
+// Avoid `Entry.withTarget` here — constructing it writes an empty placeholder
+// credential on Windows, fabricating the thing being probed for. A throw from
+// `findCredentials` on an exact target means found-but-undecodable, not absent.
 function windowsTargetExists(module: KeyringModule, account: string): boolean {
   try {
     const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
