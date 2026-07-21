@@ -92,7 +92,7 @@ const tryKeyringDelete = (
         deleted = true;
       }
 
-      if (platform === "win32" && readGoWindowsTarget(module, account)) {
+      if (platform === "win32" && windowsTargetExists(module, account)) {
         deleted = deleteGoWindowsTarget(module, account) || deleted;
       }
 
@@ -120,6 +120,23 @@ function readGoWindowsTarget(module: KeyringModule, account: string): string | n
     return credential ? normalizeGoWindowsPassword(credential.password) : null;
   } catch {
     return null;
+  }
+}
+
+// Existence check for the Windows target-shaped credential. Deliberately
+// does NOT use `Entry.withTarget` here: constructing it writes an empty
+// placeholder credential as a side effect on Windows (napi-rs/keyring
+// entry.rs), which would fabricate the very credential being probed for.
+// `findCredentials` has no such side effect — it's a plain `CredEnumerateW`
+// read. Scoped to an exact target, a genuinely absent credential yields an
+// empty result (not a throw); a throw means the target was found but its
+// blob isn't valid UTF-16 (Go writes raw UTF-8 bytes), i.e. it exists.
+function windowsTargetExists(module: KeyringModule, account: string): boolean {
+  try {
+    const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
+    return credentials.some((item) => item.account === account);
+  } catch {
+    return true;
   }
 }
 
@@ -172,11 +189,10 @@ function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean 
 // (backend unavailable) and only surfaces other errors (`unlink.go:36-40`).
 //
 // The plain `Entry(service, projectRef)` is the macOS/Linux form and the Windows
-// default. On Windows, Go also writes a separate target-shaped credential; it is
-// detected via `findCredentials` (a plain `getPassword` does not read the Go
-// target reliably) and deleted through the `withTarget` entry. The `withTarget`
-// entry is only constructed on Windows — on macOS its first argument is an
-// invalid keychain domain and throws.
+// default. On Windows, Go also writes a separate target-shaped credential,
+// deleted through the `withTarget` entry. The `withTarget` entry is only
+// constructed on Windows — on macOS its first argument is an invalid keychain
+// domain and throws.
 //
 // Each entry is probed before `deleteCredential()`: on macOS deleting an absent
 // entry blocks on a Keychain authorization prompt, and an absent read means
@@ -204,7 +220,7 @@ const deleteKeyringEntryStrict = (
       deleted = true;
     }
 
-    if (platform === "win32" && readGoWindowsTarget(module, account)) {
+    if (platform === "win32" && windowsTargetExists(module, account)) {
       const target = module.Entry.withTarget(
         goWindowsCredentialTarget(account),
         KEYRING_SERVICE,
@@ -256,7 +272,7 @@ const deleteProfileKeyringEntry = (
       found = true;
     }
 
-    if (platform === "win32" && readGoWindowsTarget(module, account)) {
+    if (platform === "win32" && windowsTargetExists(module, account)) {
       const target = module.Entry.withTarget(
         goWindowsCredentialTarget(account),
         KEYRING_SERVICE,
@@ -305,7 +321,7 @@ const deleteAllKeyringEntries = (
       } catch {
         // best-effort per entry
       }
-      if (platform === "win32" && readGoWindowsTarget(module, account)) {
+      if (platform === "win32" && windowsTargetExists(module, account)) {
         deleteGoWindowsTarget(module, account);
       }
     }

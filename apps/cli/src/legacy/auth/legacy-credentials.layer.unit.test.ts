@@ -33,23 +33,25 @@ let throwOnSetSecret = false;
 const throwOnGetPasswordAccounts = new Set<string>();
 const throwOnDeleteAccounts = new Set<string>();
 const withTargetCalls: string[] = [];
+const opaqueAccounts = new Set<string>();
 
 vi.mock("@napi-rs/keyring", () => ({
-  findCredentials: (service: string, target?: string) =>
-    Array.from(passwords.entries())
-      .filter(([key]) =>
-        // No target → model the Windows `CredEnumerate("<service>*")` sweep,
-        // which matches both the plain (`<service>/…`) and the Go target-shaped
-        // (`<service>:<account>/…`) entries by the leading segment. With a
-        // target → narrow to that specific Go target (used by readGoWindowsTarget).
-        target === undefined
-          ? key.split("/")[0]!.startsWith(service)
-          : key.startsWith(`${target}/`),
-      )
-      .map(([key, password]) => ({
-        account: key.split("/").at(-1)!,
-        password,
-      })),
+  findCredentials: (service: string, target?: string) => {
+    const matches = Array.from(passwords.entries()).filter(([key]) =>
+      // No target → model the Windows `CredEnumerate("<service>*")` sweep,
+      // which matches both the plain (`<service>/…`) and the Go target-shaped
+      // (`<service>:<account>/…`) entries by the leading segment. With a
+      // target → narrow to that specific Go target (used by readGoWindowsTarget).
+      target === undefined ? key.split("/")[0]!.startsWith(service) : key.startsWith(`${target}/`),
+    );
+    if (matches.some(([key]) => opaqueAccounts.has(key))) {
+      throw new Error("BadEncoding: invalid UTF-8 data in secure storage");
+    }
+    return matches.map(([key, password]) => ({
+      account: key.split("/").at(-1)!,
+      password,
+    }));
+  },
   Entry: class Entry {
     service: string;
     account: string;
@@ -140,6 +142,7 @@ beforeEach(() => {
   throwOnGetPasswordAccounts.clear();
   throwOnDeleteAccounts.clear();
   withTargetCalls.length = 0;
+  opaqueAccounts.clear();
   tempHome = mkdtempSync(join(tmpdir(), "supabase-legacy-creds-"));
 });
 
@@ -423,6 +426,19 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
     },
   );
 
+  it.effect("win32: no Go target credential → LegacyNotLoggedInError, nothing fabricated", () => {
+    return Effect.gen(function* () {
+      const { deleteAccessToken } = yield* LegacyCredentials;
+      const exit = yield* Effect.exit(deleteAccessToken);
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyNotLoggedInError");
+      }
+      expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
+      expect(withTargetCalls).toEqual([]);
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+  });
+
   it.effect(
     "keyring unavailable (SUPABASE_NO_KEYRING) with token in file → removes file, still NotLoggedIn",
     () => {
@@ -520,6 +536,19 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
       expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
+
+  it.effect(
+    "win32: deletes a Go target whose blob getPassword/findCredentials can't decode",
+    () => {
+      passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
+      opaqueAccounts.add(goWindowsKey("supabase"));
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* LegacyCredentials;
+        yield* deleteAccessToken;
+        expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
+      }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+    },
+  );
 
   it.effect("legacy-keyring delete error is swallowed and does not change the outcome", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
