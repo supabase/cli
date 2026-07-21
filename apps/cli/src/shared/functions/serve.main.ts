@@ -245,11 +245,11 @@ Deno.serve({
         const isValidJWT = await verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
 
         if (!isValidJWT) {
-          return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
+          return getResponse({ error: "Invalid JWT" }, STATUS_CODE.Unauthorized);
         }
       } catch (e) {
         console.error(e);
-        return getResponse({ msg: e.toString() }, STATUS_CODE.Unauthorized);
+        return getResponse({ error: e.toString() }, STATUS_CODE.Unauthorized);
       }
     }
 
