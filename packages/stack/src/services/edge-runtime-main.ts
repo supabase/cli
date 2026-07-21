@@ -6,41 +6,18 @@ const placeholder = {
   message: "Edge Functions are not configured for this local stack yet.",
 };
 
-const AUTH_ERROR_CODE = {
-  MissingAuthHeader: "UNAUTHORIZED_NO_AUTH_HEADER",
-  InvalidJwtFormat: "UNAUTHORIZED_INVALID_JWT_FORMAT",
-  LegacyJwt: "UNAUTHORIZED_LEGACY_JWT",
-  AsymmetricJwt: "UNAUTHORIZED_ASYMMETRIC_JWT",
-  UnsupportedTokenAlgorithm: "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
-};
-
-interface AuthFailure {
-  code: string;
-  message: string;
+export enum RequestErrors {
+  MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
+  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
+  InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
+  InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
+  UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
 }
 
-const AUTH_FAILURE = {
-  MissingAuthHeader: {
-    code: AUTH_ERROR_CODE.MissingAuthHeader,
-    message: "Missing authorization header",
-  },
-  InvalidJwtFormat: {
-    code: AUTH_ERROR_CODE.InvalidJwtFormat,
-    message: "Invalid JWT format",
-  },
-  LegacyJwt: {
-    code: AUTH_ERROR_CODE.LegacyJwt,
-    message: "Invalid JWT",
-  },
-  AsymmetricJwt: {
-    code: AUTH_ERROR_CODE.AsymmetricJwt,
-    message: "Invalid JWT",
-  },
-  UnsupportedTokenAlgorithm: (algorithm: string) => ({
-    code: AUTH_ERROR_CODE.UnsupportedTokenAlgorithm,
-    message: `Unsupported JWT algorithm ${algorithm}`,
-  }),
-};
+interface AuthFailure {
+  code: RequestErrors;
+  message?: string;
+}
 
 const configPath =
   typeof Deno === "undefined"
@@ -72,9 +49,14 @@ function bytesEqual(left: Uint8Array, right: Uint8Array) {
   return result === 0;
 }
 
-function getAuthErrorResponse({ code, message }: AuthFailure) {
+function getAuthErrorResponse({ code, message = "Invalid JWT" }: AuthFailure) {
   return Response.json(
-    { code, message, msg: message },
+    {
+      code,
+      message,
+      // DEPRECATED: Retained for backward compatibility.
+      msg: message,
+    },
     {
       status: 401,
       headers: {
@@ -124,7 +106,10 @@ export async function verifyRequest(req: Request, config: any, functionConfig: a
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")?.replace("Bearer", "")?.trim();
 
   if (!bearerToken && !sbApiKeyCompatibilityToken) {
-    return getAuthErrorResponse(AUTH_FAILURE.MissingAuthHeader);
+    return getAuthErrorResponse({
+      code: RequestErrors.MissingAuthHeader,
+      message: "Missing authorization header",
+    });
   }
 
   // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
@@ -134,7 +119,10 @@ export async function verifyRequest(req: Request, config: any, functionConfig: a
     !bearerToken || bearerToken.startsWith("sb_") ? sbApiKeyCompatibilityToken : bearerToken;
 
   if (!token) {
-    return getAuthErrorResponse(AUTH_FAILURE.InvalidJwtFormat);
+    return getAuthErrorResponse({
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    });
   }
 
   let algorithm: string | undefined;
@@ -142,11 +130,17 @@ export async function verifyRequest(req: Request, config: any, functionConfig: a
     algorithm = decodeJwtAlgorithm(token);
   } catch (error) {
     console.error("JWT format error", error);
-    return getAuthErrorResponse(AUTH_FAILURE.InvalidJwtFormat);
+    return getAuthErrorResponse({
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    });
   }
 
   if (!algorithm) {
-    return getAuthErrorResponse(AUTH_FAILURE.InvalidJwtFormat);
+    return getAuthErrorResponse({
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    });
   }
 
   if (algorithm === "HS256") {
@@ -155,14 +149,17 @@ export async function verifyRequest(req: Request, config: any, functionConfig: a
     } catch (error) {
       console.error("JWT verification failed", error);
     }
-    return getAuthErrorResponse(AUTH_FAILURE.LegacyJwt);
+    return getAuthErrorResponse({ code: RequestErrors.InvalidLegacyJWT });
   }
 
   if (algorithm === "ES256" || algorithm === "RS256") {
-    return getAuthErrorResponse(AUTH_FAILURE.AsymmetricJwt);
+    return getAuthErrorResponse({ code: RequestErrors.InvalidAsymmetricJWT });
   }
 
-  return getAuthErrorResponse(AUTH_FAILURE.UnsupportedTokenAlgorithm(algorithm));
+  return getAuthErrorResponse({
+    code: RequestErrors.UnsupportedTokenAlgorithm,
+    message: `Unsupported JWT algorithm ${algorithm}`,
+  });
 }
 
 function dirname(path: string) {
