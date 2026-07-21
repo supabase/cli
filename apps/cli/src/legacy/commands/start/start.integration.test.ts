@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -1290,6 +1290,31 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on a per-function env field, matching Go's Config.Load rejecting an unknown functions[slug] key",
+      () => {
+        // Go's `function` struct (pkg/config/config.go:290-296) has no `env` field — `Config.Load`'s
+        // `v.UnmarshalExact` (ErrorUnused: true) rejects it unconditionally, before any Docker
+        // work. Empirically confirmed against the real Go binary: `'functions[foo]' has invalid
+        // keys: env`. `@supabase/config`'s own schema DOES model `[functions.<slug>.env]` (a
+        // legitimate next/-only feature), so this must be a legacy-only rejection.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO = "env(SOME_VAR)"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("'functions[foo]' has invalid keys: env");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
       "fails on an invalid SUPABASE_EDGE_RUNTIME_POLICY even when edge-runtime is excluded, matching Go's Config.Load",
       () => {
         // `edge_runtime.policy` is a strict enum in @supabase/config's schema, so a bad TOML
@@ -1808,48 +1833,6 @@ content_path = "./templates/custom_notice.html"
             rmSync(stagingRoot, { recursive: true, force: true });
           }
         }).pipe(Effect.provide(layer));
-      },
-    );
-
-    it.live(
-      "resolves a per-function env(...) ref against the real env var, not the literal string",
-      () => {
-        // `config.functions.<slug>.env.<VAR>` is schema-deferred (`env(...)`)
-        // until `resolveProjectSubtree` runs — without that step Edge Runtime
-        // would receive the literal string "env(FOO_SECRET)" instead of the
-        // actual secret.
-        const previous = process.env["FOO_SECRET"];
-        process.env["FOO_SECRET"] = "the-real-secret-value";
-        const workdir = tempRoot.current;
-        mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
-        writeFileSync(join(workdir, "supabase", "functions", "foo", "index.ts"), "export {};\n");
-        const { layer, child } = setup({
-          configContents:
-            'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO_SECRET = "env(FOO_SECRET)"\n',
-        });
-        return Effect.gen(function* () {
-          yield* legacyStart(flags());
-          const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
-          const envFileIndex = runArgs.indexOf("--env-file");
-          expect(envFileIndex).toBeGreaterThanOrEqual(0);
-          const envFilePath = runArgs[envFileIndex + 1] ?? "";
-          const envFileContents = readFileSync(envFilePath, "utf8");
-          try {
-            expect(envFileContents).toContain("the-real-secret-value");
-            expect(envFileContents).not.toContain("env(FOO_SECRET)");
-          } finally {
-            rmSync(dirname(envFilePath), { recursive: true, force: true });
-          }
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) delete process.env["FOO_SECRET"];
-              else process.env["FOO_SECRET"] = previous;
-              rmSync(join(workdir, "supabase", "functions"), { recursive: true, force: true });
-            }),
-          ),
-        );
       },
     );
 

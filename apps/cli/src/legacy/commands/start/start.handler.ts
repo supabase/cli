@@ -801,6 +801,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     yield* wrapConfigOverride("auth.oauth_server", () =>
       resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     );
+    // Go's `function` struct (`pkg/config/config.go:290-296`) has no `env` field — `Config.Load`'s
+    // `v.UnmarshalExact` (`ErrorUnused: true`, `config.go:749,1041`) rejects any unknown key
+    // unconditionally, well before any Docker work. `@supabase/config`'s own schema DOES model
+    // `[functions.<slug>.env]` (`packages/config/src/functions.ts`) — a legitimate `next/`-only
+    // feature shared infrastructure the legacy shell can't remove — so this is a legacy-only
+    // rejection, not a schema change. Empirically confirmed against the real Go binary: a config
+    // with `[functions.foo.env]` fails with `'functions[foo]' has invalid keys: env`.
+    for (const [slug, func] of Object.entries(config.functions)) {
+      if (Object.keys(func.env).length > 0) {
+        yield* Effect.fail(
+          new LegacyStartInvalidConfigError({
+            message: `failed to parse config: decoding failed due to the following error(s):\n\n'functions[${slug}]' has invalid keys: env`,
+          }),
+        );
+      }
+    }
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
