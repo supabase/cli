@@ -8,6 +8,7 @@ import { importJWK, jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "./legacy-go-jwt.ts";
 import {
   LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
   LegacyInvalidAnalyticsBackendEnvOverrideError,
@@ -1476,7 +1477,7 @@ describe("legacyResolveLocalConfigValues", () => {
       ).not.toThrow();
     });
 
-    it("skips reading a malformed signing_keys_path when auth is disabled", () => {
+    it("skips reading a malformed signing_keys_path when auth is disabled, but still signs asymmetrically with the default key", async () => {
       const supabaseDir = join(tempRoot.current, "supabase");
       mkdirSync(supabaseDir, { recursive: true });
       writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
@@ -1484,11 +1485,17 @@ describe("legacyResolveLocalConfigValues", () => {
         auth: { enabled: false, signing_keys_path: "signing_keys.json" },
       });
       const values = legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
-      // Falls back to HMAC signing, matching an absent signing key.
-      const [, payload] = values.anonKey.split(".");
-      expect(JSON.parse(Buffer.from(payload ?? "", "base64url").toString())).toMatchObject({
-        iss: "supabase-demo",
-      });
+      // Go's `generateJWT` (`apikeys.go:77`) checks `len(a.SigningKeysPath) > 0 &&
+      // len(a.SigningKeys) > 0`, NOT `auth.enabled` — `a.SigningKeys` is never empty (it keeps
+      // its `NewConfig()`-seeded default when the file read is skipped), so a disabled-auth
+      // config with a configured path still signs with the default ES256 key, not HMAC.
+      const publicKey = await importJWK(
+        { ...LEGACY_DEFAULT_SIGNING_KEY, d: undefined, key_ops: undefined },
+        "ES256",
+      );
+      const { payload, protectedHeader } = await jwtVerify(values.anonKey, publicKey);
+      expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+      expect(protectedHeader).toMatchObject({ alg: "ES256", kid: LEGACY_DEFAULT_SIGNING_KEY.kid });
     });
 
     describe("SUPABASE_AUTH_ENABLED env override", () => {

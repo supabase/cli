@@ -747,11 +747,11 @@ const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema))
 /**
  * Go's `Config.Validate` (`pkg/config/config.go:877-878,1059-1062`): a relative
  * `signing_keys_path` resolves against `<workdir>/supabase`, then the file is
- * read and JSON-decoded into `[]JWK`. Shared by {@link loadFirstSigningKey} (only the
- * first key is used to sign anon/service_role, matching `generateJWT`'s
- * `a.SigningKeys[0]` — see {@link resolveSignedKey}) and {@link loadSigningKeys} (the
- * full array, matching `ResolveJWKS`'s `a.SigningKeys` loop — see
- * {@link legacyResolveLocalJwks}).
+ * read and JSON-decoded into `[]JWK`. Used via {@link legacyResolveConfiguredSigningKeys}'s
+ * {@link loadSigningKeys} call, both by `legacyResolveLocalConfigValues` (which only needs the
+ * first key to sign anon/service_role, matching `generateJWT`'s `a.SigningKeys[0]` — see
+ * {@link resolveSignedKey}) and {@link legacyResolveLocalJwks} (the full array, matching
+ * `ResolveJWKS`'s `a.SigningKeys` loop).
  *
  * Uses `node:fs` directly (not the `FileSystem` Effect service other Go-parity
  * resolvers in `legacy/` use for file reads) so this function — and its large
@@ -793,11 +793,6 @@ function readSigningKeysFile(workdir: string, signingKeysPath: string): Readonly
   } catch (cause) {
     throw new LegacyConfigValidateError(legacySigningKeysDecodeErrorMessage(cause));
   }
-}
-
-/** See {@link readSigningKeysFile}. */
-function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJwk | undefined {
-  return readSigningKeysFile(workdir, signingKeysPath)[0];
 }
 
 /** See {@link readSigningKeysFile}. */
@@ -857,12 +852,12 @@ export function legacyResolveConfiguredSigningKeys(
  *
  * Go joins both paths unconditionally with the `supabase/` dir — no `filepath.IsAbs` guard
  * (`config.go:961-965` uses `path.Join`, which absorbs a leading `/`) — unlike
- * {@link loadFirstSigningKey}'s `signing_keys_path`, which Go does guard with `filepath.IsAbs`
+ * {@link readSigningKeysFile}'s `signing_keys_path`, which Go does guard with `filepath.IsAbs`
  * (`config.go:928-929`). See `legacyResolveApiTlsPath`. Matches the identical Kong-side
  * validation already ported for `seed buckets`/`storage` in
  * `legacy-storage-credentials.ts`'s `validateLocalKongTls`.
  *
- * Uses `node:fs` directly for the same reason as {@link loadFirstSigningKey}: this stays a plain
+ * Uses `node:fs` directly for the same reason as {@link readSigningKeysFile}: this stays a plain
  * synchronous resolver rather than threading the Effect `FileSystem` service through
  * `legacyStatusValues`/`status.handler.ts`.
  */
@@ -1038,7 +1033,7 @@ export function legacyResolveAuthEmail(
  * config.go:1293-1313`), called from `Config.Validate` right after `Auth.MFA.validate()`, still
  * inside `if c.Auth.Enabled` (`config.go:1142`). Every template is checked unconditionally; a
  * notification only when that notification is itself enabled (`config.go:1308`). Uses the same
- * `readFileSync`-based pattern as {@link loadFirstSigningKey}/`readApiTlsFiles` in this file,
+ * `readFileSync`-based pattern as {@link readSigningKeysFile}/`readApiTlsFiles` in this file,
  * not an Effect `FileSystem` service.
  *
  * The `content`-vs-`content_path` exclusivity decision and path resolution (including the
@@ -2044,9 +2039,9 @@ function validateAuthExternalProviders(
  * @throws when a configured `api.tls` cert/key file can't be read — see
  * {@link readApiTlsFiles}. The "exactly one of cert/key set" presence check
  * runs later, as part of {@link legacyValidateResolvedConfig}.
- * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
- * or its first key uses an unsupported algorithm — see {@link loadFirstSigningKey}
- * and {@link legacyGenerateAsymmetricGoJwt}.
+ * @throws when `auth.signing_keys_path` is set, auth is enabled, and the file is missing,
+ * malformed, or its first key uses an unsupported algorithm — see
+ * {@link legacyResolveConfiguredSigningKeys} and {@link legacyGenerateAsymmetricGoJwt}.
  * @throws when an email template's `content` is present without `content_path`, or a
  * configured `content_path` file can't be read — see {@link readAuthEmailTemplateContent}.
  * @throws {LegacyInvalidAnalyticsBackendEnvOverrideError} when `SUPABASE_ANALYTICS_BACKEND`
@@ -2379,9 +2374,21 @@ export function legacyResolveLocalConfigValues(
     config.auth.captcha,
     projectEnvValues,
   );
+  // Go's `generateJWT` (`apikeys.go:77`) signs asymmetrically whenever
+  // `len(a.SigningKeysPath) > 0 && len(a.SigningKeys) > 0` — NOT gated on `auth.enabled`. Since
+  // `a.SigningKeys` is unconditionally seeded with the default ES256 key at `NewConfig()` time
+  // and only ever replaced by the file's keys (when the read above actually runs), it's never
+  // empty either way — so this reduces to "does `signing_keys_path` resolve to a key at all,"
+  // matching {@link legacyResolveLocalJwks}'s identical `signingKeysPath`-only condition. Reuses
+  // {@link legacyResolveConfiguredSigningKeys} (which already gates the actual file read on
+  // `authEnabled` internally, matching the file-read gating above) rather than duplicating that
+  // gate here — a disabled-auth config with a configured path must still sign asymmetrically
+  // with the default key, not silently fall back to symmetric HS256.
   const signingKey =
-    authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
-      ? loadFirstSigningKey(workdir, signingKeysPath)
+    signingKeysPath !== undefined && signingKeysPath.length > 0
+      ? (legacyResolveConfiguredSigningKeys(config, workdir, projectEnvValues) ?? [
+          LEGACY_DEFAULT_SIGNING_KEY,
+        ])[0]
       : undefined;
   // Go's `Config.Validate` runs passkey/webauthn validation, then
   // `Auth.Hook.validate()`, then `Auth.MFA.validate()`, then
@@ -2869,10 +2876,10 @@ export function legacyResolveLocalConfigValues(
  *
  * `authEnabled`/`signingKeysPath` ARE recomputed here (cheap, pure `legacyEnvOverride`/
  * `legacyEnvOverrideBool` calls, no I/O) rather than threaded through from the caller's own
- * computation of the same values, keeping this function self-contained. Only `auth.signing_keys_
- * path`'s FULL key array matters here (unlike `legacyResolveLocalConfigValues`'s
- * `loadFirstSigningKey`, which only needs the first key to sign anon/service_role) — see
- * {@link loadSigningKeys}.
+ * computation of the same values, keeping this function self-contained. Both this function and
+ * `legacyResolveLocalConfigValues`'s own `signingKey` now share
+ * {@link legacyResolveConfiguredSigningKeys} — this function needs the FULL key array (see
+ * {@link loadSigningKeys}), the other only the first key to sign anon/service_role.
  *
  * `signingKeysPath`'s effect on the oct-JWT-secret fallback below matches Go's literal field
  * checks exactly, NOT "is auth enabled": Go's `a.SigningKeysPath` (`pkg/config/config.go:928-929`)
