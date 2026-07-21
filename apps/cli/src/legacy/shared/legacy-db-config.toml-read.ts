@@ -23,6 +23,7 @@ import {
 } from "./legacy-config-validate.ts";
 import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
+import { legacyStrToArr } from "./legacy-local-config-values.ts";
 import {
   legacyCollectDotenvPrivateKeys,
   legacyDecryptSecret,
@@ -1404,11 +1405,20 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     let passkeyInput: LegacyPasskeyInput | undefined;
     if (passkeyRaw !== undefined && (yield* gate(passkeyRaw, "enabled", "auth.passkey.enabled"))) {
       const webauthnRaw = asRecord(authRawResolved["webauthn"]);
-      const rpOrigins = webauthnRaw?.["rp_origins"];
+      const rpOriginsRaw = webauthnRaw?.["rp_origins"];
+      // Go decodes `rp_origins` (a `[]string`) through the same
+      // `StringToSliceHookFunc(",")` mapstructure hook as every other `[]string` field
+      // (`config.go:775-784`) — a raw or `env(...)`-resolved comma-separated string must be
+      // split, not treated as "missing" just because it isn't already a literal TOML array.
+      // Matches `start.handler.ts`'s own `resolveGotruePasskeyWebauthn`/`legacyStrToArr` handling
+      // of this identical field.
+      const rpOrigins = Array.isArray(rpOriginsRaw)
+        ? rpOriginsRaw
+        : legacyStrToArr(str(webauthnRaw, "rp_origins"));
       passkeyInput = {
         webauthnPresent: webauthnRaw !== undefined,
         rpId: str(webauthnRaw, "rp_id"),
-        rpOrigins: Array.isArray(rpOrigins) ? rpOrigins : undefined,
+        rpOrigins: rpOrigins.length > 0 ? rpOrigins : undefined,
       };
     }
 

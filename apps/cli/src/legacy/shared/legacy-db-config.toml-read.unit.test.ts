@@ -2117,6 +2117,19 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
       'rp_origins = ["http://localhost:3000"]',
     ]),
   );
+  it.effect("accepts a comma-separated rp_origins string instead of rejecting it as missing", () =>
+    // Go decodes `rp_origins` (a `[]string`) through the same `StringToSliceHookFunc(",")`
+    // mapstructure hook as every other `[]string` field, so a raw string (not just a literal
+    // TOML array) must split, not read as absent — matches start.handler.ts's own
+    // resolveGotruePasskeyWebauthn/legacyStrToArr handling of this identical field.
+    succeeds([
+      "[auth.passkey]",
+      "enabled = true",
+      "[auth.webauthn]",
+      'rp_id = "localhost"',
+      'rp_origins = "http://a.example,http://b.example"',
+    ]),
+  );
 
   it.effect("rejects an http hook missing secrets", () =>
     failsWith(

@@ -1619,6 +1619,43 @@ content_path = "./templates/custom_notice.html"
       }).pipe(Effect.provide(layer));
     });
 
+    it.live(
+      "fails on an undecryptable [db.vault] secret even on a non-fresh volume, matching Go's Config.Load",
+      () => {
+        // `legacyCheckDbToml`'s own internal call inside `legacyStartSetupLocalDatabase` only
+        // runs on a fresh volume (Go's `NoBackupVolume` gate) — an undecryptable `[db.vault]`
+        // secret (a DB-specific field `@supabase/config`'s own schema never decrypts, only
+        // `legacyCheckDbToml`'s pipeline does) must still fail eagerly, before any Docker work,
+        // on an ordinary restart against an existing (non-fresh) volume, matching Go's
+        // `Config.Load`, which decrypts every `encrypted:` value unconditionally regardless of
+        // volume state.
+        const previous = process.env["DOTENV_PRIVATE_KEY"];
+        delete process.env["DOTENV_PRIVATE_KEY"];
+        const encrypted =
+          "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+        const { layer, child } = setup({
+          configContents: `project_id = "demo"\n[db.vault]\nmy_secret = "${encrypted}"\n`,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("failed to parse config: missing private key");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
     it.live('prints "Starting database..." on a fresh volume, before Postgres is created', () => {
       const { layer, out } = setup({ route: freshVolumeRoute(defaultRoute()) });
       return Effect.gen(function* () {

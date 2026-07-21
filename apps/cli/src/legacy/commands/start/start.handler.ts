@@ -30,6 +30,7 @@ import {
   legacyResolveApiTlsPath,
   legacyResolveEmailTemplateContentPath,
 } from "../../shared/legacy-config-validate.ts";
+import { legacyCheckDbToml } from "../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../shared/legacy-db-connection.service.ts";
 import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
 import { legacyResolveDbImage } from "../../shared/legacy-db-image.ts";
@@ -817,6 +818,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         );
       }
     }
+    // `legacyCheckDbToml` resolves `[db.vault]`/`[db.seed]`/`db.migrations.enabled`/the effective
+    // `api.auto_expose_new_tables` tri-state the same way Go's `Config.Load`/`Validate` does —
+    // unconditionally, before any Docker work (`config.go` decode + validate pass). The port only
+    // ran this inside `legacyStartSetupLocalDatabase`, which is itself gated on the DB container's
+    // healthcheck passing AND a fresh volume (Go's `NoBackupVolume` gate) — so a malformed
+    // `SUPABASE_DB_SEED_ENABLED`/an undecryptable `[db.vault]` secret went completely unvalidated
+    // whenever `start` reused an existing volume. Called here purely for its validation side
+    // effect and discarded — `legacyStartSetupLocalDatabase`'s own internal call (an already-
+    // accepted duplicate config-load pass, matching `db start`'s own independent resolution — see
+    // `lib/db-setup.ts`'s header) still resolves the real value for its own use when it runs.
+    yield* legacyCheckDbToml(fs, path, cliConfig.workdir).pipe(Effect.asVoid);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
