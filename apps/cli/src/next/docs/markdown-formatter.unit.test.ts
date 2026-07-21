@@ -69,6 +69,12 @@ describe("formatHelpDocAsMarkdown", () => {
       const usageIndex = result.indexOf("## Usage");
       expect(descIndex).toBeLessThan(usageIndex);
     });
+
+    it("escapes MDX expression braces in prose", () => {
+      const doc = makeDoc({ description: "Request /v1/projects/{ref}." });
+      const result = formatHelpDocAsMarkdown(doc);
+      expect(result).toContain("Request /v1/projects/&#123;ref&#125;.");
+    });
   });
 
   describe("flags section", () => {

@@ -23,16 +23,15 @@ const MAX_INTERVAL = Duration.seconds(60);
  *  - `MaxElapsedTime` 15m (intersected via `during`; in practice the 8-retry cap
  *    always trips first, but reproduced for completeness)
  */
-export const legacyBootstrapBackoff: Schedule.Schedule<[Duration.Duration, Duration.Duration]> =
-  Schedule.exponential("3 seconds", 1.5).pipe(
-    Schedule.modifyDelay((_, delay) => Effect.succeed(Duration.min(delay, MAX_INTERVAL))),
-    Schedule.modifyDelay((_, delay) =>
-      Random.next.pipe(
-        Effect.map((random) => Duration.millis(Duration.toMillis(delay) * (0.5 + random))),
-      ),
+export const legacyBootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pipe(
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, MAX_INTERVAL))),
+  Schedule.modifyDelay(({ duration }) =>
+    Random.next.pipe(
+      Effect.map((random) => Duration.millis(Duration.toMillis(duration) * (0.5 + random))),
     ),
-    Schedule.both(Schedule.during("15 minutes")),
-  );
+  ),
+  Schedule.upTo({ duration: "15 minutes" }),
+);
 
 /**
  * Reproduces Go's `utils.NewErrorCallback` (`internal/utils/retry.go:19-35`): after

@@ -47,16 +47,16 @@ export interface VersionManifest {
 
 export const DEFAULT_VERSIONS: VersionManifest = {
   postgres: "17.6.1.143",
-  postgrest: "14.14",
-  auth: "2.192.0",
+  postgrest: "14.15",
+  auth: "2.193.0",
   "edge-runtime": "1.74.2",
-  realtime: "2.112.10",
-  storage: "1.66.2",
+  realtime: "2.113.4",
+  storage: "1.66.4",
   imgproxy: "v3.8.0",
   mailpit: "v1.30.2",
   pgmeta: "0.96.6",
-  studio: "2026.07.07-sha-a6a04f2",
-  analytics: "1.47.0",
+  studio: "2026.07.13-sha-b5ada96",
+  analytics: "1.47.1",
   vector: "0.53.0-alpine",
   pooler: "2.9.7",
 } as const;
