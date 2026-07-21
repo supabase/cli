@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import { Effect, Exit, Fiber, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -1752,6 +1752,35 @@ content_path = "./templates/custom_notice.html"
   });
 
   describe("rollback on bring-up failure", () => {
+    it.live(
+      "rolls back on a SIGINT-style interruption mid-bring-up, matching Go's context.Canceled rollback",
+      () => {
+        // Go's `start` rolls back on Ctrl-C: `cmd/root.go:99,155` wraps every command's context
+        // with `signal.NotifyContext`, and `internal/start/start.go:73-82` rolls back on ANY
+        // non-nil `run()` error, including the `context.Canceled` a SIGINT produces. The native
+        // port installs no signal handling of its own, so this relies entirely on the global
+        // `signalAwareProgram` wrapper (`shared/cli/run.ts`) calling `Fiber.interrupt`, and on
+        // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
+        // pure interrupt's `Cause`).
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const fiber = yield* legacyStart(flags()).pipe(
+            Effect.provide(layer),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          // Wait until Postgres has actually been created, proving Docker work is underway
+          // before interrupting — this must not race a no-op interrupt before bring-up starts.
+          while (!child.spawned.some((s) => s.args[0] === "create")) {
+            yield* Effect.sleep("5 millis");
+          }
+          // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
+          // including the `Effect.onError` rollback) has fully completed.
+          yield* Fiber.interrupt(fiber);
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
+        });
+      },
+    );
+
     it.live("fails and rolls back on a network create failure", () => {
       const base = defaultRoute();
       const route = (args: ReadonlyArray<string>): RouteResult => {

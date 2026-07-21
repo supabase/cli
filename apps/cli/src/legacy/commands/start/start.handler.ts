@@ -216,8 +216,9 @@ function isContainerNotFoundMessage(message: string): boolean {
  * Wraps a synchronous `envOverride*`/`legacyEnvOverride*` config-override read that throws on a
  * malformed value into a typed `LegacyStartInvalidConfigError` failure, matching Go's
  * `Config.Load` hard-failing on a bad Viper decode (`pkg/config/config.go:749-756`) before any
- * Docker work runs — instead of leaking an untyped Effect defect that bypasses this pipeline's
- * rollback `tapError` and `withJsonErrorHandling`'s `Effect.catch`.
+ * Docker work runs — instead of leaking an untyped Effect defect that bypasses
+ * `withJsonErrorHandling`'s `Effect.catch` (which, unlike this pipeline's `Effect.onError`
+ * rollback, only intercepts typed failures, never defects).
  */
 function wrapConfigOverride<T>(
   dottedFieldPath: string,
@@ -1285,8 +1286,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // synchronously on a malformed override — wrapped via `wrapConfigOverride` so a bad
     // value fails as a typed `LegacyStartInvalidConfigError` (matching Go's
     // `Config.Load` rejecting it before any Docker work) instead of an
-    // untyped Effect defect bypassing the rollback `tapError` and
-    // `withJsonErrorHandling`'s `Effect.catch` — same bug class already fixed
+    // untyped Effect defect bypassing `withJsonErrorHandling`'s `Effect.catch`
+    // (see `wrapConfigOverride`'s doc comment) — same bug class already fixed
     // for `dbHealthTimeoutSeconds`/`db.settings`/the Edge Runtime
     // `policy`/`inspector_port` overrides elsewhere in this function.
     const poolerPort = yield* wrapConfigOverride("db.pooler.port", () =>
@@ -1631,10 +1632,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // is this port's equivalent of that mutable global — unlike
     // `excludeFromHealthWatch` (returned explicitly from `buildSpecForService`
     // because a clean return-value alternative existed there), `isFreshVolume`
-    // must survive PAST `bringUp`'s own failure path (`Effect.tapError` below,
-    // which runs on ANY failure and has no access to a value `bringUp` only
-    // returns on success) — there is no non-mutable way to thread a value
-    // computed mid-effect into a sibling failure handler.
+    // must survive PAST `bringUp`'s own failure path (`Effect.onError` below,
+    // which runs on ANY failure — including a defect or interrupt — and has no
+    // access to a value `bringUp` only returns on success) — there is no
+    // non-mutable way to thread a value computed mid-effect into a sibling
+    // failure handler.
     let isFreshVolume = false;
 
     // 8. Bring-up: network -> Postgres (+ its own health wait, GATED on
@@ -1915,10 +1917,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           );
           // Both malformed-value throws below happen well after Postgres (and possibly other
           // services) have already been created — synchronous throws here would become
-          // untyped Effect defects bypassing this pipeline's `tapError` rollback, same bug
-          // class already fixed for `dbHealthTimeoutSeconds` above and `buildSpecForService`'s
-          // `catchDefect` below. Go decodes both fields during `Config.Load`, well before any
-          // Docker work, so a bad value must fail the same way here.
+          // untyped Effect defects bypassing `withJsonErrorHandling`'s `Effect.catch` (this
+          // pipeline's own `Effect.onError` rollback would still fire either way, but the user
+          // would see an opaque defect instead of a typed config error), same bug class already
+          // fixed for `dbHealthTimeoutSeconds` above and `buildSpecForService`'s `catchDefect`
+          // below. Go decodes both fields during `Config.Load`, well before any Docker work, so
+          // a bad value must fail the same way here.
           const edgeRuntimePolicy = yield* Effect.try({
             try: () =>
               legacyEnvOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
@@ -1991,11 +1995,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // parsing, Storage's file-size-limit parsing) do synchronous, throwing work over
         // config.toml string fields `@supabase/config`'s schema does not itself validate as
         // durations/sizes. A malformed value would otherwise surface as an uncaught Effect
-        // defect (`Effect.tapError` below only intercepts typed failures, never defects) —
-        // silently skipping rollback and leaking every container/volume/network already
-        // created this run. `catchDefect` converts any such throw into the same typed config
-        // error every other malformed-config path in this handler already produces, so it
-        // rolls back like any other bring-up failure, matching Go's fail-at-config-decode
+        // defect — `Effect.onError` below still rolls back on a defect either way, but the user
+        // would see an opaque defect instead of a typed config error. `catchDefect` converts any
+        // such throw into the same typed config error every other malformed-config path in this
+        // handler already produces, matching Go's fail-at-config-decode
         // behavior (Go's `time.Duration`/size fields fail at TOML decode, before any Docker
         // work starts).
         const { spec, excludeFromHealthWatch } = yield* buildSpecForService(
@@ -2039,7 +2042,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // freshly created (see `isFreshVolume` above), matching Go exactly: a
       // rollback prunes volumes on a brand-new, empty first-ever `start`, but
       // never touches a pre-existing user's data on a failed restart.
-      Effect.tapError(() =>
+      //
+      // `Effect.onError`, not `Effect.tapError`: Go's own `Run()` (`start.go:73-82`)
+      // rolls back on ANY non-nil error from `run()`, including `context.Canceled`
+      // from a SIGINT during bring-up (`cmd/root.go:99,155` wraps every command's
+      // context with `signal.NotifyContext`). `tapError` is built on `Cause.findError`,
+      // which only matches `Fail` reasons — a pure fiber interrupt never reaches it.
+      // `onError` fires on any failure outcome (including interruption) and its
+      // cleanup effect runs uninterruptibly, matching Go's unconditional check.
+      Effect.onError(() =>
         legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
       ),
     );
@@ -2225,7 +2236,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             document: context.loaded?.document,
           },
         }).pipe(
-          Effect.tapError(() =>
+          // See the `bringUp` pipe's `Effect.onError` doc comment above — same
+          // interrupt-safety reasoning applies to a seeding failure/interrupt here.
+          Effect.onError(() =>
             legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
           ),
         );

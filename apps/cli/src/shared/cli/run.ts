@@ -50,8 +50,17 @@ const globalFlagsWithValues = new Set([
 // Commands that run their own foreground signal loop (serve/start daemons) and must
 // NOT be wrapped in the global signal-interrupt handler, which would otherwise race
 // their graceful shutdown. Matched by leading command-path segments.
+//
+// Top-level `start` (["start"]) is deliberately NOT listed here: it used to proxy to the
+// Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `legacyStart`
+// installs no signal handling of its own — excluding it left Ctrl-C mid-bring-up as a raw,
+// unhandled OS signal that hard-kills the process, skipping every Effect finalizer
+// including `legacyRollbackStart`. Go's own `start` DOES roll back on SIGINT
+// (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
+// `internal/start/start.go:73-82` rolls back on any non-nil `run()` error, including the
+// `context.Canceled` a SIGINT produces), so native `start` must participate in the global
+// wrapper to match.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
-  ["start"],
   ["db", "start"],
   // `db reset` (local path) drives the bootstrap seam, which holds SIGINT/SIGTERM/SIGHUP with
   // no-op listeners while the Go child recreates the container; the global handler would
