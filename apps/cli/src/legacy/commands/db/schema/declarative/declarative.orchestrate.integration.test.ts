@@ -41,7 +41,20 @@ function mockEdge(stdout: string) {
   const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (opts: LegacyEdgeRuntimeRunOpts) => {
       calls.push(opts);
-      return Effect.succeed({ stdout, stderr: "" });
+      // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
+      // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
+      // single-unit envelope so `legacyDiffPgDelta` parses it. Other scripts
+      // (declarative export) return their stdout unchanged.
+      const wrapped =
+        opts.script.includes("renderPlanFiles") && stdout.length > 0
+          ? JSON.stringify({
+              version: 1,
+              files: [
+                { order: 1, name: "schema_changes", transactionMode: "transactional", sql: stdout },
+              ],
+            })
+          : stdout;
+      return Effect.succeed({ stdout: wrapped, stderr: "" });
     },
   });
   return { layer, calls };

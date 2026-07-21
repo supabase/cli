@@ -49,6 +49,15 @@ export class LegacyDeclarativeParseOutputError extends Data.TaggedError(
 }> {}
 
 /**
+ * Parsing the pg-delta diff envelope failed. Byte-matches Go's
+ * `"failed to parse pg-delta diff output: " + err + ":\n" + stderr`
+ * (`apps/cli-go/internal/db/diff/pgdelta.go`, `parsePgDeltaDiffOutput`).
+ */
+export class LegacyPgDeltaDiffParseError extends Data.TaggedError("LegacyPgDeltaDiffParseError")<{
+  readonly message: string;
+}> {}
+
+/**
  * Materializing the declarative export on disk failed. Byte-matches Go's
  * `WriteDeclarativeSchemas` errors (`declarative.go:239`):
  * `"failed to clean declarative schema directory: " + err` and

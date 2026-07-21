@@ -1,7 +1,7 @@
 import {
   createPlan,
   deserializeCatalog,
-  formatSqlStatements,
+  renderPlanFiles,
 } from "npm:@supabase/pg-delta@1.0.0-alpha.20";
 import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.20/integrations/supabase";
 
@@ -32,10 +32,19 @@ if (includedSchemas) {
 }
 
 const formatOptionsRaw = Deno.env.get("FORMAT_OPTIONS");
-let formatOptions = undefined;
-if (formatOptionsRaw) {
-  formatOptions = JSON.parse(formatOptionsRaw);
-}
+const parsedFormatOptions = formatOptionsRaw ? JSON.parse(formatOptionsRaw) : undefined;
+// Format the emitted SQL by default with the same sensible settings the
+// declarative export uses (`exportDeclarativeSchema` in @supabase/pg-delta:
+// `{ ...DEFAULT_OPTIONS, maxWidth: 180, keywordCase: "upper", ...userOptions }`),
+// so `db pull` / `db diff` produce readable migrations even when config sets no
+// `[experimental.pgdelta] format_options`. The formatter fills DEFAULT_OPTIONS
+// for missing keys itself, so only the two overrides are passed here. Setting
+// `format_options = "null"` (parsed to `null`) is the explicit opt-out: raw,
+// unformatted statements, mirroring declarative export's `formatOptions === null`.
+const sqlFormatOptions =
+  parsedFormatOptions === null
+    ? undefined
+    : { maxWidth: 180, keywordCase: "upper", ...parsedFormatOptions };
 
 try {
   const result = await createPlan(
@@ -46,14 +55,32 @@ try {
       skipDefaultPrivilegeSubtraction: true,
     },
   );
-  let statements = result?.plan.statements ?? [];
-  if (formatOptions != null) {
-    statements = formatSqlStatements(statements, formatOptions);
-  }
+  // pg-delta >= 1.0.0-alpha.32 groups plan statements into execution-aware
+  // `units` with transaction boundaries. `renderPlanFiles` turns those into one
+  // numbered SQL file per unit (header comments included). `includeTransactions:
+  // false` because the CLI appliers already wrap each migration file in a single
+  // transaction (Go's implicit ExecBatch / the TS BEGIN/COMMIT wrap), so embedded
+  // BEGIN/COMMIT would nest; format options are applied per unit here instead of a
+  // manual `formatSqlStatements` pass.
+  const files = result
+    ? renderPlanFiles(result.plan, {
+        includeTransactions: false,
+        sqlFormatOptions,
+      })
+    : [];
+  const envelope = files.map((file, index) => ({
+    order: index + 1,
+    // The unit name is the rendered path minus its numeric prefix and `.sql`
+    // extension (e.g. `001_after_enum_values.sql` -> `after_enum_values`).
+    name: file.path.replace(/^\d+_/, "").replace(/\.sql$/, ""),
+    transactionMode: file.unit.transactionMode,
+    sql: file.sql,
+  }));
   if (Deno.env.get("PGDELTA_DEBUG")) {
     console.error(
       JSON.stringify({
-        statementCount: statements.length,
+        statementCount: files.reduce((total, file) => total + file.unit.statements.length, 0),
+        fileCount: files.length,
         source: source ? "connected" : "null",
         target: target ? "connected" : "null",
         includedSchemas: includedSchemas ?? null,
@@ -61,11 +88,13 @@ try {
       }),
     );
   }
-  for (const sql of statements) {
-    console.log(`${sql};`);
-  }
+  console.log(JSON.stringify({ version: 1, files: envelope }));
 } catch (e) {
   console.error(e);
+  // Emit a sentinel so the CLI runner can distinguish a real script crash from a
+  // successful empty diff, even though the forced-exit non-zero code below is
+  // suppressed by the "main worker has been destroyed" handling.
+  console.error("PGDELTA_SCRIPT_ERROR");
   // Force close event loop
   throw new Error("");
 }

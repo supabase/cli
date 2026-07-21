@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Redacted } from "effect";
+import { PlatformError, SystemError } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -640,6 +641,47 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
       return root;
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Failing filesystem — wraps the real Bun `FileSystem` and fails the Nth
+// `writeFileString` call with a `PlatformError`, so cleanup-on-failure paths
+// (e.g. the pg-delta multi-file migration writer) can be exercised
+// deterministically. Every other call delegates to the real filesystem, so
+// config reads / earlier writes behave normally. Merge this AFTER
+// `BunServices.layer` (last-wins) so it overrides only `FileSystem`; `Path`
+// still comes from `BunServices`.
+// ---------------------------------------------------------------------------
+
+export function legacyFailWriteStringOnNthCallFsLayer(
+  failOnCall: number,
+): Layer.Layer<FileSystem.FileSystem> {
+  return Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (real) => {
+      let calls = 0;
+      return FileSystem.FileSystem.of({
+        ...real,
+        writeFileString: (path, data, options) => {
+          calls += 1;
+          if (calls === failOnCall) {
+            return Effect.fail(
+              new PlatformError(
+                new SystemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "writeFileString",
+                  pathOrDescriptor: path,
+                  description: "simulated write failure",
+                }),
+              ),
+            );
+          }
+          return real.writeFileString(path, data, options);
+        },
+      });
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 }
 
 // ---------------------------------------------------------------------------

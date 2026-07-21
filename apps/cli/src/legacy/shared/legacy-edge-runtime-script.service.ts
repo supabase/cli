@@ -2,6 +2,19 @@ import { Context, type Effect, Option } from "effect";
 
 import type { LegacyEdgeRuntimeScriptError } from "./legacy-edge-runtime-script.errors.ts";
 
+/**
+ * Printed to stderr by the pg-delta Deno templates when their body throws (see
+ * the `catch` blocks in `apps/cli-go/internal/db/diff/templates/*.ts`). The
+ * templates force the edge-runtime worker to exit by throwing on both the
+ * success and failure paths, and that non-zero exit is otherwise suppressed when
+ * stderr contains `"main worker has been destroyed"`. Without a distinct marker
+ * a crashed script is indistinguishable from a successful empty diff, so
+ * `db pull` reports "No schema changes found" while the real error is swallowed.
+ * Byte-for-byte mirror of Go's `EdgeRuntimeScriptErrorSentinel`
+ * (`apps/cli-go/internal/utils/edgeruntime.go`). See supabase/cli#5826.
+ */
+export const LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL = "PGDELTA_SCRIPT_ERROR";
+
 /** A file dropped alongside `index.ts` in the container's working directory. */
 export interface LegacyEdgeRuntimeFile {
   readonly name: string;

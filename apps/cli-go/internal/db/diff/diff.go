@@ -38,7 +38,7 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	out := result.SQL
 	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
-	if err := SaveDiff(out, file, fsys); err != nil {
+	if err := SaveDiff(result, file, fsys); err != nil {
 		return err
 	}
 	drops := findDropStatements(out)
@@ -225,22 +225,31 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	} else {
 		fmt.Fprintln(w, "Diffing schemas...")
 	}
-	if IsPgDeltaDebugEnabled() && usePgDelta {
-		// Capture the shadow baseline catalog and edge-runtime stderr so an
-		// empty diff can be inspected later. DiffPgDeltaRefDetailed mirrors the
-		// pg-delta differ but additionally surfaces stderr, which differ() drops.
-		debugCapture := &PgDeltaDebugCapture{}
-		if snapshot, exportErr := exportCatalogPgDelta(ctx, utils.ToPostgresURL(shadowConfig), "postgres", options...); exportErr == nil {
-			debugCapture.SourceCatalog = snapshot
-		} else {
-			fmt.Fprintf(w, "Warning: failed to export shadow pg-delta catalog: %v\n", exportErr)
+	if usePgDelta {
+		// pg-delta always goes through the diffPgDeltaRefDetailed seam so callers get
+		// the execution-aware per-unit files (db pull writes one migration file each);
+		// db diff/declarative flatten them back via SQL. This mirrors the config-based
+		// differ (DiffPgDelta) exactly, so it is safe to bypass the injected differ()
+		// here — differ() remains the migra engine path below.
+		var debugCapture *PgDeltaDebugCapture
+		if IsPgDeltaDebugEnabled() {
+			// Capture the shadow baseline catalog and edge-runtime stderr so an
+			// empty diff can be inspected later.
+			debugCapture = &PgDeltaDebugCapture{}
+			if snapshot, exportErr := exportCatalogPgDelta(ctx, utils.ToPostgresURL(shadowConfig), "postgres", options...); exportErr == nil {
+				debugCapture.SourceCatalog = snapshot
+			} else {
+				fmt.Fprintf(w, "Warning: failed to export shadow pg-delta catalog: %v\n", exportErr)
+			}
 		}
-		result, err := DiffPgDeltaRefDetailed(ctx, utils.ToPostgresURL(shadowConfig), utils.ToPostgresURL(config), schema, pgDeltaFormatOptions(), options...)
+		result, err := diffPgDeltaRefDetailed(ctx, utils.ToPostgresURL(shadowConfig), utils.ToPostgresURL(config), schema, pgDeltaFormatOptions(), options...)
 		if err != nil {
 			return DatabaseDiff{}, err
 		}
-		debugCapture.Stderr = result.Stderr
-		return DatabaseDiff{SQL: result.SQL, Debug: debugCapture}, nil
+		if debugCapture != nil {
+			debugCapture.Stderr = result.Stderr
+		}
+		return DatabaseDiff{SQL: joinPgDeltaFiles(result.Files), Files: result.Files, Debug: debugCapture}, nil
 	}
 	output, err := differ(ctx, shadowConfig, config, schema, options...)
 	if err != nil {
