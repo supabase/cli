@@ -33,7 +33,7 @@ import {
   legacyResolveStorageCredentials,
   legacyStorageGatewayFetch,
 } from "../../shared/legacy-storage-credentials.ts";
-import { readLegacyServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
+import { legacyReadServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
 import {
@@ -973,7 +973,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // once, reused by both the image plan below and the fresh-DB one-shot
     // setup jobs' images, which Go resolves from the same already-rewritten
     // `utils.Config.*.Image` fields regardless of `--exclude`.
-    const serviceVersionOverrides = yield* readLegacyServiceVersionOverrides(
+    const serviceVersionOverrides = yield* legacyReadServiceVersionOverrides(
       fs,
       path,
       cliConfig.workdir,

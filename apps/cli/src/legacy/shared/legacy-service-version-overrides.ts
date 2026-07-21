@@ -33,7 +33,7 @@ const LEGACY_VERSION_FILES = [
  * non-blank. Any read error (including not-exist) resolves to "" for that
  * file, matching Go's `err == nil && len(version) > 0` gate.
  */
-export const readLegacyServiceVersionOverrides = Effect.fnUntraced(function* (
+export const legacyReadServiceVersionOverrides = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,

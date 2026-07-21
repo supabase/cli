@@ -10,7 +10,7 @@ import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.ser
 import { legacyReadDbToml } from "../../shared/legacy-db-config.toml-read.ts";
 import { legacyResolveDbImage } from "../../shared/legacy-db-image.ts";
 import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
-import { readLegacyServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
+import { legacyReadServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { encodeGoJson, encodeToml, encodeYaml } from "../../shared/legacy-go-output.encoders.ts";
@@ -92,7 +92,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const serviceVersions =
       tomlValues === null
         ? {}
-        : yield* readLegacyServiceVersionOverrides(
+        : yield* legacyReadServiceVersionOverrides(
             fs,
             path,
             cliConfig.workdir,
