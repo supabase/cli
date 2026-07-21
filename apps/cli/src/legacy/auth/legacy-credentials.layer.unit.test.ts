@@ -619,17 +619,6 @@ describe("legacyCredentialsLayer.deleteAllProjectCredentials", () => {
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_NO_KEYRING: "1" } })));
   });
 
-  it.effect("win32: deletes Go target-shaped project credentials", () => {
-    // Go stores Windows project credentials under `Supabase CLI:<ref>`, not the
-    // plain `Supabase CLI/<ref>` form. The sweep must delete the target form too.
-    passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
-    return Effect.gen(function* () {
-      const { deleteAllProjectCredentials } = yield* LegacyCredentials;
-      yield* deleteAllProjectCredentials;
-      expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs1"))).toBe(false);
-    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
-  });
-
   it.effect("never fails even when an individual delete throws", () => {
     passwords.set("Supabase CLI/abcdefghijklmnopqrs1", "secret-1");
     throwOnDeleteAccounts.add("Supabase CLI/abcdefghijklmnopqrs1");

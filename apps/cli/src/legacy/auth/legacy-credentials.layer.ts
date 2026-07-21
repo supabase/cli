@@ -308,31 +308,14 @@ const deleteProfileKeyringEntry = (
     return found ? "deleted" : "notFound";
   });
 
-// Best-effort wipe of every stored project database-password credential.
-// Mirrors Go's `keyring.DeleteAll(namespace)` (`store.go:71`), which prefix-matches
-// `Supabase CLI:` and swallows per-entry errors so a single stuck credential
-// can't abort logout. On Windows, Go writes every credential as
-// `Supabase CLI:<account>`; napi's default enumeration filter is the plain
-// `<account>.<service>` form Go never writes there, so the Go namespace is
-// enumerated explicitly by its `Supabase CLI:` prefix.
-const deleteAllKeyringEntries = (
-  module: KeyringModule,
-  platform: RuntimePlatform,
-): Effect.Effect<void> =>
+// Best-effort wipe of the `"Supabase CLI"` keyring namespace, mirroring Go's
+// `keyring.DeleteAll` (`store.go:71`); per-entry errors are swallowed so one
+// stuck credential can't abort logout. Go stores only the access token here
+// (`access_token.go:77`, keyed by profile name), never project database
+// passwords, and `deleteAccessToken` already removed it before this runs — so
+// there is nothing left to enumerate or decode.
+const deleteAllKeyringEntries = (module: KeyringModule): Effect.Effect<void> =>
   Effect.sync(() => {
-    if (platform === "win32") {
-      let entries: ReadonlyArray<{ account: string }>;
-      try {
-        entries = module.findCredentials(KEYRING_SERVICE, `${goWindowsCredentialTarget("")}*`);
-      } catch {
-        return;
-      }
-      for (const { account } of entries) {
-        deleteGoWindowsTarget(module, account);
-      }
-      return;
-    }
-
     let entries: ReadonlyArray<{ account: string }>;
     try {
       entries = module.findCredentials(KEYRING_SERVICE);
@@ -488,7 +471,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
 
     deleteAllProjectCredentials: Effect.gen(function* () {
       if (Option.isNone(keyringModule)) return;
-      yield* deleteAllKeyringEntries(keyringModule.value, runtimeInfo.platform);
+      yield* deleteAllKeyringEntries(keyringModule.value);
     }),
 
     deleteProjectCredential: (projectRef: string) =>
