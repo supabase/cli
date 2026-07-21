@@ -123,7 +123,7 @@ export function replaceImageTag(image: string, tag: string): string {
   return `${image.slice(0, index + 1)}${tag.trim()}`;
 }
 
-export function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
+function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
   const trimmed = version.trim();
   const prefix = SERVICE_VERSION_TAG_PREFIX[service];
   if (prefix === "v" && !trimmed.toLowerCase().startsWith("v")) {
