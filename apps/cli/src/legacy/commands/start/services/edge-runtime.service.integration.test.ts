@@ -312,4 +312,20 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         ).toBe(false);
       }),
   );
+
+  it.effect(
+    "never prints functions serve's own setup banner — Go's start bring-up (ServeFunctions) never does, unlike restartEdgeRuntime",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
+
+        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+        );
+
+        expect(out.stderrText).not.toContain("Setting up Edge Functions runtime...");
+      }),
+  );
 });

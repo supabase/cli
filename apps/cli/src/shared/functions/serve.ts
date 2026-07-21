@@ -1529,7 +1529,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
       ];
 
-      yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
       const result = yield* runChildProcess("docker", command, {
         stdout: "pipe",
         stderr: "pipe",
@@ -1579,6 +1578,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   readonly networkId: Option.Option<string>;
   readonly inspectMode: FunctionsServeInspectMode | undefined;
 }) {
+  const output = yield* Output;
   if (!(yield* isDockerRunning())) {
     return yield* Effect.fail(
       new Error(
@@ -1618,6 +1618,12 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     yield* assertLocalDbRunning(projectId);
     yield* bestEffortRemoveContainer(containerId);
     ownsRuntime = true;
+
+    // Go's `restartEdgeRuntime` prints this right before calling `ServeFunctions`
+    // (`serve.go:124-125`) — `ServeFunctions` itself (this file's `startEdgeRuntimeContainer`,
+    // also called directly by `start.go:1104`) never prints it, so it belongs in this
+    // `functions serve`-only wrapper, not the shared core.
+    yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
 
     const startedRuntime = yield* startEdgeRuntimeContainer({
       config: {
