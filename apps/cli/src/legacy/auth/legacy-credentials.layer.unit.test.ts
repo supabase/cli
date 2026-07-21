@@ -666,15 +666,22 @@ describe("legacyCredentialsLayer.deleteAllProjectCredentials", () => {
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
 
-  it.effect("win32: never fails even when the Go target sweep can't enumerate", () => {
-    passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
-    opaqueAccounts.add(goWindowsKey("abcdefghijklmnopqrs1"));
-    return Effect.gen(function* () {
-      const { deleteAllProjectCredentials } = yield* LegacyCredentials;
-      const exit = yield* Effect.exit(deleteAllProjectCredentials);
-      expect(exit._tag).toBe("Success");
-    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
-  });
+  it.effect(
+    "win32: a single undecodable entry aborts the Go target sweep without failing logout",
+    () => {
+      passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
+      passwords.set(goWindowsKey("abcdefghijklmnopqrs2"), "secret-2");
+      opaqueAccounts.add(goWindowsKey("abcdefghijklmnopqrs1"));
+      return Effect.gen(function* () {
+        const { deleteAllProjectCredentials } = yield* LegacyCredentials;
+        const exit = yield* Effect.exit(deleteAllProjectCredentials);
+        expect(exit._tag).toBe("Success");
+        // One undecodable entry aborts the whole findCredentials call.
+        expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs1"))).toBe(true);
+        expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs2"))).toBe(true);
+      }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+    },
+  );
 });
 
 describe("legacyCredentialsLayer.deleteProjectCredential", () => {
