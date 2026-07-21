@@ -110,7 +110,7 @@ function addCorsHeaders(
 // does so. Its `/_internal/health` probe answers immediately, so "Healthy"
 // status does not mean a function is servable yet. Briefly retry transport
 // failures on that route so a user's first call doesn't surface as a 502.
-const COLD_START_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(Schedule.take(8));
+const COLD_START_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(Schedule.upTo({ times: 8 }));
 
 interface ProxyHandlerOptions {
   readonly backendPort: number;

@@ -1936,6 +1936,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v1RunAQuery">(operationDefinitions.v1RunAQuery, input);
       }),
+    scrapeProjectMetrics: (
+      input: typeof operationDefinitions.v1ScrapeProjectMetrics.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1ScrapeProjectMetrics.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1ScrapeProjectMetrics">(
+          operationDefinitions.v1ScrapeProjectMetrics,
+          input,
+        );
+      }),
     setupAReadReplica: (
       input: typeof operationDefinitions.v1SetupAReadReplica.inputSchema.Type,
     ): Effect.Effect<
@@ -2901,6 +2915,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1RunAQuery.inputSchema)(input).pipe(
         Effect.flatMap((decoded) => api.v1.runAQuery(decoded)),
       );
+    case "v1ScrapeProjectMetrics":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1ScrapeProjectMetrics.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.scrapeProjectMetrics(decoded)));
     case "v1SetupAReadReplica":
       return Schema.decodeUnknownEffect(operationDefinitions.v1SetupAReadReplica.inputSchema)(
         input,

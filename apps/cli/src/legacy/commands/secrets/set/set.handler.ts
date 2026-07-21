@@ -6,6 +6,7 @@ import {
   type ProjectConfig,
   type ProjectConfigParseError,
 } from "@supabase/config";
+import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
@@ -375,8 +376,33 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       );
     }
 
+    // The Management API caps a single bulk-create request at 100 secrets
+    // (`V1BulkCreateSecretsInput`'s `isMaxLength(100)` check in `@supabase/api`).
+    // Go issues one unbatched request (`internal/secrets/set/set.go`), so against
+    // the capped API a >100-entry env file would be rejected wholesale; split into
+    // batches of at most 100 so large env files still upload.
+    const SECRETS_PER_REQUEST = 100;
+    const batches: Array<typeof body> = [];
+    for (let i = 0; i < body.length; i += SECRETS_PER_REQUEST) {
+      batches.push(body.slice(i, i + SECRETS_PER_REQUEST));
+    }
+
+    // Validate every batch (per-entry name/value constraints and the 100-item
+    // cap) before sending any request. Without this, a schema-invalid entry in a
+    // later batch would only surface after earlier batches had already been
+    // uploaded, leaving the project partially updated. Decoding fails with the
+    // same `SchemaError` `bulkCreateSecrets` raises, so `mapSetError` keeps the
+    // error surface identical to the previous single-call path.
+    yield* Effect.forEach(
+      batches,
+      (batch) => Schema.decodeUnknownEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),
+      { discard: true },
+    ).pipe(Effect.catch(mapSetError));
+
     const setting = output.format === "text" ? yield* output.task("Setting secrets...") : undefined;
-    yield* api.v1.bulkCreateSecrets({ ref, body }).pipe(
+    yield* Effect.forEach(batches, (batch) => api.v1.bulkCreateSecrets({ ref, body: batch }), {
+      discard: true,
+    }).pipe(
       Effect.tapError(() => setting?.fail() ?? Effect.void),
       Effect.catch(mapSetError),
     );

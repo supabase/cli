@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
@@ -75,11 +77,13 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		path := new.GetMigrationPath(utils.GetVersionTimestamp(base), "test")
+		_, err := run(context.Background(), nil, base, "test", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		contents, err := afero.ReadFile(fsys, "0_test.sql")
+		contents, err := afero.ReadFile(fsys, path)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte("test"), contents)
 	})
@@ -102,12 +106,14 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test with usePgDeltaDiff=true
-		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), true, diff.DiffPgDelta, fsys)
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		path := new.GetMigrationPath(utils.GetVersionTimestamp(base), "test")
+		_, err := run(context.Background(), nil, base, "test", conn.MockClient(t), true, diff.DiffPgDelta, fsys)
 		// Failure must come from shadow-creation image inspect (proving we
 		// reached the diff step), not from pg_dump.
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		exists, err := afero.Exists(fsys, "0_test.sql")
+		exists, err := afero.Exists(fsys, path)
 		assert.NoError(t, err)
 		assert.False(t, exists, "pg_dump should be skipped for pg-delta diff engine")
 	})
@@ -129,7 +135,8 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []any{"0"})
 		// Run test
-		err := run(context.Background(), []string{"public"}, "", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		_, err := run(context.Background(), []string{"public"}, base, "test", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

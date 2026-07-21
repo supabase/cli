@@ -12,6 +12,10 @@ const role = Deno.env.get("ROLE") ?? undefined;
 
 if (!target) {
   console.error("TARGET is required");
+  // Emit a sentinel so the CLI runner treats this as a real script crash rather
+  // than a successful empty catalog, even though the forced-exit non-zero code is
+  // suppressed by the "main worker has been destroyed" handling.
+  console.error("PGDELTA_SCRIPT_ERROR");
   throw new Error("");
 }
 const { pool, close } = await createManagedPool(target, { role });
@@ -21,6 +25,10 @@ try {
   console.log(stringifyCatalogSnapshot(serializeCatalog(catalog)));
 } catch (e) {
   console.error(e);
+  // Emit a sentinel so the CLI runner can distinguish a real script crash from a
+  // successful empty catalog, even though the forced-exit non-zero code below is
+  // suppressed by the "main worker has been destroyed" handling.
+  console.error("PGDELTA_SCRIPT_ERROR");
   // Force close event loop
   throw new Error("");
 } finally {

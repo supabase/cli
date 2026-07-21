@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -59,21 +60,26 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 		// TODO: handle managed schemas
 		return format.WriteStructuredSchemas(ctx, &buf, fsys)
 	}
-	// 2. Pull schema
-	timestamp := utils.GetCurrentTimestamp()
-	path := new.GetMigrationPath(timestamp, name)
-	if err := run(ctx, schema, path, conn, usePgDeltaDiff, differ, fsys, options...); err != nil {
+	// 2. Pull schema. pg-delta plans with transaction boundaries produce more than
+	// one ordered migration file; migra always produces exactly one.
+	base := time.Now().UTC()
+	written, err := run(ctx, schema, base, name, conn, usePgDeltaDiff, differ, fsys, options...)
+	if err != nil {
 		return err
 	}
-	if err := ensureMigrationWritten(fsys, path); err != nil {
-		return err
+	if len(written) == 0 {
+		return errors.New(errInSync)
 	}
-	// 3. Insert a row to `schema_migrations`
-	fmt.Fprintln(os.Stderr, "Schema written to "+utils.Bold(path))
+	// 3. Insert a row to `schema_migrations` for every file written.
+	versions := make([]string, len(written))
+	for i, w := range written {
+		fmt.Fprintln(os.Stderr, "Schema written to "+utils.Bold(w.Path))
+		versions[i] = w.Version
+	}
 	if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
 		return err
 	} else if shouldUpdate {
-		return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, false, fsys)
+		return repair.UpdateMigrationTable(ctx, conn, versions, repair.Applied, false, fsys)
 	}
 	return nil
 }
@@ -114,8 +120,10 @@ func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.
 	return nil
 }
 
-func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func run(ctx context.Context, schema []string, base time.Time, name string, conn *pgx.Conn, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) ([]diff.WrittenMigration, error) {
 	config := conn.Config().Config
+	timestamp := utils.GetVersionTimestamp(base)
+	path := new.GetMigrationPath(timestamp, name)
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
 		// pg_dump strips ownership when restored as a non-superuser, so platform
@@ -126,19 +134,27 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, useP
 		if !usePgDeltaDiff {
 			// Ignore schemas flag when working on the initial pull
 			if err = dumpRemoteSchema(ctx, path, config, fsys); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		// For the legacy path this is a second pass that captures changes
 		// pg_dump cannot emit (default privileges, managed schemas). For the
 		// pg-delta path this is the only pass and produces the full schema.
-		err = swallowInitialInSync(diffRemoteSchema(ctx, nil, path, config, usePgDeltaDiff, differ, fsys, options...), fsys, path)
-		return err
+		written, err := diffRemoteSchema(ctx, nil, base, name, config, usePgDeltaDiff, differ, fsys, options...)
+		if err = swallowInitialInSync(err, fsys, path); err != nil {
+			return nil, err
+		}
+		// The migra initial pull seeds `path` with a pg_dump even when the follow-up
+		// diff is empty and swallowed above, so record that single migration.
+		if !usePgDeltaDiff && len(written) == 0 {
+			written = []diff.WrittenMigration{{Path: path, Version: timestamp}}
+		}
+		return written, nil
 	} else if err != nil {
-		return err
+		return nil, err
 	}
 	// 2. Fetch remote schema changes
-	return diffRemoteSchema(ctx, schema, path, config, usePgDeltaDiff, differ, fsys, options...)
+	return diffRemoteSchema(ctx, schema, base, name, config, usePgDeltaDiff, differ, fsys, options...)
 }
 
 func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
@@ -157,7 +173,7 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 	})
 }
 
-func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func diffRemoteSchema(ctx context.Context, schema []string, base time.Time, name string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) ([]diff.WrittenMigration, error) {
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
 	result, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff, options...)
 	if err != nil {
@@ -166,37 +182,47 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 		// so the whole db pull workflow is self-healing, not just the dump pass.
 		poolerConfig, ok := dump.PoolerFallbackConfig(ctx, config, err)
 		if !ok {
-			return err
+			return nil, err
 		}
 		if result, err = diff.DiffDatabase(ctx, schema, poolerConfig, os.Stderr, fsys, differ, usePgDeltaDiff, options...); err != nil {
-			return err
+			return nil, err
 		}
 	}
+	// pg-delta path: one migration file per execution-aware plan unit.
+	if usePgDeltaDiff {
+		if len(result.Files) == 0 {
+			if diff.IsPgDeltaDebugEnabled() {
+				if debugDir, debugErr := saveEmptyPgDeltaPullDebug(ctx, config, result.Debug, fsys, options...); debugErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to save pg-delta debug bundle: %v\n", debugErr)
+				} else if len(debugDir) > 0 {
+					return nil, errors.Errorf("%w (debug bundle: %s)", errInSync, debugDir)
+				}
+			}
+			return nil, errors.New(errInSync)
+		}
+		return diff.WritePgDeltaMigrations(result.Files, base, name, fsys)
+	}
+	// migra path: a single migration file, appended when seeded by dumpRemoteSchema.
 	output := result.SQL
 	if trimmed := strings.TrimSpace(output); len(trimmed) == 0 {
-		if usePgDeltaDiff && diff.IsPgDeltaDebugEnabled() {
-			if debugDir, debugErr := saveEmptyPgDeltaPullDebug(ctx, config, result.Debug, fsys, options...); debugErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save pg-delta debug bundle: %v\n", debugErr)
-			} else if len(debugDir) > 0 {
-				return errors.Errorf("%w (debug bundle: %s)", errInSync, debugDir)
-			}
-		}
-		return errors.New(errInSync)
+		return nil, errors.New(errInSync)
 	}
+	timestamp := utils.GetVersionTimestamp(base)
+	path := new.GetMigrationPath(timestamp, name)
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
-		return err
+		return nil, err
 	}
 	// Append to existing migration file when we run this after dumpRemoteSchema;
-	// for the pg-delta path this is the only writer and creates the file fresh.
+	// for a non-initial pull this creates the file fresh.
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		return errors.Errorf("failed to open migration file: %w", err)
+		return nil, errors.Errorf("failed to open migration file: %w", err)
 	}
 	defer f.Close()
 	if _, err := f.WriteString(output); err != nil {
-		return errors.Errorf("failed to write migration file: %w", err)
+		return nil, errors.Errorf("failed to write migration file: %w", err)
 	}
-	return nil
+	return []diff.WrittenMigration{{Path: path, Version: timestamp}}, nil
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
