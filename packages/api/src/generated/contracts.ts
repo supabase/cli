@@ -2661,7 +2661,11 @@ export const V1GetPgsodiumConfigInput = Schema.Struct({
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
-export const V1GetPgsodiumConfigOutput = Schema.Struct({ root_key: Schema.String });
+export const V1GetPgsodiumConfigOutput = Schema.Struct({
+  root_key: Schema.String.annotate({
+    description: "The pgsodium root key: 32 bytes, hex-encoded (64 characters).",
+  }),
+});
 export const V1GetPoolerConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
@@ -5611,9 +5615,15 @@ export const V1UpdatePgsodiumConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  root_key: Schema.String,
+  root_key: Schema.String.annotate({
+    description: "The pgsodium root key: 32 bytes, hex-encoded (64 characters).",
+  }),
 });
-export const V1UpdatePgsodiumConfigOutput = Schema.Struct({ root_key: Schema.String });
+export const V1UpdatePgsodiumConfigOutput = Schema.Struct({
+  root_key: Schema.String.annotate({
+    description: "The pgsodium root key: 32 bytes, hex-encoded (64 characters).",
+  }),
+});
 export const V1UpdatePoolerConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
