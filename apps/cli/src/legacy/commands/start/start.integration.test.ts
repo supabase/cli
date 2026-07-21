@@ -1055,6 +1055,19 @@ content_path = "./templates/custom_notice.html"
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_pooler_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_auth_"))).toBe(true);
+          // Go's `baseConfig.resolve` rebases a relative notification content_path against
+          // `<workdir>/supabase`, not the template base (`workdir`) — the Kong mount must read
+          // from the same file `Config.Validate` already confirmed exists.
+          const kongCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          const notificationBind = kongCreate?.args.find(
+            (arg, index) =>
+              kongCreate.args[index - 1] === "-v" && arg.includes("custom_notice_notification"),
+          );
+          expect(notificationBind).toContain(
+            join(workdir, "supabase", "templates/custom_notice.html"),
+          );
         }).pipe(Effect.provide(layer));
       },
     );

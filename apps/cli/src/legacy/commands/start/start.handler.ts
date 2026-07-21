@@ -3,6 +3,7 @@ import {
   resolveProjectSubtree,
   type ProjectConfig,
 } from "@supabase/config";
+import { join } from "node:path";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -25,7 +26,10 @@ import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.ser
 import { legacyResolveStudioApiUrl } from "../../shared/legacy-api-url.ts";
 import { legacyIsBitbucketPipeline } from "../../shared/legacy-bitbucket-pipeline.ts";
 import { legacyAqua, legacyYellow } from "../../shared/legacy-colors.ts";
-import { legacyResolveApiTlsPath } from "../../shared/legacy-config-validate.ts";
+import {
+  legacyResolveApiTlsPath,
+  legacyResolveEmailTemplateContentPath,
+} from "../../shared/legacy-config-validate.ts";
 import { LegacyDbConnection } from "../../shared/legacy-db-connection.service.ts";
 import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
 import { legacyResolveDbImage } from "../../shared/legacy-db-image.ts";
@@ -633,9 +637,21 @@ function resolveGotrueEnvInput(params: {
   };
 }
 
-/** Go's `mountEmailTemplates` call sites for Kong (`start.go:544-558`): every configured template, then every ENABLED notification, suffixed `_notification`. */
+/**
+ * Go's `mountEmailTemplates` call sites for Kong (`start.go:544-558`): every configured template,
+ * then every ENABLED notification, suffixed `_notification`.
+ *
+ * Go's `baseConfig.resolve` (`config.go:901-916`) rebases `ContentPath` once at config-load time,
+ * BEFORE `mountEmailTemplates` ever runs: templates against `workdir`, notifications against
+ * `join(workdir, "supabase")` — the same asymmetric base `legacyResolveEmailTemplateContentPath`
+ * already applies for the file-existence check in `readAuthEmailTemplateContent`. Notification
+ * `content_path` here must go through that same rebase before reaching Kong's mount builder, or a
+ * relative notification path gets validated against `<workdir>/supabase/...` but mounted from
+ * `<workdir>/...`. Template entries need no rebase — `workdir` is already their correct base.
+ */
 function buildKongEmailTemplateMounts(
   email: LegacyResolvedAuthEmail,
+  workdir: string,
 ): ReadonlyArray<LegacyKongEmailTemplateMount> {
   return [
     ...Object.entries(email.template).map(([id, template]) => ({
@@ -646,7 +662,14 @@ function buildKongEmailTemplateMounts(
       .filter(([, notification]) => notification.enabled)
       .map(([id, notification]) => ({
         id: `${id}_notification`,
-        contentPath: notification.content_path,
+        contentPath:
+          legacyResolveEmailTemplateContentPath({
+            section: "notification",
+            name: id,
+            contentPath: notification.content_path,
+            contentPresent: false,
+            base: join(workdir, "supabase"),
+          }) ?? "",
       })),
   ];
 }
@@ -1415,7 +1438,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               poolerId: poolerContainerName,
               nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
               workdir: cliConfig.workdir,
-              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail),
+              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail, cliConfig.workdir),
             }),
           };
         }
