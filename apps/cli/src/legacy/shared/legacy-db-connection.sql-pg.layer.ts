@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
-import { Duration, Effect, Layer, Redacted, type Scope } from "effect";
+import { Duration, Effect, Exit, Layer, Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
+import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 // `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly only
 // for the COPY protocol (which `@effect/sql-pg` does not expose). Keep the direct
 // `pg` version constraint in package.json aligned with the one `@effect/sql-pg`
@@ -27,9 +28,15 @@ import { legacyResolveHostsOverHttps } from "./legacy-db-dns.ts";
 // node-postgres honors `queryMode: "extended"` to force the Parse/Bind/Execute
 // protocol (`pg/lib/query.js` `requiresPreparation`), but `@types/pg` doesn't declare
 // it. Augment `QueryConfig` so `queryRaw` can request it without an `as` cast.
+// pg-pool likewise honors a `verify(client, callback)` option — run for every
+// brand-new physical connection before it is handed to a waiting checkout
+// (`pg-pool/index.js` `_acquireClient`) — that `@types/pg` doesn't declare either.
 declare module "pg" {
   interface QueryConfig {
     queryMode?: "extended" | "simple";
+  }
+  interface PoolConfig {
+    verify?: (client: import("pg").PoolClient, callback: (err?: Error) => void) => void;
   }
 }
 
@@ -328,6 +335,178 @@ export function legacySslConfigsFor(
 }
 
 /**
+ * The raw `pg.ClientConfig` for a dial target, choosing the connection-string form
+ * whenever a libpq `options`/`runtimeParams` payload must reach the server (see
+ * `legacyBuildConnectionUrl`) and discrete fields otherwise (to avoid round-tripping
+ * the password through a URL). `copyToCsv` / `queryRaw` reuse it to open a dedicated
+ * node-postgres client for the COPY protocol and full result metadata (neither is
+ * surfaced by `@effect/sql-pg`), against whichever target the primary connection won.
+ */
+export function legacyBuildRawPgConfig(
+  cfg: LegacyPgConnInput,
+  host: string,
+  port: number,
+  sslOption: boolean | ConnectionOptions | undefined,
+  connectTimeoutSeconds: number,
+): Pg.ClientConfig {
+  const hasOptions = legacyMergedConnectionOptions(cfg) !== undefined;
+  return {
+    ...(hasOptions
+      ? { connectionString: legacyBuildConnectionUrl(cfg, host, port) }
+      : { host, port, user: cfg.user, password: cfg.password, database: cfg.database }),
+    ...(sslOption === undefined ? {} : { ssl: sslOption }),
+    connectionTimeoutMillis: connectTimeoutSeconds * 1000,
+  };
+}
+
+/**
+ * The `pg.PoolConfig` for the primary pooled connection. Extends the raw client
+ * config with the two pool controls this layer depends on:
+ *
+ * - `max: 1` — a single physical connection, so a session-scoped `SET SESSION ROLE`
+ *   (the remote step-down) and any session GUCs persist across `exec`/`query` calls.
+ * - `idleTimeoutMillis: 0` — node-postgres documents `0` as disabling auto-reaping of
+ *   idle connections. `PgClient.make` leaves this unset (→ node-postgres default
+ *   10_000ms), which during a long-idle `db pull` (shadow-DB provisioning + diff +
+ *   interactive confirm prompt) reaps the stepped-down connection after 10s idle and
+ *   transparently redials a fresh one for the final migration-table write; that fresh
+ *   connection never ran the step-down, so the DDL executes as the bare `cli_login_*`
+ *   role and fails with `permission denied` (42501). Disabling the reaper keeps the
+ *   single stepped-down connection alive for the whole session.
+ *
+ * `application_name` mirrors `PgClient.make`'s default so the server-side session name
+ * is unchanged from the previous `PgClient.make` path.
+ *
+ * When `stepDownRequired`, the pool also gets the `verify` step-down hook so every
+ * new physical connection runs `SET SESSION ROLE postgres` before it is handed out
+ * (see `legacyPoolStepDownVerify`).
+ */
+export function legacyBuildPoolConfig(
+  cfg: LegacyPgConnInput,
+  host: string,
+  port: number,
+  sslOption: boolean | ConnectionOptions | undefined,
+  connectTimeoutSeconds: number,
+  stepDownRequired: boolean,
+): Pg.PoolConfig {
+  return {
+    ...legacyBuildRawPgConfig(cfg, host, port, sslOption, connectTimeoutSeconds),
+    idleTimeoutMillis: 0,
+    max: 1,
+    application_name: "@effect/sql-pg",
+    ...(stepDownRequired ? { verify: legacyPoolStepDownVerify } : {}),
+  };
+}
+
+// Minimal structural views of `pg.Pool` / `pg.PoolClient` used by the pool hooks,
+// so the wiring can be unit-tested with a tiny fake at the driver boundary instead
+// of a live pool. A real `pg.Pool`/`pg.PoolClient` satisfies these (their `on`
+// overloads and `query` signatures are wider).
+interface LegacyStepDownClient {
+  readonly query: (sql: string) => Promise<unknown>;
+}
+interface LegacyPoolErrorSource {
+  readonly on: (event: "error", listener: (error: Error) => void) => unknown;
+}
+
+/**
+ * pg-pool `verify` hook that re-runs the remote role step-down on EVERY new
+ * physical connection, matching Go's `AfterConnect` (`connect.go:355-361`) —
+ * including the silent redial after a dropped connection, which the post-connect
+ * one-shot in `connect` can't reach. pg-pool invokes `verify` for a brand-new
+ * client BEFORE resolving the pending checkout (`pg-pool/index.js`
+ * `_acquireClient`), so the `SET` completes before any caller query runs on that
+ * connection. (A `"connect"`-listener `client.query()` would instead overlap
+ * pg-pool's own synchronous dispatch of the checked-out query — node-postgres'
+ * "Calling client.query() when the client is already executing a query"
+ * deprecation, whose internal queueing pg@9 removes.) A failure propagates to
+ * the checkout and fails the caller's query, like Go's `AfterConnect` failing
+ * the connect.
+ */
+export function legacyPoolStepDownVerify(
+  client: LegacyStepDownClient,
+  callback: (err?: Error) => void,
+): void {
+  client.query(SET_SESSION_ROLE).then(
+    () => callback(),
+    (error) => callback(error instanceof Error ? error : new Error(String(error))),
+  );
+}
+
+/**
+ * Swallow the pool's async background errors, like `PgClient.make`: an idle
+ * client's connection-level failure emits `"error"` on the pool and would crash
+ * the process without a listener; the next checkout simply redials (and the
+ * redial re-runs the `verify` step-down).
+ */
+export function legacyInstallPoolErrorSwallow(pool: LegacyPoolErrorSource): void {
+  pool.on("error", () => {});
+}
+
+// Minimal structural view of the `pg.Pool` surface `legacyAcquireProbedPool`
+// drives — a real `pg.Pool` satisfies it (its `on`/`query`/`end` signatures are
+// wider), and a tiny fake can stand in at the driver boundary for unit tests.
+interface LegacyProbePool extends LegacyPoolErrorSource {
+  readonly query: (sql: string) => Promise<unknown>;
+  readonly end: () => Promise<void>;
+}
+
+/**
+ * Acquire a `pg` pool and probe it with `SELECT 1`, guaranteeing the pool is
+ * `.end()`ed on EVERY non-success path — a probe rejection, a
+ * `connectTimeoutSeconds` timeout, or an interruption.
+ *
+ * The pool.end() finalizer is registered the MOMENT the pool is constructed, via
+ * `Effect.acquireRelease` with a synchronous (never-failing) resource step, BEFORE
+ * the probe runs. So even if the probe rejects or the outer timeout fires (a
+ * black-holed host), the finalizer is already installed and closes the pool along
+ * with its in-flight dial (sockets/timers) when the scope unwinds. Upstream
+ * `@effect/sql-pg`'s `PgClient.make` instead probes INSIDE the acquireRelease
+ * acquire, so a failed/timed-out probe never installs the finalizer and leaks the
+ * pool — we deliberately diverge to fix that leak while keeping the SqlError /
+ * ConnectionError shapes identical.
+ *
+ * The probe pool is generic so tests can inject a lightweight fake at the driver
+ * boundary; a real `pg.Pool` is returned unchanged for `PgClient.fromPool`.
+ */
+export const legacyAcquireProbedPool = <P extends LegacyProbePool>(
+  makePool: () => P,
+  connectTimeoutSeconds: number,
+): Effect.Effect<P, SqlError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const pool = yield* Effect.acquireRelease(Effect.sync(makePool), (pool) =>
+      Effect.promise(() => pool.end()).pipe(Effect.timeoutOption(1000)),
+    );
+    legacyInstallPoolErrorSwallow(pool);
+    yield* Effect.tryPromise({
+      try: () => pool.query("SELECT 1"),
+      catch: (cause) =>
+        new SqlError({
+          reason: new ConnectionError({
+            cause,
+            message: "PgClient: Failed to connect",
+            operation: "connect",
+          }),
+        }),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(connectTimeoutSeconds),
+        orElse: () =>
+          Effect.fail(
+            new SqlError({
+              reason: new ConnectionError({
+                cause: new Error("Connection timed out"),
+                message: "PgClient: Connection timed out",
+                operation: "connect",
+              }),
+            }),
+          ),
+      }),
+    );
+    return pool;
+  });
+
+/**
  * Default `LegacyDbConnection` layer, backed by `@effect/sql-pg` (pure-JS `pg`
  * driver, no native addon — bundles under `bun build --compile`). Each
  * `connect` builds a scoped single-client connection that closes on scope exit.
@@ -360,53 +539,46 @@ const connect = (
         dialTargets.push({ dialHost, port, servername: dialHost === host ? undefined : host });
       }
     }
-    // Route through the connection string whenever a libpq `options` param OR
-    // parsed `runtimeParams` are present, so both reach the live connection.
-    const hasOptions = legacyMergedConnectionOptions(cfg) !== undefined;
     // Connect timeout parity: Go's `ToPostgresURL` always sets `connect_timeout`,
     // defaulting to 10s (`connect.go:24-28`); `ConnectLocalPostgres` uses 2s for
     // local (`connect.go:143-145`). A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
     // both. Without this a black-holed host would hang to the OS/driver default.
     const connectTimeoutSeconds = cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10);
+    // Whether the remote step-down runs on this connection. Go installs the
+    // `AfterConnect` hook only on the remote path (`ConnectByConfigStream`,
+    // `connect.go:342-362`), not `ConnectLocalPostgres`, so gate on `!isLocal`.
+    const stepDownRequired = !isLocal && needsRoleStepDown(cfg.user);
+    // Build the primary connection over a self-managed `pg.Pool` (via
+    // `PgClient.fromPool`) rather than `PgClient.make`, so we control two pool
+    // behaviors `PgClient.make` does not expose: `idleTimeoutMillis: 0` (never reap
+    // the single pooled connection — see `legacyBuildPoolConfig`; the fix for the
+    // `db pull` step-down loss) and the per-connection role step-down `verify` hook
+    // (see `legacyPoolStepDownVerify`). The `acquire` uses `legacyAcquireProbedPool`:
+    // probe with `SELECT 1`, bound the connect by `connectTimeoutSeconds`, and close
+    // the pool on scope exit AND on every failure/timeout (the leak `PgClient.make`
+    // has). `probe` (below) runs each attempt in a forked scope so a failed fallback
+    // attempt's pool closes immediately, before the next host is dialed.
     const makeClient = (
       dialHost: string,
       port: number,
       sslOption: boolean | ConnectionOptions | undefined,
-    ) =>
-      PgClient.make({
-        // When a libpq `options` param is present, route everything through the
-        // connection string so it reaches the server (see `buildConnectionUrl`);
-        // otherwise pass discrete fields to avoid round-tripping the password.
-        ...(hasOptions
-          ? { url: Redacted.make(legacyBuildConnectionUrl(cfg, dialHost, port)) }
-          : {
-              host: dialHost,
+    ) => {
+      const acquire = legacyAcquireProbedPool(
+        () =>
+          new Pg.Pool(
+            legacyBuildPoolConfig(
+              cfg,
+              dialHost,
               port,
-              username: cfg.user,
-              password: Redacted.make(cfg.password),
-              database: cfg.database,
-            }),
-        // TLS parity with Go (`internal/utils/connect.go`): see `legacySslOptionFor`.
-        ...(sslOption === undefined ? {} : { ssl: sslOption }),
-        connectTimeout: Duration.seconds(connectTimeoutSeconds),
-        maxConnections: 1,
-      }).pipe(Effect.provide(Reactivity.layer));
-
-    // The raw `pg.ClientConfig` for the same dial target, mirroring `makeClient`'s
-    // discrete-vs-url choice. `copyToCsv` uses it to open a dedicated node-postgres
-    // connection for the COPY protocol (which `@effect/sql-pg` does not expose),
-    // against whichever target the primary connection won.
-    const buildRawPgConfig = (
-      dialHost: string,
-      port: number,
-      sslOption: boolean | ConnectionOptions | undefined,
-    ): Pg.ClientConfig => ({
-      ...(hasOptions
-        ? { connectionString: legacyBuildConnectionUrl(cfg, dialHost, port) }
-        : { host: dialHost, port, user: cfg.user, password: cfg.password, database: cfg.database }),
-      ...(sslOption === undefined ? {} : { ssl: sslOption }),
-      connectionTimeoutMillis: connectTimeoutSeconds * 1000,
-    });
+              sslOption,
+              connectTimeoutSeconds,
+              stepDownRequired,
+            ),
+          ),
+        connectTimeoutSeconds,
+      );
+      return PgClient.fromPool({ acquire }).pipe(Effect.provide(Reactivity.layer));
+    };
 
     // Go's `ConnectByUrl` calls `SetConnectSuggestion(err)` on every connect failure
     // (`connect.go:187`), mapping the driver error to an actionable hint that replaces
@@ -483,7 +655,7 @@ const connect = (
           // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);
           // a TLS config is any non-plaintext `ssl` value.
           usedTls: ssl !== undefined && ssl !== false,
-          rawConfig: buildRawPgConfig(dialHost, port, ssl),
+          rawConfig: legacyBuildRawPgConfig(cfg, dialHost, port, ssl, connectTimeoutSeconds),
         }),
       ),
     );
@@ -500,10 +672,26 @@ const connect = (
     // follow-up query. The winning attempt's `rawConfig` is carried out so `copyToCsv`
     // can reuse the exact dial target the primary connection succeeded against.
     const probe = (attempt: (typeof attempts)[number]) =>
-      attempt.client.pipe(
-        Effect.tap((candidate) => candidate`select 1`),
-        Effect.map((candidate) => ({ candidate, rawConfig: attempt.rawConfig })),
-      );
+      Effect.gen(function* () {
+        // Run each attempt's pool in its OWN scope, forked from the session scope.
+        // Forking (not a detached `Scope.make`) means an abandoned winner — e.g. a
+        // later step-down failure — is still closed when the session scope unwinds.
+        // On a probe FAILURE we close the child immediately, so a failed fallback
+        // attempt's pool (and its in-flight dial) is released before the next host is
+        // dialed, not left open until session end. On SUCCESS we leave the child open
+        // (a child of the session scope), so the winning pool lives for the whole
+        // session and closes with it.
+        const sessionScope = yield* Scope.Scope;
+        const attemptScope = yield* Scope.fork(sessionScope);
+        return yield* attempt.client.pipe(
+          Effect.tap((candidate) => candidate`select 1`),
+          Effect.map((candidate) => ({ candidate, rawConfig: attempt.rawConfig })),
+          Scope.provide(attemptScope),
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, exit),
+          ),
+        );
+      });
     const lastIndex = attempts.length - 1;
     const { candidate: client, rawConfig: winningRawConfig } = yield* attempts
       .slice(0, lastIndex)
@@ -521,9 +709,13 @@ const connect = (
     // Step down from the temp/privileged login role before any further SQL — but
     // only for remote connections: Go installs this hook in `ConnectByConfigStream`,
     // not `ConnectLocalPostgres`, so a local `--db-url` using `supabase_admin`/
-    // `cli_login_*` must not run it. `maxConnections: 1` guarantees the single
-    // physical connection is reused, so the session-scoped role persists for `exec`.
-    if (!isLocal && needsRoleStepDown(cfg.user)) {
+    // `cli_login_*` must not run it. The pool's `"connect"` hook already ran this on
+    // the physical connection (and on any silent redial); this explicit one-shot is
+    // the fail-fast path — the hook swallows errors, so a real role-privilege problem
+    // only surfaces here, as `LegacyDbConnectError: failed to set session role: ...`
+    // (Go parity). `max: 1` + `idleTimeoutMillis: 0` keep the stepped-down connection
+    // alive so the session-scoped role persists for every later `exec`/`query`.
+    if (stepDownRequired) {
       yield* client.unsafe(SET_SESSION_ROLE).pipe(
         Effect.asVoid,
         Effect.mapError(
@@ -563,7 +755,7 @@ const connect = (
         try: () => fresh.connect(),
         catch: toConnectError,
       });
-      if (!isLocal && needsRoleStepDown(cfg.user)) {
+      if (stepDownRequired) {
         yield* Effect.tryPromise({
           try: () => fresh.query(SET_SESSION_ROLE),
           catch: (error) =>

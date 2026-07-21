@@ -43,6 +43,34 @@ type DeclarativeOutput struct {
 	Files   []DeclarativeFile `json:"files"`
 }
 
+// PgDeltaPlanFile is one execution-aware migration unit rendered by pg-delta's
+// renderPlanFiles: a numbered SQL file whose header comments record the unit
+// number, transaction mode and boundary reason.
+type PgDeltaPlanFile struct {
+	Order           int    `json:"order"`
+	Name            string `json:"name"`
+	TransactionMode string `json:"transactionMode"`
+	SQL             string `json:"sql"`
+}
+
+// PgDeltaDiffOutput is the top-level diff envelope emitted by templates/pgdelta.ts.
+type PgDeltaDiffOutput struct {
+	Version int               `json:"version"`
+	Files   []PgDeltaPlanFile `json:"files"`
+}
+
+// joinPgDeltaFiles flattens the per-unit files back into a single SQL string for
+// callers (db diff, declarative sync) that consume one blob. The per-unit header
+// comments keep the transaction boundaries visible in the reviewed output; empty
+// files produce an empty string, preserving "no changes" detection.
+func joinPgDeltaFiles(files []PgDeltaPlanFile) string {
+	blocks := make([]string, len(files))
+	for i, file := range files {
+		blocks[i] = file.SQL
+	}
+	return strings.Join(blocks, "\n\n")
+}
+
 func isPostgresURL(ref string) bool {
 	return strings.HasPrefix(ref, "postgres://") || strings.HasPrefix(ref, "postgresql://")
 }
@@ -101,7 +129,7 @@ func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []s
 	if err != nil {
 		return "", err
 	}
-	return result.SQL, nil
+	return joinPgDeltaFiles(result.Files), nil
 }
 
 // DiffPgDeltaRefDetailed is like DiffPgDeltaRef but also returns edge-runtime stderr.
@@ -136,14 +164,36 @@ func DiffPgDeltaRefDetailed(ctx context.Context, sourceRef, targetRef string, sc
 	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error diffing schema", &stdout, &stderr, utils.PgDeltaNpmRegistryOption()); err != nil {
 		return PgDeltaDiffResult{}, err
 	}
-	return PgDeltaDiffResult{
-		SQL:    stdout.String(),
-		Stderr: stderr.String(),
-	}, nil
+	return parsePgDeltaDiffOutput(stdout.String(), stderr.String())
+}
+
+// parsePgDeltaDiffOutput turns the pg-delta diff script's stdout envelope into a
+// result. The template always prints the envelope on the success path, even for
+// an empty plan (`{"version":1,"files":[]}`); a truly empty stdout means no
+// envelope was produced, which we surface as "no changes" (empty Files) rather
+// than an error. Non-empty stdout that is not valid envelope JSON is a parse
+// error carrying the edge-runtime stderr for diagnosis.
+func parsePgDeltaDiffOutput(stdout, stderr string) (PgDeltaDiffResult, error) {
+	result := PgDeltaDiffResult{Stderr: stderr}
+	if len(strings.TrimSpace(stdout)) == 0 {
+		return result, nil
+	}
+	var envelope PgDeltaDiffOutput
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		return PgDeltaDiffResult{}, errors.Errorf("failed to parse pg-delta diff output: %w:\n%s", err, stderr)
+	}
+	result.Files = envelope.Files
+	return result, nil
 }
 
 // exportCatalogPgDelta is overridden in tests to mock catalog export.
 var exportCatalogPgDelta = ExportCatalogPgDelta
+
+// diffPgDeltaRefDetailed is the seam DiffDatabase uses for the pg-delta engine.
+// Tests override it to stub the real edge-runtime pipeline (which the injected
+// DiffFunc differ cannot, since pg-delta bypasses differ), the same pattern as
+// exportCatalogPgDelta above.
+var diffPgDeltaRefDetailed = DiffPgDeltaRefDetailed
 
 // DeclarativeExportPgDelta exports target schema as declarative file payloads
 // while keeping a config-based API for existing call sites.

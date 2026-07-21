@@ -44,6 +44,7 @@ import {
   legacyShouldUsePgDelta,
 } from "../shared/legacy-diff-engine.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyDumpOptions, legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
 import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
 import {
@@ -428,7 +429,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         }
 
         // Migration-file path (Go's `pull.run`).
-        const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
+        const nowMillis = yield* Clock.currentTimeMillis;
+        const timestamp = legacyFormatMigrationTimestamp(nowMillis);
         const migrationPath = legacyGetMigrationPath(path, cliConfig.workdir, timestamp, name);
 
         const remote = yield* legacyListRemoteMigrations(session);
@@ -620,6 +622,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 });
                 return {
                   sql: result.sql,
+                  files: result.files,
                   capture: debug ? { sourceCatalog, stderr: result.stderr } : undefined,
                 };
               }
@@ -629,7 +632,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 schema: diffSchema,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
               });
-              return { sql, capture: undefined };
+              return { sql, files: undefined, capture: undefined };
             }),
           );
         }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
@@ -678,54 +681,86 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           );
         }
 
-        if (!diffEmpty) {
-          if (seededFromDump) {
-            // Append the migra diff to the dump-seeded file (Go's `diffRemoteSchema`
-            // opens the migration file `O_APPEND`, `pull.go:191`).
-            yield* Effect.scoped(
-              Effect.gen(function* () {
-                const file = yield* fs.open(migrationPath, { flag: "a" }).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new LegacyDbPullWriteError({
-                        message: `failed to open migration file: ${cause.message}`,
-                      }),
-                  ),
-                );
-                yield* file.writeAll(new TextEncoder().encode(out)).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new LegacyDbPullWriteError({
-                        message: `failed to write migration file: ${cause.message}`,
-                      }),
-                  ),
-                );
-              }),
-            );
-          } else {
-            yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
-              Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
-            );
-            yield* fs.writeFileString(migrationPath, out).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new LegacyDbPullWriteError({
-                    message: `failed to write migration file: ${cause.message}`,
-                  }),
-              ),
+        // Build the list of migration files to record in the remote history. The
+        // migra engine writes exactly one file (the dump-seeded or freshly written
+        // migrationPath); the pg-delta engine writes one ordered file per
+        // execution-aware plan unit.
+        const writtenMigrations: Array<{ path: string; version: string }> = [];
+        if (usePgDeltaDiff) {
+          // pg-delta: one migration file per plan unit via the shared writer. A
+          // single-unit plan (the common case) keeps the exact `<ts>_<name>.sql`
+          // filename; multi-unit plans append the unit name and give each file a
+          // strictly increasing timestamp so execution + migration-history order stay
+          // stable. The full set is collision-checked against existing migrations and
+          // each file is written exclusively so a pre-existing migration is never
+          // overwritten. Mirrors Go's `WritePgDeltaMigrations`
+          // (`internal/db/diff/pgdelta_migrations.go`). Empty plans are handled by the
+          // `diffEmpty` in-sync branch above, so `planFiles` is non-empty here.
+          const planFiles = diffOutcome.files ?? [];
+          const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
+            workdir: cliConfig.workdir,
+            baseMillis: nowMillis,
+            name,
+            files: planFiles.map((file) => ({ name: file.name, sql: file.sql })),
+          }).pipe(
+            Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+          );
+          for (const unit of writtenUnits) {
+            writtenMigrations.push({ path: unit.path, version: unit.version });
+          }
+        } else {
+          if (!diffEmpty) {
+            if (seededFromDump) {
+              // Append the migra diff to the dump-seeded file (Go's `diffRemoteSchema`
+              // opens the migration file `O_APPEND`, `pull.go:191`).
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const file = yield* fs.open(migrationPath, { flag: "a" }).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new LegacyDbPullWriteError({
+                          message: `failed to open migration file: ${cause.message}`,
+                        }),
+                    ),
+                  );
+                  yield* file.writeAll(new TextEncoder().encode(out)).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new LegacyDbPullWriteError({
+                          message: `failed to write migration file: ${cause.message}`,
+                        }),
+                    ),
+                  );
+                }),
+              );
+            } else {
+              yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
+                Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+              );
+              yield* fs.writeFileString(migrationPath, out).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new LegacyDbPullWriteError({
+                      message: `failed to write migration file: ${cause.message}`,
+                    }),
+                ),
+              );
+            }
+          }
+
+          // Go's `ensureMigrationWritten` (`pull.go:68,263-268`): a dump that produced
+          // nothing followed by an empty diff leaves the file empty → in sync.
+          if (seededFromDump && !seedWroteBytes && diffEmpty) {
+            return yield* Effect.fail(
+              new LegacyDbPullInSyncError({ message: "No schema changes found" }),
             );
           }
+          writtenMigrations.push({ path: migrationPath, version: timestamp });
         }
 
-        // Go's `ensureMigrationWritten` (`pull.go:68,263-268`): a dump that produced
-        // nothing followed by an empty diff leaves the file empty → in sync.
-        if (seededFromDump && !seedWroteBytes && diffEmpty) {
-          return yield* Effect.fail(
-            new LegacyDbPullInSyncError({ message: "No schema changes found" }),
-          );
+        for (const written of writtenMigrations) {
+          yield* output.raw(`Schema written to ${legacyBold(written.path)}\n`, "stderr");
         }
-
-        yield* output.raw(`Schema written to ${legacyBold(migrationPath)}\n`, "stderr");
 
         // Prompt to update the remote migration history table. Go calls
         // `PromptYesNo(ctx, "Update remote migration history table?", true)`
@@ -739,14 +774,19 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // (`console.go:64-82`), and otherwise prompts on a real TTY.
         const shouldUpdate = yield* legacyPromptYesNo(output, yes, updateHistoryTitle, true);
         if (shouldUpdate) {
-          yield* legacyUpdateMigrationHistory(session, fs, path, migrationPath, timestamp);
+          yield* legacyUpdateMigrationHistory(session, fs, path, writtenMigrations);
           remoteHistoryUpdated = true;
         }
 
         if (output.format !== "text") {
           yield* output.success("Schema pulled.", {
             declarative: false,
-            schemaWritten: migrationPath,
+            // `schemaWritten` keeps the first written path for released consumers that
+            // read the string field; `schemaFiles` lists EVERY written migration path
+            // in write order (a pg-delta plan writes one file per unit), so machine
+            // callers see all of them, not just the first.
+            schemaWritten: writtenMigrations[0]?.path ?? migrationPath,
+            schemaFiles: writtenMigrations.map((written) => written.path),
             remoteHistoryUpdated,
             engine: usePgDeltaDiff ? "pg-delta" : "migra",
           });

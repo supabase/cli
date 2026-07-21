@@ -58,7 +58,20 @@ describe("legacyDiffPgDelta", () => {
   it.effect(
     "returns the SQL + stderr and passes the interpolated diff script + env + binds",
     () => {
-      const edge = fakeEdgeRuntime({ stdout: "ALTER TABLE x;\n", stderr: "warn" });
+      const edge = fakeEdgeRuntime({
+        stdout: JSON.stringify({
+          version: 1,
+          files: [
+            {
+              order: 1,
+              name: "schema_changes",
+              transactionMode: "transactional",
+              sql: "-- unit 1\n\nALTER TABLE x;",
+            },
+          ],
+        }),
+        stderr: "warn",
+      });
       return legacyDiffPgDelta(CTX, {
         targetRef: "postgresql://u:p@127.0.0.1:54320/postgres?connect_timeout=10",
         sourceRef: "supabase/.temp/catalog.json",
@@ -67,7 +80,10 @@ describe("legacyDiffPgDelta", () => {
       }).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            expect(result.sql).toBe("ALTER TABLE x;\n");
+            // The envelope is parsed into per-unit files and a flattened SQL join.
+            expect(result.sql).toBe("-- unit 1\n\nALTER TABLE x;");
+            expect(result.files).toHaveLength(1);
+            expect(result.files[0]?.name).toBe("schema_changes");
             expect(result.stderr).toBe("warn");
             const opts = edge.calls[0]!;
             expect(opts.errPrefix).toBe("error diffing schema");
@@ -134,6 +150,27 @@ describe("legacyDiffPgDelta", () => {
           expect((failError(exit) as { message: string }).message).toBe(
             "error diffing schema: boom",
           );
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+    );
+  });
+
+  it.effect("fails with LegacyPgDeltaDiffParseError on a malformed envelope", () => {
+    const edge = fakeEdgeRuntime({ stdout: "not json{", stderr: "boom" });
+    return legacyDiffPgDelta(CTX, {
+      targetRef: "postgresql://t",
+      sourceRef: "",
+      schema: [],
+      formatOptions: "",
+    }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDiffParseError");
+          const message = (failError(exit) as { message: string }).message;
+          expect(message).toContain("failed to parse pg-delta diff output");
+          expect(message).toContain("boom");
         }),
       ),
       Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
