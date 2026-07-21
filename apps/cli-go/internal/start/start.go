@@ -1404,6 +1404,7 @@ func buildGotrueEnv(dbConfig pgconn.Config) []string {
 		fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 		fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
 		fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION=%v", utils.Config.Auth.Email.SecurePasswordChange),
+		fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD=%v", utils.Config.Auth.Email.RequireCurrentPassword),
 		fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
 		fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
 		fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),

@@ -517,6 +517,23 @@ func TestBuildGotrueEnv(t *testing.T) {
 		assert.False(t, hasPasskey)
 		assert.False(t, hasRpId)
 	})
+
+	t.Run("maps require current password setting", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+		utils.Config.Auth.Email.RequireCurrentPassword = true
+
+		env := envToMap(buildGotrueEnv(pgconn.Config{}))
+
+		assert.Equal(t, "true", env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD"])
+	})
+
+	t.Run("omits require current password setting by default", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+
+		env := envToMap(buildGotrueEnv(pgconn.Config{}))
+
+		assert.Equal(t, "false", env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD"])
+	})
 }
 
 func TestBuildStudioEnv(t *testing.T) {
