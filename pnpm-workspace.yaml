@@ -12,11 +12,11 @@ allowBuilds:
   sharp: true
 
 catalog:
-  "@effect/atom-react": "4.0.0-beta.97"
-  "@effect/platform-bun": "4.0.0-beta.97"
-  "@effect/platform-node": "4.0.0-beta.97"
-  "@effect/sql-pg": "4.0.0-beta.97"
-  "@effect/vitest": "4.0.0-beta.97"
+  "@effect/atom-react": "4.0.0-beta.98"
+  "@effect/platform-bun": "4.0.0-beta.98"
+  "@effect/platform-node": "4.0.0-beta.98"
+  "@effect/sql-pg": "4.0.0-beta.98"
+  "@effect/vitest": "4.0.0-beta.98"
   "@nx/devkit": "^23.0.2"
   "@swc-node/register": "^1.10.9"
   "@swc/core": "^1.15.43"
@@ -24,7 +24,7 @@ catalog:
   "@types/bun": "^1.3.14"
   "@typescript/native-preview": "7.0.0-dev.20260707.2"
   "@vitest/coverage-istanbul": "^4.1.10"
-  "effect": "4.0.0-beta.97"
+  "effect": "4.0.0-beta.98"
   "knip": "^6.26.0"
   "nx": "^23.0.2"
   "oxfmt": "^0.58.0"
