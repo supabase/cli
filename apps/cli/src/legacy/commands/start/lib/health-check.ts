@@ -268,9 +268,7 @@ export function legacyWaitForHealthyServices(
     // uint64(timeout.Seconds()))` (`db/start/start.go:192-198`): a 1-second
     // constant delay, capped at `timeoutSeconds` retries after the initial
     // attempt (~`timeoutSeconds` further seconds elapsed on total failure).
-    const schedule = Schedule.spaced("1 seconds").pipe(
-      Schedule.both(Schedule.recurs(timeoutSeconds)),
-    );
+    const schedule = Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(timeoutSeconds)]);
 
     yield* probe.pipe(
       Effect.retry(schedule),
