@@ -161,9 +161,10 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * invocation) — the same reasoning `legacyStageStartSecretFiles`
  * (`../lib/container-lifecycle.ts`) already applies to every other service's
  * staged secret files. `startEdgeRuntimeContainer` (`shared/functions/
- * serve.ts`) already runs `cleanup` internally on a failed or interrupted
- * bring-up (`Effect.onInterrupt`, and the non-zero-exit branch), so the
- * caller only needs to leave the returned `cleanup` unused on success.
+ * serve.ts`) already runs `cleanup` internally on any failed or interrupted
+ * bring-up (`Effect.onError`, covering the whole staging-write-through-
+ * `docker run` window, not just a non-zero exit code), so the caller only
+ * needs to leave the returned `cleanup` unused on success.
  */
 export const legacyStartEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRuntime")(function* (
   input: LegacyEdgeRuntimeBringUpInput,

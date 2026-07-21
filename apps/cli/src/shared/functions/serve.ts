@@ -813,10 +813,7 @@ async function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: st
     { mode: 0o600 },
   );
 
-  return {
-    path,
-    cleanup: () => rm(dir, { recursive: true, force: true }),
-  };
+  return { path };
 }
 
 async function writeDockerMultilineEnvScript(
@@ -860,7 +857,6 @@ export ${name}="\${${name}%x}"`;
   return {
     bind: `${dir}:${containerDir}:ro`,
     scriptPath: join(containerDir, scriptName).replaceAll("\\", "/"),
-    cleanup: () => rm(dir, { recursive: true, force: true }),
   };
 }
 
@@ -1241,10 +1237,7 @@ async function writeServeMainTemplateFile(template: string, dir: string) {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const pathname = join(dir, "index.ts");
   await writeFile(pathname, template);
-  return {
-    bind: `${pathname}:${serveMainContainerPath}:ro`,
-    cleanup: () => rm(dir, { recursive: true, force: true }),
-  } as const;
+  return { bind: `${pathname}:${serveMainContainerPath}:ro` } as const;
 }
 
 function edgeRuntimeImageTag(version: string) {
@@ -1382,6 +1375,14 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // container name, so these JWT/service-role-key/secret env artifacts no
     // longer leak on host disk indefinitely after the container is torn down.
     const stagingDir = join(input.projectRoot, "supabase", ".temp", "start-secrets", containerId);
+    // A single directory-wide `rm` rather than three per-file `.cleanup()` closures (the JWT
+    // secrets/env file, the multiline-env script, the serve-main template all live under
+    // `stagingDir`): this is what lets the cleanup cover the whole staging-write window below,
+    // including a mid-write failure between the first and second `writeDocker*` call, not just
+    // the final `docker run` step.
+    const cleanupRuntimeArtifacts = Effect.tryPromise(() =>
+      rm(stagingDir, { recursive: true, force: true }),
+    ).pipe(Effect.orDie);
 
     const functionConfigs = yield* resolveServeFunctionConfigs(
       input.projectRoot,
@@ -1455,89 +1456,85 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const dockerEnv = Object.fromEntries(env.map(splitEnvEntry));
     const { singleLine: singleLineDockerEnv, multiline: multilineDockerEnv } =
       partitionDockerEnvEntries(dockerEnv);
-    yield* Effect.try({
-      try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    });
-    const dockerEnvFile = yield* Effect.tryPromise(() =>
-      writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env")),
-    );
-    const multilineEnvDir = "/root/.supabase/multiline-env";
-    const dockerMultilineEnvScript = yield* Effect.tryPromise(() =>
-      writeDockerMultilineEnvScript(
-        multilineDockerEnv,
-        multilineEnvDir,
-        join(stagingDir, "multiline-env"),
-      ),
-    ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
-
-    const labels = dockerProjectLabels(projectId);
-    const runtimeCommand = [
-      "edge-runtime",
-      "start",
-      "--main-service=/root",
-      `--port=${dockerRuntimeServerPort}`,
-      `--policy=${input.config.edgeRuntimePolicy}`,
-      ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
-      ...(input.debug ? ["--verbose"] : []),
-    ];
-    const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
-    const serveMainTemplateFile = yield* Effect.tryPromise(() =>
-      writeServeMainTemplateFile(serveMainTemplate, join(stagingDir, "main")),
-    ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
-    const command = [
-      "run",
-      "-d",
-      "--name",
-      containerId,
-      "--network",
-      networkMode,
-      "--network-alias",
-      "edge_runtime",
-      "--workdir",
-      toDockerPath(input.projectRoot),
-      "--ulimit",
-      "nofile=65536:65536",
-      "--label",
-      `com.supabase.cli.project=${labels["com.supabase.cli.project"]}`,
-      "--label",
-      `com.docker.compose.project=${labels["com.docker.compose.project"]}`,
-      "--label",
-      `${dockerWorkdirLabel}=${input.projectRoot}`,
-      "-v",
-      serveMainTemplateFile.bind,
-      ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
-      ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
-      ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
-      ...(input.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
-      ...(input.inspectMode === undefined
-        ? []
-        : ["-p", `${input.config.edgeRuntimeInspectorPort}:${dockerRuntimeInspectorPort}`]),
-      "--entrypoint",
-      "sh",
-      input.image,
-      "-c",
-      buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
-    ];
-
-    const cleanupRuntimeArtifacts = Effect.all([
-      Effect.tryPromise(() => serveMainTemplateFile.cleanup()).pipe(Effect.orDie),
-      dockerEnvFile === undefined
-        ? Effect.void
-        : Effect.tryPromise(() => dockerEnvFile.cleanup()).pipe(Effect.orDie),
-      dockerMultilineEnvScript === undefined
-        ? Effect.void
-        : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()).pipe(Effect.orDie),
-    ]).pipe(Effect.asVoid);
-
+    // Everything from here on writes into `stagingDir` (or starts the container that reads from
+    // it), so the whole window — including a mid-write failure between two `writeDocker*` calls,
+    // not just the final `docker run` step — is wrapped in `Effect.onError` below.
     return yield* Effect.gen(function* () {
+      yield* Effect.try({
+        try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
+      const dockerEnvFile = yield* Effect.tryPromise(() =>
+        writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env")),
+      );
+      const multilineEnvDir = "/root/.supabase/multiline-env";
+      const dockerMultilineEnvScript = yield* Effect.tryPromise(() =>
+        writeDockerMultilineEnvScript(
+          multilineDockerEnv,
+          multilineEnvDir,
+          join(stagingDir, "multiline-env"),
+        ),
+      ).pipe(
+        Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
+      );
+
+      const labels = dockerProjectLabels(projectId);
+      const runtimeCommand = [
+        "edge-runtime",
+        "start",
+        "--main-service=/root",
+        `--port=${dockerRuntimeServerPort}`,
+        `--policy=${input.config.edgeRuntimePolicy}`,
+        ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
+        ...(input.debug ? ["--verbose"] : []),
+      ];
+      const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
+      const serveMainTemplateFile = yield* Effect.tryPromise(() =>
+        writeServeMainTemplateFile(serveMainTemplate, join(stagingDir, "main")),
+      ).pipe(
+        Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
+      );
+      const command = [
+        "run",
+        "-d",
+        "--name",
+        containerId,
+        "--network",
+        networkMode,
+        "--network-alias",
+        "edge_runtime",
+        "--workdir",
+        toDockerPath(input.projectRoot),
+        "--ulimit",
+        "nofile=65536:65536",
+        "--label",
+        `com.supabase.cli.project=${labels["com.supabase.cli.project"]}`,
+        "--label",
+        `com.docker.compose.project=${labels["com.docker.compose.project"]}`,
+        "--label",
+        `${dockerWorkdirLabel}=${input.projectRoot}`,
+        "-v",
+        serveMainTemplateFile.bind,
+        ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
+        ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
+        ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
+        ...(input.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
+        ...(input.inspectMode === undefined
+          ? []
+          : ["-p", `${input.config.edgeRuntimeInspectorPort}:${dockerRuntimeInspectorPort}`]),
+        "--entrypoint",
+        "sh",
+        input.image,
+        "-c",
+        buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
+      ];
+
       yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
       const result = yield* runChildProcess("docker", command, {
         stdout: "pipe",
         stderr: "pipe",
       });
       if (result.exitCode !== 0) {
-        yield* cleanupRuntimeArtifacts;
         const message =
           result.stderr.trim() || result.stdout.trim() || "failed to start edge runtime";
         return yield* Effect.fail(new Error(message));
@@ -1548,7 +1545,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         cleanup: cleanupRuntimeArtifacts,
         watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
       } satisfies StartedRuntime;
-    }).pipe(Effect.onInterrupt(() => cleanupRuntimeArtifacts));
+    }).pipe(Effect.onError(() => cleanupRuntimeArtifacts));
   },
 );
 

@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Sink, Stream } from "effect";
+import { Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { beforeEach } from "vitest";
 
@@ -252,6 +252,46 @@ describe("legacyStartEdgeRuntimeContainer", () => {
 
         expect(started.containerId).toBe("supabase_edge_runtime_proj");
         yield* started.cleanup;
+      }),
+  );
+
+  it.effect(
+    "cleans up a stale staging directory from a previous invocation even when this invocation fails before ever reaching docker run",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
+        const stagingDir = join(
+          tempWorkdir.current,
+          "supabase",
+          ".temp",
+          "start-secrets",
+          "supabase_edge_runtime_proj",
+        );
+        // Simulates a leftover from an earlier invocation (e.g. `functions serve`'s watch-mode
+        // restart loop) that was never reclaimed — `writeDockerEnvFile`'s own header explains why
+        // this path is deterministic/reused rather than a fresh mkdtemp per call.
+        mkdirSync(join(stagingDir, "env"), { recursive: true });
+        writeFileSync(join(stagingDir, "env", "docker.env"), "STALE=1");
+
+        const input = {
+          ...baseInput(tempWorkdir.current),
+          // A multiline secret with a name that fails `validateDockerMultilineEnvNames` (must
+          // match a shell variable name) — this throws before any of THIS invocation's staging
+          // writes happen, proving cleanup covers the whole staging-write window, not just a
+          // failure at (or after) the `docker run` step.
+          edgeRuntimeSecrets: { "1BAD_NAME": "line one\nline two" },
+        };
+
+        const exit = yield* Effect.exit(
+          legacyStartEdgeRuntimeContainer(input).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+            Effect.provide(out.layer),
+          ),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(existsSync(stagingDir)).toBe(false);
       }),
   );
 
