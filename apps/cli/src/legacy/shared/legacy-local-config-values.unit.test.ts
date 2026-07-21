@@ -25,6 +25,7 @@ import {
   legacyEnvOverridePoolMode,
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
+  legacyRawUnmodeledBool,
   legacyResolveAuthCaptcha,
   legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
@@ -1199,6 +1200,65 @@ describe("legacyResolveLocalConfigValues", () => {
         undefined,
       );
       expect(resolved["my_custom"]?.enabled).toBe(false);
+    });
+
+    it("weakly coerces a raw numeric custom-provider boolean by truthiness, matching Go's WeaklyTypedInput decode", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: 1, client_id: "custom-client-id" } },
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        undefined,
+      );
+      expect(resolved["my_custom"]?.enabled).toBe(true);
+    });
+
+    it("throws on a raw array/table custom-provider boolean instead of silently disabling it", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: [1, 2], client_id: "custom-client-id" } },
+      };
+      expect(() =>
+        legacyResolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
+      ).toThrow('cannot parse "1,2" as a bool');
+    });
+  });
+
+  describe("legacyRawUnmodeledBool", () => {
+    it("returns false for an absent value, matching Go's zero-value bool default", () => {
+      expect(legacyRawUnmodeledBool(undefined, "auth.passkey.enabled")).toBe(false);
+    });
+
+    it("passes a real boolean through unchanged", () => {
+      expect(legacyRawUnmodeledBool(true, "auth.passkey.enabled")).toBe(true);
+      expect(legacyRawUnmodeledBool(false, "auth.passkey.enabled")).toBe(false);
+    });
+
+    it("weakly coerces a raw number by truthiness, matching mapstructure's WeaklyTypedInput decodeBool", () => {
+      expect(legacyRawUnmodeledBool(123, "auth.passkey.enabled")).toBe(true);
+      expect(legacyRawUnmodeledBool(0, "auth.passkey.enabled")).toBe(false);
+      expect(legacyRawUnmodeledBool(1.5, "auth.passkey.enabled")).toBe(true);
+    });
+
+    it("parses a valid boolean-ish string the way Go's strconv.ParseBool does", () => {
+      expect(legacyRawUnmodeledBool("true", "auth.passkey.enabled")).toBe(true);
+      expect(legacyRawUnmodeledBool("False", "auth.passkey.enabled")).toBe(false);
+      expect(legacyRawUnmodeledBool("", "auth.passkey.enabled")).toBe(false);
+    });
+
+    it("throws on an unparsable string instead of silently disabling it", () => {
+      expect(() => legacyRawUnmodeledBool("not-a-bool", "auth.passkey.enabled")).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
+    });
+
+    it("throws on an array or table value — mapstructure's decodeBool errors on these unconditionally, never weakly coerced", () => {
+      expect(() => legacyRawUnmodeledBool([1, 2], "auth.passkey.enabled")).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+      expect(() => legacyRawUnmodeledBool({ nested: true }, "auth.passkey.enabled")).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
     });
   });
 

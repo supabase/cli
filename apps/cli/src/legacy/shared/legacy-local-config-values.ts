@@ -1842,9 +1842,21 @@ export interface LegacyResolvedAuthExternalProvider {
  * config as "section disabled" AND skip the required-field validation an enabled section should
  * trigger. An absent value (`undefined` — key genuinely not present) is NOT an error: that's Go's
  * own zero-value bool default, unchanged.
+ *
+ * Viper's decoder sets `WeaklyTypedInput: true` (its own hardcoded default —
+ * `defaultDecoderConfig`, `viper.go:976-994` — the `UnmarshalExact` call site only overrides
+ * `TagName`/`Squash`/`ZeroFields`/`DecodeHook`, never touching this flag), so a raw NUMBER for a
+ * `bool` field is NOT an error in Go either — mapstructure's `decodeBool` weakly coerces it via a
+ * truthiness check (`mapstructure.go:915-920`: int/uint/float `!= 0`), e.g. `enabled = 123` decodes
+ * as `true`, `enabled = 0` as `false`. Only a genuinely unconvertible type — an array or inline
+ * table (TOML's only other value kinds) — hits mapstructure's `default:` case
+ * (`mapstructure.go:933-936`), which errors unconditionally regardless of `WeaklyTypedInput`. So
+ * this function must weakly-coerce a JS `number` the same way, and only throw for anything else.
  */
 export function legacyRawUnmodeledBool(value: unknown, dottedFieldPath: string): boolean {
+  if (value === undefined) return false;
   if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
   if (typeof value === "string") {
     const parsed = legacyParseGoBool(value);
     if (parsed === undefined) {
@@ -1852,7 +1864,7 @@ export function legacyRawUnmodeledBool(value: unknown, dottedFieldPath: string):
     }
     return parsed;
   }
-  return false;
+  throw new LegacyInvalidBoolEnvOverrideError(dottedFieldPath, String(value));
 }
 
 /**
