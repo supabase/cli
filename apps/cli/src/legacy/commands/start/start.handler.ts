@@ -1260,6 +1260,20 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         projectEnvValues,
       ),
     );
+    // Same gap for `storage.s3_protocol.enabled` — a plain bool decoded via Go's generic
+    // Viper/mapstructure `Config.Load` pass (`storage.go:43-45`, `s3Protocol.Enabled`), the exact
+    // same mechanism as `storage.vector.enabled` above, unconditionally before any Docker work.
+    // The Storage spec builder below only parsed this lazily, so it was silently accepted when
+    // Storage is excluded/disabled — same class of gap already fixed for `storage.file_size_limit`,
+    // the GoTrue duration fields, and `db.health_timeout`.
+    const storageS3ProtocolEnabled = yield* wrapConfigOverride("storage.s3_protocol.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
+        config.storage.s3_protocol.enabled,
+        "storage.s3_protocol.enabled",
+        projectEnvValues,
+      ),
+    );
 
     // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` — both
     // PostgREST's own container AND Studio's copy of the same PGRST_DB_* env
@@ -1587,12 +1601,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               s3Region: values.storageS3Region,
               s3AccessKeyId: values.storageS3AccessKeyId,
               s3SecretAccessKey: values.storageS3SecretAccessKey,
-              s3ProtocolEnabled: legacyEnvOverrideBool(
-                "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-                config.storage.s3_protocol.enabled,
-                "storage.s3_protocol.enabled",
-                projectEnvValues,
-              ),
+              s3ProtocolEnabled: storageS3ProtocolEnabled,
               imageTransformationEnabled: gates.imgproxy,
               vectorBucketsEnabled: storageVectorEnabled,
               dbUrl: values.dbUrl,

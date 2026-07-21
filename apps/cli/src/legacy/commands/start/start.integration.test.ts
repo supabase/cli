@@ -1138,6 +1138,37 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on an invalid SUPABASE_STORAGE_S3_PROTOCOL_ENABLED even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // `storage.s3_protocol.enabled` is a plain bool decoded via Go's generic Viper pass in
+        // Config.Load, unconditionally — same class of gap as storage.file_size_limit above,
+        // now fixed the same way (hoisted eager wrapConfigOverride in start.handler.ts).
+        const previous = process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
+        process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = "not-a-bool";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.s3_protocol.enabled");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
+              else process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "fails on an invalid auth.sms.max_frequency even when auth is disabled, matching Go's Config.Load",
       () => {
         // Go's Config.Load decodes every GoTrue duration field unconditionally, regardless of
