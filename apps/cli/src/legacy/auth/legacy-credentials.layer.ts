@@ -131,15 +131,19 @@ type WindowsTargetProbe = "present" | "absent" | "unknown";
 function probeWindowsTarget(module: KeyringModule, account: string): WindowsTargetProbe {
   try {
     const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
-    return credentials.some((item) => item.account === account) ? "present" : "absent";
+    // An empty password is an orphaned placeholder, not a real credential.
+    const credential = credentials.find(
+      (item) => item.account === account && item.password.length > 0,
+    );
+    return credential ? "present" : "absent";
   } catch {
     return "unknown";
   }
 }
 
-// Constructing `withTarget` (see above) always leaves something at that target
-// — the real credential, or the placeholder — so a delete that follows never
-// has a legitimate "nothing to delete" outcome: any non-success is surfaced.
+// Constructing `withTarget` always leaves something at that target — the real
+// credential, or the placeholder — so a delete that follows is never a
+// legitimate "nothing to delete": any non-success is surfaced.
 const deleteProbedWindowsTarget = <E>(
   module: KeyringModule,
   account: string,
@@ -300,13 +304,32 @@ const deleteProfileKeyringEntry = (
   });
 
 // Best-effort wipe of the `"Supabase CLI"` keyring namespace, mirroring Go's
-// `keyring.DeleteAll` (`store.go:71`); per-entry errors are swallowed so one
-// stuck credential can't abort logout. Go stores only the access token here
-// (`access_token.go:77`, keyed by profile name), never project database
-// passwords, and `deleteAccessToken` already removed it before this runs — so
-// there is nothing left to enumerate or decode.
-const deleteAllKeyringEntries = (module: KeyringModule): Effect.Effect<void> =>
+// `keyring.DeleteAll` (`store.go:71`); errors are swallowed so one stuck
+// credential can't abort logout, matching Go's own handling (`logout.go:35`).
+//
+// Go writes Windows credentials under the target-shaped form
+// (`Supabase CLI:<account>`), invisible to the plain enumeration below, so
+// it's swept separately. `findCredentials` decodes every matched blob and
+// aborts entirely on one undecodable entry, unlike Go's raw-byte `wincred.List`.
+const deleteAllKeyringEntries = (
+  module: KeyringModule,
+  platform: RuntimePlatform,
+): Effect.Effect<void> =>
   Effect.sync(() => {
+    if (platform === "win32") {
+      try {
+        const entries = module.findCredentials(
+          KEYRING_SERVICE,
+          `${goWindowsCredentialTarget("")}*`,
+        );
+        for (const { account } of entries) {
+          deleteGoWindowsTarget(module, account);
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
     let entries: ReadonlyArray<{ account: string }>;
     try {
       entries = module.findCredentials(KEYRING_SERVICE);
@@ -462,7 +485,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
 
     deleteAllProjectCredentials: Effect.gen(function* () {
       if (Option.isNone(keyringModule)) return;
-      yield* deleteAllKeyringEntries(keyringModule.value);
+      yield* deleteAllKeyringEntries(keyringModule.value, runtimeInfo.platform);
     }),
 
     deleteProjectCredential: (projectRef: string) =>

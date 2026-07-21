@@ -447,6 +447,18 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
 
+  it.effect("win32: an empty placeholder Go target → LegacyNotLoggedInError", () => {
+    passwords.set(goWindowsKey("supabase"), "");
+    return Effect.gen(function* () {
+      const { deleteAccessToken } = yield* LegacyCredentials;
+      const exit = yield* Effect.exit(deleteAccessToken);
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyNotLoggedInError");
+      }
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+  });
+
   it.effect(
     "keyring unavailable (SUPABASE_NO_KEYRING) with token in file → removes file, still NotLoggedIn",
     () => {
@@ -641,6 +653,27 @@ describe("legacyCredentialsLayer.deleteAllProjectCredentials", () => {
       const exit = yield* Effect.exit(deleteAllProjectCredentials);
       expect(exit._tag).toBe("Success");
     }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("win32: deletes Go target-shaped project credentials", () => {
+    passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
+    passwords.set(goWindowsKey("abcdefghijklmnopqrs2"), "secret-2");
+    return Effect.gen(function* () {
+      const { deleteAllProjectCredentials } = yield* LegacyCredentials;
+      yield* deleteAllProjectCredentials;
+      expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs1"))).toBe(false);
+      expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs2"))).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+  });
+
+  it.effect("win32: never fails even when the Go target sweep can't enumerate", () => {
+    passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
+    opaqueAccounts.add(goWindowsKey("abcdefghijklmnopqrs1"));
+    return Effect.gen(function* () {
+      const { deleteAllProjectCredentials } = yield* LegacyCredentials;
+      const exit = yield* Effect.exit(deleteAllProjectCredentials);
+      expect(exit._tag).toBe("Success");
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
 });
 
