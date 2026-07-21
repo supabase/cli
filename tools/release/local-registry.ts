@@ -5,11 +5,13 @@
  *
  * - Starts Verdaccio on http://localhost:4873
  * - Creates a local publish user and stores the auth token in tmp/verdaccio-token
- * - Redirects the global npm and pnpm registry config to the local registry
- * - Restores the original registry config and kills Verdaccio on Ctrl+C / SIGTERM
+ * - Kills Verdaccio on Ctrl+C / SIGTERM / SIGHUP
+ *
+ * Global npm/pnpm registry config is never modified — everything that talks to
+ * the local registry passes --registry explicitly (see local-release.ts), so a
+ * crash or hard kill cannot leave the developer's machine pointed at localhost.
  */
 
-import { $ } from "bun";
 import { openSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -80,15 +82,6 @@ async function createUser(): Promise<string> {
 	return body.token;
 }
 
-async function getRegistryConfig(tool: "npm" | "pnpm"): Promise<string> {
-	try {
-		const value = (await $`${tool} config get registry`.quiet().text()).trim();
-		return value === "undefined" ? "https://registry.npmjs.org/" : value;
-	} catch {
-		return "https://registry.npmjs.org/";
-	}
-}
-
 async function main() {
 	if (await isPortInUse()) {
 		console.error(`\nError: Something is already running on port ${PORT}.`);
@@ -134,13 +127,6 @@ async function main() {
 	const token = await createUser();
 	await writeFile(tokenPath, token, "utf-8");
 
-	// Capture current global registry settings so we can restore them on exit.
-	const origNpm = await getRegistryConfig("npm");
-	const origPnpm = await getRegistryConfig("pnpm");
-
-	await $`npm config set registry ${REGISTRY}`.quiet();
-	await $`pnpm config set registry ${REGISTRY}`.quiet();
-
 	console.log(`
   Registry : ${REGISTRY}
   Token    : ${tokenPath}
@@ -150,28 +136,21 @@ async function main() {
     pnpm cli-release --next
     pnpm cli-release --legacy
 
-  Press Ctrl+C to stop and restore the original registry settings.
+  Global npm/pnpm registry config is untouched — pass --registry ${REGISTRY}
+  to npx / npm install when testing the published package.
+
+  Press Ctrl+C to stop.
 `);
 
-	const cleanup = async () => {
-		process.stdout.write("\nShutting down local registry...");
-		try {
-			await $`npm config set registry ${origNpm}`.quiet();
-			await $`pnpm config set registry ${origPnpm}`.quiet();
-			process.stdout.write(" registry restored.\n");
-		} catch {
-			process.stdout.write(
-				"\nWarning: could not restore registry config — run:\n" +
-					`  npm config set registry ${origNpm}\n` +
-					`  pnpm config set registry ${origPnpm}\n`,
-			);
-		}
+	const cleanup = () => {
+		process.stdout.write("\nShutting down local registry...\n");
 		proc.kill();
 		process.exit(0);
 	};
 
 	process.on("SIGINT", cleanup);
 	process.on("SIGTERM", cleanup);
+	process.on("SIGHUP", cleanup);
 
 	// Block until a signal is received.
 	await new Promise<never>(() => {});
