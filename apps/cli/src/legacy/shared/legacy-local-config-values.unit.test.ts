@@ -2280,7 +2280,13 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS"] = "true";
       process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "10s";
       process.env["SUPABASE_AUTH_SMS_TEMPLATE"] = "Your OTP is {{ .Code }}";
-      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      // A provider must be enabled, or `enable_signup` gets downgraded to `false` regardless of
+      // the override — see the "disables phone login" tests below for that behavior itself.
+      const configured = {
+        ...baseConfig().auth.sms,
+        twilio: { ...baseConfig().auth.sms.twilio, enabled: true },
+      };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
       expect(resolved.enable_signup).toBe(true);
       expect(resolved.enable_confirmations).toBe(true);
       expect(resolved.max_frequency).toBe("10s");
@@ -2288,10 +2294,48 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     it("leaves the scalars at their configured values when nothing is overridden", () => {
-      const configured = { ...baseConfig().auth.sms, enable_signup: true, max_frequency: "5s" };
+      const configured = {
+        ...baseConfig().auth.sms,
+        enable_signup: true,
+        max_frequency: "5s",
+        twilio: { ...baseConfig().auth.sms.twilio, enabled: true },
+      };
       const resolved = legacyResolveAuthSms(undefined, configured, undefined);
       expect(resolved.enable_signup).toBe(true);
       expect(resolved.max_frequency).toBe("5s");
+    });
+  });
+
+  describe("legacyResolveAuthSms (disables phone login with no provider enabled)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+    });
+
+    it("downgrades enable_signup to false when configured true with no provider enabled", () => {
+      const configured = { ...baseConfig().auth.sms, enable_signup: true };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.enable_signup).toBe(false);
+    });
+
+    it("downgrades an env-overridden enable_signup to false with no provider enabled", () => {
+      process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
+      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      expect(resolved.enable_signup).toBe(false);
+    });
+
+    it("leaves enable_signup alone when a provider is enabled", () => {
+      const configured = {
+        ...baseConfig().auth.sms,
+        enable_signup: true,
+        vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
+      };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.enable_signup).toBe(true);
+    });
+
+    it("leaves enable_signup at false when already false with no provider enabled", () => {
+      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      expect(resolved.enable_signup).toBe(false);
     });
   });
 

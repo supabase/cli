@@ -759,15 +759,34 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     yield* wrapConfigOverride("auth.email.max_frequency", () =>
       legacyParseGoDuration(resolvedEmail.max_frequency),
     );
-    yield* wrapConfigOverride("auth.sms.max_frequency", () =>
-      legacyParseGoDuration(
-        legacyResolveAuthSms(
-          asRecord(context.loaded?.document?.["auth"]),
-          config.auth.sms,
-          projectEnvValues,
-        ).max_frequency,
-      ),
+    const smsForValidation = legacyResolveAuthSms(
+      asRecord(context.loaded?.document?.["auth"]),
+      config.auth.sms,
+      projectEnvValues,
     );
+    yield* wrapConfigOverride("auth.sms.max_frequency", () =>
+      legacyParseGoDuration(smsForValidation.max_frequency),
+    );
+    // Go's `(s *sms) validate()` (`config.go:1412-1415`) prints this and downgrades
+    // `EnableSignup` to `false` when no provider is enabled — `legacyResolveAuthSms` already
+    // applies the downgrade itself, so this only needs to detect whether that branch fired (the
+    // user configured `enable_signup = true` with every provider disabled) to reproduce the
+    // matching warning.
+    if (
+      !smsForValidation.twilio.enabled &&
+      !smsForValidation.twilio_verify.enabled &&
+      !smsForValidation.messagebird.enabled &&
+      !smsForValidation.textlocal.enabled &&
+      !smsForValidation.vonage.enabled &&
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
+        config.auth.sms.enable_signup,
+        "auth.sms.enable_signup",
+        projectEnvValues,
+      )
+    ) {
+      yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
+    }
     if (gotrueSessionsForValidation?.timebox !== undefined) {
       yield* wrapConfigOverride("auth.sessions.timebox", () =>
         legacyParseGoDuration(gotrueSessionsForValidation.timebox!),

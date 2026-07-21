@@ -2796,7 +2796,13 @@ content_path = "./templates/custom_notice.html"
         const previousMaxFrequency = process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
         process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
         process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "10s";
-        const { layer, child } = setup();
+        // A complete, enabled provider is required, or Go's own `sms.validate()` downgrades
+        // enable_signup to false regardless of the override — see the "disables phone login"
+        // test below for that behavior itself.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "test-auth-token"\nmessage_service_sid = "MG123"\n',
+        });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
           const gotrueCreate = child.spawned.find(
@@ -2818,6 +2824,36 @@ content_path = "./templates/custom_notice.html"
               } else {
                 process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = previousMaxFrequency;
               }
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "disables phone login and warns when enable_signup is true with no SMS provider enabled",
+      () => {
+        // Go's `(s *sms) validate()` (`config.go:1412-1415`) takes the `case s.EnableSignup:`
+        // switch branch — reached only when every named provider is disabled — and mutates
+        // `EnableSignup = false` (plus a stderr warning) before `buildGotrueEnv` ever reads it.
+        const previous = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+        process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
+        const { layer, child, out } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_EXTERNAL_PHONE_ENABLED"]).toBe("false");
+          expect(out.stderrText).toContain(
+            "WARN: no SMS provider is enabled. Disabling phone login",
+          );
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+              else process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = previous;
             }),
           ),
         );

@@ -1645,14 +1645,27 @@ export function legacyResolveAuthSms(
     );
   }
 
+  const twilioEnabled = resolveEnabled("twilio", sms.twilio.enabled);
+  const twilioVerifyEnabled = resolveEnabled("twilio_verify", sms.twilio_verify.enabled);
+  const messagebirdEnabled = resolveEnabled("messagebird", sms.messagebird.enabled);
+  const textlocalEnabled = resolveEnabled("textlocal", sms.textlocal.enabled);
+  const vonageEnabled = resolveEnabled("vonage", sms.vonage.enabled);
+  const anyProviderEnabled =
+    twilioEnabled || twilioVerifyEnabled || messagebirdEnabled || textlocalEnabled || vonageEnabled;
+  const enableSignupConfigured = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
+    sms.enable_signup,
+    "auth.sms.enable_signup",
+    projectEnvValues,
+  );
+
   return {
     ...sms,
-    enable_signup: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
-      sms.enable_signup,
-      "auth.sms.enable_signup",
-      projectEnvValues,
-    ),
+    // Go's `(s *sms) validate()` (`config.go:1348-1416`) takes the `case s.EnableSignup:` switch
+    // branch — reached only when every named provider above is disabled — and mutates
+    // `EnableSignup = false` before `buildGotrueEnv` ever reads it, so phone signup is never
+    // enabled with no provider configured to actually deliver an OTP.
+    enable_signup: anyProviderEnabled ? enableSignupConfigured : false,
     enable_confirmations: legacyEnvOverrideBool(
       "SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS",
       sms.enable_confirmations,
@@ -1666,7 +1679,7 @@ export function legacyResolveAuthSms(
       legacyEnvOverride("SUPABASE_AUTH_SMS_MAX_FREQUENCY", sms.max_frequency, projectEnvValues) ??
       sms.max_frequency,
     twilio: {
-      enabled: resolveEnabled("twilio", sms.twilio.enabled),
+      enabled: twilioEnabled,
       account_sid: resolveField("twilio", "account_sid", sms.twilio.account_sid) ?? "",
       message_service_sid:
         resolveField("twilio", "message_service_sid", sms.twilio.message_service_sid) ?? "",
@@ -1676,7 +1689,7 @@ export function legacyResolveAuthSms(
       ),
     },
     twilio_verify: {
-      enabled: resolveEnabled("twilio_verify", sms.twilio_verify.enabled),
+      enabled: twilioVerifyEnabled,
       account_sid: resolveField("twilio_verify", "account_sid", sms.twilio_verify.account_sid),
       message_service_sid: resolveField(
         "twilio_verify",
@@ -1689,7 +1702,7 @@ export function legacyResolveAuthSms(
       ),
     },
     messagebird: {
-      enabled: resolveEnabled("messagebird", sms.messagebird.enabled),
+      enabled: messagebirdEnabled,
       originator: resolveField("messagebird", "originator", sms.messagebird.originator),
       access_key: legacyDecryptAuthSecret(
         resolveField("messagebird", "access_key", sms.messagebird.access_key),
@@ -1697,7 +1710,7 @@ export function legacyResolveAuthSms(
       ),
     },
     textlocal: {
-      enabled: resolveEnabled("textlocal", sms.textlocal.enabled),
+      enabled: textlocalEnabled,
       sender: resolveField("textlocal", "sender", sms.textlocal.sender),
       api_key: legacyDecryptAuthSecret(
         resolveField("textlocal", "api_key", sms.textlocal.api_key),
@@ -1705,7 +1718,7 @@ export function legacyResolveAuthSms(
       ),
     },
     vonage: {
-      enabled: resolveEnabled("vonage", sms.vonage.enabled),
+      enabled: vonageEnabled,
       from: resolveField("vonage", "from", sms.vonage.from),
       api_key: resolveField("vonage", "api_key", sms.vonage.api_key),
       api_secret: legacyDecryptAuthSecret(
