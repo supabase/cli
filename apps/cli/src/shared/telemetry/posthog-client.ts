@@ -22,17 +22,35 @@ export const fireAndForgetFetch: NonNullable<PostHogOptions["fetch"]> = async (u
 
 export const scopedPosthogClient = (apiKey: string, host: string) =>
   Effect.acquireRelease(
-    Effect.sync(
-      () =>
-        new PostHog(apiKey, {
-          host,
-          flushAt: 1,
-          flushInterval: 0,
-          requestTimeout: EXIT_DELAY_CAP_MS,
-          fetch: fireAndForgetFetch,
-        }),
-    ),
-    // Catch on the promise: Effect.promise turns rejections into defects,
-    // which escape Effect.ignore and fail the command.
-    (client) => Effect.promise(() => client._shutdown(EXIT_DELAY_CAP_MS).catch(() => undefined)),
-  );
+    Effect.sync(() => {
+      const shutdown = new AbortController();
+      const client = new PostHog(apiKey, {
+        host,
+        flushAt: 1,
+        flushInterval: 0,
+        requestTimeout: EXIT_DELAY_CAP_MS,
+        fetch: (url, options) =>
+          fireAndForgetFetch(url, {
+            ...options,
+            signal: options.signal
+              ? AbortSignal.any([options.signal, shutdown.signal])
+              : shutdown.signal,
+          }),
+      });
+      return { client, shutdown };
+    }),
+    ({ client, shutdown }) =>
+      Effect.promise(async () => {
+        try {
+          await client._shutdown(EXIT_DELAY_CAP_MS);
+        } catch {
+          // The deadline rejection must be swallowed: Effect.promise turns
+          // rejections into defects, which would fail the command.
+        } finally {
+          // The shutdown deadline only stops the wait; the SDK's drain keeps
+          // in-flight requests running and starts queued ones after release.
+          // Aborting cancels them so nothing outlives the scope.
+          shutdown.abort();
+        }
+      }),
+  ).pipe(Effect.map(({ client }) => client));

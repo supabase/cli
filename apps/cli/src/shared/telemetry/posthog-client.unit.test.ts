@@ -67,14 +67,22 @@ describe("scopedPosthogClient", () => {
         const firstRequestInFlight = new Promise<void>((resolve) => {
           requestStarted = resolve;
         });
+        let activeRequests = 0;
         vi.stubGlobal(
           "fetch",
           (_url: string, options: { signal?: AbortSignal }) =>
             new Promise<Response>((_resolve, reject) => {
+              activeRequests += 1;
               requestStarted();
-              options.signal?.addEventListener("abort", () =>
-                reject(new DOMException("The operation was aborted.", "AbortError")),
-              );
+              const abort = () => {
+                activeRequests -= 1;
+                reject(new DOMException("The operation was aborted.", "AbortError"));
+              };
+              if (options.signal?.aborted) {
+                abort();
+                return;
+              }
+              options.signal?.addEventListener("abort", abort);
             }),
         );
 
@@ -87,6 +95,12 @@ describe("scopedPosthogClient", () => {
         }).pipe(Effect.scoped);
 
         expect(performance.now() - startedAt).toBeLessThan(3_000);
+
+        // The SDK's drain keeps running past the shutdown deadline; without
+        // cancellation it starts the queued request AFTER scope release and
+        // keeps the process alive for that request's own timeout.
+        yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+        expect(activeRequests).toBe(0);
       }),
     10_000,
   );
