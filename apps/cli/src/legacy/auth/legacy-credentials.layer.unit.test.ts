@@ -66,7 +66,9 @@ vi.mock("@napi-rs/keyring", () => ({
     }
     static withTarget(target: string, service: string, account: string) {
       withTargetCalls.push(`${target}/${service}/${account}`);
-      return new this(service, account, target);
+      const entry = new this(service, account, target);
+      if (!passwords.has(entry.key())) passwords.set(entry.key(), "");
+      return entry;
     }
     key(): string {
       return this.target === undefined
@@ -346,7 +348,7 @@ describe("legacyCredentialsLayer.saveAccessToken", () => {
     return Effect.gen(function* () {
       const { saveAccessToken } = yield* LegacyCredentials;
       yield* saveAccessToken(VALID_TOKEN);
-      expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
+      expect(passwords.get(goWindowsKey("supabase")) ?? "").toBe("");
       expect(passwords.has("Supabase CLI/supabase")).toBe(false);
       const content = readFileSync(join(tempHome, ".supabase", "access-token"), "utf-8");
       expect(content).toBe(VALID_TOKEN);
@@ -573,18 +575,30 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
     },
   );
 
-  it.effect("win32: a Windows enumeration failure is not treated as a deletable target", () => {
+  it.effect("win32: an enumeration hiccup alone does not block logout", () => {
     throwOnFindCredentials = true;
     return Effect.gen(function* () {
       const { deleteAccessToken } = yield* LegacyCredentials;
       const exit = yield* Effect.exit(deleteAccessToken);
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyNotLoggedInError");
-        expect(JSON.stringify(exit.cause)).not.toContain("LegacyDeleteTokenError");
-      }
+      expect(exit._tag).toBe("Success");
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
+
+  it.effect(
+    "win32: an enumeration failure whose target also fails to delete → LegacyDeleteTokenError",
+    () => {
+      throwOnFindCredentials = true;
+      failDeleteAccounts.add(goWindowsKey("supabase"));
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* LegacyCredentials;
+        const exit = yield* Effect.exit(deleteAccessToken);
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyDeleteTokenError");
+        }
+      }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+    },
+  );
 
   it.effect("legacy-keyring delete error is swallowed and does not change the outcome", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);

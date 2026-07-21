@@ -137,10 +137,12 @@ function probeWindowsTarget(module: KeyringModule, account: string): WindowsTarg
   }
 }
 
+// Constructing `withTarget` (see above) always leaves something at that target
+// — the real credential, or the placeholder — so a delete that follows never
+// has a legitimate "nothing to delete" outcome: any non-success is surfaced.
 const deleteProbedWindowsTarget = <E>(
   module: KeyringModule,
   account: string,
-  probe: Exclude<WindowsTargetProbe, "absent">,
   onFailure: (cause: unknown) => E,
 ): Effect.Effect<boolean, E> =>
   Effect.gen(function* () {
@@ -152,11 +154,8 @@ const deleteProbedWindowsTarget = <E>(
       ).deleteCredential(),
     ).pipe(Effect.result);
     if (Result.isSuccess(result) && result.success) return true;
-    if (probe === "present") {
-      const cause = Result.isFailure(result) ? result.failure : "credential was not removed";
-      return yield* Effect.fail(onFailure(cause));
-    }
-    return false;
+    const cause = Result.isFailure(result) ? result.failure : "credential was not removed";
+    return yield* Effect.fail(onFailure(cause));
   });
 
 function normalizeGoWindowsPassword(value: string): string {
@@ -239,20 +238,16 @@ const deleteKeyringEntryStrict = (
       deleted = true;
     }
 
-    if (platform === "win32") {
-      const probe = probeWindowsTarget(module, account);
-      if (probe !== "absent") {
-        const removed = yield* deleteProbedWindowsTarget(
-          module,
-          account,
-          probe,
-          (cause) =>
-            new LegacyCredentialDeleteError({
-              message: `failed to delete project credential: ${String(cause)}`,
-            }),
-        );
-        deleted ||= removed;
-      }
+    if (platform === "win32" && probeWindowsTarget(module, account) !== "absent") {
+      const removed = yield* deleteProbedWindowsTarget(
+        module,
+        account,
+        (cause) =>
+          new LegacyCredentialDeleteError({
+            message: `failed to delete project credential: ${String(cause)}`,
+          }),
+      );
+      deleted ||= removed;
     }
 
     return deleted;
@@ -289,20 +284,16 @@ const deleteProfileKeyringEntry = (
       found = true;
     }
 
-    if (platform === "win32") {
-      const probe = probeWindowsTarget(module, account);
-      if (probe !== "absent") {
-        const removed = yield* deleteProbedWindowsTarget(
-          module,
-          account,
-          probe,
-          (cause) =>
-            new LegacyDeleteTokenError({
-              message: `failed to delete access token from keyring: ${String(cause)}`,
-            }),
-        );
-        found ||= removed;
-      }
+    if (platform === "win32" && probeWindowsTarget(module, account) !== "absent") {
+      const removed = yield* deleteProbedWindowsTarget(
+        module,
+        account,
+        (cause) =>
+          new LegacyDeleteTokenError({
+            message: `failed to delete access token from keyring: ${String(cause)}`,
+          }),
+      );
+      found ||= removed;
     }
 
     return found ? "deleted" : "notFound";
