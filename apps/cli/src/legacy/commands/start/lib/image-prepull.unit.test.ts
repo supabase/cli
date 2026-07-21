@@ -125,22 +125,29 @@ describe("legacyEnsureImagesCached", () => {
     }),
   );
 
-  it.live("aggregates every failed image's message into one combined error", () => {
-    const mock = mockSpawner((args) => {
-      if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
-      if (args[0] === "pull") return { exitCode: 1, stderr: `no such image: ${args[1]}\n` };
-      return { exitCode: 1 };
-    });
+  // Every pull attempt fails, so this drives the real DOCKER_PULL_RETRY_DELAYS_MS
+  // backoff (4s + 8s) to exhaustion across all 3 registry candidates (~36s) —
+  // needs more than Vitest's 5s default.
+  it.live(
+    "aggregates every failed image's message into one combined error",
+    () => {
+      const mock = mockSpawner((args) => {
+        if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+        if (args[0] === "pull") return { exitCode: 1, stderr: `no such image: ${args[1]}\n` };
+        return { exitCode: 1 };
+      });
 
-    return legacyEnsureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
-      Effect.flip,
-      Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyImagePrepullError);
-        expect(error.message).toContain("supabase/a:1");
-        expect(error.message).toContain("supabase/b:1");
-      }),
-    );
-  });
+      return legacyEnsureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
+        Effect.flip,
+        Effect.map((error) => {
+          expect(error).toBeInstanceOf(LegacyImagePrepullError);
+          expect(error.message).toContain("supabase/a:1");
+          expect(error.message).toContain("supabase/b:1");
+        }),
+      );
+    },
+    60_000,
+  );
 
   it.live(
     "appends the install hint once when a failure indicates the daemon is unreachable",
@@ -163,6 +170,7 @@ describe("legacyEnsureImagesCached", () => {
         }),
       );
     },
+    60_000,
   );
 
   it.live("resolves an empty map for an empty image list without spawning anything", () => {
