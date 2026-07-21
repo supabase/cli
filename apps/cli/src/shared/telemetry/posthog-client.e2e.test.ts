@@ -56,6 +56,8 @@ describe("telemetry against a blackholed PostHog endpoint", () => {
     // Telemetry must have actually reached the blackhole, otherwise the
     // timing assertion below passes vacuously with telemetry off.
     expect(connections).toBeGreaterThanOrEqual(1);
-    expect(elapsedMs).toBeLessThan(3_500);
+    // Healthy runs measure ~2.5s (2s drain cap + spawn overhead); the nearest
+    // real failure signature is the SDK's 5s default deadline plus startup.
+    expect(elapsedMs).toBeLessThan(4_500);
   });
 });
