@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Redacted, Result } from "effect";
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
@@ -92,7 +92,7 @@ const tryKeyringDelete = (
         deleted = true;
       }
 
-      if (platform === "win32" && windowsTargetExists(module, account)) {
+      if (platform === "win32" && probeWindowsTarget(module, account) !== "absent") {
         deleted = deleteGoWindowsTarget(module, account) || deleted;
       }
 
@@ -123,17 +123,41 @@ function readGoWindowsTarget(module: KeyringModule, account: string): string | n
   }
 }
 
-// Avoid `Entry.withTarget` here — constructing it writes an empty placeholder
-// credential on Windows, fabricating the thing being probed for. A throw from
-// `findCredentials` on an exact target means found-but-undecodable, not absent.
-function windowsTargetExists(module: KeyringModule, account: string): boolean {
+// `Entry.withTarget` is avoided as a probe — its constructor writes an empty
+// placeholder. A `findCredentials` throw is ambiguous (an undecodable Go blob or
+// a real enumeration failure), so reported as `"unknown"`, never assumed present.
+type WindowsTargetProbe = "present" | "absent" | "unknown";
+
+function probeWindowsTarget(module: KeyringModule, account: string): WindowsTargetProbe {
   try {
     const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
-    return credentials.some((item) => item.account === account);
+    return credentials.some((item) => item.account === account) ? "present" : "absent";
   } catch {
-    return true;
+    return "unknown";
   }
 }
+
+const deleteProbedWindowsTarget = <E>(
+  module: KeyringModule,
+  account: string,
+  probe: Exclude<WindowsTargetProbe, "absent">,
+  onFailure: (cause: unknown) => E,
+): Effect.Effect<boolean, E> =>
+  Effect.gen(function* () {
+    const result = yield* Effect.try(() =>
+      module.Entry.withTarget(
+        goWindowsCredentialTarget(account),
+        KEYRING_SERVICE,
+        account,
+      ).deleteCredential(),
+    ).pipe(Effect.result);
+    if (Result.isSuccess(result) && result.success) return true;
+    if (probe === "present") {
+      const cause = Result.isFailure(result) ? result.failure : "credential was not removed";
+      return yield* Effect.fail(onFailure(cause));
+    }
+    return false;
+  });
 
 function normalizeGoWindowsPassword(value: string): string {
   const direct = normalizeKeyringToken(value);
@@ -215,22 +239,20 @@ const deleteKeyringEntryStrict = (
       deleted = true;
     }
 
-    if (platform === "win32" && windowsTargetExists(module, account)) {
-      const target = module.Entry.withTarget(
-        goWindowsCredentialTarget(account),
-        KEYRING_SERVICE,
-        account,
-      );
-      yield* Effect.try({
-        try: () => {
-          target.deleteCredential();
-        },
-        catch: (cause) =>
-          new LegacyCredentialDeleteError({
-            message: `failed to delete project credential: ${String(cause)}`,
-          }),
-      });
-      deleted = true;
+    if (platform === "win32") {
+      const probe = probeWindowsTarget(module, account);
+      if (probe !== "absent") {
+        const removed = yield* deleteProbedWindowsTarget(
+          module,
+          account,
+          probe,
+          (cause) =>
+            new LegacyCredentialDeleteError({
+              message: `failed to delete project credential: ${String(cause)}`,
+            }),
+        );
+        deleted ||= removed;
+      }
     }
 
     return deleted;
@@ -267,43 +289,50 @@ const deleteProfileKeyringEntry = (
       found = true;
     }
 
-    if (platform === "win32" && windowsTargetExists(module, account)) {
-      const target = module.Entry.withTarget(
-        goWindowsCredentialTarget(account),
-        KEYRING_SERVICE,
-        account,
-      );
-      yield* Effect.try({
-        try: () => {
-          target.deleteCredential();
-        },
-        catch: (cause) =>
-          new LegacyDeleteTokenError({
-            message: `failed to delete access token from keyring: ${String(cause)}`,
-          }),
-      });
-      found = true;
+    if (platform === "win32") {
+      const probe = probeWindowsTarget(module, account);
+      if (probe !== "absent") {
+        const removed = yield* deleteProbedWindowsTarget(
+          module,
+          account,
+          probe,
+          (cause) =>
+            new LegacyDeleteTokenError({
+              message: `failed to delete access token from keyring: ${String(cause)}`,
+            }),
+        );
+        found ||= removed;
+      }
     }
 
     return found ? "deleted" : "notFound";
   });
 
-// Best-effort wipe of every entry in the `"Supabase CLI"` keyring namespace —
-// the project database-password credentials `link` writes. Mirrors Go's
-// `keyring.DeleteAll(namespace)` (`store.go:71`). Never fails: per-entry delete
-// errors are swallowed so a single stuck credential can't abort logout.
-//
-// On Windows, Go stores credentials under the target-shaped name
-// `Supabase CLI:<account>` rather than the plain `Entry(service, account)` form
-// (see `writeGoWindowsTarget`). So each discovered account is deleted in BOTH
-// forms — the plain entry and, on win32, the Go target entry — mirroring the
-// individual deletes in `deleteProfileKeyringEntry`. Without this, a Go-written
-// project credential would survive `logout` on Windows.
+// Best-effort wipe of every stored project database-password credential.
+// Mirrors Go's `keyring.DeleteAll(namespace)` (`store.go:71`), which prefix-matches
+// `Supabase CLI:` and swallows per-entry errors so a single stuck credential
+// can't abort logout. On Windows, Go writes every credential as
+// `Supabase CLI:<account>`; napi's default enumeration filter is the plain
+// `<account>.<service>` form Go never writes there, so the Go namespace is
+// enumerated explicitly by its `Supabase CLI:` prefix.
 const deleteAllKeyringEntries = (
   module: KeyringModule,
   platform: RuntimePlatform,
 ): Effect.Effect<void> =>
   Effect.sync(() => {
+    if (platform === "win32") {
+      let entries: ReadonlyArray<{ account: string }>;
+      try {
+        entries = module.findCredentials(KEYRING_SERVICE, `${goWindowsCredentialTarget("")}*`);
+      } catch {
+        return;
+      }
+      for (const { account } of entries) {
+        deleteGoWindowsTarget(module, account);
+      }
+      return;
+    }
+
     let entries: ReadonlyArray<{ account: string }>;
     try {
       entries = module.findCredentials(KEYRING_SERVICE);
@@ -315,9 +344,6 @@ const deleteAllKeyringEntries = (
         new module.Entry(KEYRING_SERVICE, account).deleteCredential();
       } catch {
         // best-effort per entry
-      }
-      if (platform === "win32" && windowsTargetExists(module, account)) {
-        deleteGoWindowsTarget(module, account);
       }
     }
   });
