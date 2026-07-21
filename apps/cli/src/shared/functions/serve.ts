@@ -1595,6 +1595,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   const projectId = resolved.projectId;
   const containerId = localDockerId("edge_runtime", projectId);
   let ownsRuntime = false;
+  let startedRuntime: StartedRuntime | undefined;
   return yield* Effect.gen(function* () {
     const networkMode = Option.getOrElse(input.networkId, () =>
       localDockerId("network", projectId),
@@ -1625,7 +1626,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     // `functions serve`-only wrapper, not the shared core.
     yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
 
-    const startedRuntime = yield* startEdgeRuntimeContainer({
+    startedRuntime = yield* startEdgeRuntimeContainer({
       config: {
         projectId,
         apiPort: resolved.apiPort,
@@ -1656,7 +1657,16 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     return startedRuntime;
   }).pipe(
-    Effect.onInterrupt(() => (ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void)),
+    // `startEdgeRuntimeContainer`'s own `Effect.onError` only reaches while it's still running —
+    // once it returns successfully, an interrupt here (e.g. mid-`reloadKong`) escapes that scope
+    // entirely, so this wrapper must also run the returned runtime's own staging-file cleanup,
+    // not just remove the container.
+    Effect.onInterrupt(() =>
+      Effect.all([
+        ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
+        startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
+      ]).pipe(Effect.asVoid),
+    ),
   );
 });
 

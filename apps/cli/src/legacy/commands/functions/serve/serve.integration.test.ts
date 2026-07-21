@@ -51,11 +51,15 @@ const deployMockState = vi.hoisted(() => ({
         command: string,
         args: ReadonlyArray<string>,
         options: unknown,
-      ) => {
-        exitCode: number;
-        stdout: string;
-        stderr: string;
-      }),
+      ) =>
+        | {
+            exitCode: number;
+            stdout: string;
+            stderr: string;
+          }
+        // Never resolves — lets a test fork+interrupt while this specific call is in flight,
+        // matching Effect's own canonical "forever pending, interruptible" primitive.
+        | { pending: true }),
   reset() {
     this.isDockerRunning = true;
     this.runCalls = [];
@@ -83,7 +87,7 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
         deployMockState.volumeCalls.push({ volumeName, projectId });
       }),
     runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const envFile = args.flatMap((value, index) =>
           args[index - 1] === "--env-file" ? [value] : [],
         )[0];
@@ -117,13 +121,12 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
                     }),
               };
         deployMockState.runCalls.push({ command, args: [...args], options: enrichedOptions });
-        return (
-          deployMockState.runHandler?.(command, args, options) ?? {
-            exitCode: 0,
-            stdout: "",
-            stderr: "",
-          }
-        );
+        const result = deployMockState.runHandler?.(command, args, options) ?? {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        };
+        return "pending" in result ? Effect.never : Effect.succeed(result);
       }),
   };
 });
@@ -1236,6 +1239,84 @@ describe("legacy functions serve integration", () => {
       expect(out.stdoutText).toContain("Stopped serving");
     });
   });
+
+  it.live(
+    "cleans up staged secrets when interrupted while reloading Kong after a successful bring-up",
+    () => {
+      const processControl = mockQueuedProcessControl();
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          // Hangs Kong reload so the interrupt below lands after bring-up succeeded (staged
+          // secrets already written, `startedRuntime` already assigned) but before this
+          // wrapper's own `reloadKong` call returns.
+          return { pending: true };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([{ pending: true }]);
+
+      const stagingDir = join(
+        tempRoot.current,
+        "supabase",
+        ".temp",
+        "start-secrets",
+        "supabase_edge_runtime_test-project",
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        const { layer } = setupServe({ processControl, childSpawner });
+        const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* waitFor(
+          () =>
+            deployMockState.runCalls.some(
+              (call) => call.command === "docker" && call.args[0] === "exec",
+            ),
+          "timed out waiting for Kong reload to start",
+        );
+        expect(existsSync(stagingDir)).toBe(true);
+        processControl.signal("SIGINT");
+
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isSuccess(exit)).toBe(true);
+
+        expect(
+          deployMockState.runCalls.some(
+            (call) =>
+              call.command === "docker" &&
+              call.args[0] === "container" &&
+              call.args[1] === "rm" &&
+              call.args.includes("supabase_edge_runtime_test-project"),
+          ),
+        ).toBe(true);
+        expect(existsSync(stagingDir)).toBe(false);
+      });
+    },
+  );
 
   it.live("passes inspect, debug, and custom network settings through to edge-runtime", () => {
     deployMockState.runHandler = (command, args) => {
