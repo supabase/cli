@@ -38,6 +38,7 @@ import {
   legacyStorageGatewayFetch,
 } from "../../shared/legacy-storage-credentials.ts";
 import { legacyReadServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
+import { ramInBytes } from "../../shared/legacy-size-units.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
 import {
@@ -741,6 +742,47 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
+    // Go decodes every `time.Duration` config field — including these 5 — in the same single,
+    // unconditional `Config.Load` pass (`mapstructure.StringToTimeDurationHookFunc()`,
+    // `pkg/config/config.go:749-756,777`), before `start` touches Docker at all
+    // (`internal/start/start.go:51,73`). The TS port only parses them inside GoTrue's own env
+    // builder (`gotrue.service.ts`), which never runs at all when auth is disabled or `gotrue` is
+    // excluded — so a malformed value would otherwise be silently accepted instead of failing the
+    // command, unlike Go. Validate eagerly here, discarding the parsed nanosecond counts, since
+    // `resolveGotrueEnvInput` (below) re-resolves and re-parses these same fields for the actual
+    // GoTrue container build.
+    const gotrueSessionsForValidation = resolveGotrueSessions(
+      config.auth.sessions,
+      projectEnvValues,
+    );
+    yield* wrapConfigOverride("auth.email.max_frequency", () =>
+      legacyParseGoDuration(resolvedEmail.max_frequency),
+    );
+    yield* wrapConfigOverride("auth.sms.max_frequency", () =>
+      legacyParseGoDuration(
+        legacyResolveAuthSms(
+          asRecord(context.loaded?.document?.["auth"]),
+          config.auth.sms,
+          projectEnvValues,
+        ).max_frequency,
+      ),
+    );
+    if (gotrueSessionsForValidation?.timebox !== undefined) {
+      yield* wrapConfigOverride("auth.sessions.timebox", () =>
+        legacyParseGoDuration(gotrueSessionsForValidation.timebox!),
+      );
+    }
+    if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
+      yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
+        legacyParseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+      );
+    }
+    yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
+      legacyParseGoDuration(
+        legacyResolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency,
+      ),
+    );
+
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
 
@@ -1196,6 +1238,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         config.storage.file_size_limit,
         projectEnvValues,
       ) ?? config.storage.file_size_limit;
+    // `@supabase/config`'s schema accepts `file_size_limit` as a plain string — it does not parse
+    // the size grammar itself, so a malformed value (e.g. "foobar") would otherwise only surface
+    // when `storage.service.ts`'s `ramInBytes` call builds the container env, well after
+    // network/image/Postgres work, and never at all when Storage is excluded/disabled. Go's
+    // `sizeInBytes.UnmarshalText` (`pkg/config/config.go:39-49`) decodes this unconditionally in
+    // the same `Config.Load` pass as everything else (`config.go:749-756,775-784`), before `start`
+    // touches Docker or looks at `--exclude` — validate eagerly here to match, discarding the
+    // parsed byte count since every consumer re-parses `storageFileSizeLimit` itself.
+    yield* wrapConfigOverride("storage.file_size_limit", () => ramInBytes(storageFileSizeLimit));
     // Same gap for `storage.vector.enabled` — both the long-running Storage
     // container AND `legacySeedBucketsRun`'s `effectiveLocalStorageConfig`
     // splice further down must see the same already-overridden value (Go's
@@ -2001,16 +2052,18 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         const image = imagePlanByService.get(entry.service);
         if (image === undefined) continue;
 
-        // Several service builders (e.g. GoTrue's `auth.email/sms.max_frequency` Go-duration
-        // parsing, Storage's file-size-limit parsing) do synchronous, throwing work over
-        // config.toml string fields `@supabase/config`'s schema does not itself validate as
-        // durations/sizes. A malformed value would otherwise surface as an uncaught Effect
-        // defect — `Effect.onError` below still rolls back on a defect either way, but the user
-        // would see an opaque defect instead of a typed config error. `catchDefect` converts any
-        // such throw into the same typed config error every other malformed-config path in this
-        // handler already produces, matching Go's fail-at-config-decode
-        // behavior (Go's `time.Duration`/size fields fail at TOML decode, before any Docker
-        // work starts).
+        // Several service builders do synchronous, throwing work over config.toml string fields
+        // `@supabase/config`'s schema does not itself validate as durations/sizes (GoTrue's
+        // `auth.email/sms.max_frequency`/sessions/mfa Go-duration parsing and Storage's
+        // file-size-limit parsing are now caught earlier, eagerly, before any Docker work — see
+        // the `resolvedEmail`/`storageFileSizeLimit` validation above — but this `catchDefect`
+        // stays as defense-in-depth for any other field of this shape). A malformed value would
+        // otherwise surface as an uncaught Effect defect — `Effect.onError` below still rolls back
+        // on a defect either way, but the user would see an opaque defect instead of a typed
+        // config error. `catchDefect` converts any such throw into the same typed config error
+        // every other malformed-config path in this handler already produces, matching Go's
+        // fail-at-config-decode behavior (Go's `time.Duration`/size fields fail at TOML decode,
+        // before any Docker work starts).
         const { spec, excludeFromHealthWatch } = yield* buildSpecForService(
           entry.service,
           resolveImage(image),

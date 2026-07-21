@@ -1115,6 +1115,52 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on an invalid storage.file_size_limit even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // Go's sizeInBytes decoder rejects a malformed file_size_limit unconditionally at
+        // Config.Load, regardless of --exclude — this proves the eager validation in
+        // start.handler.ts really is unconditional, not merely earlier-but-still-gated on
+        // Storage actually running.
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[storage]\nfile_size_limit = "not-a-size"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.file_size_limit");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "fails on an invalid auth.sms.max_frequency even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // Go's Config.Load decodes every GoTrue duration field unconditionally, regardless of
+        // auth.enabled — proving the eager validation covers fields beyond auth.email.max_frequency
+        // and really is independent of whether GoTrue's own spec builder ever runs.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.sms]\nmax_frequency = "not-a-duration"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.sms.max_frequency");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
       "warns about a Windows npipe Docker daemon before starting Vector, in text mode, and excludes it from the health watch list",
       () => {
         // `legacyResolveDockerDaemonHost` checks `DOCKER_HOST` before ever shelling out to
@@ -1866,15 +1912,14 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
-      "fails and rolls back on a malformed auth.email.max_frequency instead of crashing past rollback",
+      "fails on a malformed auth.email.max_frequency before any Docker work, matching Go's Config.Load",
       () => {
         // `auth.email.max_frequency` is a plain, unvalidated string in `@supabase/config`'s
-        // schema, so a malformed Go-duration value reaches `legacyBuildGotrueEnv`'s
-        // `legacyParseGoDuration` call unchecked. That call is a synchronous throw, not a
-        // typed Effect failure — without `Effect.catchDefect` around the per-service spec
-        // builder in `start.handler.ts`, this would surface as an uncaught defect that
-        // bypasses `Effect.tapError`'s rollback entirely, leaking the network/Postgres/
-        // Logflare/Vector/Kong containers already created by the time GoTrue's spec is built.
+        // schema. Go decodes it in the same unconditional Config.Load mapstructure pass as every
+        // other duration field, before start.Run touches Docker at all — this is now validated
+        // eagerly here too (see the `resolvedEmail` validation in start.handler.ts), so a
+        // malformed value fails before the network/Postgres/Kong/GoTrue sequence ever begins,
+        // not partway through it.
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
         });
@@ -1884,9 +1929,9 @@ content_path = "./templates/custom_notice.html"
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
-            expect(serialized).toContain("invalid config for gotrue");
+            expect(serialized).toContain("invalid config for auth.email.max_frequency");
           }
-          expect(rollbackWasAttempted(child.spawned)).toBe(true);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
