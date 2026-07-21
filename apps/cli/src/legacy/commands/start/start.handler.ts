@@ -1415,6 +1415,25 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }),
     });
 
+    // Same bug class as `dbHealthTimeoutSeconds` above: Go decodes `edge_runtime.policy`
+    // (an enum via `UnmarshalText`) and `edge_runtime.inspector_port` (a plain `uint`) during
+    // the same unconditional `Config.Load` pass (`pkg/config/config.go:749-756,777`), before
+    // `start.Run` touches Docker — regardless of `--exclude edge-runtime`. The Edge Runtime
+    // branch below re-resolves both against `resolvedEdgeRuntime`'s env-interpolated subtree
+    // for the real container build; this eager call only needs the raw `config.edge_runtime`
+    // value to prove it parses.
+    const edgeRuntimePolicy = yield* wrapConfigOverride("edge_runtime.policy", () =>
+      legacyEnvOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
+    );
+    const edgeRuntimeInspectorPort = yield* wrapConfigOverride("edge_runtime.inspector_port", () =>
+      envOverridePort(
+        "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
+        config.edge_runtime.inspector_port,
+        "edge_runtime.inspector_port",
+        projectEnvValues,
+      ),
+    );
+
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
      * {@link LegacyStartContainerSpec} to bring up; `excludeFromHealthWatch`
@@ -2004,35 +2023,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             "edge_runtime",
             { goViperCompat: true },
           );
-          // Both malformed-value throws below happen well after Postgres (and possibly other
-          // services) have already been created — synchronous throws here would become
-          // untyped Effect defects bypassing `withJsonErrorHandling`'s `Effect.catch` (this
-          // pipeline's own `Effect.onError` rollback would still fire either way, but the user
-          // would see an opaque defect instead of a typed config error), same bug class already
-          // fixed for `dbHealthTimeoutSeconds` above and `buildSpecForService`'s `catchDefect`
-          // below. Go decodes both fields during `Config.Load`, well before any Docker work, so
-          // a bad value must fail the same way here.
-          const edgeRuntimePolicy = yield* Effect.try({
-            try: () =>
-              legacyEnvOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
-            catch: (cause) =>
-              new LegacyStartInvalidConfigError({
-                message: `invalid config for edge_runtime.policy: ${cause instanceof Error ? cause.message : String(cause)}`,
-              }),
-          });
-          const edgeRuntimeInspectorPort = yield* Effect.try({
-            try: () =>
-              envOverridePort(
-                "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-                config.edge_runtime.inspector_port,
-                "edge_runtime.inspector_port",
-                projectEnvValues,
-              ),
-            catch: (cause) =>
-              new LegacyStartInvalidConfigError({
-                message: `invalid config for edge_runtime.inspector_port: ${cause instanceof Error ? cause.message : String(cause)}`,
-              }),
-          });
+          // `edgeRuntimePolicy`/`edgeRuntimeInspectorPort` are resolved eagerly, before any
+          // Docker work — see their hoisted `wrapConfigOverride` calls next to
+          // `dbHealthTimeoutSeconds` above.
           const edgeRuntimeInput: LegacyEdgeRuntimeBringUpInput = {
             projectId,
             networkId,

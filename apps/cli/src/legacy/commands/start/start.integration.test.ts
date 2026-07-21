@@ -1290,6 +1290,70 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on an invalid SUPABASE_EDGE_RUNTIME_POLICY even when edge-runtime is excluded, matching Go's Config.Load",
+      () => {
+        // `edge_runtime.policy` is a strict enum in @supabase/config's schema, so a bad TOML
+        // value is already rejected at config load, before start.handler.ts runs — only the env
+        // var override path (a plain string, unchecked by the schema) can reach
+        // `legacyEnvOverrideEdgeRuntimePolicy`'s own throw, same reasoning as the GoTrue
+        // override-only tests above.
+        const previous = process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
+        process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "not-a-policy";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["edge-runtime"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for edge_runtime.policy");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
+              else process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT even when edge-runtime is excluded, matching Go's Config.Load",
+      () => {
+        // `edge_runtime.inspector_port` is a plain number in @supabase/config's schema, so a bad
+        // TOML value is already rejected at config load — only the env var override path (a
+        // string parsed by `envOverridePort`) can throw here, same reasoning as the policy test
+        // above.
+        const previous = process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"];
+        process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"] = "not-a-port";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["edge-runtime"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for edge_runtime.inspector_port");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"];
+              else process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "warns about a Windows npipe Docker daemon before starting Vector, in text mode, and excludes it from the health watch list",
       () => {
         // `legacyResolveDockerDaemonHost` checks `DOCKER_HOST` before ever shelling out to
