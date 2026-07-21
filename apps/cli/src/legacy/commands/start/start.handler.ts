@@ -54,9 +54,7 @@ import {
   legacyListContainersByLabel,
 } from "../../shared/legacy-docker-lifecycle.ts";
 import {
-  envOverride,
-  envOverridePort,
-  envOverrideUint,
+  legacyEnvOverride,
   legacyEnvOverrideApiMaxRows,
   legacyEnvOverrideBool,
   legacyEnvOverrideDefaultPoolSize,
@@ -65,8 +63,10 @@ import {
   legacyEnvOverrideMajorVersion,
   legacyEnvOverrideMaxClientConn,
   legacyEnvOverridePoolMode,
+  legacyEnvOverridePort,
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
+  legacyEnvOverrideUint,
   legacyRawUnmodeledBool,
   legacyResolveAuthCaptcha,
   legacyResolveAuthEmail,
@@ -214,7 +214,7 @@ function isContainerNotFoundMessage(message: string): boolean {
 }
 
 /**
- * Wraps a synchronous `envOverride*`/`legacyEnvOverride*` config-override read that throws on a
+ * Wraps a synchronous `legacyEnvOverride*`/`legacyEnvOverride*` config-override read that throws on a
  * malformed value into a typed `LegacyStartInvalidConfigError` failure, matching Go's
  * `Config.Load` hard-failing on a bad Viper decode (`pkg/config/config.go:749-756`) before any
  * Docker work runs — instead of leaking an untyped Effect defect that bypasses
@@ -306,19 +306,19 @@ function resolveGotruePasskeyWebauthn(
       : undefined;
   const rpOriginsOverride =
     webauthnDoc !== undefined
-      ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+      ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
       : undefined;
   const webauthn =
     webauthnDoc !== undefined
       ? {
           rpId:
-            envOverride(
+            legacyEnvOverride(
               "SUPABASE_AUTH_WEBAUTHN_RP_ID",
               typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
               projectEnvValues,
             ) ?? "",
           rpDisplayName:
-            envOverride(
+            legacyEnvOverride(
               "SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME",
               typeof webauthnDoc["rp_display_name"] === "string"
                 ? webauthnDoc["rp_display_name"]
@@ -359,12 +359,12 @@ function resolveGotrueSessions(
   sessions: ProjectConfig["auth"]["sessions"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): ProjectConfig["auth"]["sessions"] {
-  const timebox = envOverride(
+  const timebox = legacyEnvOverride(
     "SUPABASE_AUTH_SESSIONS_TIMEBOX",
     sessions?.timebox,
     projectEnvValues,
   );
-  const inactivityTimeout = envOverride(
+  const inactivityTimeout = legacyEnvOverride(
     "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
     sessions?.inactivity_timeout,
     projectEnvValues,
@@ -385,43 +385,43 @@ function resolveGotrueRateLimit(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): ProjectConfig["auth"]["rate_limit"] {
   return {
-    anonymous_users: envOverrideUint(
+    anonymous_users: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
       "auth.rate_limit.anonymous_users",
       rateLimit.anonymous_users,
       projectEnvValues,
     ),
-    token_refresh: envOverrideUint(
+    token_refresh: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
       "auth.rate_limit.token_refresh",
       rateLimit.token_refresh,
       projectEnvValues,
     ),
-    sign_in_sign_ups: envOverrideUint(
+    sign_in_sign_ups: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
       "auth.rate_limit.sign_in_sign_ups",
       rateLimit.sign_in_sign_ups,
       projectEnvValues,
     ),
-    token_verifications: envOverrideUint(
+    token_verifications: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
       "auth.rate_limit.token_verifications",
       rateLimit.token_verifications,
       projectEnvValues,
     ),
-    email_sent: envOverrideUint(
+    email_sent: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
       "auth.rate_limit.email_sent",
       rateLimit.email_sent,
       projectEnvValues,
     ),
-    sms_sent: envOverrideUint(
+    sms_sent: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
       "auth.rate_limit.sms_sent",
       rateLimit.sms_sent,
       projectEnvValues,
     ),
-    web3: envOverrideUint(
+    web3: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_WEB3",
       "auth.rate_limit.web3",
       rateLimit.web3,
@@ -474,7 +474,7 @@ function resolveGotrueOAuthServer(
       projectEnvValues,
     ),
     authorization_url_path:
-      envOverride(
+      legacyEnvOverride(
         "SUPABASE_AUTH_OAUTH_SERVER_AUTHORIZATION_URL_PATH",
         oauthServer.authorization_url_path,
         projectEnvValues,
@@ -525,7 +525,7 @@ function resolveAuthExternalUrl(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
   const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
-  return envOverride(
+  return legacyEnvOverride(
     "SUPABASE_AUTH_EXTERNAL_URL",
     typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
     projectEnvValues,
@@ -574,12 +574,12 @@ function resolveGotrueEnvInput(params: {
   // `local_smtp.admin_email`/`sender_name` — value-typed fields, so no
   // raw-document presence gate needed, matching `local_smtp.port`'s
   // existing treatment.
-  const mailpitAdminEmail = envOverride(
+  const mailpitAdminEmail = legacyEnvOverride(
     "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
     config.local_smtp.admin_email,
     projectEnvValues,
   );
-  const mailpitSenderName = envOverride(
+  const mailpitSenderName = legacyEnvOverride(
     "SUPABASE_LOCAL_SMTP_SENDER_NAME",
     config.local_smtp.sender_name,
     projectEnvValues,
@@ -991,7 +991,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // Postgres container spec below, since `postgres.service.ts`'s
     // `legacyPostgresExtraEnv` reads this same field to decide whether to add
     // the S3/`POSTGRES_INITDB_ARGS` env vars — both consumers must agree.
-    const orioledbVersion = envOverride(
+    const orioledbVersion = legacyEnvOverride(
       "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
       config.experimental.orioledb_version,
       projectEnvValues,
@@ -1001,7 +1001,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // alongside `orioledb_version` (`apps/cli-go/internal/db/start/
     // start.go:70-77`) — also threaded into the Postgres container spec
     // below, since `legacyPostgresExtraEnv` reads these same fields raw.
-    const s3Host = envOverride(
+    const s3Host = legacyEnvOverride(
       "SUPABASE_EXPERIMENTAL_S3_HOST",
       config.experimental.s3_host,
       projectEnvValues,
@@ -1032,17 +1032,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       "auth.enabled",
       projectEnvValues,
     );
-    const s3Region = envOverride(
+    const s3Region = legacyEnvOverride(
       "SUPABASE_EXPERIMENTAL_S3_REGION",
       config.experimental.s3_region,
       projectEnvValues,
     );
-    const s3AccessKey = envOverride(
+    const s3AccessKey = legacyEnvOverride(
       "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
       config.experimental.s3_access_key,
       projectEnvValues,
     );
-    const s3SecretKey = envOverride(
+    const s3SecretKey = legacyEnvOverride(
       "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
       config.experimental.s3_secret_key,
       projectEnvValues,
@@ -1220,12 +1220,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `Validate` reads `CertPath`/`KeyPath` from disk into `CertContent`/
     // `KeyContent` (`pkg/config/config.go:1012-1024`). Mirrors the identical
     // resolution `legacy-local-config-values.ts` already does for `status`/`stop`.
-    const apiTlsCertPath = envOverride(
+    const apiTlsCertPath = legacyEnvOverride(
       "SUPABASE_API_TLS_CERT_PATH",
       config.api.tls.cert_path,
       projectEnvValues,
     );
-    const apiTlsKeyPath = envOverride(
+    const apiTlsKeyPath = legacyEnvOverride(
       "SUPABASE_API_TLS_KEY_PATH",
       config.api.tls.key_path,
       projectEnvValues,
@@ -1252,7 +1252,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `internal/start/start.go:1004`, `internal/db/start/start.go:307`, both
     // reading the single `utils.Config.Storage.FileSizeLimit`).
     const storageFileSizeLimit =
-      envOverride(
+      legacyEnvOverride(
         "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
         config.storage.file_size_limit,
         projectEnvValues,
@@ -1301,10 +1301,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `utils.Config.Api.{Schemas,ExtraSearchPath,MaxRows}`). The two array
     // fields use the same comma-split-override pattern as
     // `auth.additional_redirect_urls`/`auth.webauthn.rp_origins` above.
-    const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, projectEnvValues);
+    const apiSchemasOverride = legacyEnvOverride(
+      "SUPABASE_API_SCHEMAS",
+      undefined,
+      projectEnvValues,
+    );
     const apiSchemas =
       apiSchemasOverride !== undefined ? apiSchemasOverride.split(",") : config.api.schemas;
-    const apiExtraSearchPathOverride = envOverride(
+    const apiExtraSearchPathOverride = legacyEnvOverride(
       "SUPABASE_API_EXTRA_SEARCH_PATH",
       undefined,
       projectEnvValues,
@@ -1325,7 +1329,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // zero-value uint16), matching mailpit.service.ts's own `!== 0` publish
     // guard, so `?? 0` here preserves that "unconfigured" signal.
     const mailpitPort = yield* wrapConfigOverride("local_smtp.port", () =>
-      envOverridePort(
+      legacyEnvOverridePort(
         "SUPABASE_LOCAL_SMTP_PORT",
         config.local_smtp.port,
         "local_smtp.port",
@@ -1333,7 +1337,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     const mailpitSmtpPort = yield* wrapConfigOverride("local_smtp.smtp_port", () =>
-      envOverridePort(
+      legacyEnvOverridePort(
         "SUPABASE_LOCAL_SMTP_SMTP_PORT",
         config.local_smtp.smtp_port ?? 0,
         "local_smtp.smtp_port",
@@ -1341,7 +1345,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     const mailpitPop3Port = yield* wrapConfigOverride("local_smtp.pop3_port", () =>
-      envOverridePort(
+      legacyEnvOverridePort(
         "SUPABASE_LOCAL_SMTP_POP3_PORT",
         config.local_smtp.pop3_port ?? 0,
         "local_smtp.pop3_port",
@@ -1354,7 +1358,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // before start.go:378 reads utils.Config.Analytics.Port to build
     // Logflare's HostPort.
     const analyticsPort = yield* wrapConfigOverride("analytics.port", () =>
-      envOverridePort(
+      legacyEnvOverridePort(
         "SUPABASE_ANALYTICS_PORT",
         config.analytics.port,
         "analytics.port",
@@ -1375,7 +1379,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // for `dbHealthTimeoutSeconds`/`db.settings`/the Edge Runtime
     // `policy`/`inspector_port` overrides elsewhere in this function.
     const poolerPort = yield* wrapConfigOverride("db.pooler.port", () =>
-      envOverridePort(
+      legacyEnvOverridePort(
         "SUPABASE_DB_POOLER_PORT",
         config.db.pooler.port,
         "db.pooler.port",
@@ -1402,7 +1406,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // Docker at all (`internal/start/start.go:51,73`) — a malformed value must
     // fail before network/image/Postgres work, not after Postgres's own container
     // has already been created and started.
-    const dbHealthTimeout = envOverride(
+    const dbHealthTimeout = legacyEnvOverride(
       "SUPABASE_DB_HEALTH_TIMEOUT",
       config.db.health_timeout,
       projectEnvValues,
@@ -1426,7 +1430,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       legacyEnvOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
     );
     const edgeRuntimeInspectorPort = yield* wrapConfigOverride("edge_runtime.inspector_port", () =>
-      envOverridePort(
+      legacyEnvOverridePort(
         "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
         config.edge_runtime.inspector_port,
         "edge_runtime.inspector_port",
@@ -1699,8 +1703,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 kongContainerName,
                 logflareContainerName,
                 studioApiUrl: legacyResolveStudioApiUrl(
-                  envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+                  legacyEnvOverride(
+                    "SUPABASE_STUDIO_API_URL",
                     config.studio.api_url,
+                    projectEnvValues,
+                  ) ?? config.studio.api_url,
                   context.hostname,
                   values.apiUrl,
                 ),

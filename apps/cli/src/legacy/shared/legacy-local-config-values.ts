@@ -176,7 +176,7 @@ export class LegacyInvalidJwtSecretError extends Error {
 const MIN_JWT_SECRET_LENGTH = 16;
 
 /**
- * Thrown by {@link envOverridePort} when a `SUPABASE_*_PORT` env/dotenv
+ * Thrown by {@link legacyEnvOverridePort} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port, mirroring Go's `Config.Load`
  * (`pkg/config/config.go:749-756`): `v.UnmarshalExact` decodes with
  * `WeaklyTypedInput` on (viper's `defaultDecoderConfig`, never reset by our
@@ -198,7 +198,7 @@ export class LegacyInvalidPortEnvOverrideError extends Error {
 const MAX_PORT = 65535;
 
 /**
- * Port-flavored sibling of {@link envOverride}/{@link legacyEnvOverrideBool}
+ * Port-flavored sibling of {@link legacyEnvOverride}/{@link legacyEnvOverrideBool}
  * for `SUPABASE_*_PORT` fields Go decodes as `uint16` rather than a plain
  * string. Unlike the boolean sibling — which intentionally falls back to
  * `configured` on a malformed override — a bad port override is a genuine
@@ -206,13 +206,13 @@ const MAX_PORT = 65535;
  * a leniency case: Go never proceeds with the pre-override value on a decode
  * error, it fails config loading outright.
  */
-export function envOverridePort(
+export function legacyEnvOverridePort(
   name: string,
   configuredPort: number,
   dottedFieldPath: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  const value = envOverride(name, undefined, projectEnvValues);
+  const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configuredPort;
   if (!/^\d+$/.test(value)) {
     throw new LegacyInvalidPortEnvOverrideError(dottedFieldPath, value);
@@ -259,7 +259,7 @@ export function envOverridePort(
  * check); an unresolved/empty indirection leaves the `env(VAR)` literal
  * untouched, same as Go.
  */
-export function envOverride(
+export function legacyEnvOverride(
   name: string,
   configured: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
@@ -291,7 +291,7 @@ export class LegacyInvalidBoolEnvOverrideError extends Error {
 }
 
 /**
- * Boolean-flavored sibling of {@link envOverride} for `SUPABASE_*` fields Go
+ * Boolean-flavored sibling of {@link legacyEnvOverride} for `SUPABASE_*` fields Go
  * decodes as a native bool (`api.tls.enabled`, `auth.enabled`, and every other
  * `<section>.enabled` gate `status`/`stop` read — see `legacy-status-values.ts`)
  * rather than a string/number — those are bound by the same generic Viper
@@ -316,7 +316,7 @@ export function legacyEnvOverrideBool(
   dottedFieldPath: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): boolean {
-  const value = envOverride(name, undefined, projectEnvValues);
+  const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   const parsed = legacyParseGoBool(value);
   if (parsed === undefined) {
@@ -346,7 +346,7 @@ export class LegacyInvalidAnalyticsBackendEnvOverrideError extends Error {
 }
 
 /**
- * `analytics.backend`-flavored sibling of {@link envOverridePort}/
+ * `analytics.backend`-flavored sibling of {@link legacyEnvOverridePort}/
  * {@link legacyEnvOverrideBool} for the one `SUPABASE_*` override this file
  * decodes as a Go text-unmarshalled enum rather than a string/number/bool —
  * see {@link LegacyInvalidAnalyticsBackendEnvOverrideError}. Validates the
@@ -365,7 +365,7 @@ function envOverrideAnalyticsBackend(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): "postgres" | "bigquery" {
   const value =
-    envOverride("SUPABASE_ANALYTICS_BACKEND", undefined, projectEnvValues) ?? configured;
+    legacyEnvOverride("SUPABASE_ANALYTICS_BACKEND", undefined, projectEnvValues) ?? configured;
   if (value !== "postgres" && value !== "bigquery") {
     throw new LegacyInvalidAnalyticsBackendEnvOverrideError("analytics.backend", value);
   }
@@ -399,19 +399,19 @@ export function legacyEnvOverrideRealtimeIpVersion(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): "IPv4" | "IPv6" {
   const value =
-    envOverride("SUPABASE_REALTIME_IP_VERSION", undefined, projectEnvValues) ?? configured;
+    legacyEnvOverride("SUPABASE_REALTIME_IP_VERSION", undefined, projectEnvValues) ?? configured;
   if (value !== "IPv4" && value !== "IPv6") {
     throw new LegacyInvalidRealtimeIpVersionEnvOverrideError("realtime.ip_version", value);
   }
   return value;
 }
 
-/** `SUPABASE_REALTIME_MAX_HEADER_LENGTH` — see {@link envOverrideUint}. */
+/** `SUPABASE_REALTIME_MAX_HEADER_LENGTH` — see {@link legacyEnvOverrideUint}. */
 export function legacyEnvOverrideRealtimeMaxHeaderLength(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  return envOverrideUint(
+  return legacyEnvOverrideUint(
     "SUPABASE_REALTIME_MAX_HEADER_LENGTH",
     "realtime.max_header_length",
     configured,
@@ -419,12 +419,17 @@ export function legacyEnvOverrideRealtimeMaxHeaderLength(
   );
 }
 
-/** `SUPABASE_API_MAX_ROWS` — see {@link envOverrideUint}. */
+/** `SUPABASE_API_MAX_ROWS` — see {@link legacyEnvOverrideUint}. */
 export function legacyEnvOverrideApiMaxRows(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  return envOverrideUint("SUPABASE_API_MAX_ROWS", "api.max_rows", configured, projectEnvValues);
+  return legacyEnvOverrideUint(
+    "SUPABASE_API_MAX_ROWS",
+    "api.max_rows",
+    configured,
+    projectEnvValues,
+  );
 }
 
 /**
@@ -453,7 +458,7 @@ export function legacyEnvOverridePoolMode(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): "transaction" | "session" {
   const value =
-    envOverride("SUPABASE_DB_POOLER_POOL_MODE", undefined, projectEnvValues) ?? configured;
+    legacyEnvOverride("SUPABASE_DB_POOLER_POOL_MODE", undefined, projectEnvValues) ?? configured;
   if (value !== "transaction" && value !== "session") {
     throw new LegacyInvalidPoolModeEnvOverrideError("db.pooler.pool_mode", value);
   }
@@ -487,19 +492,19 @@ export function legacyEnvOverrideEdgeRuntimePolicy(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): "per_worker" | "oneshot" {
   const value =
-    envOverride("SUPABASE_EDGE_RUNTIME_POLICY", undefined, projectEnvValues) ?? configured;
+    legacyEnvOverride("SUPABASE_EDGE_RUNTIME_POLICY", undefined, projectEnvValues) ?? configured;
   if (value !== "per_worker" && value !== "oneshot") {
     throw new LegacyInvalidEdgeRuntimePolicyEnvOverrideError("edge_runtime.policy", value);
   }
   return value;
 }
 
-/** `SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE` — see {@link envOverrideUint}. */
+/** `SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE` — see {@link legacyEnvOverrideUint}. */
 export function legacyEnvOverrideDefaultPoolSize(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  return envOverrideUint(
+  return legacyEnvOverrideUint(
     "SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE",
     "db.pooler.default_pool_size",
     configured,
@@ -507,12 +512,12 @@ export function legacyEnvOverrideDefaultPoolSize(
   );
 }
 
-/** `SUPABASE_DB_POOLER_MAX_CLIENT_CONN` — see {@link envOverrideUint}. */
+/** `SUPABASE_DB_POOLER_MAX_CLIENT_CONN` — see {@link legacyEnvOverrideUint}. */
 export function legacyEnvOverrideMaxClientConn(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  return envOverrideUint(
+  return legacyEnvOverrideUint(
     "SUPABASE_DB_POOLER_MAX_CLIENT_CONN",
     "db.pooler.max_client_conn",
     configured,
@@ -534,7 +539,7 @@ export function legacyEnvOverrideMaxClientConn(
  * key material and a malformed one would silently pass through instead of
  * failing like Go does.
  *
- * Applied AFTER {@link envOverride}, matching Go: an env-sourced override lands
+ * Applied AFTER {@link legacyEnvOverride}, matching Go: an env-sourced override lands
  * on the same `config.Secret` field and goes through the same decode hook as a
  * TOML-sourced value, so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted
  * too, not just the config.toml value.
@@ -571,7 +576,7 @@ function legacyDecryptAuthSecret(
  * `_HOST`/`_PORT`/`_USER`/`_PASS`/`_ADMIN_EMAIL`/`_SENDER_NAME` overrides
  * apply before `Auth.Email.validate` runs (`config.go:1325-1344`) — layered on
  * top of the presence-aware raw-document read above, same
- * `envOverride`/`envOverridePort` precedent as every other field in this file.
+ * `legacyEnvOverride`/`legacyEnvOverridePort` precedent as every other field in this file.
  * `sender_name` (`pkg/config/auth.go:254-262`) is an equally Viper-bound
  * regular field, just not needed by validation (hence absent from
  * {@link LegacySmtpInput}).
@@ -590,19 +595,19 @@ export function legacyResolveAuthEmailSmtp(
       projectEnvValues,
     ),
     host:
-      envOverride(
+      legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_SMTP_HOST",
         typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
         projectEnvValues,
       ) ?? "",
-    port: envOverridePort(
+    port: legacyEnvOverridePort(
       "SUPABASE_AUTH_EMAIL_SMTP_PORT",
       typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
       "auth.email.smtp.port",
       projectEnvValues,
     ),
     user:
-      envOverride(
+      legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_SMTP_USER",
         typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
         projectEnvValues,
@@ -613,7 +618,7 @@ export function legacyResolveAuthEmailSmtp(
     // keys below, via the same `legacyDecryptAuthSecret` helper.
     pass:
       legacyDecryptAuthSecret(
-        envOverride(
+        legacyEnvOverride(
           "SUPABASE_AUTH_EMAIL_SMTP_PASS",
           typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
           projectEnvValues,
@@ -621,12 +626,12 @@ export function legacyResolveAuthEmailSmtp(
         projectEnvValues,
       ) ?? "",
     adminEmail:
-      envOverride(
+      legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",
         typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
         projectEnvValues,
       ) ?? "",
-    senderName: envOverride(
+    senderName: legacyEnvOverride(
       "SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME",
       typeof smtpDoc["sender_name"] === "string" ? smtpDoc["sender_name"] : undefined,
       projectEnvValues,
@@ -676,11 +681,15 @@ export function legacyResolveAuthCaptcha(
             : (captcha.enabled ?? false),
         provider:
           captchaDoc !== undefined
-            ? envOverride("SUPABASE_AUTH_CAPTCHA_PROVIDER", captcha.provider, projectEnvValues)
+            ? legacyEnvOverride(
+                "SUPABASE_AUTH_CAPTCHA_PROVIDER",
+                captcha.provider,
+                projectEnvValues,
+              )
             : captcha.provider,
         secret: legacyDecryptAuthSecret(
           captchaDoc !== undefined
-            ? envOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
+            ? legacyEnvOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
             : captcha.secret,
           projectEnvValues,
         ),
@@ -824,7 +833,7 @@ export function legacyResolveConfiguredSigningKeys(
     "auth.enabled",
     projectEnvValues,
   );
-  const signingKeysPath = envOverride(
+  const signingKeysPath = legacyEnvOverride(
     "SUPABASE_AUTH_SIGNING_KEYS_PATH",
     config.auth.signing_keys_path,
     projectEnvValues,
@@ -946,12 +955,12 @@ export function legacyResolveAuthEmail(
   const template: Record<string, LegacyResolvedAuthEmailTemplate> = {};
   for (const [name, tmpl] of Object.entries(email.template)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}`;
-    const envSubject = envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
+    const envSubject = legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     const rawSubjectPresent = asRecord(templateDoc?.[name])?.["subject"] !== undefined;
     template[name] = {
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
       content_path:
-        envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+        legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
         tmpl.content_path,
     };
   }
@@ -959,7 +968,7 @@ export function legacyResolveAuthEmail(
   const notification: Record<string, LegacyResolvedAuthEmailNotification> = {};
   for (const [name, tmpl] of Object.entries(email.notification)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_NOTIFICATION_${name.toUpperCase()}`;
-    const envSubject = envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
+    const envSubject = legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     const rawSubjectPresent = asRecord(notificationDoc?.[name])?.["subject"] !== undefined;
     notification[name] = {
       enabled: legacyEnvOverrideBool(
@@ -970,7 +979,7 @@ export function legacyResolveAuthEmail(
       ),
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
       content_path:
-        envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+        legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
         tmpl.content_path,
     };
   }
@@ -1002,15 +1011,18 @@ export function legacyResolveAuthEmail(
       projectEnvValues,
     ),
     max_frequency:
-      envOverride("SUPABASE_AUTH_EMAIL_MAX_FREQUENCY", email.max_frequency, projectEnvValues) ??
-      email.max_frequency,
-    otp_length: envOverrideUint(
+      legacyEnvOverride(
+        "SUPABASE_AUTH_EMAIL_MAX_FREQUENCY",
+        email.max_frequency,
+        projectEnvValues,
+      ) ?? email.max_frequency,
+    otp_length: legacyEnvOverrideUint(
       "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
       "auth.email.otp_length",
       email.otp_length,
       projectEnvValues,
     ),
-    otp_expiry: envOverrideUint(
+    otp_expiry: legacyEnvOverrideUint(
       "SUPABASE_AUTH_EMAIL_OTP_EXPIRY",
       "auth.email.otp_expiry",
       email.otp_expiry,
@@ -1089,7 +1101,7 @@ function readAuthEmailTemplateContent(
 }
 
 /**
- * `SUPABASE_<NAME>` sibling of {@link envOverridePort} for `uint`-typed config
+ * `SUPABASE_<NAME>` sibling of {@link legacyEnvOverridePort} for `uint`-typed config
  * fields with no upper-bound cap (`db.major_version`, `edge_runtime.
  * deno_version`, `auth.jwt_expiry`, `auth.refresh_token_reuse_interval`,
  * `auth.minimum_password_length`, …) — same generic Viper `AutomaticEnv`
@@ -1101,13 +1113,13 @@ function readAuthEmailTemplateContent(
  * aren't independently distinguishable from the CLI's output the way
  * ports/bools are.
  */
-export function envOverrideUint(
+export function legacyEnvOverrideUint(
   name: string,
   dottedFieldPath: string,
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  const value = envOverride(name, undefined, projectEnvValues);
+  const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   if (!/^\d+$/.test(value)) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
@@ -1115,12 +1127,12 @@ export function envOverrideUint(
   return Number(value);
 }
 
-/** `SUPABASE_DB_MAJOR_VERSION` — see {@link envOverrideUint}. */
+/** `SUPABASE_DB_MAJOR_VERSION` — see {@link legacyEnvOverrideUint}. */
 export function legacyEnvOverrideMajorVersion(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  return envOverrideUint(
+  return legacyEnvOverrideUint(
     "SUPABASE_DB_MAJOR_VERSION",
     "db.major_version",
     configured,
@@ -1128,12 +1140,12 @@ export function legacyEnvOverrideMajorVersion(
   );
 }
 
-/** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
+/** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link legacyEnvOverrideUint}. */
 export function legacyEnvOverrideDenoVersion(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  return envOverrideUint(
+  return legacyEnvOverrideUint(
     "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
     "edge_runtime.deno_version",
     configured,
@@ -1142,7 +1154,7 @@ export function legacyEnvOverrideDenoVersion(
 }
 
 /**
- * Optional-uint sibling of {@link envOverrideUint} for `db.settings.*` number
+ * Optional-uint sibling of {@link legacyEnvOverrideUint} for `db.settings.*` number
  * fields (`max_connections`, `max_wal_senders`, …) — each one is a genuine Go
  * nil pointer (`*uint`) when unset in `config.toml`, unlike `db.major_version`/
  * `edge_runtime.deno_version`, which always have a real default. `configured`
@@ -1156,7 +1168,7 @@ function envOverrideOptionalUint(
   configured: number | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number | undefined {
-  const value = envOverride(name, undefined, projectEnvValues);
+  const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   if (!/^\d+$/.test(value)) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
@@ -1176,7 +1188,7 @@ function legacyEnvOverrideOptionalBool(
   dottedFieldPath: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): boolean | undefined {
-  const value = envOverride(name, undefined, projectEnvValues);
+  const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   const parsed = legacyParseGoBool(value);
   if (parsed === undefined) {
@@ -1215,7 +1227,7 @@ function legacyEnvOverrideSessionReplicationRole(
   configured: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): "origin" | "replica" | "local" | undefined {
-  const value = envOverride(
+  const value = legacyEnvOverride(
     "SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE",
     configured,
     projectEnvValues,
@@ -1247,17 +1259,17 @@ export function legacyResolveDbSettingsEnvOverrides(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): NonNullable<ProjectConfig["db"]["settings"]> {
   return {
-    effective_cache_size: envOverride(
+    effective_cache_size: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_EFFECTIVE_CACHE_SIZE",
       settings?.effective_cache_size,
       projectEnvValues,
     ),
-    logical_decoding_work_mem: envOverride(
+    logical_decoding_work_mem: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_LOGICAL_DECODING_WORK_MEM",
       settings?.logical_decoding_work_mem,
       projectEnvValues,
     ),
-    maintenance_work_mem: envOverride(
+    maintenance_work_mem: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_MAINTENANCE_WORK_MEM",
       settings?.maintenance_work_mem,
       projectEnvValues,
@@ -1298,22 +1310,22 @@ export function legacyResolveDbSettingsEnvOverrides(
       settings?.max_replication_slots,
       projectEnvValues,
     ),
-    max_slot_wal_keep_size: envOverride(
+    max_slot_wal_keep_size: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_MAX_SLOT_WAL_KEEP_SIZE",
       settings?.max_slot_wal_keep_size,
       projectEnvValues,
     ),
-    max_standby_archive_delay: envOverride(
+    max_standby_archive_delay: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_MAX_STANDBY_ARCHIVE_DELAY",
       settings?.max_standby_archive_delay,
       projectEnvValues,
     ),
-    max_standby_streaming_delay: envOverride(
+    max_standby_streaming_delay: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_MAX_STANDBY_STREAMING_DELAY",
       settings?.max_standby_streaming_delay,
       projectEnvValues,
     ),
-    max_wal_size: envOverride(
+    max_wal_size: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_MAX_WAL_SIZE",
       settings?.max_wal_size,
       projectEnvValues,
@@ -1334,17 +1346,17 @@ export function legacyResolveDbSettingsEnvOverrides(
       settings?.session_replication_role,
       projectEnvValues,
     ),
-    shared_buffers: envOverride(
+    shared_buffers: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
       settings?.shared_buffers,
       projectEnvValues,
     ),
-    statement_timeout: envOverride(
+    statement_timeout: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_STATEMENT_TIMEOUT",
       settings?.statement_timeout,
       projectEnvValues,
     ),
-    track_activity_query_size: envOverride(
+    track_activity_query_size: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_TRACK_ACTIVITY_QUERY_SIZE",
       settings?.track_activity_query_size,
       projectEnvValues,
@@ -1355,17 +1367,21 @@ export function legacyResolveDbSettingsEnvOverrides(
       "db.settings.track_commit_timestamp",
       projectEnvValues,
     ),
-    wal_keep_size: envOverride(
+    wal_keep_size: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_WAL_KEEP_SIZE",
       settings?.wal_keep_size,
       projectEnvValues,
     ),
-    wal_sender_timeout: envOverride(
+    wal_sender_timeout: legacyEnvOverride(
       "SUPABASE_DB_SETTINGS_WAL_SENDER_TIMEOUT",
       settings?.wal_sender_timeout,
       projectEnvValues,
     ),
-    work_mem: envOverride("SUPABASE_DB_SETTINGS_WORK_MEM", settings?.work_mem, projectEnvValues),
+    work_mem: legacyEnvOverride(
+      "SUPABASE_DB_SETTINGS_WORK_MEM",
+      settings?.work_mem,
+      projectEnvValues,
+    ),
   };
 }
 
@@ -1458,10 +1474,12 @@ export function legacyResolveAuthHooks(
         )
       : h.enabled;
     const uri =
-      (hookSectionPresent ? envOverride(`${envPrefix}_URI`, h.uri, projectEnvValues) : h.uri) ?? "";
+      (hookSectionPresent
+        ? legacyEnvOverride(`${envPrefix}_URI`, h.uri, projectEnvValues)
+        : h.uri) ?? "";
     const secrets =
       (hookSectionPresent
-        ? envOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
+        ? legacyEnvOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
         : h.secrets) ?? "";
     result[LEGACY_HOOK_TYPE_TO_CAMEL[hookType]] = { enabled, uri, secrets };
   }
@@ -1515,17 +1533,20 @@ export function legacyResolveAuthMfa(
         "auth.mfa.phone.verify_enabled",
         projectEnvValues,
       ),
-      otp_length: envOverrideUint(
+      otp_length: legacyEnvOverrideUint(
         "SUPABASE_AUTH_MFA_PHONE_OTP_LENGTH",
         "auth.mfa.phone.otp_length",
         mfa.phone.otp_length,
         projectEnvValues,
       ),
       template:
-        envOverride("SUPABASE_AUTH_MFA_PHONE_TEMPLATE", mfa.phone.template, projectEnvValues) ??
-        mfa.phone.template,
+        legacyEnvOverride(
+          "SUPABASE_AUTH_MFA_PHONE_TEMPLATE",
+          mfa.phone.template,
+          projectEnvValues,
+        ) ?? mfa.phone.template,
       max_frequency:
-        envOverride(
+        legacyEnvOverride(
           "SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY",
           mfa.phone.max_frequency,
           projectEnvValues,
@@ -1545,7 +1566,7 @@ export function legacyResolveAuthMfa(
         projectEnvValues,
       ),
     },
-    max_enrolled_factors: envOverrideUint(
+    max_enrolled_factors: legacyEnvOverrideUint(
       "SUPABASE_AUTH_MFA_MAX_ENROLLED_FACTORS",
       "auth.mfa.max_enrolled_factors",
       mfa.max_enrolled_factors,
@@ -1622,7 +1643,7 @@ export function legacyResolveAuthSms(
     configured: string | undefined,
   ): string | undefined {
     if (!providerPresent(providerName)) return configured;
-    return envOverride(
+    return legacyEnvOverride(
       `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}_${field.toUpperCase()}`,
       configured,
       projectEnvValues,
@@ -1644,9 +1665,10 @@ export function legacyResolveAuthSms(
       projectEnvValues,
     ),
     template:
-      envOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues) ?? sms.template,
+      legacyEnvOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues) ??
+      sms.template,
     max_frequency:
-      envOverride("SUPABASE_AUTH_SMS_MAX_FREQUENCY", sms.max_frequency, projectEnvValues) ??
+      legacyEnvOverride("SUPABASE_AUTH_SMS_MAX_FREQUENCY", sms.max_frequency, projectEnvValues) ??
       sms.max_frequency,
     twilio: {
       enabled: resolveEnabled("twilio", sms.twilio.enabled),
@@ -1898,13 +1920,14 @@ export function legacyResolveAuthExternalProviders(
         `auth.external.${name}.enabled`,
         projectEnvValues,
       ),
-      clientId: envOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues) ?? "",
+      clientId:
+        legacyEnvOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues) ?? "",
       secret: legacyDecryptAuthSecret(
-        envOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
+        legacyEnvOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
         projectEnvValues,
       ),
-      url: envOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues) ?? "",
-      redirectUri: envOverride(
+      url: legacyEnvOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues) ?? "",
+      redirectUri: legacyEnvOverride(
         `${envPrefix}_REDIRECT_URI`,
         configuredRedirectUri,
         projectEnvValues,
@@ -2051,12 +2074,12 @@ export function legacyResolveLocalConfigValues(
   // `undefined` only when the key is genuinely absent (`optionalKey`, see
   // `packages/config/src/base.ts`) — that's the ONE case where Go's own
   // sanitized-basename viper default shows through instead of a file value,
-  // so the fallback belongs here, not as a third branch after `envOverride`.
-  // `SUPABASE_PROJECT_ID` is checked via the same `envOverride` precedence
+  // so the fallback belongs here, not as a third branch after `legacyEnvOverride`.
+  // `SUPABASE_PROJECT_ID` is checked via the same `legacyEnvOverride` precedence
   // every other field here uses, since Viper's `AutomaticEnv` binds it too
   // (`config.go:529-535`) and it can turn an explicit-empty file value (or an
   // unsanitizable basename fallback) back into a valid override.
-  const resolvedProjectId = envOverride(
+  const resolvedProjectId = legacyEnvOverride(
     "SUPABASE_PROJECT_ID",
     config.project_id ?? legacySanitizeProjectId(basename(workdir)),
     projectEnvValues,
@@ -2084,12 +2107,12 @@ export function legacyResolveLocalConfigValues(
     "api.enabled",
     projectEnvValues,
   );
-  const apiTlsCertPath = envOverride(
+  const apiTlsCertPath = legacyEnvOverride(
     "SUPABASE_API_TLS_CERT_PATH",
     config.api.tls.cert_path,
     projectEnvValues,
   );
-  const apiTlsKeyPath = envOverride(
+  const apiTlsKeyPath = legacyEnvOverride(
     "SUPABASE_API_TLS_KEY_PATH",
     config.api.tls.key_path,
     projectEnvValues,
@@ -2101,8 +2124,8 @@ export function legacyResolveLocalConfigValues(
   // when `api.enabled` (`pkg/config/config.go:1006-1008`) — unlike `db.port`
   // below, which has no `enabled` gate. Resolved once into a named const so the
   // check and the URL derivation below share the same overridden value instead
-  // of calling `envOverridePort` twice.
-  const apiPort = envOverridePort(
+  // of calling `legacyEnvOverridePort` twice.
+  const apiPort = legacyEnvOverridePort(
     "SUPABASE_API_PORT",
     config.api.port,
     "api.port",
@@ -2110,7 +2133,7 @@ export function legacyResolveLocalConfigValues(
   );
   const apiExternalUrl = legacyResolveApiExternalUrl(
     {
-      external_url: envOverride(
+      external_url: legacyEnvOverride(
         "SUPABASE_API_EXTERNAL_URL",
         config.api.external_url,
         projectEnvValues,
@@ -2126,7 +2149,12 @@ export function legacyResolveLocalConfigValues(
   // exact message (`pkg/config/config.go:1031-1032`) before `status`/`stop`
   // render anything, same wording already used for the `db query`/`test db`
   // path (`legacy-db-config.toml-read.ts:1380`).
-  const dbPort = envOverridePort("SUPABASE_DB_PORT", config.db.port, "db.port", projectEnvValues);
+  const dbPort = legacyEnvOverridePort(
+    "SUPABASE_DB_PORT",
+    config.db.port,
+    "db.port",
+    projectEnvValues,
+  );
   // Go's `Config.Validate` checks `db.major_version` right after `db.port`
   // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
   const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
@@ -2160,7 +2188,7 @@ export function legacyResolveLocalConfigValues(
       "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
     );
   }
-  const rawRootKey = envOverride("SUPABASE_DB_ROOT_KEY", rawRootKeyValue, projectEnvValues);
+  const rawRootKey = legacyEnvOverride("SUPABASE_DB_ROOT_KEY", rawRootKeyValue, projectEnvValues);
   const rootKey =
     rawRootKey === undefined || rawRootKey.length === 0
       ? LEGACY_POSTGRES_DEFAULT_ROOT_KEY
@@ -2178,7 +2206,7 @@ export function legacyResolveLocalConfigValues(
     "studio.enabled",
     projectEnvValues,
   );
-  const studioPort = envOverridePort(
+  const studioPort = legacyEnvOverridePort(
     "SUPABASE_STUDIO_PORT",
     config.studio.port,
     "studio.port",
@@ -2187,11 +2215,11 @@ export function legacyResolveLocalConfigValues(
   // Go's `Config.Validate` parses `studio.api_url` with `net/url.Parse` right
   // after the port check, still inside `if c.Studio.Enabled`
   // (`pkg/config/config.go:1074-1078`). `config.studio.api_url` is a required
-  // (defaulted) field, so `envOverride` can only return `undefined` here if
+  // (defaulted) field, so `legacyEnvOverride` can only return `undefined` here if
   // that default itself were somehow undefined — the `??` fallback just
   // satisfies that generic signature.
   const studioApiUrl =
-    envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+    legacyEnvOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
     config.studio.api_url;
   // Go's `Config.Validate` rejects `local_smtp.port === 0`/
   // `SUPABASE_LOCAL_SMTP_PORT=0` ONLY when `local_smtp.enabled` — Go's struct
@@ -2205,7 +2233,7 @@ export function legacyResolveLocalConfigValues(
     "local_smtp.enabled",
     projectEnvValues,
   );
-  const mailpitPort = envOverridePort(
+  const mailpitPort = legacyEnvOverridePort(
     "SUPABASE_LOCAL_SMTP_PORT",
     config.local_smtp.port,
     "local_smtp.port",
@@ -2213,11 +2241,11 @@ export function legacyResolveLocalConfigValues(
   );
   const jwtSecret = resolveJwtSecret(
     legacyDecryptAuthSecret(
-      envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
+      legacyEnvOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
       projectEnvValues,
     ),
   );
-  const signingKeysPath = envOverride(
+  const signingKeysPath = legacyEnvOverride(
     "SUPABASE_AUTH_SIGNING_KEYS_PATH",
     config.auth.signing_keys_path,
     projectEnvValues,
@@ -2243,7 +2271,7 @@ export function legacyResolveLocalConfigValues(
   // (`Schema.withDecodingDefaultKey`), so an explicit `site_url = ""` decodes as
   // `""` with no schema-level error, same gap as `db.port === 0` above.
   const siteUrl =
-    envOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
+    legacyEnvOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
     config.auth.site_url;
   // Go's `start.go` builds GoTrue's env straight off `utils.Config.Auth.*`
   // with no local override logic of its own (`start.go:1365-1405`) — the
@@ -2251,12 +2279,12 @@ export function legacyResolveLocalConfigValues(
   // (`config.go:585-586`), so every flat `auth.*` scalar Go feeds into
   // GoTrue's env must go through the same override resolution `siteUrl`
   // above already gets, not just the fields `Validate` happens to check.
-  const jwtIssuer = envOverride(
+  const jwtIssuer = legacyEnvOverride(
     "SUPABASE_AUTH_JWT_ISSUER",
     config.auth.jwt_issuer,
     projectEnvValues,
   );
-  const jwtExpiry = envOverrideUint(
+  const jwtExpiry = legacyEnvOverrideUint(
     "SUPABASE_AUTH_JWT_EXPIRY",
     "auth.jwt_expiry",
     config.auth.jwt_expiry,
@@ -2266,7 +2294,7 @@ export function legacyResolveLocalConfigValues(
   // `StringToSliceHookFunc(",")` mapstructure hook as every other Go
   // string-slice field (`config.go:775-784`) — same comma-split-override
   // pattern as `auth.webauthn.rp_origins` below.
-  const additionalRedirectUrlsOverride = envOverride(
+  const additionalRedirectUrlsOverride = legacyEnvOverride(
     "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
     undefined,
     projectEnvValues,
@@ -2293,7 +2321,7 @@ export function legacyResolveLocalConfigValues(
     "auth.enable_refresh_token_rotation",
     projectEnvValues,
   );
-  const refreshTokenReuseInterval = envOverrideUint(
+  const refreshTokenReuseInterval = legacyEnvOverrideUint(
     "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
     "auth.refresh_token_reuse_interval",
     config.auth.refresh_token_reuse_interval,
@@ -2305,7 +2333,7 @@ export function legacyResolveLocalConfigValues(
     "auth.enable_manual_linking",
     projectEnvValues,
   );
-  const minimumPasswordLength = envOverrideUint(
+  const minimumPasswordLength = legacyEnvOverrideUint(
     "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
     "auth.minimum_password_length",
     config.auth.minimum_password_length,
@@ -2315,7 +2343,7 @@ export function legacyResolveLocalConfigValues(
   // hard-fails config loading on a value outside this fixed set — same
   // decode-time-failure semantics as the numeric overrides above, just
   // string-typed.
-  const passwordRequirementsOverride = envOverride(
+  const passwordRequirementsOverride = legacyEnvOverride(
     "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
     undefined,
     projectEnvValues,
@@ -2388,7 +2416,7 @@ export function legacyResolveLocalConfigValues(
         : false;
     const rpId =
       webauthnDoc !== undefined
-        ? envOverride(
+        ? legacyEnvOverride(
             "SUPABASE_AUTH_WEBAUTHN_RP_ID",
             typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : undefined,
             projectEnvValues,
@@ -2399,7 +2427,7 @@ export function legacyResolveLocalConfigValues(
     // `SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS` override is comma-split the same way.
     const rpOriginsOverride =
       webauthnDoc !== undefined
-        ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+        ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
         : undefined;
     // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")` unconditionally to
     // every `[]string`-typed field (`config.go:775-784`) — a raw or `env(...)`-resolved
@@ -2495,7 +2523,7 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "firebase",
         requiredField:
-          envOverride(
+          legacyEnvOverride(
             "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
             config.auth.third_party.firebase.project_id,
             projectEnvValues,
@@ -2513,7 +2541,7 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "auth0",
         requiredField:
-          envOverride(
+          legacyEnvOverride(
             "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
             config.auth.third_party.auth0.tenant,
             projectEnvValues,
@@ -2531,12 +2559,12 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "cognito",
         requiredField:
-          envOverride(
+          legacyEnvOverride(
             "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
             config.auth.third_party.aws_cognito.user_pool_id,
             projectEnvValues,
           ) ?? "",
-        cognitoUserPoolRegion: envOverride(
+        cognitoUserPoolRegion: legacyEnvOverride(
           "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
           config.auth.third_party.aws_cognito.user_pool_region,
           projectEnvValues,
@@ -2554,7 +2582,7 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "clerk",
         requiredField:
-          envOverride(
+          legacyEnvOverride(
             "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
             config.auth.third_party.clerk.domain,
             projectEnvValues,
@@ -2572,7 +2600,7 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "workos",
         requiredField:
-          envOverride(
+          legacyEnvOverride(
             "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
             config.auth.third_party.workos.issuer_url,
             projectEnvValues,
@@ -2618,17 +2646,17 @@ export function legacyResolveLocalConfigValues(
     projectEnvValues,
   );
   const analyticsBackend = envOverrideAnalyticsBackend(config.analytics.backend, projectEnvValues);
-  const gcpProjectId = envOverride(
+  const gcpProjectId = legacyEnvOverride(
     "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
     config.analytics.gcp_project_id,
     projectEnvValues,
   );
-  const gcpProjectNumber = envOverride(
+  const gcpProjectNumber = legacyEnvOverride(
     "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
     config.analytics.gcp_project_number,
     projectEnvValues,
   );
-  const gcpJwtPath = envOverride(
+  const gcpJwtPath = legacyEnvOverride(
     "SUPABASE_ANALYTICS_GCP_JWT_PATH",
     config.analytics.gcp_jwt_path,
     projectEnvValues,
@@ -2716,7 +2744,11 @@ export function legacyResolveLocalConfigValues(
   }
 
   const openaiApiKey = legacyDecryptAuthSecret(
-    envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", config.studio.openai_api_key, projectEnvValues),
+    legacyEnvOverride(
+      "SUPABASE_STUDIO_OPENAI_API_KEY",
+      config.studio.openai_api_key,
+      projectEnvValues,
+    ),
     projectEnvValues,
   );
 
@@ -2747,14 +2779,18 @@ export function legacyResolveLocalConfigValues(
     dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${dbPort}/postgres`,
     publishableKey: resolveOpaqueKey(
       legacyDecryptAuthSecret(
-        envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key, projectEnvValues),
+        legacyEnvOverride(
+          "SUPABASE_AUTH_PUBLISHABLE_KEY",
+          config.auth.publishable_key,
+          projectEnvValues,
+        ),
         projectEnvValues,
       ),
       defaultPublishableKey,
     ),
     secretKey: resolveOpaqueKey(
       legacyDecryptAuthSecret(
-        envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
+        legacyEnvOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
         projectEnvValues,
       ),
       defaultSecretKey,
@@ -2762,7 +2798,7 @@ export function legacyResolveLocalConfigValues(
     jwtSecret,
     anonKey: resolveSignedKey(
       legacyDecryptAuthSecret(
-        envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
+        legacyEnvOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
         projectEnvValues,
       ),
       jwtSecret,
@@ -2771,7 +2807,7 @@ export function legacyResolveLocalConfigValues(
     ),
     serviceRoleKey: resolveSignedKey(
       legacyDecryptAuthSecret(
-        envOverride(
+        legacyEnvOverride(
           "SUPABASE_AUTH_SERVICE_ROLE_KEY",
           config.auth.service_role_key,
           projectEnvValues,
@@ -2819,7 +2855,7 @@ export function legacyResolveLocalConfigValues(
  * {@link LegacyLocalConfigValues.jwtSecret} by {@link legacyResolveLocalConfigValues}/
  * {@link resolveJwtSecret}) rather than recomputed, so the two functions never disagree on it.
  *
- * `authEnabled`/`signingKeysPath` ARE recomputed here (cheap, pure `envOverride`/
+ * `authEnabled`/`signingKeysPath` ARE recomputed here (cheap, pure `legacyEnvOverride`/
  * `legacyEnvOverrideBool` calls, no I/O) rather than threaded through from the caller's own
  * computation of the same values, keeping this function self-contained. Only `auth.signing_keys_
  * path`'s FULL key array matters here (unlike `legacyResolveLocalConfigValues`'s
@@ -2846,7 +2882,7 @@ export async function legacyResolveLocalJwks(
   jwtSecret: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): Promise<string> {
-  const signingKeysPath = envOverride(
+  const signingKeysPath = legacyEnvOverride(
     "SUPABASE_AUTH_SIGNING_KEYS_PATH",
     config.auth.signing_keys_path,
     projectEnvValues,
@@ -2881,7 +2917,7 @@ export async function legacyResolveLocalJwks(
         "auth.third_party.firebase.enabled",
         projectEnvValues,
       ),
-      project_id: envOverride(
+      project_id: legacyEnvOverride(
         "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
         config.auth.third_party.firebase.project_id,
         projectEnvValues,
@@ -2894,12 +2930,12 @@ export async function legacyResolveLocalJwks(
         "auth.third_party.auth0.enabled",
         projectEnvValues,
       ),
-      tenant: envOverride(
+      tenant: legacyEnvOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
         config.auth.third_party.auth0.tenant,
         projectEnvValues,
       ),
-      tenant_region: envOverride(
+      tenant_region: legacyEnvOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
         config.auth.third_party.auth0.tenant_region,
         projectEnvValues,
@@ -2912,12 +2948,12 @@ export async function legacyResolveLocalJwks(
         "auth.third_party.aws_cognito.enabled",
         projectEnvValues,
       ),
-      user_pool_id: envOverride(
+      user_pool_id: legacyEnvOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
         config.auth.third_party.aws_cognito.user_pool_id,
         projectEnvValues,
       ),
-      user_pool_region: envOverride(
+      user_pool_region: legacyEnvOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
         config.auth.third_party.aws_cognito.user_pool_region,
         projectEnvValues,
@@ -2930,7 +2966,7 @@ export async function legacyResolveLocalJwks(
         "auth.third_party.clerk.enabled",
         projectEnvValues,
       ),
-      domain: envOverride(
+      domain: legacyEnvOverride(
         "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
         config.auth.third_party.clerk.domain,
         projectEnvValues,
@@ -2943,7 +2979,7 @@ export async function legacyResolveLocalJwks(
         "auth.third_party.workos.enabled",
         projectEnvValues,
       ),
-      issuer_url: envOverride(
+      issuer_url: legacyEnvOverride(
         "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
         config.auth.third_party.workos.issuer_url,
         projectEnvValues,
