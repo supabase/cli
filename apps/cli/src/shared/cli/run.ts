@@ -59,7 +59,11 @@ const globalFlagsWithValues = new Set([
 // (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
 // `internal/start/start.go:73-82` rolls back on any non-nil `run()` error, including the
 // `context.Canceled` a SIGINT produces), so native `start` must participate in the global
-// wrapper to match.
+// wrapper to match. This list is matched purely against argv command-path segments — it has
+// no notion of which shell (legacy vs next) registered the matching command, so `next start`
+// (a completely different command tree that happens to share the literal path `["start"]`)
+// needs its OWN exemption, passed via `RunCliOptions.additionalSelfManagedSignalCommands` from
+// `next/cli/main.ts` — see that call site's comment for why.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "start"],
   // `db reset` (local path) drives the bootstrap seam, which holds SIGINT/SIGTERM/SIGHUP with
@@ -87,9 +91,12 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
 }
 
 /** Whether the global signal-interrupt handler should wrap this invocation. */
-export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boolean {
+export function shouldUseGlobalSignalInterrupt(
+  args: ReadonlyArray<string>,
+  additionalSelfManagedCommands: ReadonlyArray<ReadonlyArray<string>> = [],
+): boolean {
   const commandPath = extractCommandPath(args);
-  return !selfManagedSignalCommands.some((command) =>
+  return ![...selfManagedSignalCommands, ...additionalSelfManagedCommands].some((command) =>
     command.every((segment, index) => commandPath[index] === segment),
   );
 }
@@ -456,6 +463,13 @@ type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
 
 export interface RunCliOptions {
   readonly analyticsLayer: AnyAnalyticsLayer;
+  /**
+   * Extra command paths (on top of the shared `selfManagedSignalCommands` list) that must NOT
+   * be wrapped in the global signal-interrupt handler for this shell specifically — see
+   * `next/cli/main.ts`'s own `start` exemption for why a shell needs this instead of just
+   * adding to the shared list.
+   */
+  readonly additionalSelfManagedSignalCommands?: ReadonlyArray<ReadonlyArray<string>>;
 }
 
 function cliProgramFor(
@@ -522,7 +536,10 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
   // text/json formatters would have shown before the vendored library's own
   // duplicate render was suppressed.
   const suggestionContext = { rootCommand, args };
-  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
+  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(
+    args,
+    options.additionalSelfManagedSignalCommands,
+  );
   const outputFormat = await Effect.runPromise(
     Effect.gen(function* () {
       const aiTool = yield* AiTool;
