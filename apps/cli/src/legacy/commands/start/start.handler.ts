@@ -1308,6 +1308,29 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       legacyEnvOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
     );
 
+    // Overridden by SUPABASE_DB_HEALTH_TIMEOUT — Go's Config.Load binds this
+    // generically before StartDatabase's health wait reads it
+    // (pkg/config/config.go:580-586, internal/db/start/start.go:180). Resolved
+    // here, before any Docker work, rather than inside `bringUp` right before the
+    // health wait: Go's `mapstructure.StringToTimeDurationHookFunc()` decodes this
+    // in the same unconditional `Config.Load` pass as every other field
+    // (`pkg/config/config.go:749-756,777`), which runs before `start.Run` touches
+    // Docker at all (`internal/start/start.go:51,73`) — a malformed value must
+    // fail before network/image/Postgres work, not after Postgres's own container
+    // has already been created and started.
+    const dbHealthTimeout = envOverride(
+      "SUPABASE_DB_HEALTH_TIMEOUT",
+      config.db.health_timeout,
+      projectEnvValues,
+    );
+    const dbHealthTimeoutSeconds = yield* Effect.try({
+      try: () => resolveDbHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: `failed to parse config: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    });
+
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
      * {@link LegacyStartContainerSpec} to bring up; `excludeFromHealthWatch`
@@ -1719,21 +1742,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         rootKey: values.rootKey,
       });
       const postgresContainerId = yield* legacyStartContainer(spawner, postgresSpec, startOpts);
-      // Overridden by SUPABASE_DB_HEALTH_TIMEOUT — Go's Config.Load binds this
-      // generically before StartDatabase's health wait reads it
-      // (pkg/config/config.go:580-586, internal/db/start/start.go:180).
-      const dbHealthTimeout = envOverride(
-        "SUPABASE_DB_HEALTH_TIMEOUT",
-        config.db.health_timeout,
-        projectEnvValues,
-      );
-      const dbHealthTimeoutSeconds = yield* Effect.try({
-        try: () => resolveDbHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
-        catch: (cause) =>
-          new LegacyStartInvalidConfigError({
-            message: `failed to parse config: ${cause instanceof Error ? cause.message : String(cause)}`,
-          }),
-      });
+      // `dbHealthTimeoutSeconds` is resolved eagerly, before any Docker work — see its
+      // definition above, alongside the other eagerly-validated config-override fields.
       const postgresHealthResult = yield* legacyWaitForHealthyServices(
         spawner,
         [postgresContainerId],

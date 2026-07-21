@@ -1091,8 +1091,13 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
-      "fails config loading on an unparseable db.health_timeout, matching Go's Config.Load",
+      "fails config loading on an unparseable db.health_timeout before any Docker work, matching Go's Config.Load",
       () => {
+        // Go's Config.Load decodes db.health_timeout in the same unconditional mapstructure pass
+        // as every other duration field, before start.Run touches Docker at all — a malformed
+        // value fails before network/image/Postgres work, so Go's own rollback (only reached when
+        // run() itself fails) never even runs. Resolved eagerly here, alongside the other
+        // config-override fields, for the same reason — no containers should ever be created.
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "not-a-duration"\n',
         });
@@ -1104,7 +1109,7 @@ content_path = "./templates/custom_notice.html"
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("failed to parse config");
           }
-          expect(rollbackWasAttempted(child.spawned)).toBe(true);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
