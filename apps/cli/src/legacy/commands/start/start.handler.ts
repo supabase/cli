@@ -705,11 +705,18 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const { config, projectId, projectEnvValues } = context;
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link legacyResolveAuthEmail}'s doc comment.
-    const resolvedEmail = legacyResolveAuthEmail(
-      config.auth.email,
-      asRecord(context.loaded?.document?.["auth"]),
-      projectEnvValues,
-    );
+    const resolvedEmail = yield* Effect.try({
+      try: () =>
+        legacyResolveAuthEmail(
+          config.auth.email,
+          asRecord(context.loaded?.document?.["auth"]),
+          projectEnvValues,
+        ),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
 
