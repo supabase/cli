@@ -782,6 +782,25 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         legacyResolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency,
       ),
     );
+    // Same gap for the remaining GoTrue overrides: `auth.rate_limit.*` (plain `uint`s) and
+    // `auth.web3.*.enabled`/`auth.oauth_server.{enabled,allow_dynamic_registration}` (plain
+    // `bool`s) are all decoded unconditionally in Go's single `Config.Load` pass
+    // (`pkg/config/auth.go:200-208,371-382,394-398`), regardless of `auth.enabled`/`--exclude
+    // gotrue`. `resolveGotrueRateLimit`/`resolveGotrueWeb3`/`resolveGotrueOAuthServer` already
+    // throw internally on a bad override, so — unlike the duration fields above — calling each
+    // whole (pure) function once here is simpler than re-deriving every field individually;
+    // `resolveGotrueEnvInput` below re-resolves them a second time for the real container build,
+    // which is safe since they're pure. `auth.oauth_server.authorization_url_path` is a plain
+    // string and can't throw, so it needs no eager check.
+    yield* wrapConfigOverride("auth.rate_limit", () =>
+      resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
+    );
+    yield* wrapConfigOverride("auth.web3", () =>
+      resolveGotrueWeb3(config.auth.web3, projectEnvValues),
+    );
+    yield* wrapConfigOverride("auth.oauth_server", () =>
+      resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+    );
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);

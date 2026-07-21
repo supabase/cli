@@ -1192,6 +1192,104 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on an invalid SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // `auth.rate_limit.*` are plain uints decoded unconditionally in Go's Config.Load
+        // (pkg/config/auth.go:200-208) — `resolveGotrueRateLimit` only throws via an env var
+        // override (a bad TOML value is caught by @supabase/config's own schema first), so this
+        // models the override directly, same as the storage.s3_protocol.enabled test above.
+        const previous = process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"];
+        process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"] = "not-a-uint";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.rate_limit");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"];
+              else process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_AUTH_WEB3_SOLANA_ENABLED even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // `auth.web3.*.enabled` are plain bools decoded unconditionally in Go's Config.Load
+        // (pkg/config/auth.go:379-382) — same override-only-throw reasoning as the rate_limit
+        // test above.
+        const previous = process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
+        process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = "not-a-bool";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.web3");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
+              else process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_AUTH_OAUTH_SERVER_ENABLED even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // `auth.oauth_server.enabled`/`allow_dynamic_registration` are plain bools decoded
+        // unconditionally in Go's Config.Load (pkg/config/auth.go:394-398) — same
+        // override-only-throw reasoning as the two tests above.
+        const previous = process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
+        process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = "not-a-bool";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.oauth_server");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
+              else process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "warns about a Windows npipe Docker daemon before starting Vector, in text mode, and excludes it from the health watch list",
       () => {
         // `legacyResolveDockerDaemonHost` checks `DOCKER_HOST` before ever shelling out to
