@@ -22,7 +22,7 @@ func TestReadAttributeMappingFile(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fs, "/not-valid-json", []byte("not-valid-JSON"), 0755))
 		var body api.CreateProviderBody
-		err := ReadAttributeMappingFile(fs, "/not-valid-json", body.AttributeMapping)
+		err := ReadAttributeMappingFile(fs, "/not-valid-json", &body.AttributeMapping)
 		assert.ErrorContains(t, err, "failed to parse attribute mapping")
 	})
 
@@ -30,24 +30,16 @@ func TestReadAttributeMappingFile(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		data := `{"keys":{"abc":{"names":["x","y","z"],"default":2,"name":"k"}}}`
 		require.NoError(t, afero.WriteFile(fs, "/valid-json", []byte(data), 0755))
-		body := api.CreateProviderBody{
-			AttributeMapping: &struct {
-				Keys map[string]struct {
-					Array   *bool     "json:\"array,omitempty\""
-					Default *any      "json:\"default,omitempty\""
-					Name    *string   "json:\"name,omitempty\""
-					Names   *[]string "json:\"names,omitempty\""
-				} "json:\"keys\""
-			}{},
-		}
-		err := ReadAttributeMappingFile(fs, "/valid-json", body.AttributeMapping)
+		var body api.CreateProviderBody
+		err := ReadAttributeMappingFile(fs, "/valid-json", &body.AttributeMapping)
 		assert.NoError(t, err)
+		require.NotNil(t, body.AttributeMapping)
 		assert.Len(t, body.AttributeMapping.Keys, 1)
 		value := body.AttributeMapping.Keys["abc"]
 		assert.Equal(t, cast.Ptr("k"), value.Name)
 		assert.Equal(t, &[]string{"x", "y", "z"}, value.Names)
 		assert.NotNil(t, value.Default)
-		assert.Equal(t, float64(2), *value.Default)
+		assert.Equal(t, float64(2), value.Default)
 	})
 }
 
