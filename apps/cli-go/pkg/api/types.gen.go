@@ -511,6 +511,7 @@ const (
 // Defines values for JitStateResponse1UnavailableReason.
 const (
 	PostgresUpgradeRequired JitStateResponse1UnavailableReason = "postgres_upgrade_required"
+	SslEnforcementRequired  JitStateResponse1UnavailableReason = "ssl_enforcement_required"
 	TemporarilyUnavailable  JitStateResponse1UnavailableReason = "temporarily_unavailable"
 )
 
@@ -837,6 +838,11 @@ const (
 	OrganizationProjectsResponseProjectsStatusRESTORING       OrganizationProjectsResponseProjectsStatus = "RESTORING"
 	OrganizationProjectsResponseProjectsStatusUNKNOWN         OrganizationProjectsResponseProjectsStatus = "UNKNOWN"
 	OrganizationProjectsResponseProjectsStatusUPGRADING       OrganizationProjectsResponseProjectsStatus = "UPGRADING"
+)
+
+// Defines values for PlanGateErrorBodyErrorCode.
+const (
+	EntitlementRequired PlanGateErrorBodyErrorCode = "entitlement_required"
 )
 
 // Defines values for PostgresConfigResponseSessionReplicationRole.
@@ -3431,8 +3437,30 @@ type OrganizationResponseV1 struct {
 
 // PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
 type PgsodiumConfigResponse struct {
+	// RootKey The pgsodium root key: 32 bytes, hex-encoded (64 characters).
 	RootKey string `json:"root_key"`
 }
+
+// PlanGateErrorBody defines model for PlanGateErrorBody.
+type PlanGateErrorBody struct {
+	// Error Present on entitlement denials. Other errors with this status code (validation, billing state) carry only message.
+	Error *struct {
+		// Code Machine-readable marker for plan-gated denials
+		Code PlanGateErrorBodyErrorCode `json:"code"`
+
+		// Feature Entitlement feature key that failed the check
+		Feature string `json:"feature"`
+
+		// UpgradeUrl Billing page URL for the organization, present when the org is resolvable
+		UpgradeUrl *string `json:"upgrade_url,omitempty"`
+	} `json:"error,omitempty"`
+
+	// Message Human-readable explanation of the plan gate
+	Message string `json:"message"`
+}
+
+// PlanGateErrorBodyErrorCode Machine-readable marker for plan-gated denials
+type PlanGateErrorBodyErrorCode string
 
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
@@ -4372,6 +4400,7 @@ type UpdateJitAccessBody struct {
 
 // UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
 type UpdatePgsodiumConfigBody struct {
+	// RootKey The pgsodium root key: 32 bytes, hex-encoded (64 characters).
 	RootKey string `json:"root_key"`
 }
 

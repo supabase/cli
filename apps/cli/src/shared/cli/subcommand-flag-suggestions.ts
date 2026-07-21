@@ -102,6 +102,71 @@ function flagMatchesOption(flag: HelpDoc.FlagDoc, option: string): boolean {
   return flag.aliases.includes(option);
 }
 
+/**
+ * Every argv token (e.g. `-t`, alongside the canonical `--type`) that also
+ * resolves to `option` for the command at `commandPath`, by walking the
+ * command tree the same way `buildSubcommandFlagHint` does. Returns `[]` if
+ * `commandPath` doesn't resolve to a real command or that command has no
+ * flag named `option` — callers should treat that as "no aliases", not an
+ * error, since a synthetic/test command path is a legitimate input.
+ *
+ * Used by `run.ts`'s `isMissingFlagTokenPresent` to recognize a required
+ * flag supplied by its short alias but missing its value (Go/pflag still
+ * shows usage for that case — see CLI-1901) instead of misclassifying it as
+ * genuinely absent (Go: `SilenceUsage`-suppressed, no usage shown).
+ */
+export function flagAliasesFor(
+  rootCommand: Command.Command.Any,
+  commandPath: ReadonlyArray<string>,
+  option: string,
+): ReadonlyArray<string> {
+  const command = findCommand(rootCommand, commandPath.slice(1));
+  if (!command) return [];
+  const flag = helpDocFor(command, commandPath)?.flags.find(
+    (candidate) => candidate.name === option,
+  );
+  return flag?.aliases ?? [];
+}
+
+/**
+ * Builds a lookup for whether an argv token (a canonical `--name` or one of
+ * its aliases, e.g. `-t`) at `commandPath` belongs to a *value-taking* flag
+ * (any flag whose `HelpDoc.FlagDoc.type !== "boolean"`) on the command
+ * resolved the same way `flagAliasesFor` does. Returns a function that
+ * answers `false` for every token when `commandPath` doesn't resolve to a
+ * real command, mirroring `flagAliasesFor`'s "no aliases" fallback.
+ *
+ * Used by `run.ts`'s `isMissingFlagTokenPresent` to recognize when a
+ * DIFFERENT flag's value-consumption ate the very token being scanned for.
+ * Go/pflag's `parseLongArg` (`flag.go`) unconditionally consumes the next
+ * argv entry as a value-taking flag's value, even when that entry itself
+ * looks like another flag — e.g. `sso add --project-ref --type` hands the
+ * literal string `--type` to `--project-ref`, so `--type` is never seen as
+ * its own occurrence and its `MissingOption` failure gets Go's
+ * `SilenceUsage` treatment (no usage shown). The vendored `effect` CLI
+ * library's own parser does NOT replicate that (`internal/parser.ts`'s
+ * `consumeFlagValueWithTokens` only consumes a following token when it's
+ * lexed as a plain `Value`, never a flag-shaped token), so without this
+ * lookup the raw argv scan in `isMissingFlagTokenPresent` would find the
+ * literal `--type` token and wrongly conclude the flag is present but
+ * missing its value — reintroducing the usage dump CLI-1901 suppresses.
+ */
+export function isValueTakingFlagTokenFor(
+  rootCommand: Command.Command.Any,
+  commandPath: ReadonlyArray<string>,
+): (token: string) => boolean {
+  const command = findCommand(rootCommand, commandPath.slice(1));
+  const flags = command && helpDocFor(command, commandPath)?.flags;
+  if (!flags) return () => false;
+  const valueTakingTokens = new Set<string>();
+  for (const flag of flags) {
+    if (flag.type === "boolean") continue;
+    valueTakingTokens.add(`--${flag.name}`);
+    for (const alias of flag.aliases) valueTakingTokens.add(alias);
+  }
+  return (token: string) => valueTakingTokens.has(token);
+}
+
 function findPathEndIndex(
   args: ReadonlyArray<string>,
   pathWithoutRoot: ReadonlyArray<string>,

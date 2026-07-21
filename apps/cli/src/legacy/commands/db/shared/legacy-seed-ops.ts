@@ -5,6 +5,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyCreateSeedTable } from "../../../shared/legacy-migration-history.ts";
+import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
 
 /**
@@ -27,74 +28,6 @@ export interface LegacySeedFile {
 
 const META_CHARS = /[*?[\\]/u;
 
-/**
- * Go's `path.Match` for a single filename (no `/`). Supports `*` (any run of
- * non-separator chars), `?` (one char), `[...]` classes with ranges and a
- * leading `^`/`!` negation, and `\` escapes. Filenames never contain `/`, so the
- * separator subtlety in Go's matcher does not apply here.
- */
-export function legacyMatchPattern(pattern: string, name: string): boolean {
-  const matchClass = (cls: string, ch: string): boolean => {
-    let negated = false;
-    let body = cls;
-    if (body.startsWith("^") || body.startsWith("!")) {
-      negated = true;
-      body = body.slice(1);
-    }
-    let matched = false;
-    for (let k = 0; k < body.length; k++) {
-      if (body[k + 1] === "-" && k + 2 < body.length) {
-        if (ch >= body[k]! && ch <= body[k + 2]!) matched = true;
-        k += 2;
-      } else if (body[k] === ch) {
-        matched = true;
-      }
-    }
-    return matched !== negated;
-  };
-
-  const match = (p: number, n: number): boolean => {
-    while (p < pattern.length) {
-      const pc = pattern[p]!;
-      if (pc === "*") {
-        // Collapse consecutive stars, then try to match the rest at every offset.
-        while (pattern[p] === "*") p++;
-        if (p === pattern.length) return true;
-        for (let k = n; k <= name.length; k++) {
-          if (match(p, k)) return true;
-        }
-        return false;
-      }
-      if (n >= name.length) return false;
-      if (pc === "?") {
-        p++;
-        n++;
-        continue;
-      }
-      if (pc === "[") {
-        const end = pattern.indexOf("]", p + 1);
-        if (end === -1) return false;
-        if (!matchClass(pattern.slice(p + 1, end), name[n]!)) return false;
-        p = end + 1;
-        n++;
-        continue;
-      }
-      if (pc === "\\" && p + 1 < pattern.length) {
-        if (pattern[p + 1] !== name[n]) return false;
-        p += 2;
-        n++;
-        continue;
-      }
-      if (pc !== name[n]) return false;
-      p++;
-      n++;
-    }
-    return n === name.length;
-  };
-
-  return match(0, 0);
-}
-
 /** Result of resolving `[db.seed].sql_paths` against the workspace. */
 interface LegacyGlobResult {
   /** Workdir-relative, forward-slashed matches, deduplicated in pattern order. */
@@ -108,8 +41,10 @@ interface LegacyGlobResult {
  * over `fs.Glob` (`pkg/config/config.go:102-124`). Each pattern is first joined
  * under the `supabase/` directory (Go resolves `sql_paths` at config load,
  * `config.go:884`). Matches per pattern are sorted; the overall result preserves
- * first-seen order across patterns. A pattern that matches nothing contributes a
- * `no files matched pattern: <pattern>` warning but is not fatal.
+ * first-seen order across patterns. A pattern that matches nothing, or is malformed
+ * (Go's `path.ErrBadPattern`, e.g. an unterminated `[` class), contributes a warning
+ * but is not fatal — mirroring `fs.Glob`'s up-front `Match(pattern, "")` validation
+ * (`io/fs/glob.go`) and the sibling seed pipeline's `legacy-seed.ts:resolveSeedFiles`.
  */
 const legacyGlobSeedFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -128,6 +63,13 @@ const legacyGlobSeedFiles = Effect.fnUntraced(function* (
     // globs those resolved paths without re-prefixing (`config.go:102-124`), so only
     // normalize separators here; re-joining `supabase/` would double-prefix.
     const pattern = toSlash(rawPattern);
+    // Go's `fs.Glob` validates the whole pattern up front (`Match(pattern, "")`); a
+    // malformed glob is reported as `failed to glob files: <ErrBadPattern>` and
+    // contributes no matches, rather than the misleading "no files matched" below.
+    if (legacyPathMatch(pattern, "").badPattern) {
+      errors.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
+      continue;
+    }
     const matches = yield* globOne(fs, path, workdir, pattern);
     if (matches.length === 0) {
       errors.push(`no files matched pattern: ${pattern}`);
@@ -202,7 +144,7 @@ const globOne = (
         .readDirectory(absDir)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
       for (const name of names) {
-        if (legacyMatchPattern(file, name)) {
+        if (legacyPathMatch(file, name).matched) {
           result.push(d === "" ? name : `${d}/${name}`);
         }
       }

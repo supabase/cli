@@ -45,7 +45,10 @@ interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unkno
   // (`cmd/root_analytics.go:110-116`, which checks `flag.Value.(*utils.EnumFlag)`
   // unconditionally — no per-flag annotation required). Passing `config` here
   // covers every current and future enum flag on the command without having to
-  // hand-list each one in `safeFlags`.
+  // hand-list each one in `safeFlags`. The three global choice flags
+  // (`--output`, `--dns-resolver`, `--agent`) are covered separately and
+  // automatically via `GLOBAL_CHOICE_FLAG_NAMES` below — no need to redeclare
+  // them here.
   readonly config?: Record<string, Param.Any>;
   // The `-o`/`--output` values this command accepts, mirroring Go's per-command
   // `--output` enum (`internal/utils/enum.go`). Defaults to the resource-command
@@ -295,6 +298,33 @@ const GLOBAL_SHORT_ALIASES: Readonly<Record<string, string>> = (() => {
   return aliases;
 })();
 
+// CLI-name set for every global/persistent flag that is itself a
+// `Flag.choice`/`Flag.choiceWithValue` — today `output`, `dns-resolver`, and
+// `agent` (`shared/legacy/global-flags.ts`). Reuses `getChoiceFlagNames`
+// itself (keyed by `.id` rather than CLI name — `getChoiceFlagNames` only
+// ever reads `single.name` off the unwrapped param, so the record key is
+// irrelevant) rather than re-implementing the choice-detection predicate, so
+// the two can never silently drift apart. Derived from `LEGACY_GLOBAL_FLAGS`
+// the same way `GLOBAL_SHORT_ALIASES` is, so this never drifts from that
+// single source of truth either. Mirrors Go's `isEnumFlag`
+// (`cmd/root_analytics.go:110-116`) checked against the actual
+// `*utils.EnumFlag`-backed persistent flag object registered on root
+// (`cmd/root.go:330,331,333`). Applied ONLY to the global-fallback path in
+// `buildFlagsMap` below (`!isFromHandler`): when a command registers its OWN
+// differently-typed local flag under the same CLI name (e.g. `db diff`'s
+// local string `--output`, `cmd/db.go:622`), Go's own `isEnumFlag` check runs
+// against THAT command's local flag object instead — which fails the type
+// assertion, so it stays redacted — exactly mirrored by
+// `choiceFlagNames`/`isFromHandler` continuing to govern the handler-owned
+// path. Invariant this depends on: any command whose Go counterpart locally
+// shadows one of these three with a NON-enum flag (only `db diff`'s `output`
+// today) must pass that flag in its own `flags` record, so `isFromHandler`
+// is true and this global set is never consulted for it — otherwise the
+// fallback would report verbatim here even though Go redacts it.
+const GLOBAL_CHOICE_FLAG_NAMES: ReadonlySet<string> = getChoiceFlagNames(
+  Object.fromEntries(LEGACY_GLOBAL_FLAGS.map((globalFlag) => [globalFlag.id, globalFlag.flag])),
+);
+
 function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
   readonly flags: Flags | undefined;
   // Live global/persistent flag values (`legacyGlobalFlagValues`), keyed by
@@ -330,13 +360,19 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
     // `safeFlagSet`/`choiceFlagNames` classify a flag as safe by CLI NAME,
     // sourced from this command's own `safeFlags`/`config` options — they may
     // only vouch for a value that actually came from this command's own
-    // `flags` record. A value resolved from the global-flag fallback is safe
-    // solely because it's boolean (Go's `isBooleanFlag` branch applies
-    // unconditionally); it must never inherit a *different* command's
-    // per-flag safe/choice annotation just because the CLI name matches.
+    // `flags` record; a value resolved from the global-flag fallback must
+    // never inherit a *different* command's per-flag safe/choice annotation
+    // just because the CLI name matches. The global-fallback path instead
+    // consults `GLOBAL_CHOICE_FLAG_NAMES` (CLI-1904) — the global flag's OWN
+    // choice-ness, exactly mirroring Go's `isEnumFlag` type-asserting the
+    // actual persistent flag object rather than any per-command annotation.
+    // Boolean values are safe unconditionally regardless of source (Go's
+    // `isBooleanFlag` branch applies unconditionally too).
     const isSafe =
       typeof value === "boolean" ||
-      (isFromHandler && (safeFlagSet.has(cliName) || choiceFlagNames.has(cliName)));
+      (isFromHandler
+        ? safeFlagSet.has(cliName) || choiceFlagNames.has(cliName)
+        : GLOBAL_CHOICE_FLAG_NAMES.has(cliName));
 
     result[cliName] = isSafe ? (value ?? REDACTED_VALUE) : REDACTED_VALUE;
   }

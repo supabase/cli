@@ -1,20 +1,47 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   evaluateAllOpenPrs,
   evaluateGate,
+  fetchAuthorPermission,
   GATE_LABEL,
   type GateIo,
+  isInternalAuthor,
   type LinkedIssue,
   type OpenPr,
 } from "./contribution-gate.ts";
 
 const REPO = "supabase/cli";
 
+describe("isInternalAuthor", () => {
+  test.each(["OWNER", "MEMBER", "COLLABORATOR"])(
+    "treats internal association %s as internal without a permission lookup",
+    (authorAssociation) => {
+      expect(isInternalAuthor(authorAssociation, undefined)).toBe(true);
+    },
+  );
+
+  test.each(["admin", "write"])("treats push-capable permission %s as internal", (permission) => {
+    // A private org member surfaces only as CONTRIBUTOR/NONE via
+    // author_association, but their effective repo permission gives them
+    // away as a maintainer.
+    expect(isInternalAuthor("CONTRIBUTOR", permission)).toBe(true);
+    expect(isInternalAuthor("NONE", permission)).toBe(true);
+  });
+
+  test.each(["read", "none", undefined])(
+    "treats external author with permission %s as external",
+    (permission) => {
+      expect(isInternalAuthor("CONTRIBUTOR", permission)).toBe(false);
+      expect(isInternalAuthor("NONE", permission)).toBe(false);
+    },
+  );
+});
+
 describe("evaluateGate", () => {
   test("skips bot authors", () => {
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "NONE",
+      isInternal: false,
       isBot: true,
       linkedIssues: [],
     });
@@ -22,24 +49,21 @@ describe("evaluateGate", () => {
     expect(result.reason).toBe("bot");
   });
 
-  test.each(["OWNER", "MEMBER", "COLLABORATOR"])(
-    "skips internal author association %s",
-    (authorAssociation) => {
-      const result = evaluateGate({
-        repository: REPO,
-        authorAssociation,
-        isBot: false,
-        linkedIssues: [],
-      });
-      expect(result.pass).toBe(true);
-      expect(result.reason).toBe("internal");
-    },
-  );
+  test("skips internal authors", () => {
+    const result = evaluateGate({
+      repository: REPO,
+      isInternal: true,
+      isBot: false,
+      linkedIssues: [],
+    });
+    expect(result.pass).toBe(true);
+    expect(result.reason).toBe("internal");
+  });
 
   test("fails when no issue is linked", () => {
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "NONE",
+      isInternal: false,
       isBot: false,
       linkedIssues: [],
     });
@@ -52,11 +76,9 @@ describe("evaluateGate", () => {
   test("fails when the linked issue is open but not labeled", () => {
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "CONTRIBUTOR",
+      isInternal: false,
       isBot: false,
-      linkedIssues: [
-        { repository: REPO, number: 12, state: "OPEN", labels: ["🐛 Bug"] },
-      ],
+      linkedIssues: [{ repository: REPO, number: 12, state: "OPEN", labels: ["🐛 Bug"] }],
     });
     expect(result.pass).toBe(false);
     expect(result.reason).toBe("missing-label");
@@ -66,11 +88,9 @@ describe("evaluateGate", () => {
   test("fails when the only labeled issue is closed", () => {
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "NONE",
+      isInternal: false,
       isBot: false,
-      linkedIssues: [
-        { repository: REPO, number: 7, state: "CLOSED", labels: [GATE_LABEL] },
-      ],
+      linkedIssues: [{ repository: REPO, number: 7, state: "CLOSED", labels: [GATE_LABEL] }],
     });
     expect(result.pass).toBe(false);
     expect(result.reason).toBe("issue-closed");
@@ -79,7 +99,7 @@ describe("evaluateGate", () => {
   test("passes when a linked issue is open and carries the gate label", () => {
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "NONE",
+      isInternal: false,
       isBot: false,
       linkedIssues: [
         {
@@ -97,7 +117,7 @@ describe("evaluateGate", () => {
   test("passes when any one of several linked issues qualifies", () => {
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "FIRST_TIME_CONTRIBUTOR",
+      isInternal: false,
       isBot: false,
       linkedIssues: [
         { repository: REPO, number: 1, state: "CLOSED", labels: [GATE_LABEL] },
@@ -114,7 +134,7 @@ describe("evaluateGate", () => {
     // controlled by the contributor, so it must not satisfy the gate.
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "NONE",
+      isInternal: false,
       isBot: false,
       linkedIssues: [
         {
@@ -132,7 +152,7 @@ describe("evaluateGate", () => {
   test("matches the repository case-insensitively", () => {
     const result = evaluateGate({
       repository: REPO,
-      authorAssociation: "NONE",
+      isInternal: false,
       isBot: false,
       linkedIssues: [
         {
@@ -152,61 +172,75 @@ describe("evaluateAllOpenPrs", () => {
   function makeIo(
     openPrs: OpenPr[],
     linkedByPr: Record<number, LinkedIssue[]>,
-  ): { io: GateIo; closed: Array<{ number: number; message: string }> } {
+    permissionByLogin: Record<string, string> = {},
+  ): {
+    io: GateIo;
+    closed: Array<{ number: number; message: string }>;
+    permissionLookups: string[];
+  } {
     const closed: Array<{ number: number; message: string }> = [];
+    const permissionLookups: string[] = [];
     const io: GateIo = {
       listOpenPrs: () => Promise.resolve(openPrs),
-      fetchLinkedIssues: (prNumber) =>
-        Promise.resolve(linkedByPr[prNumber] ?? []),
+      fetchPermission: (login) => {
+        permissionLookups.push(login);
+        return Promise.resolve(permissionByLogin[login]);
+      },
+      fetchLinkedIssues: (prNumber) => Promise.resolve(linkedByPr[prNumber] ?? []),
       closePr: (prNumber, message) => {
         closed.push({ number: prNumber, message });
         return Promise.resolve();
       },
     };
-    return { io, closed };
+    return { io, closed, permissionLookups };
   }
 
   test("closes only non-conforming external PRs and leaves the rest", async () => {
-    const { io, closed } = makeIo(
+    const { io, closed, permissionLookups } = makeIo(
       [
-        { number: 1, authorAssociation: "NONE", isBot: false }, // no issue -> close
-        { number: 2, authorAssociation: "MEMBER", isBot: false }, // internal -> skip
-        { number: 3, authorAssociation: "NONE", isBot: true }, // bot -> skip
-        { number: 4, authorAssociation: "CONTRIBUTOR", isBot: false }, // conforming -> keep
-        { number: 5, authorAssociation: "NONE", isBot: false }, // missing label -> close
+        // no issue -> close
+        { number: 1, authorLogin: "ext-a", authorAssociation: "NONE", isBot: false },
+        // public member -> skip (no permission lookup needed)
+        { number: 2, authorLogin: "maint", authorAssociation: "MEMBER", isBot: false },
+        // bot -> skip
+        { number: 3, authorLogin: "dependabot", authorAssociation: "NONE", isBot: true },
+        // conforming external -> keep
+        { number: 4, authorLogin: "ext-b", authorAssociation: "CONTRIBUTOR", isBot: false },
+        // missing label -> close
+        { number: 5, authorLogin: "ext-c", authorAssociation: "NONE", isBot: false },
+        // private-membership maintainer (CONTRIBUTOR + write access) -> skip
+        { number: 6, authorLogin: "hidden-maint", authorAssociation: "CONTRIBUTOR", isBot: false },
       ],
       {
-        4: [
-          { repository: REPO, number: 40, state: "OPEN", labels: [GATE_LABEL] },
-        ],
-        5: [
-          { repository: REPO, number: 50, state: "OPEN", labels: ["🐛 Bug"] },
-        ],
+        4: [{ repository: REPO, number: 40, state: "OPEN", labels: [GATE_LABEL] }],
+        5: [{ repository: REPO, number: 50, state: "OPEN", labels: ["🐛 Bug"] }],
       },
+      { "hidden-maint": "write" },
     );
 
     const entries = await evaluateAllOpenPrs(io, REPO);
 
     expect(closed.map((c) => c.number).sort((a, b) => a - b)).toEqual([1, 5]);
-    const byNumber = Object.fromEntries(
-      entries.map((entry) => [entry.number, entry.result]),
-    );
+    const byNumber = Object.fromEntries(entries.map((entry) => [entry.number, entry.result]));
     expect(byNumber[1]?.reason).toBe("no-linked-issue");
     expect(byNumber[2]?.pass).toBe(true);
     expect(byNumber[2]?.reason).toBe("internal");
     expect(byNumber[3]?.reason).toBe("bot");
     expect(byNumber[4]?.pass).toBe(true);
     expect(byNumber[5]?.reason).toBe("missing-label");
+    expect(byNumber[6]?.pass).toBe(true);
+    expect(byNumber[6]?.reason).toBe("internal");
     expect(closed.find((c) => c.number === 1)?.message).toContain(GATE_LABEL);
+    // Bots and public members are settled without a permission lookup.
+    expect(permissionLookups).not.toContain("maint");
+    expect(permissionLookups).not.toContain("dependabot");
   });
 
   test("returns an entry per PR and closes none when all conform", async () => {
     const { io, closed } = makeIo(
-      [{ number: 9, authorAssociation: "NONE", isBot: false }],
+      [{ number: 9, authorLogin: "ext", authorAssociation: "NONE", isBot: false }],
       {
-        9: [
-          { repository: REPO, number: 90, state: "OPEN", labels: [GATE_LABEL] },
-        ],
+        9: [{ repository: REPO, number: 90, state: "OPEN", labels: [GATE_LABEL] }],
       },
     );
 
@@ -215,5 +249,49 @@ describe("evaluateAllOpenPrs", () => {
     expect(entries).toHaveLength(1);
     expect(closed).toHaveLength(0);
     expect(entries[0]?.result.pass).toBe(true);
+  });
+});
+
+describe("fetchAuthorPermission", () => {
+  const fetchSpy = spyOn(globalThis, "fetch");
+  afterEach(() => {
+    fetchSpy.mockReset();
+  });
+
+  function stubFetch(status: number, body: unknown): void {
+    // `typeof fetch` carries a static `preconnect`, so attach a no-op to keep
+    // the implementation assignable without casting.
+    fetchSpy.mockImplementation(
+      Object.assign(() => Promise.resolve(new Response(JSON.stringify(body), { status })), {
+        preconnect: () => {},
+      }),
+    );
+  }
+
+  test("returns the effective permission for a collaborator", async () => {
+    stubFetch(200, { permission: "admin" });
+    const permission = await fetchAuthorPermission("t", "supabase", "cli", "maint");
+    expect(permission).toBe("admin");
+  });
+
+  test("maps a 404 (non-collaborator fork author) to undefined", async () => {
+    // The endpoint 404s for users who are not collaborators — the common case
+    // for the external contributors the gate targets. It must map to external,
+    // not abort the run.
+    stubFetch(404, { message: "Not Found" });
+    const permission = await fetchAuthorPermission("t", "supabase", "cli", "ext");
+    expect(permission).toBeUndefined();
+  });
+
+  test("throws on other API failures so the run aborts without closing PRs", async () => {
+    stubFetch(403, { message: "Forbidden" });
+    await expect(fetchAuthorPermission("t", "supabase", "cli", "ext")).rejects.toThrow(/403/);
+  });
+
+  test("skips the network call for a blank login", async () => {
+    stubFetch(200, { permission: "admin" });
+    const permission = await fetchAuthorPermission("t", "supabase", "cli", "");
+    expect(permission).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
