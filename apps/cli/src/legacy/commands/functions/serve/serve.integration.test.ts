@@ -157,6 +157,33 @@ function extractFlagValues(args: ReadonlyArray<string>, flag: string) {
   return args.flatMap((value, index) => (args[index - 1] === flag ? [value] : []));
 }
 
+function withConfiguredTempDir<A, E, R>(
+  directory: string,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  const names = ["TMPDIR", "TMP", "TEMP"] as const;
+  const previous = names.map((name) => [name, process.env[name]] as const);
+
+  return Effect.sync(() => {
+    for (const name of names) {
+      process.env[name] = directory;
+    }
+  }).pipe(
+    Effect.andThen(effect),
+    Effect.ensuring(
+      Effect.sync(() => {
+        for (const [name, value] of previous) {
+          if (value === undefined) {
+            delete process.env[name];
+          } else {
+            process.env[name] = value;
+          }
+        }
+      }),
+    ),
+  );
+}
+
 async function extractDockerEnvEntries(call: { args: ReadonlyArray<string>; options: unknown }) {
   const values = extractFlagValues(call.args, "-e");
   if (values.some((value) => value.includes("="))) {
@@ -647,6 +674,92 @@ describe("legacy functions serve integration", () => {
       }
       expect(multilineEnvDirExistedWhenLogsStarted).toBe(true);
       expect(existsSync(multilineEnvDirWhenLogsStarted)).toBe(false);
+    });
+  });
+
+  it.live("creates a missing configured temp directory for runtime artifacts", () => {
+    const configuredTempDir = join(tempRoot.current, "missing-temp");
+    const multilineValue = "line-1\nline-2";
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          ".env.local",
+          [`SINGLE_LINE=value`, `MULTILINE_VALUE="${multilineValue}"`, ""].join("\n"),
+        ),
+      );
+
+      const { layer } = setupServe();
+      const error = yield* withConfiguredTempDir(
+        configuredTempDir,
+        legacyFunctionsServe(
+          baseFlags({
+            envFile: Option.some(".env.local"),
+            noVerifyJwt: Option.some(true),
+          }),
+        ).pipe(Effect.provide(layer), Effect.flip),
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(existsSync(configuredTempDir)).toBe(true);
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+      expect(envs).toContain("SINGLE_LINE=value");
+
+      const options =
+        typeof dockerRun.options === "object" && dockerRun.options !== null
+          ? dockerRun.options
+          : undefined;
+      const multilineEnvFiles =
+        options !== undefined && "multilineEnvFiles" in options
+          ? (options.multilineEnvFiles as Record<string, string> | undefined)
+          : undefined;
+      expect(multilineEnvFiles).toEqual({ "env-0": multilineValue });
+    });
+  });
+
+  it.live("surfaces filesystem errors for an unusable configured temp path", () => {
+    const configuredTempPath = join(tempRoot.current, "temp-file");
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFile(configuredTempPath, "not a directory"));
+
+      const { layer } = setupServe();
+      const error = yield* withConfiguredTempDir(
+        configuredTempPath,
+        legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip),
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain(configuredTempPath);
+        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
+      }
+      expect(
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toHaveLength(0);
     });
   });
 

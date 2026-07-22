@@ -818,13 +818,19 @@ function splitEnvEntry(entry: string) {
     : ([entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)] as const);
 }
 
+async function createFunctionsServeTempDir(prefix: string) {
+  const root = tmpdir();
+  await mkdir(root, { recursive: true });
+  return mkdtemp(join(root, prefix));
+}
+
 async function writeDockerEnvFile(env: Readonly<Record<string, string>>) {
   const entries = Object.entries(env);
   if (entries.length === 0) {
     return undefined;
   }
 
-  const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-env-"));
+  const dir = await createFunctionsServeTempDir("supabase-functions-serve-env-");
   const path = join(dir, "docker.env");
   // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
   // owner-only rather than relying on the process umask.
@@ -850,7 +856,7 @@ async function writeDockerMultilineEnvScript(
     return undefined;
   }
 
-  const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-multiline-env-"));
+  const dir = await createFunctionsServeTempDir("supabase-functions-serve-multiline-env-");
   const scriptName = "multiline-env.sh";
   const path = join(dir, scriptName);
   const envDir = join(containerDir, "values");
@@ -1253,7 +1259,7 @@ export function buildServeEntrypointCommand(
 async function writeServeMainTemplateFile(template: string) {
   // Mount the bundled runtime template instead of embedding it in `sh -c` so
   // Windows does not hit `uv_spawn` ENAMETOOLONG on path-heavy projects.
-  const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-main-"));
+  const dir = await createFunctionsServeTempDir("supabase-functions-serve-main-");
   const pathname = join(dir, "index.ts");
   await writeFile(pathname, template);
   return {
@@ -1413,11 +1419,15 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     });
-    const dockerEnvFile = yield* Effect.tryPromise(() => writeDockerEnvFile(singleLineDockerEnv));
+    const dockerEnvFile = yield* Effect.tryPromise({
+      try: () => writeDockerEnvFile(singleLineDockerEnv),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    });
     const multilineEnvDir = "/root/.supabase/multiline-env";
-    const dockerMultilineEnvScript = yield* Effect.tryPromise(() =>
-      writeDockerMultilineEnvScript(multilineDockerEnv, multilineEnvDir),
-    ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
+    const dockerMultilineEnvScript = yield* Effect.tryPromise({
+      try: () => writeDockerMultilineEnvScript(multilineDockerEnv, multilineEnvDir),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    });
 
     const labels = dockerProjectLabels(projectId);
     const runtimeCommand = [
@@ -1430,9 +1440,10 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       ...(input.debug ? ["--verbose"] : []),
     ];
     const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
-    const serveMainTemplateFile = yield* Effect.tryPromise(() =>
-      writeServeMainTemplateFile(serveMainTemplate),
-    ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
+    const serveMainTemplateFile = yield* Effect.tryPromise({
+      try: () => writeServeMainTemplateFile(serveMainTemplate),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    });
     const command = [
       "run",
       "-d",
