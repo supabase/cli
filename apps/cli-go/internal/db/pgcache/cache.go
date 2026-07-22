@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -261,6 +262,9 @@ func exportCatalog(ctx context.Context, targetRef string, options ...func(*pgx.C
 	}
 	env := append([]string{"TARGET=" + preparedRef, "ROLE=postgres"}, sslEnv...)
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
+	if cwd, err := os.Getwd(); err == nil {
+		binds = append(binds, cwd+":/workspace")
+	}
 	var stdout, stderr bytes.Buffer
 	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaCatalogExportTS)
 	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting pg-delta catalog", &stdout, &stderr, utils.PgDeltaNpmRegistryOption()); err != nil {
