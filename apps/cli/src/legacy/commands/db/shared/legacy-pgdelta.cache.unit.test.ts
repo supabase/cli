@@ -220,25 +220,57 @@ describe("legacyListLocalMigrations", () => {
 });
 
 describe("legacyHashMigrations", () => {
-  it.effect("hashes path + contents in list order (stable, content-sensitive)", () => {
-    const dir = withTemp();
-    const migrationsDir = join(dir, "supabase", "migrations");
-    mkdirSync(migrationsDir, { recursive: true });
-    const file = join(migrationsDir, "20240101120000_create.sql");
-    writeFileSync(file, "create table x();");
-    const expected = createHash("sha256")
-      .update(file, "utf8")
-      .update(Buffer.from("create table x();"))
-      .digest("hex");
-    return withServices((fs, path) => legacyHashMigrations(fs, path, migrationsDir)).pipe(
-      Effect.tap((hash) =>
-        Effect.sync(() => {
-          expect(hash).toBe(expected);
-          rmSync(dir, { recursive: true, force: true });
+  it.effect(
+    "hashes the workdir-relative path + contents in list order (stable, content-sensitive)",
+    () => {
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const file = join(migrationsDir, "20240101120000_create.sql");
+      writeFileSync(file, "create table x();");
+      const relPath = join("supabase", "migrations", "20240101120000_create.sql");
+      const expected = createHash("sha256")
+        .update(relPath, "utf8")
+        .update(Buffer.from("create table x();"))
+        .digest("hex");
+      return withServices((fs, path) => legacyHashMigrations(fs, path, dir, migrationsDir)).pipe(
+        Effect.tap((hash) =>
+          Effect.sync(() => {
+            expect(hash).toBe(expected);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "is unaffected by the absolute location of workdir (Go-parity, not machine-specific)",
+    () => {
+      const dirA = withTemp();
+      const dirB = withTemp();
+      const migrationsA = join(dirA, "supabase", "migrations");
+      const migrationsB = join(dirB, "supabase", "migrations");
+      mkdirSync(migrationsA, { recursive: true });
+      mkdirSync(migrationsB, { recursive: true });
+      writeFileSync(join(migrationsA, "20240101120000_create.sql"), "create table x();");
+      writeFileSync(join(migrationsB, "20240101120000_create.sql"), "create table x();");
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const hashA = yield* legacyHashMigrations(fs, path, dirA, migrationsA);
+          const hashB = yield* legacyHashMigrations(fs, path, dirB, migrationsB);
+          expect(hashA).toBe(hashB);
         }),
-      ),
-    );
-  });
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            rmSync(dirA, { recursive: true, force: true });
+            rmSync(dirB, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });
 
 describe("legacyHashDeclarativeSchemas", () => {

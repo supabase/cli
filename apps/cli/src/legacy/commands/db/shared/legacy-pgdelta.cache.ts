@@ -192,18 +192,20 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
 
 /**
  * Mirrors Go's `pgcache.HashMigrations` (`pgcache/cache.go`): for each local
- * migration (in list order), hash its path then its contents. Returns full hex.
+ * migration (in list order), hash its `workdir`-relative path then its
+ * contents. Returns full hex.
  */
 export const legacyHashMigrations = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  workdir: string,
   migrationsDir: string,
 ) {
   const migrations = yield* legacyListLocalMigrations(fs, path, migrationsDir);
   const hash = createHash("sha256");
   for (const filePath of migrations) {
     const contents = yield* fs.readFile(filePath);
-    hash.update(filePath, "utf8");
+    hash.update(path.relative(workdir, filePath), "utf8");
     hash.update(contents);
   }
   return hash.digest("hex");
@@ -417,7 +419,7 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
 ) {
   if (!params.enabled) return;
   const prefix = legacyCatalogPrefixFromConfig(params.conn, params.isLocal);
-  const hash = yield* legacyHashMigrations(fs, path, params.migrationsDir);
+  const hash = yield* legacyHashMigrations(fs, path, ctx.cwd, params.migrationsDir);
   const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
     targetRef: params.targetUrl,
     role: "postgres",
