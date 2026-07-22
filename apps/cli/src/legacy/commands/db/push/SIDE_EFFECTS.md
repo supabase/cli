@@ -23,6 +23,7 @@ linked/remote Postgres database.
 | `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | on the `--linked` path (post-run cache, Go's `ensureProjectGroupsCached`)                                                                                                                                                                            |
 | `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                    |
 | `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after a successful migration apply, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the push (Go's `pgcache.TryCacheMigrationsCatalog`) |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                        | PEM    | same gate as above, when the target requires SSL (`legacyPreparePgDeltaRef`)                                                                                                                                                                         |
 
 ## Database Mutations
 
@@ -42,11 +43,13 @@ linked/remote Postgres database.
 
 ## Environment Variables
 
-| Variable                | Purpose                                     | Required?                                               |
-| ----------------------- | ------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection   | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`          | auto-confirm prompts (Go's `viper YES`)     | no (also `--yes`)                                       |
+| Variable                           | Purpose                                                                             | Required?                                               |
+| ---------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                         | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                           | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_YES`                     | auto-confirm prompts (Go's `viper YES`)                                             | no (also `--yes`)                                       |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset | no (project `.env` or shell)                            |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export             | no (project `.env` or shell)                            |
 
 ## Exit Codes
 
