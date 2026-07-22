@@ -1340,6 +1340,53 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         projectEnvValues,
       ),
     );
+    // Go decodes `storage.analytics.{max_namespaces,max_tables,max_catalogs}` and
+    // `storage.vector.{max_buckets,max_indexes}` as plain `uint`s in the same generic
+    // Viper/mapstructure `Config.Load` pass as every other field above (`pkg/config/
+    // storage.go:28-39`) — unconditionally, before any Docker work. Unlike their `enabled`
+    // siblings above, `start`'s own logic never reads these fields (only `config push`/`pull`
+    // do), so there is no downstream re-resolution to reuse — validate purely for Go's
+    // fail-fast parity and discard the result.
+    yield* wrapConfigOverride("storage.analytics.max_namespaces", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
+        "storage.analytics.max_namespaces",
+        config.storage.analytics.max_namespaces,
+        projectEnvValues,
+      ),
+    );
+    yield* wrapConfigOverride("storage.analytics.max_tables", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
+        "storage.analytics.max_tables",
+        config.storage.analytics.max_tables,
+        projectEnvValues,
+      ),
+    );
+    yield* wrapConfigOverride("storage.analytics.max_catalogs", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
+        "storage.analytics.max_catalogs",
+        config.storage.analytics.max_catalogs,
+        projectEnvValues,
+      ),
+    );
+    yield* wrapConfigOverride("storage.vector.max_buckets", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
+        "storage.vector.max_buckets",
+        config.storage.vector.max_buckets,
+        projectEnvValues,
+      ),
+    );
+    yield* wrapConfigOverride("storage.vector.max_indexes", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
+        "storage.vector.max_indexes",
+        config.storage.vector.max_indexes,
+        projectEnvValues,
+      ),
+    );
 
     // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` — both
     // PostgREST's own container AND Studio's copy of the same PGRST_DB_* env

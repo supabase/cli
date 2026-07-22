@@ -1169,6 +1169,156 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // `storage.analytics.max_namespaces` is a plain uint decoded via Go's generic
+        // Viper/mapstructure Config.Load pass (pkg/config/storage.go:28-39), unconditionally —
+        // same class of gap as storage.s3_protocol.enabled above, now fixed the same way
+        // (hoisted eager wrapConfigOverride in start.handler.ts).
+        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"];
+        process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"] = "not-a-uint";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.analytics.max_namespaces");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"];
+              else process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_TABLES even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_tables`
+        // is decoded in the same Config.Load pass (pkg/config/storage.go:28-39).
+        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"];
+        process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"] = "not-a-uint";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.analytics.max_tables");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"];
+              else process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_catalogs`
+        // is decoded in the same Config.Load pass (pkg/config/storage.go:28-39).
+        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"];
+        process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"] = "not-a-uint";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.analytics.max_catalogs");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"];
+              else process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_BUCKETS even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // `storage.vector.max_buckets` is a plain uint decoded in the same Config.Load pass as
+        // storage.analytics.* above (pkg/config/storage.go:28-39), unconditionally.
+        const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"];
+        process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"] = "not-a-uint";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.vector.max_buckets");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"];
+              else process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_INDEXES even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // `storage.vector.max_indexes` is a plain uint decoded in the same Config.Load pass as
+        // storage.vector.max_buckets above (pkg/config/storage.go:28-39), unconditionally.
+        const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"];
+        process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"] = "not-a-uint";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.vector.max_indexes");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"];
+              else process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "fails on an invalid auth.sms.max_frequency even when auth is disabled, matching Go's Config.Load",
       () => {
         // Go's Config.Load decodes every GoTrue duration field unconditionally, regardless of
