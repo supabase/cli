@@ -2044,8 +2044,10 @@ describe("legacyResolveLocalConfigValues", () => {
 
     afterEach(() => {
       delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"];
+      delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT"];
       delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_ENABLED"];
       delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT_PATH"];
+      delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT"];
     });
 
     it("lets an env-provided template content_path override a missing TOML content_path", () => {
@@ -2109,6 +2111,69 @@ describe("legacyResolveLocalConfigValues", () => {
           enabled: true,
           site_url: "http://localhost:3000",
           email: { notification: { password_changed: { enabled: true } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    // Go's Viper `AutomaticEnv` folds a `SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT`/
+    // `_NOTIFICATION_<NAME>_CONTENT` override into `Content *string` before `Config.Validate`
+    // runs (`config.go:749,882`), so it's "present" for the content-vs-content_path exclusivity
+    // check exactly like a raw TOML `content` key — a bare env override with no content_path
+    // configured anywhere must be rejected, not silently accepted.
+    it("rejects a template _CONTENT env override with no content_path configured", () => {
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT"] = "<html>Hi</html>";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: {} } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.template.invite.content: please use content_path instead",
+      );
+    });
+
+    it("rejects an enabled notification's _CONTENT env override with no content_path configured", () => {
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT"] = "<html>Hi</html>";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { notification: { password_changed: { enabled: true } } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.notification.password_changed.content: please use content_path instead",
+      );
+    });
+
+    it("does not validate a disabled notification's _CONTENT env override", () => {
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT"] = "<html>Hi</html>";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { notification: { password_changed: { enabled: false } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("lets a simultaneous template _CONTENT_PATH env override win over a _CONTENT env override", () => {
+      writeFileSync(join(tempRoot.current, "invite.html"), "<html></html>");
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT"] = "<html>Hi</html>";
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"] = "invite.html";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: {} } },
         },
       });
       expect(() =>

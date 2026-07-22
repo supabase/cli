@@ -505,6 +505,7 @@ describe("legacyBuildGotrueEnv", () => {
             confirmation: {
               subject: "Confirm your signup",
               content_path: "supabase/templates/confirm.html",
+              content_present: false,
             },
           },
         },
@@ -524,7 +525,11 @@ describe("legacyBuildGotrueEnv", () => {
         email: {
           ...baseEnvInput.email,
           template: {
-            confirmation: { subject: "", content_path: "supabase/templates/confirm.html" },
+            confirmation: {
+              subject: "",
+              content_path: "supabase/templates/confirm.html",
+              content_present: false,
+            },
           },
         },
       });
@@ -537,7 +542,11 @@ describe("legacyBuildGotrueEnv", () => {
         email: {
           ...baseEnvInput.email,
           template: {
-            confirmation: { subject: undefined, content_path: "supabase/templates/confirm.html" },
+            confirmation: {
+              subject: undefined,
+              content_path: "supabase/templates/confirm.html",
+              content_present: false,
+            },
           },
         },
       });
@@ -554,6 +563,7 @@ describe("legacyBuildGotrueEnv", () => {
               enabled: true,
               subject: "Your password changed",
               content_path: "supabase/templates/password_changed.html",
+              content_present: false,
             },
           },
         },
@@ -577,6 +587,7 @@ describe("legacyBuildGotrueEnv", () => {
               enabled: false,
               subject: "Your password changed",
               content_path: "supabase/templates/password_changed.html",
+              content_present: false,
             },
           },
         },

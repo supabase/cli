@@ -889,6 +889,7 @@ function readApiTlsFiles(
 interface LegacyResolvedAuthEmailTemplate {
   readonly subject: string | undefined;
   readonly content_path: string;
+  readonly content_present: boolean;
 }
 
 /** One `[auth.email.notification.<name>]` entry — see {@link LegacyResolvedAuthEmailTemplate}. */
@@ -896,6 +897,7 @@ interface LegacyResolvedAuthEmailNotification {
   readonly enabled: boolean;
   readonly subject: string | undefined;
   readonly content_path: string;
+  readonly content_present: boolean;
 }
 
 /**
@@ -957,6 +959,14 @@ export function legacyResolveAuthEmail(
       content_path:
         legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
         tmpl.content_path,
+      // Go's `Content *string` is folded from `${envPrefix}_CONTENT` by the same generic
+      // Viper/`AutomaticEnv` bind as every other field (`config.go:749`, before `Config.Validate`
+      // at `config.go:882`) — so an env override makes `content` "present" here exactly like a raw
+      // TOML `content = "..."` would, and {@link readAuthEmailTemplateContent} rejects it below
+      // unless `content_path` is also set.
+      content_present:
+        asRecord(templateDoc?.[name])?.["content"] !== undefined ||
+        legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined,
     };
   }
 
@@ -976,6 +986,10 @@ export function legacyResolveAuthEmail(
       content_path:
         legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
         tmpl.content_path,
+      // Same `_CONTENT` env-presence fold as the template loop above.
+      content_present:
+        asRecord(notificationDoc?.[name])?.["content"] !== undefined ||
+        legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined,
     };
   }
 
@@ -1040,30 +1054,22 @@ export function legacyResolveAuthEmail(
  * TEMPLATE-vs-`workdir`/NOTIFICATION-vs-`<workdir>/supabase` base asymmetry, per Go's `(c
  * *baseConfig) resolve` (`config.go:900-916`) — this asymmetry is real, intentional Go behavior
  * to match, not a bug to fix) now live in `legacyResolveEmailTemplateContentPath`
- * (`legacy-config-validate.ts`); this function only feeds it `contentPresent` (computed from the
- * raw `document`, since `@supabase/config`'s `template`/`notification` schema
- * (`packages/config/src/auth/email.ts`) has no `content` field to see) and performs the read
- * when a path comes back.
+ * (`legacy-config-validate.ts`); this function only feeds it each entry's already-resolved
+ * `content_present` (see {@link legacyResolveAuthEmail}, which folds both the raw TOML `content`
+ * key AND a `${envPrefix}_CONTENT` env override into that flag) and performs the read when a path
+ * comes back.
  *
  * Takes the ALREADY env-override-resolved `email` (from {@link legacyResolveAuthEmail}) so this
  * only performs the file-existence read, matching the other validators' "resolve once, validate
  * the resolved value" shape.
  */
-function readAuthEmailTemplateContent(
-  email: LegacyResolvedAuthEmail,
-  workdir: string,
-  authDocument: Record<string, unknown> | undefined,
-): void {
-  const emailDoc = asRecord(authDocument?.["email"]);
-  const templatesDoc = asRecord(emailDoc?.["template"]);
-  const notificationsDoc = asRecord(emailDoc?.["notification"]);
-
+function readAuthEmailTemplateContent(email: LegacyResolvedAuthEmail, workdir: string): void {
   for (const [name, tmpl] of Object.entries(email.template)) {
     const path = legacyResolveEmailTemplateContentPath({
       section: "template",
       name,
       contentPath: tmpl.content_path,
-      contentPresent: asRecord(templatesDoc?.[name])?.["content"] !== undefined,
+      contentPresent: tmpl.content_present,
       base: workdir,
     });
     if (path === undefined) continue;
@@ -1081,7 +1087,7 @@ function readAuthEmailTemplateContent(
       section: "notification",
       name,
       contentPath: tmpl.content_path,
-      contentPresent: asRecord(notificationsDoc?.[name])?.["content"] !== undefined,
+      contentPresent: tmpl.content_present,
       base: join(workdir, "supabase"),
     });
     if (path === undefined) continue;
@@ -2519,7 +2525,6 @@ export function legacyResolveLocalConfigValues(
     readAuthEmailTemplateContent(
       legacyResolveAuthEmail(config.auth.email, authDocument, projectEnvValues),
       workdir,
-      authDocument,
     );
 
     // Go's `[auth.email.smtp]` presence-based `enabled` default — see

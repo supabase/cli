@@ -3141,6 +3141,44 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+
+    it.live(
+      "fails fast on SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT with no content_path configured, matching Go's Config.Validate",
+      () => {
+        // Go's Viper `AutomaticEnv` folds this override into `Content *string` before
+        // `Config.Validate` runs (`config.go:749,882`), so `(e *email) validate` rejects it
+        // exactly like a raw TOML `content` key with no `content_path` — before start touches
+        // Docker at all.
+        const previous = process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"];
+        process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"] = "<html>Hi</html>";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth.email.template.confirmation]\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain(
+              "Invalid config for auth.email.template.confirmation.content: please use content_path instead",
+            );
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"];
+              } else {
+                process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("SUPABASE_DB_PORT override", () => {
