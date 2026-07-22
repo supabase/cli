@@ -2045,6 +2045,69 @@ content_path = "./templates/custom_notice.html"
       },
     );
 
+    it.live(
+      "rolls back on a SIGINT-style interruption during the post-bring-up bulk health-check wait",
+      () => {
+        // Regression test for the post-bring-up tail rollback fix: before it, the ONLY
+        // `Effect.onError` rollback wrapper covered `bringUp` itself (see the test above),
+        // which already resolves the instant every container has been created — a fiber
+        // interrupt landing anywhere in the tail that follows (the bulk health-check wait
+        // below, the `--ignore-health-check` storage-only recheck-and-seed, the success-path
+        // bucket seed, or the `cli_stack_started` capture) would slip past that earlier
+        // wrapper entirely and never call `legacyRollbackStart`. Marking `auth` as
+        // never-healthy (mirroring the "non-Postgres service never becomes healthy" scenario
+        // below) keeps `legacyWaitForHealthyServices` genuinely retrying on its real 1-second
+        // `Schedule.spaced` backoff — not hung on `Effect.never` — so interrupting the fiber
+        // right after its first `container inspect` of that container lands the interrupt
+        // while still inside this exact step, not before "Waiting for health checks..." prints
+        // and not after the step has already failed/timed out on its own.
+        const neverHealthy = new Set<string>();
+        const route = defaultRoute({ neverHealthy });
+        let authContainerId: string | undefined;
+        const { layer, child } = setup({
+          route: (args) => {
+            if (args[0] === "create") {
+              const name = containerNameFromCreateArgs(args);
+              if (name.includes("_auth_")) {
+                neverHealthy.add(name);
+                authContainerId = name;
+              }
+            }
+            return route(args);
+          },
+          // Sidesteps the PostgREST/Edge Runtime HTTP-HEAD readiness probes entirely, so this
+          // scenario only exercises the Docker-inspect health path (mirrors the
+          // non-interrupt-based scenario below).
+          httpClientLayer: unusedHttpClientLayer,
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* legacyStart(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(
+            Effect.provide(layer),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          // Wait until the bulk health check has actually probed the never-healthy auth
+          // container at least once — proving the fiber is genuinely suspended inside
+          // `legacyWaitForHealthyServices`'s retry loop, not merely past the "Waiting for
+          // health checks..." message that precedes it.
+          while (
+            authContainerId === undefined ||
+            !child.spawned.some(
+              (s) =>
+                s.args[0] === "container" &&
+                s.args[1] === "inspect" &&
+                s.args[2] === authContainerId,
+            )
+          ) {
+            yield* Effect.sleep("5 millis");
+          }
+          // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
+          // including the `Effect.onError` rollback) has fully completed.
+          yield* Fiber.interrupt(fiber);
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
+        });
+      },
+    );
+
     it.live("fails and rolls back on a network create failure", () => {
       const base = defaultRoute();
       const route = (args: ReadonlyArray<string>): RouteResult => {
