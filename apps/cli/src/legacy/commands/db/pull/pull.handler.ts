@@ -91,23 +91,6 @@ const DEPRECATION_LINE =
 /** Migration-file mode for the initial pg_dump seed (Go's `OpenFile(..., 0644)`). */
 const MIGRATION_FILE_MODE = 0o644;
 
-/** Builds a plain Postgres URL from a resolved connection (Go's `ToPostgresURL`). */
-const connToUrl = (conn: LegacyPgConnInput): string =>
-  legacyToPostgresURL({
-    host: conn.host,
-    port: conn.port,
-    user: conn.user,
-    password: conn.password,
-    database: conn.database,
-    ...(conn.options !== undefined ? { options: conn.options } : {}),
-    ...(conn.runtimeParams !== undefined ? { runtimeParams: conn.runtimeParams } : {}),
-    // Preserve a `--db-url` connect_timeout; Go's ToPostgresURL serializes the
-    // parsed ConnectTimeout (`connect.go`), defaulting to 10 only when unset.
-    ...(conn.connectTimeoutSeconds !== undefined
-      ? { connectTimeoutSeconds: conn.connectTimeoutSeconds }
-      : {}),
-  });
-
 /** Rebuilds the `db pull` argv for the Go-delegated `--experimental` structured-dump branch. */
 const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
   const args = ["db", "pull"];
@@ -233,7 +216,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     });
     const linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
-    const targetUrl = connToUrl(resolved.conn);
+    const targetUrl = legacyToPostgresURL(resolved.conn);
 
     // Reload config with the resolved linked ref so a matching `[remotes.<ref>]`
     // block merges before the engine/format/runtime/declarative paths are read —
@@ -294,7 +277,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
                 yield* legacyEmitPoolerFallbackWarning(resolved.conn.host);
-                return yield* attempt(connToUrl(pooler.value));
+                return yield* attempt(legacyToPostgresURL(pooler.value));
               }
             }
             return yield* Effect.fail(error);

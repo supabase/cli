@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -29,6 +29,12 @@ import {
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
+import {
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyDbPush } from "./push.handler.ts";
 import type { LegacyDbPushFlags } from "./push.command.ts";
 
@@ -153,6 +159,9 @@ function setup(
     vaultRows?: ReadonlyArray<{ id: string; name: string }>;
     noSeedTable?: boolean;
     failExec?: string;
+    catalogStdout?: string;
+    catalogExportFailWith?: string;
+    noProjectId?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -169,6 +178,23 @@ function setup(
   const conn = mockConnection(opts);
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
+
+  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      edgeRunCalls.push(runOpts);
+      if (opts.catalogExportFailWith !== undefined) {
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
+        );
+      }
+      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
+    },
+  });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
   const projectRefLayer = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
@@ -188,7 +214,10 @@ function setup(
     out.layer,
     conn.layer,
     mockResolver({ isLocal: opts.isLocal ?? true }),
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliConfig({
+      workdir,
+      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    }),
     BunServices.layer,
     // Prompts (migration/seed confirmation) are answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
@@ -201,8 +230,10 @@ function setup(
     projectRefLayer,
     telemetry.layer,
     linkedCache.layer,
+    edge,
+    sslProbe,
   );
-  return { layer, out, conn, telemetry, linkedCache };
+  return { layer, out, conn, telemetry, linkedCache, edgeRunCalls };
 }
 
 const MIGRATION_DIR = "supabase/migrations";
@@ -263,6 +294,94 @@ describe("legacy db push", () => {
       expect(conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(
         true,
       );
+    });
+  });
+
+  it.live("does not attempt to cache the migrations catalog when pg-delta is disabled", () => {
+    const { layer, out, edgeRunCalls } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(edgeRunCalls).toHaveLength(0);
+      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+    });
+  });
+
+  it.live("caches the migrations catalog when project .env enables pg-delta", () => {
+    const { layer, out, edgeRunCalls } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n",
+      },
+      confirm: [true],
+      catalogStdout: '{"snapshot":"ok"}',
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+      expect(edgeRunCalls).toHaveLength(1);
+      const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
+      const catalogFiles = readdirSync(tempDir).filter((name) =>
+        name.startsWith("catalog-local-migrations-"),
+      );
+      expect(catalogFiles).toHaveLength(1);
+    });
+  });
+
+  it.live("caches the migrations catalog after a successful push when pg-delta is enabled", () => {
+    const { layer, out, edgeRunCalls } = setup(tmp.current, {
+      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+      catalogStdout: '{"snapshot":"ok"}',
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+      expect(edgeRunCalls).toHaveLength(1);
+      const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
+      const catalogFiles = readdirSync(tempDir).filter((name) =>
+        name.startsWith("catalog-local-migrations-"),
+      );
+      expect(catalogFiles).toHaveLength(1);
+      expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+    });
+  });
+
+  it.live("caches the migrations catalog with an empty projectId when none is resolved", () => {
+    const { layer, out, edgeRunCalls } = setup(tmp.current, {
+      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+      catalogStdout: '{"snapshot":"ok"}',
+      noProjectId: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+      expect(edgeRunCalls).toHaveLength(1);
+    });
+  });
+
+  it.live("warns without failing the push when the catalog export fails", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+      catalogExportFailWith: "edge-runtime script produced no output",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain(
+        "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+      );
+      expect(out.stdoutText).toContain("Finished");
     });
   });
 
