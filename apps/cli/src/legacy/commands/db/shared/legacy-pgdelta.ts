@@ -19,6 +19,7 @@ import {
   LegacyDeclarativeEdgeRuntimeError,
   LegacyDeclarativeEmptyOutputError,
   LegacyDeclarativeParseOutputError,
+  LegacyPgDeltaDiffParseError,
 } from "./legacy-pgdelta.errors.ts";
 
 const PG_DELTA_NPM_REGISTRY_ENV = "PGDELTA_NPM_REGISTRY";
@@ -38,9 +39,32 @@ export interface LegacyDeclarativeOutput {
   readonly files: ReadonlyArray<LegacyDeclarativeFile>;
 }
 
-/** Result of a pg-delta diff: the SQL statements plus edge-runtime stderr. */
+/**
+ * One execution-aware migration unit from a pg-delta diff plan. Mirrors Go's
+ * `PgDeltaPlanFile` (`internal/db/diff/pgdelta.go`): a numbered SQL file whose
+ * header comments record the unit number, transaction mode and boundary reason.
+ */
+interface LegacyPgDeltaPlanFile {
+  readonly order: number;
+  readonly name: string;
+  readonly transactionMode: string;
+  readonly sql: string;
+}
+
+/** The pg-delta diff envelope. Mirrors Go's `PgDeltaDiffOutput`. */
+interface LegacyPgDeltaDiffOutput {
+  readonly version: number;
+  readonly files: ReadonlyArray<LegacyPgDeltaPlanFile>;
+}
+
+/**
+ * Result of a pg-delta diff: the per-unit plan `files`, a `sql` flattening of
+ * them (kept for `db diff` / declarative callers that consume one blob), and the
+ * edge-runtime `stderr`.
+ */
 interface LegacyPgDeltaDiffResult {
   readonly sql: string;
+  readonly files: ReadonlyArray<LegacyPgDeltaPlanFile>;
   readonly stderr: string;
 }
 
@@ -189,7 +213,27 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
       denoVersion: ctx.denoVersion,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
-  return { sql: result.stdout, stderr: result.stderr } satisfies LegacyPgDeltaDiffResult;
+  // The template always prints the diff envelope on the success path, even for an
+  // empty plan (`{"version":1,"files":[]}`); a truly empty stdout means no envelope
+  // was produced, which we surface as "no changes" rather than a parse error.
+  // Mirrors Go's `parsePgDeltaDiffOutput` (`internal/db/diff/pgdelta.go`).
+  if (result.stdout.trim().length === 0) {
+    return { sql: "", files: [], stderr: result.stderr } satisfies LegacyPgDeltaDiffResult;
+  }
+  const envelope = yield* Effect.try({
+    try: () => JSON.parse(result.stdout) as LegacyPgDeltaDiffOutput,
+    catch: (cause) =>
+      new LegacyPgDeltaDiffParseError({
+        message: `failed to parse pg-delta diff output: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }:\n${result.stderr}`,
+      }),
+  });
+  const files = envelope.files ?? [];
+  // Flatten to one blob for callers that need it; unit header comments keep the
+  // transaction boundaries visible (mirrors Go's `joinPgDeltaFiles`).
+  const sql = files.map((file) => file.sql).join("\n\n");
+  return { sql, files, stderr: result.stderr } satisfies LegacyPgDeltaDiffResult;
 });
 
 /**

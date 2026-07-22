@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
 import {
+  legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
@@ -35,10 +36,15 @@ interface SetupOpts {
   readonly isLocal?: boolean;
   readonly linkedRef?: string;
   readonly diffSql?: string;
+  // When set, the pg-delta edge mock emits a multi-unit plan envelope (one file
+  // per entry) instead of the single-unit wrap of `diffSql`.
+  readonly diffFiles?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
   readonly targetOverride?: string;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   readonly networkId?: string; // --network-id value forwarded to docker runs
+  // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
+  readonly failWriteOnCall?: number;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -87,7 +93,28 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           new LegacyEdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
         );
       }
-      return Effect.succeed({ stdout: opts.diffSql ?? "", stderr: "" });
+      const diffSql = opts.diffSql ?? "";
+      // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
+      // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
+      // single-unit envelope so `legacyDiffPgDelta` parses it. The migra script
+      // returns raw SQL unchanged.
+      const isPgDelta = runOpts.script.includes("renderPlanFiles");
+      const planFiles =
+        opts.diffFiles !== undefined
+          ? opts.diffFiles.map((file, i) => ({
+              order: i + 1,
+              name: file.name,
+              transactionMode: "transactional",
+              sql: file.sql,
+            }))
+          : diffSql.length > 0
+            ? [{ order: 1, name: "schema_changes", transactionMode: "transactional", sql: diffSql }]
+            : [];
+      const stdout =
+        isPgDelta && planFiles.length > 0
+          ? JSON.stringify({ version: 1, files: planFiles })
+          : diffSql;
+      return Effect.succeed({ stdout, stderr: "" });
     },
   });
 
@@ -141,7 +168,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  const layer = Layer.mergeAll(
+  const baseLayer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     cache.layer,
@@ -164,6 +191,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockRuntimeInfo(),
     BunServices.layer,
   );
+  // Merged last so its `FileSystem` overrides `BunServices` (last-wins); `Path`
+  // still resolves from `BunServices`.
+  const layer =
+    opts.failWriteOnCall === undefined
+      ? baseLayer
+      : Layer.merge(baseLayer, legacyFailWriteStringOnNthCallFsLayer(opts.failWriteOnCall));
 
   return {
     layer,
@@ -435,6 +468,122 @@ describe("legacy db diff", () => {
       const files = readdirSync(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("writes one migration file per unit for a multi-unit pg-delta plan", () => {
+    // A pg-delta plan that crosses a transaction boundary yields more than one
+    // ordered unit; writing them into one migration would fail when db push/reset
+    // applies it as a single transaction. Each unit becomes its own file (Go's
+    // WritePgDeltaMigrations), named `<name>_<unit>` with strictly increasing
+    // timestamps, and the machine payload's `files` lists them all.
+    const s = setup(tmp.current, {
+      format: "json",
+      diffFiles: [
+        { name: "schema_changes", sql: "alter type mood add value 'ok';" },
+        { name: "after_enum_values", sql: "insert into t values ('ok');" },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
+      const dir = join(tmp.current, "supabase", "migrations");
+      const files = readdirSync(dir).sort();
+      expect(files).toHaveLength(2);
+      expect(files[0]).toMatch(/^\d{14}_my_diff_schema_changes\.sql$/);
+      expect(files[1]).toMatch(/^\d{14}_my_diff_after_enum_values\.sql$/);
+      // Each unit's file carries only that unit's SQL, terminated with a newline.
+      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("alter type mood add value 'ok';\n");
+      const success = s.out.messages.find((m) => m.type === "success");
+      const data = success?.data as { file: string; files: ReadonlyArray<string> };
+      expect(data.files).toHaveLength(2);
+      // `file` stays the first written path for released string-field consumers.
+      expect(data.file).toBe(data.files[0]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("creates nested parent directories for a nested single-unit --file name", () => {
+    // `db diff -f snapshots/remote` must create the `<ts>_snapshots/` parent dir
+    // before writing, mirroring Go's `utils.WriteFile`.
+    const s = setup(tmp.current, { diffSql: "create table g ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ file: Option.some("snapshots/remote") }));
+      const migrationsRoot = join(tmp.current, "supabase", "migrations");
+      const dirs = readdirSync(migrationsRoot);
+      expect(dirs).toHaveLength(1);
+      expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
+      expect(readdirSync(join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("creates nested parent directories for a nested multi-unit --file name", () => {
+    const s = setup(tmp.current, {
+      format: "json",
+      diffFiles: [
+        { name: "schema_changes", sql: "alter type mood add value 'ok';" },
+        { name: "after_enum_values", sql: "insert into t values ('ok');" },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(
+        flags({ usePgDelta: Option.some(true), file: Option.some("snapshots/remote") }),
+      );
+      const success = s.out.messages.find((m) => m.type === "success");
+      const data = success?.data as { files: ReadonlyArray<string> };
+      expect(data.files).toHaveLength(2);
+      for (const written of data.files) expect(existsSync(written)).toBe(true);
+      expect(data.files[0]).toMatch(/\d{14}_snapshots\/remote_schema_changes\.sql$/u);
+      expect(data.files[1]).toMatch(/\d{14}_snapshots\/remote_after_enum_values\.sql$/u);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bumps the version set when a target migration file already exists", () => {
+    // The full generated set is collision-checked before writing; if any target
+    // exists the base advances one second so the new files stay strictly ascending
+    // AND never overwrite the pre-existing migration.
+    const s = setup(tmp.current, {
+      format: "json",
+      diffFiles: [
+        { name: "schema_changes", sql: "a" },
+        { name: "after_enum_values", sql: "b" },
+      ],
+    });
+    return Effect.gen(function* () {
+      const dir = join(tmp.current, "supabase", "migrations");
+      mkdirSync(dir, { recursive: true });
+      // TestClock starts at epoch 0, so the first version the writer tries is
+      // 19700101000000; pre-seed a colliding file at that version.
+      const clashing = join(dir, "19700101000000_my_diff_schema_changes.sql");
+      writeFileSync(clashing, "-- pre-existing\n");
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
+      expect(readdirSync(dir).sort()).toEqual([
+        "19700101000000_my_diff_schema_changes.sql",
+        "19700101000001_my_diff_schema_changes.sql",
+        "19700101000002_my_diff_after_enum_values.sql",
+      ]);
+      // The pre-existing file was never overwritten.
+      expect(readFileSync(clashing, "utf8")).toBe("-- pre-existing\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("removes already-written unit files when a later unit write fails", () => {
+    // A mid-loop write failure best-effort removes every file this invocation
+    // already wrote, so no partial multi-file migration is left behind.
+    const s = setup(tmp.current, {
+      format: "json",
+      failWriteOnCall: 2,
+      diffFiles: [
+        { name: "schema_changes", sql: "a" },
+        { name: "after_enum_values", sql: "b" },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDiff(
+        flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const dir = join(tmp.current, "supabase", "migrations");
+      const remaining = existsSync(dir) ? readdirSync(dir) : [];
+      expect(remaining).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 

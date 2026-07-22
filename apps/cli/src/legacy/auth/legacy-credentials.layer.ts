@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Redacted, Result } from "effect";
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
@@ -92,7 +92,7 @@ const tryKeyringDelete = (
         deleted = true;
       }
 
-      if (platform === "win32" && readGoWindowsTarget(module, account)) {
+      if (platform === "win32" && probeWindowsTarget(module, account) !== "absent") {
         deleted = deleteGoWindowsTarget(module, account) || deleted;
       }
 
@@ -122,6 +122,45 @@ function readGoWindowsTarget(module: KeyringModule, account: string): string | n
     return null;
   }
 }
+
+// `Entry.withTarget` is avoided as a probe — its constructor writes an empty
+// placeholder. A `findCredentials` throw is ambiguous (an undecodable Go blob or
+// a real enumeration failure), so reported as `"unknown"`, never assumed present.
+type WindowsTargetProbe = "present" | "absent" | "unknown";
+
+function probeWindowsTarget(module: KeyringModule, account: string): WindowsTargetProbe {
+  try {
+    const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
+    // An empty password is an orphaned placeholder, not a real credential.
+    const credential = credentials.find(
+      (item) => item.account === account && item.password.length > 0,
+    );
+    return credential ? "present" : "absent";
+  } catch {
+    return "unknown";
+  }
+}
+
+// Constructing `withTarget` always leaves something at that target — the real
+// credential, or the placeholder — so a delete that follows is never a
+// legitimate "nothing to delete": any non-success is surfaced.
+const deleteProbedWindowsTarget = <E>(
+  module: KeyringModule,
+  account: string,
+  onFailure: (cause: unknown) => E,
+): Effect.Effect<boolean, E> =>
+  Effect.gen(function* () {
+    const result = yield* Effect.try(() =>
+      module.Entry.withTarget(
+        goWindowsCredentialTarget(account),
+        KEYRING_SERVICE,
+        account,
+      ).deleteCredential(),
+    ).pipe(Effect.result);
+    if (Result.isSuccess(result) && result.success) return true;
+    const cause = Result.isFailure(result) ? result.failure : "credential was not removed";
+    return yield* Effect.fail(onFailure(cause));
+  });
 
 function normalizeGoWindowsPassword(value: string): string {
   const direct = normalizeKeyringToken(value);
@@ -172,11 +211,10 @@ function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean 
 // (backend unavailable) and only surfaces other errors (`unlink.go:36-40`).
 //
 // The plain `Entry(service, projectRef)` is the macOS/Linux form and the Windows
-// default. On Windows, Go also writes a separate target-shaped credential; it is
-// detected via `findCredentials` (a plain `getPassword` does not read the Go
-// target reliably) and deleted through the `withTarget` entry. The `withTarget`
-// entry is only constructed on Windows — on macOS its first argument is an
-// invalid keychain domain and throws.
+// default. On Windows, Go also writes a separate target-shaped credential,
+// deleted through the `withTarget` entry. The `withTarget` entry is only
+// constructed on Windows — on macOS its first argument is an invalid keychain
+// domain and throws.
 //
 // Each entry is probed before `deleteCredential()`: on macOS deleting an absent
 // entry blocks on a Keychain authorization prompt, and an absent read means
@@ -204,22 +242,16 @@ const deleteKeyringEntryStrict = (
       deleted = true;
     }
 
-    if (platform === "win32" && readGoWindowsTarget(module, account)) {
-      const target = module.Entry.withTarget(
-        goWindowsCredentialTarget(account),
-        KEYRING_SERVICE,
+    if (platform === "win32" && probeWindowsTarget(module, account) !== "absent") {
+      const removed = yield* deleteProbedWindowsTarget(
+        module,
         account,
-      );
-      yield* Effect.try({
-        try: () => {
-          target.deleteCredential();
-        },
-        catch: (cause) =>
+        (cause) =>
           new LegacyCredentialDeleteError({
             message: `failed to delete project credential: ${String(cause)}`,
           }),
-      });
-      deleted = true;
+      );
+      deleted ||= removed;
     }
 
     return deleted;
@@ -256,43 +288,48 @@ const deleteProfileKeyringEntry = (
       found = true;
     }
 
-    if (platform === "win32" && readGoWindowsTarget(module, account)) {
-      const target = module.Entry.withTarget(
-        goWindowsCredentialTarget(account),
-        KEYRING_SERVICE,
+    if (platform === "win32" && probeWindowsTarget(module, account) !== "absent") {
+      const removed = yield* deleteProbedWindowsTarget(
+        module,
         account,
-      );
-      yield* Effect.try({
-        try: () => {
-          target.deleteCredential();
-        },
-        catch: (cause) =>
+        (cause) =>
           new LegacyDeleteTokenError({
             message: `failed to delete access token from keyring: ${String(cause)}`,
           }),
-      });
-      found = true;
+      );
+      found ||= removed;
     }
 
     return found ? "deleted" : "notFound";
   });
 
-// Best-effort wipe of every entry in the `"Supabase CLI"` keyring namespace —
-// the project database-password credentials `link` writes. Mirrors Go's
-// `keyring.DeleteAll(namespace)` (`store.go:71`). Never fails: per-entry delete
-// errors are swallowed so a single stuck credential can't abort logout.
+// Best-effort wipe of the `"Supabase CLI"` keyring namespace, mirroring Go's
+// `keyring.DeleteAll` (`store.go:71`); errors are swallowed so one stuck
+// credential can't abort logout, matching Go's own handling (`logout.go:35`).
 //
-// On Windows, Go stores credentials under the target-shaped name
-// `Supabase CLI:<account>` rather than the plain `Entry(service, account)` form
-// (see `writeGoWindowsTarget`). So each discovered account is deleted in BOTH
-// forms — the plain entry and, on win32, the Go target entry — mirroring the
-// individual deletes in `deleteProfileKeyringEntry`. Without this, a Go-written
-// project credential would survive `logout` on Windows.
+// Go writes Windows credentials under the target-shaped form
+// (`Supabase CLI:<account>`), invisible to the plain enumeration below, so
+// it's swept separately. `findCredentials` decodes every matched blob and
+// aborts entirely on one undecodable entry, unlike Go's raw-byte `wincred.List`.
 const deleteAllKeyringEntries = (
   module: KeyringModule,
   platform: RuntimePlatform,
 ): Effect.Effect<void> =>
   Effect.sync(() => {
+    if (platform === "win32") {
+      try {
+        const entries = module.findCredentials(
+          KEYRING_SERVICE,
+          `${goWindowsCredentialTarget("")}*`,
+        );
+        for (const { account } of entries) {
+          deleteGoWindowsTarget(module, account);
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
     let entries: ReadonlyArray<{ account: string }>;
     try {
       entries = module.findCredentials(KEYRING_SERVICE);
@@ -304,9 +341,6 @@ const deleteAllKeyringEntries = (
         new module.Entry(KEYRING_SERVICE, account).deleteCredential();
       } catch {
         // best-effort per entry
-      }
-      if (platform === "win32" && readGoWindowsTarget(module, account)) {
-        deleteGoWindowsTarget(module, account);
       }
     }
   });

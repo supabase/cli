@@ -1205,10 +1205,11 @@ const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: stri
 const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
-  const result = yield* runChildProcess("docker", ["exec", kongId, "kong", "reload"], {
-    stdout: "ignore",
-    stderr: "pipe",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  const result = yield* runChildProcess(
+    "docker",
+    ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
+    { stdout: "ignore", stderr: "pipe" },
+  ).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
 
   if (result.exitCode !== 0) {
     const suffix = result.stderr.trim().length > 0 ? ` ${result.stderr.trim()}` : "";

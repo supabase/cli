@@ -129,7 +129,14 @@ func IsPgDeltaEnabled() bool {
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
-	return time.Now().UTC().Format(layoutVersion)
+	return GetVersionTimestamp(time.Now())
+}
+
+// GetVersionTimestamp formats t as a migration version (UTC `YYYYMMDDHHMMSS`).
+// Callers that write several ordered migration files in one pass add real time
+// offsets to a shared base rather than incrementing the formatted string.
+func GetVersionTimestamp(t time.Time) string {
+	return t.UTC().Format(layoutVersion)
 }
 
 func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
