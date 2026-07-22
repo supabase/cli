@@ -180,9 +180,11 @@ function setup(
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
 
   const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const registryEnvAtRunTime: Array<string | undefined> = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCalls.push(runOpts);
+      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
       if (opts.catalogExportFailWith !== undefined) {
         return Effect.fail(
           new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
@@ -233,7 +235,7 @@ function setup(
     edge,
     sslProbe,
   );
-  return { layer, out, conn, telemetry, linkedCache, edgeRunCalls };
+  return { layer, out, conn, telemetry, linkedCache, edgeRunCalls, registryEnvAtRunTime };
 }
 
 const MIGRATION_DIR = "supabase/migrations";
@@ -384,6 +386,35 @@ describe("legacy db push", () => {
       expect(out.stdoutText).toContain("Finished");
     });
   });
+
+  it.live(
+    "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
+    () => {
+      const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+      delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+      const { layer, registryEnvAtRunTime } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+        },
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
+        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+            else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+          }),
+        ),
+      );
+    },
+  );
 
   it.live("returns context canceled when the migration prompt is declined", () => {
     const { layer, conn } = setup(tmp.current, {

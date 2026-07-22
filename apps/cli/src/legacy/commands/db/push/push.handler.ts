@@ -9,6 +9,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
+  legacyApplyProjectEnv,
   legacyCheckDbToml,
   legacyLoadProjectEnv,
 } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -99,6 +100,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
+    yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
     // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local"), keyed off the
     // explicitly-set flags (cobra's `Changed`), not the `--linked` default value.
@@ -366,5 +368,6 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    Effect.scoped,
   );
 });
