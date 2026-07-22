@@ -508,6 +508,19 @@ describe("legacy functions serve integration", () => {
           },
         });
 
+        expect(deployMockState.runCalls).toContainEqual({
+          command: "docker",
+          args: [
+            "exec",
+            "supabase_kong_test-project",
+            "kong",
+            "reload",
+            "--nginx-conf",
+            "/home/kong/custom_nginx.template",
+          ],
+          options: { stdout: "ignore", stderr: "pipe" },
+        });
+
         expect(childSpawner.spawned).toEqual([
           {
             command: "docker",
