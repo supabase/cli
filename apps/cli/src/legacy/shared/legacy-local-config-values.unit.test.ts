@@ -22,6 +22,7 @@ import {
   legacyEnvOverrideApiMaxRows,
   legacyEnvOverrideDefaultPoolSize,
   legacyEnvOverrideEdgeRuntimePolicy,
+  legacyEnvOverrideMajorVersion,
   legacyEnvOverrideMaxClientConn,
   legacyEnvOverridePoolMode,
   legacyEnvOverrideRealtimeIpVersion,
@@ -947,6 +948,18 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "18446744073709551615";
       expect(() => legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).not.toThrow();
     });
+
+    // Guards against the base-0 grammar rewrite (`parseGoBaseZeroUint`) silently
+    // reintroducing precision loss or an unbounded parse for a non-decimal literal —
+    // `0x10000000000000000` is exactly 2^64, one past `LEGACY_UINT_MAX`, same as the
+    // decimal literal above, just routed through the hex branch instead of the plain
+    // decimal branch.
+    it("rejects a hex override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "0x10000000000000000";
+      expect(() => legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
+        "Failed reading config: Invalid realtime.max_header_length: 0x10000000000000000.",
+      );
+    });
   });
 
   describe("legacyEnvOverrideApiMaxRows", () => {
@@ -961,6 +974,69 @@ describe("legacyResolveLocalConfigValues", () => {
     it("overrides the configured value via the env var", () => {
       process.env["SUPABASE_API_MAX_ROWS"] = "500";
       expect(legacyEnvOverrideApiMaxRows(1000, undefined)).toBe(500);
+    });
+  });
+
+  // `legacyEnvOverrideMajorVersion` is exercised directly (rather than through the
+  // full `legacyResolveLocalConfigValues` pipeline, as the "db.major_version (required
+  // field in config)" describe block above does) so these assertions cover only
+  // `legacyEnvOverrideUint`'s base-0 grammar parsing, not `legacyValidateResolvedConfig`'s
+  // separate "is this a supported Postgres major version" switch — most of the octal/hex/
+  // binary literals below don't correspond to a supported major version and would fail
+  // that unrelated downstream check even once correctly parsed.
+  describe("legacyEnvOverrideMajorVersion", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_MAJOR_VERSION"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(17);
+    });
+
+    // Go's `strconv.ParseUint(str, 0, 64)` treats a bare leading zero followed by more
+    // digits as octal, not decimal — `"010"` is `8`, not `10` — a silent value
+    // divergence the old `/^\d+$/`-plus-`Number()` parsing didn't reproduce.
+    it("resolves an octal leading-zero override to its octal value, not decimal", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "010";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(8);
+    });
+
+    it("resolves a 0x-prefixed override as hex", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "0x10";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(16);
+    });
+
+    it("resolves a 0b-prefixed override as binary", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "0b101";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(5);
+    });
+
+    it("still resolves a plain decimal override with no leading zero", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "15";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(15);
+    });
+
+    // Underscore digit separators are only legal in Go's base-0 mode (Go 1.13+).
+    it("permits an underscore digit separator between decimal digits", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "1_000";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(1000);
+    });
+
+    // Go does NOT fall back to decimal when a bare-leading-zero literal contains an
+    // invalid octal digit — `"08"`/`"09"` are rejected outright, never read as 8/9.
+    it("rejects an invalid octal digit instead of silently falling back to decimal", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "08";
+      expect(() => legacyEnvOverrideMajorVersion(17, undefined)).toThrow(
+        "Failed reading config: Invalid db.major_version: 08.",
+      );
+    });
+
+    // `strconv.ParseUint` never accepts a leading sign, unlike `ParseInt`.
+    it("rejects a signed override", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "+5";
+      expect(() => legacyEnvOverrideMajorVersion(17, undefined)).toThrow(
+        "Failed reading config: Invalid db.major_version: +5.",
+      );
     });
   });
 

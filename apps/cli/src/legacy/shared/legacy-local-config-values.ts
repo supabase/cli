@@ -1111,19 +1111,63 @@ function readAuthEmailTemplateContent(email: LegacyResolvedAuthEmail, workdir: s
 const LEGACY_UINT_MAX = 18446744073709551615n; // 2^64 - 1
 
 /**
+ * Go-style base-0 unsigned integer literal parsing, matching `strconv.ParseUint(str, 0, bitSize)`
+ * — the same call {@link legacyEnvOverrideUint}'s callers all decode through (`mapstructure.go:791`,
+ * `decodeUint`). Base 0 auto-detects from a prefix: `0b`/`0B` → binary, `0o`/`0O` → octal, `0x`/`0X`
+ * → hex, and a BARE leading `0` followed by more digits is ALSO octal (so `"010"` parses as `8`, not
+ * `10` — a real footgun for a user zero-padding a value expecting decimal semantics). Underscores
+ * are permitted between digits (Go 1.13+, e.g. `"1_000"`), but ONLY in base-0 mode. `ParseUint`
+ * never accepts a leading `+`/`-` sign (unlike `ParseInt`) — verified against a real Go binary
+ * across prefix casing, underscore placement, invalid-octal-digit rejection (`"08"`/`"09"` do NOT
+ * fall back to decimal — Go rejects them outright), and sign rejection. Returns `undefined` (not a
+ * thrown error) for anything that isn't a valid literal, so the caller can produce its own
+ * consistently-shaped error message; deliberately does NOT bound-check the result against any
+ * particular bit width — that stays the caller's job (see {@link LEGACY_UINT_MAX}), matching
+ * `strconv.ParseUint`'s own separation of "parse the literal" from "does it fit in `bitSize` bits".
+ */
+function parseGoBaseZeroUint(value: string): bigint | undefined {
+  if (value.length === 0 || value.startsWith("+") || value.startsWith("-")) return undefined;
+
+  let literal: string | undefined;
+  if (/^0[bB](_?[01])+$/.test(value)) {
+    literal = `0b${value.slice(2).replaceAll("_", "")}`;
+  } else if (/^0[oO](_?[0-7])+$/.test(value)) {
+    literal = `0o${value.slice(2).replaceAll("_", "")}`;
+  } else if (/^0[xX](_?[0-9a-fA-F])+$/.test(value)) {
+    literal = `0x${value.slice(2).replaceAll("_", "")}`;
+  } else if (value.startsWith("0") && value.length > 1) {
+    // Go's default branch for a bare leading zero: always octal, with no fallback to decimal even
+    // when a later digit isn't valid octal (`"08"`/`"09"` are rejected, not read as decimal 8/9).
+    literal = /^[0-7](_?[0-7])*$/.test(value) ? `0o${value.replaceAll("_", "")}` : undefined;
+  } else {
+    literal = /^[0-9](_?[0-9])*$/.test(value) ? value.replaceAll("_", "") : undefined;
+  }
+  if (literal === undefined) return undefined;
+
+  try {
+    // `BigInt(...)` natively parses `0b`/`0o`/`0x`-prefixed string literals in the corresponding
+    // base — exactly the normalized, underscore-free literal built above.
+    return BigInt(literal);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * `SUPABASE_<NAME>` sibling of {@link legacyEnvOverridePort} for `uint`-typed config
  * fields with no upper-bound cap (`db.major_version`, `edge_runtime.
  * deno_version`, `auth.jwt_expiry`, `auth.refresh_token_reuse_interval`,
  * `auth.minimum_password_length`, …) — same generic Viper `AutomaticEnv`
  * binding (`config.go:576-586`), same mapstructure hard-fail-on-bad-value
- * semantics as the capped `uint16` port fields, but without `MAX_PORT`. A
- * non-digit override folds into the same generic "Invalid <field>" message
- * `legacyValidateResolvedConfig` produces for an out-of-set numeric value,
- * since Go's own decode failure and `Validate` failure for these fields
- * aren't independently distinguishable from the CLI's output the way
- * ports/bools are. Same reasoning for an override that overflows
- * {@link LEGACY_UINT_MAX} — `strconv.ParseUint` fails on it in Go, so it must
- * fail here too instead of silently losing precision through `Number(value)`.
+ * semantics as the capped `uint16` port fields, but without `MAX_PORT`. Parses
+ * with {@link parseGoBaseZeroUint} (Go's base-0 grammar — hex/octal/binary
+ * prefixes and a bare leading zero all parse differently than plain decimal),
+ * not plain decimal, since Go's own decode does the same. A non-parsing or
+ * out-of-{@link LEGACY_UINT_MAX} override folds into the same generic
+ * "Invalid <field>" message `legacyValidateResolvedConfig` produces for an
+ * out-of-set numeric value, since Go's own decode failure and `Validate`
+ * failure for these fields aren't independently distinguishable from the
+ * CLI's output the way ports/bools are.
  */
 export function legacyEnvOverrideUint(
   name: string,
@@ -1133,10 +1177,11 @@ export function legacyEnvOverrideUint(
 ): number {
   const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  if (!/^\d+$/.test(value) || BigInt(value) > LEGACY_UINT_MAX) {
+  const parsed = parseGoBaseZeroUint(value);
+  if (parsed === undefined || parsed > LEGACY_UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
-  return Number(value);
+  return Number(parsed);
 }
 
 /** `SUPABASE_DB_MAJOR_VERSION` — see {@link legacyEnvOverrideUint}. */
