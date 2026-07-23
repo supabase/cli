@@ -1,8 +1,11 @@
 import { Effect, Exit, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import { containerCliExitCode, spawnContainerCli } from "./legacy-container-cli.ts";
+import { spawnContainerCli } from "./legacy-container-cli.ts";
 import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
-import { LEGACY_SUGGEST_DOCKER_INSTALL } from "./legacy-docker-suggest.ts";
+import {
+  LEGACY_SUGGEST_DOCKER_INSTALL,
+  legacyIsDockerDaemonUnreachable,
+} from "./legacy-docker-suggest.ts";
 import { legacyGetRegistryImageUrlCandidates } from "./legacy-docker-registry.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -33,16 +36,22 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  * best registry candidate (already-local first, then pulled with retry),
  * mirroring Go's `DockerResolveImageIfNotCached` /
  * `DockerImagePullWithRetry` (`apps/cli-go/internal/utils/docker.go:304-343`).
- * A pull failure is retried unconditionally — Go retries on any non-nil error
- * as long as the context wasn't canceled, with no message-pattern gating — up
- * to 2 times per candidate (3 total attempts) with an escalating 4s/8s
- * backoff (`DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds
- * for `i` in `0,1`. A spawn failure (the Docker/Podman binary itself
- * couldn't be run) is a different, non-retryable case — see `spawnError`
- * below. Used by both the foreground `db dump`-style run-to-completion
- * containers (`legacy-docker-run.layer.ts`) and `start`'s detached,
- * long-running service containers — the resolve/pull/retry algorithm is
- * identical for both, only the caller's process lifecycle differs.
+ * The local-image check fails fast (never reaching the pull loop at all) when
+ * the daemon itself is unreachable — Go's own inspect call distinguishes a
+ * typed `errdefs.IsNotFound` from any other inspect error and returns the
+ * latter immediately (`docker.go:326-334`); see `hasLocalImage` below for how
+ * this port makes the same distinction from a CLI subprocess's stderr instead
+ * of a typed Engine API error. Once past that gate, a pull failure IS retried
+ * unconditionally — Go retries on any non-nil error as long as the context
+ * wasn't canceled, with no message-pattern gating — up to 2 times per
+ * candidate (3 total attempts) with an escalating 4s/8s backoff
+ * (`DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds for `i` in
+ * `0,1`. A spawn failure (the Docker/Podman binary itself couldn't be run) is
+ * a different, non-retryable case — see `spawnError` below. Used by both the
+ * foreground `db dump`-style run-to-completion containers
+ * (`legacy-docker-run.layer.ts`) and `start`'s detached, long-running service
+ * containers — the resolve/pull/retry algorithm is identical for both, only
+ * the caller's process lifecycle differs.
  *
  * `projectEnvValues` is optional (see `legacy-docker-registry.ts`'s doc
  * comment) — only `start` currently threads it through, since its caller
@@ -54,20 +63,41 @@ export function legacyMakeDockerImageResolver(
   spawner: Spawner,
   projectEnvValues?: Readonly<Record<string, string>>,
 ): (image: string) => Effect.Effect<string, LegacyDockerRunError> {
-  const hasLocalImage = (image: string): Effect.Effect<boolean> =>
-    // `stdin`/`stdout`/`stderr: "ignore"`: this only awaits the exit code, but
-    // `docker image inspect` writes the full image JSON to stdout on a cache
-    // hit, which can exceed the OS pipe buffer and deadlock the child against
-    // an unread default `"pipe"` stdio — see `legacy-docker-remove-all.ts`'s
-    // fuller explanation of this same hazard.
-    containerCliExitCode(spawner, ["image", "inspect", image], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    }).pipe(
-      Effect.map((exitCode) => exitCode === 0),
-      Effect.catch(() => Effect.succeed(false)),
-    );
+  const hasLocalImage = (image: string): Effect.Effect<boolean, LegacyDockerRunError> =>
+    Effect.gen(function* () {
+      // `stdout: "ignore"`: `docker image inspect` writes the full image JSON
+      // to stdout on a cache hit, which can exceed the OS pipe buffer and
+      // deadlock the child against an unread default `"pipe"` stdio — see
+      // `legacy-docker-remove-all.ts`'s fuller explanation of this same
+      // hazard. `stderr` IS captured (unlike a plain exit-code check) so a
+      // "daemon unreachable" response can be told apart from a genuine
+      // "image not found" — see this function's own doc comment above.
+      const handle = yield* spawnContainerCli(spawner, ["image", "inspect", image], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      }).pipe(Effect.mapError(() => spawnError()));
+      const stderrChunks: Array<Uint8Array> = [];
+      yield* Stream.runForEach(handle.stderr, (chunk) =>
+        Effect.sync(() => {
+          stderrChunks.push(chunk);
+        }),
+      ).pipe(Effect.mapError(() => spawnError()));
+      const exitCode = yield* handle.exitCode.pipe(
+        Effect.map(Number),
+        Effect.mapError(() => spawnError()),
+      );
+      if (exitCode === 0) return true;
+      const stderr = new TextDecoder().decode(concat(stderrChunks)).trim();
+      if (legacyIsDockerDaemonUnreachable(stderr)) {
+        return yield* Effect.fail(
+          new LegacyDockerRunError({
+            message: `failed to inspect docker image: ${stderr}\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+          }),
+        );
+      }
+      return false;
+    }).pipe(Effect.scoped);
 
   const pullImage = (
     image: string,
@@ -147,10 +177,12 @@ export function legacyMakeDockerImageResolver(
             }
           } else {
             // A failed effect (rather than a non-zero exit, which returns a
-            // value) means the container runtime could not be spawned at all.
-            // No registry candidate can fix a missing Docker/Podman binary or
-            // a down daemon, so stop here and surface the install hint instead
-            // of an opaque, repeated spawn error across every candidate.
+            // value) means the container runtime could not be spawned at all
+            // — a down daemon is caught earlier, by `hasLocalImage`'s own
+            // fail-fast check above, and never reaches this loop. No registry
+            // candidate can fix a missing Docker/Podman binary, so stop here
+            // and surface the install hint instead of an opaque, repeated
+            // spawn error across every candidate.
             return yield* Effect.fail(spawnError());
           }
 

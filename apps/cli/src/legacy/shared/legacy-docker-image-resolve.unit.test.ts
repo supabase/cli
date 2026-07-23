@@ -5,11 +5,19 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
 
 import { legacyMakeDockerImageResolver } from "./legacy-docker-image-resolve.ts";
+import { LEGACY_SUGGEST_DOCKER_INSTALL } from "./legacy-docker-suggest.ts";
+import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
 
 const REGISTRY_ENV = "SUPABASE_INTERNAL_IMAGE_REGISTRY";
 
 function mockSpawner(
   pullResults: ReadonlyArray<{ readonly exitCode: number; readonly stderr?: string }>,
+  // Defaults to a non-zero exit with empty stderr, which forces every
+  // candidate through the pull path instead of the already-cached shortcut —
+  // the behavior both existing pull-retry tests below rely on. A test
+  // covering `hasLocalImage`'s own fail-fast behavior overrides this to
+  // simulate a daemon-down `image inspect` response instead.
+  imageInspectResult: { readonly exitCode: number; readonly stderr?: string } = { exitCode: 1 },
 ) {
   const pulls: Array<string> = [];
   const imageInspectOptions: Array<ChildProcess.CommandOptions> = [];
@@ -19,15 +27,19 @@ function mockSpawner(
       const args = command._tag === "StandardCommand" ? command.args : [];
 
       if (args[0] === "image" && args[1] === "inspect") {
-        // Force every candidate through the pull path instead of the
-        // already-cached shortcut.
         if (command._tag === "StandardCommand") imageInspectOptions.push(command.options);
         const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-        yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(1));
+        yield* Deferred.succeed(
+          exitDeferred,
+          ChildProcessSpawner.ExitCode(imageInspectResult.exitCode),
+        );
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           stdout: Stream.empty,
-          stderr: Stream.empty,
+          stderr:
+            imageInspectResult.stderr !== undefined
+              ? Stream.fromIterable([new TextEncoder().encode(imageInspectResult.stderr)])
+              : Stream.empty,
           all: Stream.empty,
           exitCode: Deferred.await(exitDeferred),
           isRunning: Effect.succeed(false),
@@ -112,13 +124,14 @@ describe("legacyMakeDockerImageResolver", () => {
           expect(mock.pulls).toHaveLength(3);
           expect(error.message).toContain("no space left on device");
           expect(error.message).toContain("attempt 3");
-          // `image inspect`'s stdio must be fully ignored: nothing here reads
-          // it, and the default `"pipe"` stdio risks a write-buffer deadlock
-          // on a cache hit (see the doc comment in
-          // `legacy-docker-image-resolve.ts`).
+          // `image inspect`'s stdout must be fully ignored — the default
+          // `"pipe"` stdio risks a write-buffer deadlock on a cache hit (see
+          // the doc comment in `legacy-docker-image-resolve.ts`) — but
+          // stderr IS piped so a daemon-unreachable response can be told
+          // apart from a genuine cache miss.
           expect(mock.imageInspectOptions.length).toBeGreaterThan(0);
           for (const options of mock.imageInspectOptions) {
-            expect(options).toMatchObject({ stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+            expect(options).toMatchObject({ stdin: "ignore", stdout: "ignore", stderr: "pipe" });
           }
         } finally {
           globalThis.process.stderr.write = originalWrite;
@@ -158,5 +171,29 @@ describe("legacyMakeDockerImageResolver", () => {
           else process.env[REGISTRY_ENV] = previousRegistry;
         }
       }),
+  );
+
+  it.effect("fails fast on a daemon-unreachable image inspect without ever attempting a pull", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      process.env[REGISTRY_ENV] = "docker.io";
+
+      try {
+        const daemonUnreachableStderr =
+          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
+        const mock = mockSpawner([], { exitCode: 1, stderr: daemonUnreachableStderr });
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(LegacyDockerRunError);
+        expect(error.message).toContain(daemonUnreachableStderr);
+        expect(error.message).toContain(LEGACY_SUGGEST_DOCKER_INSTALL);
+        expect(mock.pulls).toHaveLength(0);
+      } finally {
+        if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+        else process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
   );
 });
