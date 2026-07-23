@@ -426,6 +426,52 @@ describe("legacyStartContainer secretFiles", () => {
   );
 
   it.live(
+    "keeps the staged secretFile at HOST mode 0644 even under a restrictive process umask (writeFile's `mode` is only a creation-time hint ANDed with the umask — without the explicit chmod, a 0077 umask would silently narrow the on-disk mode to 0600 and the non-root in-container reader would get EACCES)",
+    () => {
+      let hostPath: string | undefined;
+      let modeAtCreateTime: number | undefined;
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") {
+          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
+          if (bind !== undefined) {
+            hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
+            modeAtCreateTime = statSync(hostPath).mode & 0o777;
+          }
+          return { exitCode: 0, stdout: "container-id-umask\n" };
+        }
+        return { exitCode: 0 };
+      });
+
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      };
+
+      // `it.live`'s test function runs inside `Effect.suspend`, so a plain JS try/finally around
+      // this `return` would restore the umask synchronously right after CONSTRUCTING the effect
+      // pipeline below, before it actually runs — long before the real write+chmod happens.
+      // `Effect.ensuring` is the effect-native equivalent: it sequences the restore to run only
+      // after this effect actually completes, on success, failure, or defect alike.
+      return Effect.sync(() => process.umask(0o077)).pipe(
+        Effect.flatMap((originalUmask) =>
+          legacyStartContainer(mock.spawner, spec, {
+            projectId: "proj",
+            isBitbucketPipeline: false,
+            workdir,
+            extraHosts: [],
+          }).pipe(
+            Effect.map(() => {
+              expect(hostPath).toBeDefined();
+              expect(modeAtCreateTime).toBe(0o644);
+            }),
+            Effect.ensuring(Effect.sync(() => process.umask(originalUmask))),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.live(
     "removes any pre-existing directory at the deterministic path before writing fresh files (self-healing across config changes)",
     () => {
       const dir = join(workdir, "supabase", ".temp", "start-secrets", baseSpec.containerName);

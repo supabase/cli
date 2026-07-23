@@ -12,7 +12,7 @@
  * comment for why it is hoisted to run once instead of once per container.
  */
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Data, Effect, Stream } from "effect";
@@ -529,7 +529,12 @@ function legacyDockerStartContainer(
  * `<workdir>/supabase/.temp/start-secrets/<containerName>/` (matching this
  * codebase's existing `<workdir>/supabase/.temp/` convention for CLI-owned
  * scratch state — see `legacy-linked-project-cache.layer.ts`), directory mode
- * `0700` and one file per entry at mode `0644` — the directory stays
+ * `0700` and one file per entry force-`chmod`'d to mode `0644` after writing
+ * (a creation-time `writeFile({ mode })` is only ever the argument to the
+ * underlying `open()`/`creat()` syscall, which the kernel ANDs with `~umask`
+ * — under a restrictive shell umask like `077`/`027` the file would otherwise
+ * land at `0600`, unlike `chmod`, which sets the mode unconditionally) — the
+ * directory stays
  * owner-only (the kernel checks execute/search permission on this ancestor
  * directory before it ever checks a file's own mode, so no other local user
  * on the host can list the staged file names/count or read their contents
@@ -593,6 +598,11 @@ function legacyStageStartSecretFiles(
           secretFiles.map(async (secretFile, index) => {
             const hostPath = join(dir, `secret-${index}`);
             await writeFile(hostPath, secretFile.content, { mode: 0o644 });
+            // `writeFile`'s `mode` is only a creation-time hint the kernel ANDs with the
+            // process umask — force the final mode explicitly so a restrictive umask (e.g.
+            // `077`/`027`) can't silently narrow this to `0600` and break the non-root
+            // in-container reader (see this function's doc comment).
+            await chmod(hostPath, 0o644);
             return `${hostPath}:${secretFile.containerPath}:ro`;
           }),
         );
