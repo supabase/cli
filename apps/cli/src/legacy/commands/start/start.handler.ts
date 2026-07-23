@@ -759,11 +759,23 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     yield* wrapConfigOverride("auth.email.max_frequency", () =>
       legacyParseGoDuration(resolvedEmail.max_frequency),
     );
-    const smsForValidation = legacyResolveAuthSms(
-      asRecord(context.loaded?.document?.["auth"]),
-      config.auth.sms,
-      projectEnvValues,
-    );
+    // Wrapped like `resolvedEmail` above: `legacyResolveLocalConfigValues`'s own SMS validation
+    // only runs `if (authEnabled)` (`legacy-local-config-values.ts`), so this direct call is the
+    // ONLY place a malformed `auth.sms.*` override is ever caught when auth is disabled — an
+    // unwrapped throw here would surface as an Effect defect instead of the normal
+    // `LegacyStartInvalidConfigError` config-load failure.
+    const smsForValidation = yield* Effect.try({
+      try: () =>
+        legacyResolveAuthSms(
+          asRecord(context.loaded?.document?.["auth"]),
+          config.auth.sms,
+          projectEnvValues,
+        ),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
     yield* wrapConfigOverride("auth.sms.max_frequency", () =>
       legacyParseGoDuration(smsForValidation.max_frequency),
     );

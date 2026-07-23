@@ -2430,6 +2430,43 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails with a typed config error on a malformed auth.sms override even when auth itself is disabled",
+      () => {
+        // `legacyResolveLocalConfigValues` only validates `auth.sms.*` overrides inside its
+        // own `authEnabled` branch, so with auth disabled the unwrapped `legacyResolveAuthSms`
+        // call in `start.handler.ts` (used to detect the "no SMS provider enabled" warning)
+        // becomes the FIRST place `SUPABASE_AUTH_SMS_ENABLE_SIGNUP` gets parsed — a synchronous
+        // throw there would surface as an uncaught Effect defect instead. Same shape as the
+        // auth.email override regression test above, this override is read before any
+        // network/container work starts, so there is nothing yet for rollback to prune — the
+        // point of this test is solely that the typed LegacyStartInvalidConfigError surfaces
+        // instead of a defect.
+        const previous = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+        process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "bad";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+          }
+          expect(child.spawned).toHaveLength(0);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+              else process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "fails and rolls back when Postgres itself never becomes healthy within its configured health_timeout",
       () => {
         // `db.health_timeout` (unlike the generic 30s `serviceTimeout` every other service
