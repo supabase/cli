@@ -89,6 +89,20 @@ describe("legacyParseGoDuration", () => {
   it("accepts Go's actual maximum parseable duration without overflowing", () => {
     expect(() => legacyParseGoDuration("2562047h47m16.854775807s")).not.toThrow();
   });
+
+  // Regression test: an earlier fix's overflow bound was `Number(9223372036854775807n)`,
+  // which rounds UP to `9223372036854776000` — 193 past the true `math.MaxInt64`. That let
+  // this exact value (`2^63`, one nanosecond past Go's true ceiling) silently pass instead of
+  // being rejected like Go's real `time.ParseDuration` rejects it.
+  it('rejects a duration exactly 1ns past Go\'s true math.MaxInt64 ceiling ("9223372036854775808ns")', () => {
+    expect(() => legacyParseGoDuration("9223372036854775808ns")).toThrow(
+      'time: invalid duration "9223372036854775808ns"',
+    );
+  });
+
+  it("accepts a duration exactly at Go's true math.MaxInt64 ceiling in nanoseconds", () => {
+    expect(() => legacyParseGoDuration("9223372036854775807ns")).not.toThrow();
+  });
 });
 
 describe("legacyFormatGoDuration", () => {
