@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -289,6 +290,9 @@ func registryFromImage(imageTag string) string {
 func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
 	out, err := Docker.ImagePull(ctx, imageTag, image.PullOptions{
 		RegistryAuth: GetRegistryAuthForImage(imageTag),
+		// Prefer the host architecture so services like mailpit do not start
+		// with a wrong-arch binary (exec format error). See supabase/supabase#48224.
+		Platform: "linux/" + runtime.GOARCH,
 	})
 	if err != nil {
 		return errors.Errorf("failed to pull docker image: %w", err)

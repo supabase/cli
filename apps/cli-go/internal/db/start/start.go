@@ -213,11 +213,20 @@ func WaitForHealthyService(ctx context.Context, timeout time.Duration, started .
 	policy := NewBackoffPolicy(ctx, timeout)
 	err := backoff.Retry(probe, policy)
 	if err != nil && !errors.Is(err, context.Canceled) {
-		// Print container logs for easier debugging
+		// Print container logs for easier debugging and suggest recovery steps.
+		var logBuf strings.Builder
 		for _, containerId := range started {
 			fmt.Fprintln(os.Stderr, containerId, "container logs:")
-			if err := utils.DockerStreamLogsOnce(context.Background(), containerId, os.Stderr, os.Stderr); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+			w := io.MultiWriter(os.Stderr, &logBuf)
+			if logErr := utils.DockerStreamLogsOnce(context.Background(), containerId, w, w); logErr != nil {
+				fmt.Fprintln(os.Stderr, logErr)
+			}
+		}
+		if suggestion := SuggestFromUnhealthyLogs(logBuf.String()); len(suggestion) > 0 {
+			if len(utils.CmdSuggestion) > 0 {
+				utils.CmdSuggestion += "\n\n" + suggestion
+			} else {
+				utils.CmdSuggestion = suggestion
 			}
 		}
 	}
