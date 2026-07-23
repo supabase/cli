@@ -929,6 +929,24 @@ describe("legacyResolveLocalConfigValues", () => {
         }),
       ).toBe(16384);
     });
+
+    // Go's `uint` is 64 bits wide on every platform this CLI ships for, decoded via
+    // mapstructure's `decodeUint` (`strconv.ParseUint(str, 0, 64)`) under Viper's
+    // `WeaklyTypedInput: true`. A value one past `2^64-1` genuinely fails that parse in Go, so
+    // it must be rejected here too instead of silently losing precision through `Number(value)`.
+    it("rejects an override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "18446744073709551616";
+      expect(() => legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
+        "Failed reading config: Invalid realtime.max_header_length: 18446744073709551616.",
+      );
+    });
+
+    // Guards against an overcorrected fix that used an imprecise `Number`-based bound and
+    // rejected values Go itself still accepts.
+    it("accepts an override of exactly the uint64 max (2^64-1)", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "18446744073709551615";
+      expect(() => legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).not.toThrow();
+    });
   });
 
   describe("legacyEnvOverrideApiMaxRows", () => {

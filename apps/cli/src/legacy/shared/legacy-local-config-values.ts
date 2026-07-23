@@ -1101,6 +1101,15 @@ function readAuthEmailTemplateContent(email: LegacyResolvedAuthEmail, workdir: s
   }
 }
 
+// Go's decode-time overflow bound for every field routed through {@link legacyEnvOverrideUint}:
+// they are all plain Go `uint`, 64 bits wide on every platform this CLI ships for (amd64/arm64),
+// decoded via mapstructure's `decodeUint` under Viper's default `WeaklyTypedInput: true`
+// (`strconv.ParseUint(str, 0, 64)` — `viper.go:988` sets the flag, `config.go:749` never
+// overrides it). `BigInt`, not `Number`, comparison: a JS `Number` can't exactly represent values
+// this close to `2^64`, so a `Number.MAX_SAFE_INTEGER`-based check would incorrectly reject
+// legitimate large `uint64` values Go itself still accepts.
+const LEGACY_UINT_MAX = 18446744073709551615n; // 2^64 - 1
+
 /**
  * `SUPABASE_<NAME>` sibling of {@link legacyEnvOverridePort} for `uint`-typed config
  * fields with no upper-bound cap (`db.major_version`, `edge_runtime.
@@ -1112,7 +1121,9 @@ function readAuthEmailTemplateContent(email: LegacyResolvedAuthEmail, workdir: s
  * `legacyValidateResolvedConfig` produces for an out-of-set numeric value,
  * since Go's own decode failure and `Validate` failure for these fields
  * aren't independently distinguishable from the CLI's output the way
- * ports/bools are.
+ * ports/bools are. Same reasoning for an override that overflows
+ * {@link LEGACY_UINT_MAX} — `strconv.ParseUint` fails on it in Go, so it must
+ * fail here too instead of silently losing precision through `Number(value)`.
  */
 export function legacyEnvOverrideUint(
   name: string,
@@ -1122,7 +1133,7 @@ export function legacyEnvOverrideUint(
 ): number {
   const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  if (!/^\d+$/.test(value)) {
+  if (!/^\d+$/.test(value) || BigInt(value) > LEGACY_UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
   return Number(value);
