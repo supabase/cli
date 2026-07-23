@@ -116,6 +116,7 @@ Creating vector bucket: <name>
 Pruning vector bucket: <name>
 Uploading: <objects_path>/<rel> => <bucket>/<rel>
 Skipping non-regular file: <path>
+Skipping OS metadata file: <path>
 WARNING: Vector buckets are not available in this project's region yet. Skipping vector bucket seeding.
 WARNING: Vector buckets are not available in the local storage service. If this project is linked, run `supabase link` to update service versions, then restart the local stack. Skipping vector bucket seeding.
 ```

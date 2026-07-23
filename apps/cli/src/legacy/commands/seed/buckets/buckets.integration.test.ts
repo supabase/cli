@@ -1285,6 +1285,95 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("skips OS metadata files during the object walk (CLI-1950)", () => {
+    // .DS_Store (macOS Finder), Thumbs.db and desktop.ini (Windows Explorer)
+    // must never be uploaded as seeded objects — they are never even attempted,
+    // covering the "silently becomes a public object" failure mode, not just
+    // an upload-time abort.
+    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+    writeFileSync(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
+    writeFileSync(join(tmp.current, "supabase", "assets", "Thumbs.db"), "junk");
+    writeFileSync(join(tmp.current, "supabase", "assets", "desktop.ini"), "junk");
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/object/", body: {} },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Skipping OS metadata file: supabase/assets/.DS_Store");
+      expect(out.stderrText).toContain("Skipping OS metadata file: supabase/assets/Thumbs.db");
+      expect(out.stderrText).toContain("Skipping OS metadata file: supabase/assets/desktop.ini");
+      expect(out.stderrText).toContain("Uploading: supabase/assets/a.txt => images/a.txt");
+      const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+      expect(uploads).toHaveLength(1);
+    });
+  });
+
+  it.live(
+    "skips a .DS_Store file in a MIME-restricted bucket instead of uploading it (CLI-1950)",
+    () => {
+      // Reproduces the original bug report shape: a bucket with allowed_mime_types
+      // restricted to images. The test harness's mock HTTP route doesn't enforce
+      // allowed_mime_types server-side (that's real Storage-service behavior), so
+      // this doesn't simulate the 415 abort itself — it asserts the junk file is
+      // skipped and never uploaded, while the real image file still uploads.
+      mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "assets", "logo.png"), "fake-png-bytes");
+      writeFileSync(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: [
+          "[storage.buckets.images]",
+          "public = true",
+          'allowed_mime_types = ["image/png"]',
+          'objects_path = "./assets"',
+        ].join("\n"),
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/object/", body: {} },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("Skipping OS metadata file: supabase/assets/.DS_Store");
+        expect(out.stderrText).toContain("Uploading: supabase/assets/logo.png => images/logo.png");
+        const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+        expect(uploads).toHaveLength(1);
+      });
+    },
+  );
+
+  it.live("skips a .DS_Store file when objects_path points directly at it (CLI-1950)", () => {
+    // Covers collectFiles' single-file branch: objects_path resolves directly to
+    // a junk-named file rather than a directory.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", ".DS_Store"), "junk");
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./.DS_Store"\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Skipping OS metadata file: supabase/.DS_Store");
+      const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+      expect(uploads).toHaveLength(0);
+    });
+  });
+
   // Root bypasses POSIX permission bits, so chmod 000 wouldn't block open() there
   // and the open-vs-stat distinction this test relies on would vanish.
   const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
