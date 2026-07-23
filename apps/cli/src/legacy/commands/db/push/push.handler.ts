@@ -24,7 +24,7 @@ import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-fla
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { redactLegacyConnectionString } from "../../../shared/legacy-db-config.parse.ts";
-import { legacyParseBoolEnv, legacyShouldUsePgDelta } from "../shared/legacy-diff-engine.ts";
+import { legacyParseBoolEnv } from "../shared/legacy-diff-engine.ts";
 import {
   legacyListLocalMigrations,
   legacyTryCacheMigrationsCatalog,
@@ -295,11 +295,9 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             }
             yield* legacyUpsertVaultSecrets(session, vaultSecrets);
             yield* legacyApplyMigrations(session, fs, path, pending, applyError);
-            const cacheEnabled = legacyShouldUsePgDelta({
-              configEnabled: toml.pgDelta.enabled,
-              usePgDeltaFlag: false,
-              envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-            });
+            const cacheEnabled =
+              toml.pgDelta.enabled ||
+              legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
             const pgDeltaCtx: LegacyPgDeltaContext = {
               projectId: Option.getOrElse(cliConfig.projectId, () => ""),
               cwd: workdir,
