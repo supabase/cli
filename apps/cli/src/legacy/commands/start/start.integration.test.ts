@@ -2176,15 +2176,46 @@ content_path = "./templates/custom_notice.html"
         // `signalAwareProgram` wrapper (`shared/cli/run.ts`) calling `Fiber.interrupt`, and on
         // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
         // pure interrupt's `Cause`).
-        const { layer, child } = setup();
+        //
+        // Marking the `db` container never-healthy (mirroring the neighboring "post-bring-up
+        // bulk health-check" test below) keeps `bringUp`'s own Postgres health-check wait
+        // genuinely retrying on its real 1-second `Schedule.spaced` backoff, rather than relying
+        // on merely observing a `create` call: `mockStartContainerCliSpawner`'s synchronous,
+        // zero-delay mock lets a whole bring-up (10+ containers, no real waits of its own) run to
+        // full completion inside `Effect.forkChild({ startImmediately: true })`'s synchronous
+        // startup window, before this test's own polling loop ever gets scheduled — making
+        // `Fiber.interrupt` a no-op on an already-succeeded fiber and `rollbackWasAttempted`
+        // flakily `false`.
+        const neverHealthy = new Set<string>();
+        const route = defaultRoute({ neverHealthy });
+        let dbContainerId: string | undefined;
+        const { layer, child } = setup({
+          route: (args) => {
+            if (args[0] === "create") {
+              const name = containerNameFromCreateArgs(args);
+              if (name.includes("_db_")) {
+                neverHealthy.add(name);
+                dbContainerId = name;
+              }
+            }
+            return route(args);
+          },
+        });
         return Effect.gen(function* () {
           const fiber = yield* legacyStart(flags()).pipe(
             Effect.provide(layer),
             Effect.forkChild({ startImmediately: true }),
           );
-          // Wait until Postgres has actually been created, proving Docker work is underway
-          // before interrupting — this must not race a no-op interrupt before bring-up starts.
-          while (!child.spawned.some((s) => s.args[0] === "create")) {
+          // Wait until Postgres's own health check has actually probed the never-healthy `db`
+          // container at least once — proving the fiber is genuinely suspended inside
+          // `bringUp`'s health-check retry loop, not merely past the `create` call.
+          while (
+            dbContainerId === undefined ||
+            !child.spawned.some(
+              (s) =>
+                s.args[0] === "container" && s.args[1] === "inspect" && s.args[2] === dbContainerId,
+            )
+          ) {
             yield* Effect.sleep("5 millis");
           }
           // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
