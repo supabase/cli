@@ -1598,8 +1598,15 @@ const LEGACY_SMS_PROVIDER_ORDER = [
  *
  * Presence-gated per provider (the raw `[auth.sms.<provider>]` table must exist), matching
  * `AutomaticEnv`'s "only intercepts keys already present in the merged config" behavior — same
- * gate {@link validateAuthSmsProviders} used before this was hoisted out of it. When a provider's
- * table is absent, its decoded (schema-default) values pass through unchanged, still decrypting
+ * gate {@link validateAuthSmsProviders} used before this was hoisted out of it. `twilio` is the
+ * one exception: Go's ejected default `config.toml` (`pkg/config/templates/config.toml:288-293`)
+ * unconditionally emits an UNCOMMENTED `[auth.sms.twilio]` table, merged into Viper
+ * (`mergeDefaultValues`, `config.go:690-698`) before the user's own file — so `auth.sms.twilio.*`
+ * is always registered with Viper and `SUPABASE_AUTH_SMS_TWILIO_*` overrides apply with no
+ * user-declared table, confirmed empirically against the real Go binary. The other 4 providers get
+ * no default template entry at all (not even commented out), so they keep the presence gate. When
+ * a (non-twilio) provider's table is absent, its decoded (schema-default) values pass through
+ * unchanged, still decrypting
  * the one `config.Secret`-typed field per provider (`pkg/config/auth.go:339,345,351,358`) for
  * parity with this function's (now-superseded) `resolveGotrueSms` precursor, which decrypted all
  * 5 providers unconditionally.
@@ -1622,6 +1629,8 @@ export function legacyResolveAuthSms(
   const smsDoc = asRecord(authDocument?.["sms"]);
 
   function providerPresent(providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number]): boolean {
+    // `twilio` is always considered present — see this function's doc comment.
+    if (providerName === "twilio") return true;
     return smsDoc !== undefined && asRecord(smsDoc[providerName]) !== undefined;
   }
 
@@ -1815,7 +1824,9 @@ export interface LegacyResolvedAuthExternalProvider {
  * `@supabase/config`'s schema always decodes a fixed set of ~19 known
  * providers, each defaulting `enabled: false` regardless of TOML presence — so
  * presence must be read from the raw document, same approach
- * {@link validateAuthExternalProviders} below uses.
+ * {@link validateAuthExternalProviders} below uses. `apple` is the one
+ * exception, unioned into the iterated provider set unconditionally — see the
+ * inline comment at the iteration below for why.
  *
  * `auth.external.<name>.*` is Viper-bound like every other nested field once
  * `[auth.external.<name>]` is present in config.toml (`ExperimentalBindStruct`/
@@ -1900,17 +1911,26 @@ export function legacyResolveAuthExternalProviders(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): Record<string, LegacyResolvedAuthExternalProvider> {
   const externalDoc = asRecord(authDocument?.["external"]);
-  if (externalDoc === undefined) return {};
 
   const result: Record<string, LegacyResolvedAuthExternalProvider> = {};
   const decodedProviders = new Map(Object.entries(external));
   // Iterate the RAW document's keys, not `Object.entries(external)` — see this
   // function's doc comment above for why (unmodeled/custom provider names).
-  for (const name of Object.keys(externalDoc)) {
+  // `apple` is unioned in unconditionally: Go's ejected default config.toml
+  // (`pkg/config/templates/config.toml:322-335`) unconditionally emits an
+  // UNCOMMENTED `[auth.external.apple]` table, merged into Viper
+  // (`mergeDefaultValues`, `config.go:690-699`) before the user's own file — so
+  // `auth.external.apple.*` is always registered with Viper and
+  // `SUPABASE_AUTH_EXTERNAL_APPLE_*` overrides apply with no user-declared table,
+  // confirmed against the actual Go source. Every other provider has no default
+  // template entry (just named in a comment), so they keep the raw-document
+  // presence gate below.
+  const providerNames = new Set([...Object.keys(externalDoc ?? {}), "apple"]);
+  for (const name of providerNames) {
     if (LEGACY_DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
     const envPrefix = `SUPABASE_AUTH_EXTERNAL_${name.toUpperCase()}`;
     const provider = decodedProviders.get(name);
-    const rawProvider = provider === undefined ? asRecord(externalDoc[name]) : undefined;
+    const rawProvider = provider === undefined ? asRecord(externalDoc?.[name]) : undefined;
     if (provider === undefined && rawProvider === undefined) continue;
     const configuredEnabled =
       provider?.enabled ??

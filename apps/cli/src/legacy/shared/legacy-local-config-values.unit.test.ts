@@ -1223,6 +1223,45 @@ describe("legacyResolveLocalConfigValues", () => {
         legacyResolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
       ).toThrow('cannot parse "1,2" as a bool');
     });
+
+    it("resolves apple purely from env overrides even with no config.toml [auth.external] section at all, matching Go's ejected default template", () => {
+      const projectEnvValues = {
+        SUPABASE_AUTH_EXTERNAL_APPLE_ENABLED: "true",
+        SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID: "apple-client-id",
+        SUPABASE_AUTH_EXTERNAL_APPLE_SECRET: "apple-secret",
+        SUPABASE_AUTH_EXTERNAL_APPLE_URL: "https://appleid.apple.com",
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        undefined,
+        baseConfig().auth.external,
+        projectEnvValues,
+      );
+      expect(resolved["apple"]).toEqual({
+        enabled: true,
+        clientId: "apple-client-id",
+        secret: "apple-secret",
+        url: "https://appleid.apple.com",
+        redirectUri: "",
+        skipNonceCheck: false,
+        emailOptional: false,
+      });
+    });
+
+    it("does not synthesize any other provider purely from an env override with no TOML table, only apple gets Go's default-template exception", () => {
+      const projectEnvValues = {
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_ENABLED: "true",
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: "google-client-id",
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        undefined,
+        baseConfig().auth.external,
+        projectEnvValues,
+      );
+      expect(resolved["google"]).toBeUndefined();
+      // apple is still unconditionally present (Go's default template), but unaffected by
+      // the unrelated google env vars above.
+      expect(resolved["apple"]?.enabled).toBe(false);
+    });
   });
 
   describe("legacyRawUnmodeledBool", () => {
@@ -2325,9 +2364,40 @@ describe("legacyResolveLocalConfigValues", () => {
       ).toThrow("Missing required field in config: auth.sms.messagebird.originator");
     });
 
-    it("does not synthesize a provider purely from an env override when the section is absent from the document", () => {
+    it("throws for a provider enabled only via env with missing required fields even when the document has no auth.sms section at all", () => {
+      // Unlike the other 4 providers, twilio's presence is NOT gated on the document: Go's
+      // ejected default config.toml (`pkg/config/templates/config.toml:288-293`) always emits an
+      // uncommented `[auth.sms.twilio]` table, so `mergeDefaultValues` registers
+      // `auth.sms.twilio.*` with Viper even when the user's own config.toml has no `[auth.sms]`
+      // section at all — `SUPABASE_AUTH_SMS_TWILIO_ENABLED` applies with nothing left to supply
+      // the required credentials, so this now fails validation instead of silently doing nothing.
       process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
       const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: auth.sms.twilio.account_sid",
+      );
+    });
+
+    it("resolves a fully env-only twilio configuration with no auth.sms.twilio document section", () => {
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"] = "AC123";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID"] = "MG123";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN"] = "tok";
+      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      expect(resolved.twilio.enabled).toBe(true);
+      expect(resolved.twilio.account_sid).toBe("AC123");
+      expect(resolved.twilio.message_service_sid).toBe("MG123");
+      expect(resolved.twilio.auth_token).toBe("tok");
+    });
+
+    it("still does not synthesize messagebird purely from an env override when the section is absent from the document", () => {
+      // messagebird (like twilio_verify/textlocal/vonage) has no entry at all in Go's default
+      // template, so an absent `[auth.sms.messagebird]` table genuinely means Viper never
+      // registers it — the presence gate is still correct parity for these 4 providers.
+      process.env["SUPABASE_AUTH_SMS_MESSAGEBIRD_ENABLED"] = "true";
+      const config = baseConfig();
+      const resolved = legacyResolveAuthSms(undefined, config.auth.sms, undefined);
+      expect(resolved.messagebird.enabled).toBe(false);
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
   });
