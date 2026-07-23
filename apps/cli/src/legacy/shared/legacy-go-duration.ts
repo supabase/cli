@@ -21,12 +21,21 @@ const NS_PER_HOUR = 60 * NS_PER_MINUTE;
 const NS_PER_MS = 1_000_000;
 const NS_PER_US = 1_000;
 
+// Go's `time.Duration` ceiling (`math.MaxInt64` nanoseconds, ~292.47 years) — `time.ParseDuration`
+// rejects any value whose accumulated nanosecond count would exceed this. Converted from a
+// `BigInt` literal (exact) rather than written as a `number` literal directly, since
+// `9223372036854775807` itself isn't exactly representable as a float64.
+const MAX_INT64_NS = Number(9223372036854775807n);
+
 /**
  * Port of Go `time.ParseDuration`. Returns nanoseconds as a number. Accepts
  * the same grammar Go does: a possibly-signed sequence of decimal numbers,
  * each with a unit suffix (`"ns"`, `"us"`/`"µs"`, `"ms"`, `"s"`, `"m"`, `"h"`),
  * e.g. `"5s"`, `"1h30m"`, `"300ms"`. Throws on invalid input, matching Go's
- * own `errors.New("time: invalid duration ...")` failure mode.
+ * own `errors.New("time: invalid duration ...")` failure mode — including
+ * overflowing `math.MaxInt64` nanoseconds (Go's real max parseable duration
+ * is `2562047h47m16.854775807s`) and a fractional remainder that would
+ * truncate to a sub-nanosecond value.
  */
 export function legacyParseGoDuration(value: string): number {
   const orig = value;
@@ -103,7 +112,13 @@ export function legacyParseGoDuration(value: string): number {
       throw new Error(`time: unknown unit in duration "${orig}"`);
     }
 
-    total += n * unitNs + Math.round((frac / post) * unitNs);
+    // Go converts the fractional remainder via `uint64(float64(f) * (float64(unit)/scale))` —
+    // a float64->uint64 conversion, which truncates toward zero, not rounds: `"0.5ns"` becomes
+    // `0`, not `1`.
+    total += n * unitNs + Math.trunc((frac / post) * unitNs);
+    if (total > MAX_INT64_NS) {
+      throw new Error(`time: invalid duration "${orig}"`);
+    }
   }
 
   return neg ? -total : total;

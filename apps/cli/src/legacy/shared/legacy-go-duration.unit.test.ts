@@ -67,6 +67,28 @@ describe("legacyParseGoDuration", () => {
   it("rejects an unknown unit", () => {
     expect(() => legacyParseGoDuration("5x")).toThrow('time: unknown unit in duration "5x"');
   });
+
+  // Go converts the fractional remainder via a float64->uint64 conversion,
+  // which truncates toward zero rather than rounding — `"0.5ns"` must become
+  // `0`, not `1`.
+  it('truncates a sub-nanosecond fraction instead of rounding ("0.5ns")', () => {
+    expect(legacyParseGoDuration("0.5ns")).toBe(0);
+  });
+
+  it('truncates a sub-nanosecond fraction instead of rounding ("1.9ns")', () => {
+    expect(legacyParseGoDuration("1.9ns")).toBe(1);
+  });
+
+  // Go's `time.Duration` is bounded by `math.MaxInt64` nanoseconds
+  // (~292.47 years); `time.ParseDuration` rejects any value whose
+  // accumulated nanosecond count would exceed it.
+  it('rejects a duration that overflows math.MaxInt64 nanoseconds ("2562048h")', () => {
+    expect(() => legacyParseGoDuration("2562048h")).toThrow('time: invalid duration "2562048h"');
+  });
+
+  it("accepts Go's actual maximum parseable duration without overflowing", () => {
+    expect(() => legacyParseGoDuration("2562047h47m16.854775807s")).not.toThrow();
+  });
 });
 
 describe("legacyFormatGoDuration", () => {
