@@ -40,6 +40,14 @@ const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
 
 /**
+ * Well-known OS metadata files (macOS Finder, Windows Explorer) that must
+ * never be uploaded as seeded objects — see CLI-1950. Go has no equivalent
+ * skip; this is an intentional TS-only improvement over Go's current (also
+ * buggy) behavior.
+ */
+const osJunkFileNames = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
+
+/**
  * Mirrors Go's `ValidateBucketName` regex (`apps/cli-go/pkg/config/config.go:1382`).
  * Used to validate `[storage.buckets]` names before any Storage API call, matching
  * Go's config-load-time check (`config.go:899-903`). Vector and analytics names are
@@ -566,6 +574,10 @@ const collectFiles = (
       return yield* collectDir(fs, path, output, absRoot, displayRoot);
     }
     if (info.type === "File") {
+      if (osJunkFileNames.has(path.basename(displayRoot))) {
+        yield* output.raw(`Skipping OS metadata file: ${displayRoot}\n`, "stderr");
+        return [];
+      }
       return [{ absPath: absRoot, displayPath: displayRoot }];
     }
     yield* output.raw(`Skipping non-regular file: ${displayRoot}\n`, "stderr");
@@ -585,6 +597,10 @@ const collectDir = (
     for (const name of names) {
       const absChild = path.join(absDir, name);
       const displayChild = path.join(displayDir, name);
+      if (osJunkFileNames.has(name)) {
+        yield* output.raw(`Skipping OS metadata file: ${displayChild}\n`, "stderr");
+        continue;
+      }
       // `readLink` succeeds only on a symlink — our no-follow detector (Effect's
       // `stat` follows symlinks and has no `lstat`).
       const isSymlink = yield* fs.readLink(absChild).pipe(
