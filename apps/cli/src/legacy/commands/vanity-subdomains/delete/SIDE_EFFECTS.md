@@ -41,9 +41,9 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups         |
-| ---------------------- | ------------------------------------------ | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+| Event                  | When                                                                                           | Notable properties / groups         |
+| ---------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` |
 
 ## Output
 
@@ -70,4 +70,6 @@ One `result` event when the legacy `--output` flag is unset.
 ## Notes
 
 - The legacy `--output` flag wins over TS `--output-format` when both are provided.
-- `linked-project.json` is written after ref resolution, even when the API call fails.
+- `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
+  even when the API call fails. A closed gate writes nothing (Go's `PersistentPreRunE` fails
+  before `PersistentPostRun` runs).

@@ -41,10 +41,10 @@
 
 ## Telemetry Events Fired
 
-| Event                   | When                                       | Notable properties / groups                |
-| ----------------------- | ------------------------------------------ | ------------------------------------------ |
-| `cli_command_executed`  | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags`        |
-| `cli_upgrade_suggested` | gated 4xx responses only                   | `feature_key=vanity_subdomain`, `org_slug` |
+| Event                   | When                                                                                           | Notable properties / groups                |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `cli_command_executed`  | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags`        |
+| `cli_upgrade_suggested` | gated 4xx responses only                                                                       | `feature_key=vanity_subdomain`, `org_slug` |
 
 ## Output
 
@@ -71,5 +71,12 @@ One `result` event with the full response object.
 ## Notes
 
 - The legacy `--output` flag wins over TS `--output-format` when both are provided.
-- `linked-project.json` is written after ref resolution, even when the API call fails.
+- `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
+  even when the API call fails. A closed gate writes nothing (Go's `PersistentPreRunE` fails
+  before `PersistentPostRun` runs).
 - On gated 4xx responses this command prints an upgrade suggestion and fires `cli_upgrade_suggested`.
+- Known divergence from Go: when both `--desired-subdomain` and `--experimental` are omitted,
+  the TS parser rejects the missing required flag before the handler runs, so the
+  missing-required-flag error is reported where Go's gate error wins (cobra validates required
+  flags only after `PersistentPreRunE`). Exit code is `1` either way; each error names the
+  exact flag to add.
