@@ -162,7 +162,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   }
 
   if (gate === undefined) {
-    if (opts.featureKey === undefined) {
+    if (opts.featureKey === undefined || opts.featureKey === "") {
       return;
     }
 
