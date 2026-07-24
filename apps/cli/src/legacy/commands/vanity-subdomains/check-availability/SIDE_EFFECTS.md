@@ -36,6 +36,7 @@
 | `0`  | success                                                                                                                                         |
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
 | `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
+| `1`  | `--desired-subdomain` omitted (`LegacyDesiredSubdomainRequiredError`) — checked after gate/login/ref resolution; telemetry still fires          |
 | `1`  | API non-2xx (`LegacyVanitySubdomainsCheckUnexpectedStatusError`)                                                                                |
 | `1`  | transport failure (`LegacyVanitySubdomainsCheckNetworkError`)                                                                                   |
 
@@ -76,8 +77,11 @@ One `result` event with the full response object.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
   even when the API call fails. A closed gate writes nothing (Go's `PersistentPreRunE` fails
   before `PersistentPostRun` runs).
-- Known divergence from Go: when both `--desired-subdomain` and `--experimental` are omitted,
-  the TS parser rejects the missing required flag before the handler runs, so the
-  missing-required-flag error is reported where Go's gate error wins (cobra validates required
-  flags only after `PersistentPreRunE`). Exit code is `1` either way; each error names the
-  exact flag to add.
+- `--desired-subdomain` is required in Go (`cmd/vanitySubdomains.go:69`) but cobra validates
+  required flags only after `PersistentPreRunE` (gate → login → ref resolution), so the TS flag
+  is optional at parse time and enforced in the handler with cobra's exact wording
+  (`required flag(s) "desired-subdomain" not set`). The gate/login/ref errors win over the
+  missing flag, matching Go's ordering, and — as in Go, where `PersistentPostRun` still runs —
+  telemetry and `linked-project.json` are written on this failure. An explicit empty value
+  (`--desired-subdomain ""`) passes the check and reaches the API, as cobra only requires the
+  flag to be set.

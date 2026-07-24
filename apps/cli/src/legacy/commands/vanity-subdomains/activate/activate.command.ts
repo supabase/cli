@@ -17,8 +17,15 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
+  // Go marks this flag required (`cmd/vanitySubdomains.go:67`), but cobra
+  // validates required flags only AFTER `PersistentPreRunE`
+  // (`cobra@v1.10.2/command.go:985,1005`) — so the `--experimental` gate,
+  // login check, and project-ref resolution must all win over a missing
+  // `--desired-subdomain`. Optional at parse time; presence is enforced in
+  // the handler (after ref resolution) instead.
   desiredSubdomain: Flag.string("desired-subdomain").pipe(
     Flag.withDescription("The desired vanity subdomain to use for your Supabase project."),
+    Flag.optional,
   ),
 } as const;
 

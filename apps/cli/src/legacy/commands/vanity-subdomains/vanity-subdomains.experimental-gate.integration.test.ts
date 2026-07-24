@@ -79,18 +79,21 @@ function setup() {
 }
 
 describe("legacy vanity-subdomains experimental gate (Go PersistentPreRunE parity)", () => {
-  // `check-availability` and `activate` pass `--desired-subdomain` so the run
-  // gets past flag parsing — the gate under test lives in the handler pipeline,
-  // which the parser must reach first.
+  // `check-availability` and `activate` deliberately OMIT `--desired-subdomain`:
+  // Go marks it required (`cmd/vanitySubdomains.go:67,69`) but cobra validates
+  // required flags only after `PersistentPreRunE` (`cobra@v1.10.2
+  // command.go:985,1005`), so the gate error must win when both flags are
+  // missing. The TS flag is optional at parse time (enforced in the handler)
+  // precisely so this ordering holds — these cases assert it end to end.
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["vanity-subdomains", "get"] },
     {
       name: "check-availability",
-      args: ["vanity-subdomains", "check-availability", "--desired-subdomain", "example"],
+      args: ["vanity-subdomains", "check-availability"],
     },
     {
       name: "activate",
-      args: ["vanity-subdomains", "activate", "--desired-subdomain", "example"],
+      args: ["vanity-subdomains", "activate"],
     },
     { name: "delete", args: ["vanity-subdomains", "delete"] },
   ];
