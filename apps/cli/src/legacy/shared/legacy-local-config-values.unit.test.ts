@@ -520,6 +520,41 @@ describe("legacyResolveLocalConfigValues", () => {
       );
     });
 
+    // Go's `strconv.ParseUint(str, 0, 16)` (base 0) auto-detects octal/hex/binary literals for
+    // `SUPABASE_*_PORT` overrides too — same base-0 grammar as `legacyEnvOverrideUint`
+    // (`parseGoBaseZeroUint`), just capped at `uint16` instead of `uint64`. The old
+    // `/^\d+$/`-plus-`Number()` parsing silently misread a bare-leading-zero override as decimal
+    // instead of octal, and rejected a `0x`-prefixed override outright even though Go accepts it.
+    it("resolves an octal leading-zero SUPABASE_DB_PORT override to its octal value, not decimal", () => {
+      process.env["SUPABASE_DB_PORT"] = "010";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbPort).toBe(8);
+      expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:8/postgres");
+    });
+
+    it("resolves a 0x-prefixed SUPABASE_DB_PORT override as hex", () => {
+      process.env["SUPABASE_DB_PORT"] = "0x1F90";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbPort).toBe(8080);
+    });
+
+    it("still resolves a plain decimal SUPABASE_DB_PORT override with no leading zero", () => {
+      process.env["SUPABASE_DB_PORT"] = "5432";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbPort).toBe(5432);
+    });
+
+    it("rejects a 0x-prefixed SUPABASE_DB_PORT override exceeding the uint16 range", () => {
+      process.env["SUPABASE_DB_PORT"] = "0x1FFFF";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidPortEnvOverrideError,
+      );
+    });
+
     // Unlike the malformed/out-of-range cases above (a decode-time hard-fail,
     // uniform across all four SUPABASE_*_PORT fields), db.port=0 is a
     // Config.Validate-time hard-fail specific to db.port: it has no `enabled`
@@ -831,6 +866,53 @@ describe("legacyResolveLocalConfigValues", () => {
       // also covers every pre-existing call site/test in this file that
       // doesn't pass a 5th argument.
       const config = baseConfig({ experimental: { webhooks: {} } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    // `experimental.webhooks.enabled`/`experimental.pgdelta.format_options` are Viper-bound like
+    // any other leaf field once `[experimental]` is present (`ExperimentalBindStruct`/
+    // `AutomaticEnv`, `config.go:581-586`) — same SUPABASE_*-env-override MECHANICS split as
+    // `auth.captcha`/`auth.passkey` above: the required-field/JSON-shape checks themselves live in
+    // `legacy-config-validate.unit.test.ts`, only the env-override wiring is exercised here.
+    afterEach(() => {
+      delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS"];
+    });
+
+    it("enables webhooks purely via SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when the section omits enabled", () => {
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "true";
+      const config = baseConfig({ experimental: { webhooks: {} } });
+      const document = { experimental: { webhooks: {} } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("rejects a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED override on an already-enabled section", () => {
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "notabool";
+      const config = baseConfig({ experimental: { webhooks: { enabled: true } } });
+      const document = { experimental: { webhooks: { enabled: true } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(LegacyInvalidBoolEnvOverrideError);
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(
+        'Invalid config for experimental.webhooks.enabled: cannot parse "notabool" as a bool',
+      );
+    });
+
+    it("rejects an invalid JSON SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS override", () => {
+      process.env["SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS"] = "{not valid json";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
+      );
+    });
+
+    it("accepts a valid JSON SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS override", () => {
+      process.env["SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS"] = '{"keywordCase":"upper"}';
+      const config = baseConfig();
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
   });

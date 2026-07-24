@@ -204,7 +204,11 @@ const MAX_PORT = 65535;
  * `configured` on a malformed override — a bad port override is a genuine
  * Go-parity hard failure (see {@link LegacyInvalidPortEnvOverrideError}), not
  * a leniency case: Go never proceeds with the pre-override value on a decode
- * error, it fails config loading outright.
+ * error, it fails config loading outright. Parses with
+ * {@link parseGoBaseZeroUint} (Go's base-0 grammar, same as
+ * {@link legacyEnvOverrideUint}), then applies {@link MAX_PORT} as this
+ * field's own `uint16` bound afterward — the same "parse the literal, then
+ * check it fits the bit width" split `strconv.ParseUint` itself uses.
  */
 export function legacyEnvOverridePort(
   name: string,
@@ -214,14 +218,11 @@ export function legacyEnvOverridePort(
 ): number {
   const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configuredPort;
-  if (!/^\d+$/.test(value)) {
+  const parsed = parseGoBaseZeroUint(value);
+  if (parsed === undefined || parsed > BigInt(MAX_PORT)) {
     throw new LegacyInvalidPortEnvOverrideError(dottedFieldPath, value);
   }
-  const port = Number(value);
-  if (port > MAX_PORT) {
-    throw new LegacyInvalidPortEnvOverrideError(dottedFieldPath, value);
-  }
-  return port;
+  return Number(parsed);
 }
 
 /**
@@ -2789,8 +2790,25 @@ export function legacyResolveLocalConfigValues(
   // pre-default TOML) instead, same as the passkey/smtp checks above.
   const experimentalDocument = asRecord(document?.["experimental"]);
   const webhooksPresent = asRecord(experimentalDocument?.["webhooks"]) !== undefined;
-  const webhooksEnabled = config.experimental.webhooks?.enabled === true;
-  const pgdeltaFormatOptions = config.experimental.pgdelta?.format_options ?? "";
+  // `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED`/`SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS` are
+  // Viper-bound like every other leaf field (`ExperimentalBindStruct`/`AutomaticEnv`,
+  // `config.go:581-586`) before `experimental.validate()` runs — same mechanism the db/migration
+  // loader (`legacy-db-config.toml-read.ts`) already applies for the `pgdelta` override; this
+  // resolver just never got the equivalent treatment. A malformed JSON override needs no separate
+  // error path here: it flows through unchanged and `legacyValidateResolvedConfig`'s existing
+  // `isValidJson` check reports it the same way it already reports a malformed TOML-sourced value.
+  const webhooksEnabled = legacyEnvOverrideBool(
+    "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
+    config.experimental.webhooks?.enabled === true,
+    "experimental.webhooks.enabled",
+    projectEnvValues,
+  );
+  const pgdeltaFormatOptions =
+    legacyEnvOverride(
+      "SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS",
+      config.experimental.pgdelta?.format_options,
+      projectEnvValues,
+    ) ?? "";
 
   // Every PURE Config.Validate check this module/legacy-config-validate.ts jointly own is
   // deferred to this single call, positioned here (where the last of those checks ran until
