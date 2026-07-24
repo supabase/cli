@@ -20,7 +20,7 @@ import {
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   type LegacyDbConnType,
   resolveLegacyDbTargetFlags,

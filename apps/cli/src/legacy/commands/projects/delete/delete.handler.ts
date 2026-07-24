@@ -12,9 +12,11 @@ import {
 } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
+import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacyProjectsDeleteCancelledError,
@@ -36,7 +38,9 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
   const cliConfig = yield* LegacyCliConfig;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  const yes = yield* LegacyYesFlag;
+  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320) —
+  // the env var must auto-confirm too, not just the flag (CLI-1974).
+  const yes = yield* legacyResolveYes;
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -67,19 +71,15 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
       return yield* new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE });
     }
 
-    const title = `Do you want to delete project ${ref}? This action is irreversible.`;
-    let confirmed: boolean;
-    if (yes) {
-      // Mirror Go's `PromptYesNo` confirm-by-flag UX (`console.go:64-78`): the
-      // default is No, so the choices render `[y/N]` and the auto-answer is `y`.
-      yield* output.raw(`${title} [y/N] y\n`, "stderr");
-      confirmed = true;
-    } else if (!tty.stdinIsTty) {
-      // Non-TTY with no `--yes`: `PromptYesNo` returns the `false` default.
-      confirmed = false;
-    } else {
-      confirmed = yield* output.promptConfirm(title).pipe(Effect.orElseSucceed(() => false));
-    }
+    // Go passes `utils.Aqua(ref)` inside the title (`delete.go:21`); `legacyAqua`
+    // mirrors lipgloss's profile detection (plain when stderr is not a TTY).
+    const title = `Do you want to delete project ${legacyAqua(ref)}? This action is irreversible.`;
+    // Go's `PromptYesNo(title, false)` (`delete.go:22`, `console.go:64-82`):
+    // `--yes`/`SUPABASE_YES` auto-confirms with the `<title> [y/N] y` stderr echo;
+    // a non-TTY stdin still prints the label and scans one piped line (100ms), so
+    // `echo y | supabase projects delete <ref>` confirms; empty/unparseable input
+    // falls back to the No default (CLI-1974).
+    const confirmed = yield* legacyPromptYesNo(output, yes, title, false);
     if (!confirmed) {
       return yield* new LegacyProjectsDeleteCancelledError({ message: "context canceled" });
     }

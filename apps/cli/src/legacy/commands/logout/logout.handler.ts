@@ -4,7 +4,7 @@ import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { legacyPromptYesNo } from "../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { LegacyLogoutCancelledError, LEGACY_LOGOUT_CANCELLED_MESSAGE } from "./logout.errors.ts";
 
 const LOGGED_OUT_MSG = "Access token deleted successfully. You are now logged out.";
@@ -23,16 +23,18 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
   const body = Effect.gen(function* () {
     // Confirm prompt, honoring the global `--yes`/`SUPABASE_YES` (`logout.go:15-16`).
     const confirmed = yield* Effect.gen(function* () {
-      if (yes) return true;
-      // Machine (json/stream-json) mode has no Go equivalent — fail loudly on a
-      // non-interactive prompt rather than silently defaulting, preserving the
-      // existing contract.
-      if (output.format !== "text") {
+      // Machine (json/stream-json) mode without `--yes` has no Go equivalent —
+      // fail loudly on a non-interactive prompt rather than silently defaulting,
+      // preserving the existing contract.
+      if (!yes && output.format !== "text") {
         return yield* output.promptConfirm(confirmLabel, { defaultValue: false });
       }
-      // Text mode mirrors Go's `PromptYesNo(..., false)` (`logout.go:16`): it scans
-      // piped stdin before falling back to the default (`console.go:64-82`), so
-      // `printf 'y\n' | supabase logout` deletes the token.
+      // Mirrors Go's `PromptYesNo(..., false)` (`logout.go:16`): `--yes`/
+      // `SUPABASE_YES` auto-confirms WITH the `<label> [y/N] y` stderr echo
+      // (`console.go:70-72`) — do not short-circuit before the helper, or the
+      // echo line Go always prints goes missing (CLI-1974). Without `--yes` it
+      // scans piped stdin before falling back to the default (`console.go:64-82`),
+      // so `printf 'y\n' | supabase logout` deletes the token.
       return yield* legacyPromptYesNo(output, yes, confirmLabel, false);
     });
     if (!confirmed) {

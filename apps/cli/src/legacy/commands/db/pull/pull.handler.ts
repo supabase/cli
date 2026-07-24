@@ -10,7 +10,7 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,

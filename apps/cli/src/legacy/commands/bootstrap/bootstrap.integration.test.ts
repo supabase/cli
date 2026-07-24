@@ -306,6 +306,10 @@ describe("legacy bootstrap integration", () => {
     writeFileSync(join(tempRoot.current, "existing.txt"), "keep me");
     return Effect.gen(function* () {
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+      // Go's PromptYesNo echoes the auto-accepted overwrite question to stderr
+      // under the global YES flag (`bootstrap.go:47-48`, `console.go:70-72`).
+      expect(s.out.stderrText).toContain("Do you want to overwrite existing files in ");
+      expect(s.out.stderrText).toContain(" directory? [Y/n] y\n");
       expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });

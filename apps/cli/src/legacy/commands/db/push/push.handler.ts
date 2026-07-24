@@ -18,7 +18,7 @@ import {
   legacyApplyMigrations,
   legacySeedGlobals,
 } from "../../../shared/legacy-migration-apply.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";

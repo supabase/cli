@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../../../../shared/runtime/stdin.layer.ts";
 import { legacyCliConfigLayer } from "../../../../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../../../shared/legacy-db-connection.layer.ts";
@@ -56,4 +57,7 @@ export const legacyDbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
     Layer.provide(legacyIdentityStitchLayer),
   ),
   commandRuntimeLayer(["db", "schema", "declarative", "sync"]),
+  // `stdinLayer`: the confirmation prompts route through `legacyPromptYesNo`,
+  // whose non-TTY branch reads piped stdin (Go's `Console.ReadLine`).
+  stdinLayer,
 );

@@ -8,7 +8,7 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";

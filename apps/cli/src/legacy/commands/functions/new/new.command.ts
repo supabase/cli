@@ -3,6 +3,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
@@ -29,6 +30,9 @@ const legacyFunctionsNewRuntimeLayer = Layer.mergeAll(
   cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["functions", "new"]),
+  // `stdinLayer`: the first-function IDE prompts read piped stdin via
+  // `legacyPromptYesNo` (Go's `Console.ReadLine`, `console.go:38-61`).
+  stdinLayer,
 );
 
 export const legacyFunctionsNewCommand = Command.make("new", config).pipe(

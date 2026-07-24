@@ -3,9 +3,10 @@ import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
-  LegacyYesFlag,
   legacyResolveExperimentalWithProjectEnv,
+  legacyResolveYesWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
@@ -81,7 +82,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
     const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
-    const yes = yield* LegacyYesFlag;
+    // `--yes` OR `SUPABASE_YES` (shell env or project `.env`): Go's prompts here
+    // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
+    // auto-confirm too, not just the flag (CLI-1974).
+    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
     const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const seam = yield* LegacyDeclarativeSeam;
@@ -168,14 +172,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           message: "no declarative schema found. Run supabase db schema declarative generate first",
         });
         if (!tty.stdinIsTty && !yes) return yield* Effect.fail(noFiles);
-        // Go's Console.PromptYesNo auto-returns true when the global YES flag is set
-        // (`apps/cli-go/internal/utils/console.go:70-73`), so --yes must skip this
-        // prompt rather than block/fail.
-        const ok = yes
-          ? true
-          : yield* output.promptConfirm("No declarative schema found. Generate a new one ?", {
-              defaultValue: true,
-            });
+        // Go asks via Console.PromptYesNo (db_schema_declarative.go:381, default
+        // true): --yes/SUPABASE_YES auto-confirms WITH the `<label> [Y/n] y`
+        // stderr echo (console.go:70-72) — routed through `legacyPromptYesNo`
+        // so the echo is not skipped (CLI-1974).
+        const ok = yield* legacyPromptYesNo(
+          output,
+          yes,
+          "No declarative schema found. Generate a new one ?",
+          true,
+        );
         if (!ok) return yield* Effect.fail(noFiles);
         // Go delegates to the full smart-generate flow (`runDeclarativeGenerate`,
         // db_schema_declarative.go:321): with migrations present it offers the
