@@ -455,6 +455,16 @@ function missingSuffixesForExcludeKey(excludeKey: string): ReadonlyArray<string>
   return [CONTAINER_SUFFIX_BY_EXCLUDE_KEY[excludeKey]!];
 }
 
+// Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext decrypts to
+// "value" under the keypair below — same fixture used by `legacy-local-config-values.unit.test.ts`'s
+// "encrypted auth secrets" suite. Hoisted to file scope so both the GoTrue-secret suite and the
+// Edge-Runtime-secret suite below reuse the exact same known-good dotenvx ciphertext instead of
+// each needing to produce their own (that requires the real ECIES encryption this fixture already
+// captures).
+const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+const VAULT_ENCRYPTED =
+  "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
 describe("legacy start integration", () => {
   describe("--exclude validation", () => {
     it.live("warns on stderr for an invalid --exclude value, even when already running", () => {
@@ -1436,6 +1446,58 @@ content_path = "./templates/custom_notice.html"
             }),
           ),
         );
+      },
+    );
+
+    it.live(
+      "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
+        // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
+        // `resolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw reasoning as
+        // the web3/oauth_server tests above, except the malformed value lives directly in
+        // config.toml here since `@supabase/config` never sees (or rejects) this unmodeled field —
+        // there's no schema-level bool coercion to catch it first.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.passkey");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // `auth.external` is a genuine Go `map[string]provider` (auth.go:190) — an unmodeled/
+        // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
+        // schema silently drops at decode time (see the "custom auth.external providers" describe
+        // block below for the accepted-value counterpart), so
+        // `legacyResolveAuthExternalProviders`'s raw-document read is the only place this malformed
+        // value is ever seen — same override-only-throw reasoning as the passkey test above.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.external");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
       },
     );
 
@@ -3811,13 +3873,6 @@ content_path = "./templates/custom_notice.html"
   });
 
   describe("encrypted secrets reach GoTrue's container", () => {
-    // Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext
-    // decrypts to "value" under the keypair below — same fixture already used in
-    // `legacy-local-config-values.unit.test.ts`'s "encrypted auth secrets" suite.
-    const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
-    const VAULT_ENCRYPTED =
-      "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
-
     it.live("decrypts an encrypted external OAuth provider secret (known provider)", () => {
       const previous = process.env["DOTENV_PRIVATE_KEY"];
       process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
@@ -3911,6 +3966,75 @@ content_path = "./templates/custom_notice.html"
           const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
           expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
         }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "decrypts an encrypted [edge_runtime.secrets] entry into plaintext, not the raw ciphertext",
+      () => {
+        // Mirrors "encrypted secrets reach GoTrue's container" above, but for
+        // `edge_runtime.secrets` — Go's `DecryptSecretHookFunc` decrypts this field during
+        // `Config.Load` too, so the real Edge Runtime container's env file must contain the
+        // decrypted "value", never the literal `encrypted:...` string.
+        const previous = process.env["DOTENV_PRIVATE_KEY"];
+        process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+        const { layer, child } = setup({
+          configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const edgeRuntimeRunCall = child.spawned.find(
+            (s) => s.args[0] === "run" && s.args[1] === "-d",
+          );
+          const args = edgeRuntimeRunCall?.args ?? [];
+          const envFileIndex = args.indexOf("--env-file");
+          const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
+          expect(envFilePath).toBeDefined();
+          const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
+          expect(envFileContent).toContain("MY_SECRET=value");
+          expect(envFileContent).not.toContain("encrypted:");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails with a typed config error, before any container is created, on an undecryptable [edge_runtime.secrets] entry",
+      () => {
+        // Caught eagerly by `legacyCheckDbToml`'s `legacyAssertDecryptableSecrets` pre-check
+        // (`edge_runtime.secrets.*` is one of `LEGACY_SECRET_PATHS`), well before the bring-up
+        // loop's own edge-runtime-specific decrypt — same shape as the sibling `[db.vault]`
+        // "even on a non-fresh volume" test above.
+        const previous = process.env["DOTENV_PRIVATE_KEY"];
+        delete process.env["DOTENV_PRIVATE_KEY"];
+        const { layer, child } = setup({
+          configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyDbConfigLoadError");
+            expect(serialized).toContain("failed to parse config: missing private key");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+            }),
+          ),
+        );
       },
     );
   });

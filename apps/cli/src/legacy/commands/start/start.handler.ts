@@ -39,6 +39,11 @@ import {
   legacyStorageGatewayFetch,
 } from "../../shared/legacy-storage-credentials.ts";
 import { legacyReadServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
+import {
+  legacyCollectDotenvPrivateKeys,
+  legacyDecryptSecret,
+  legacyIsEncryptedSecret,
+} from "../../shared/legacy-vault-decrypt.ts";
 import { ramInBytes } from "../../shared/legacy-size-units.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
@@ -832,6 +837,24 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     );
     yield* wrapConfigOverride("auth.oauth_server", () =>
       resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+    );
+    // Same gap for `auth.passkey.enabled`/`auth.webauthn.*` and per-provider `auth.external.
+    // <name>.{enabled,skip_nonce_check,email_optional}` — Go decodes these raw (unmodeled by
+    // `@supabase/config`) booleans in the same unconditional `Config.Load` pass as the fields
+    // above (`pkg/config/auth.go:166-176,190,361-391`), regardless of `auth.enabled`/`--exclude
+    // gotrue`. Both resolvers already throw internally on a bad raw bool (`legacyRawUnmodeledBool`)
+    // and are otherwise only reached from `resolveGotrueEnvInput`'s `case "gotrue":` branch below —
+    // itself gated on auth being enabled and gotrue not excluded — so calling each here, once,
+    // eagerly and discarding the result, closes the same "validates but doesn't reach it" gap.
+    yield* wrapConfigOverride("auth.passkey", () =>
+      resolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
+    );
+    yield* wrapConfigOverride("auth.external", () =>
+      legacyResolveAuthExternalProviders(
+        asRecord(context.loaded?.document?.["auth"]),
+        config.auth.external,
+        projectEnvValues,
+      ),
     );
     // Go's `function` struct (`pkg/config/config.go:290-296`) has no `env` field — `Config.Load`'s
     // `v.UnmarshalExact` (`ErrorUnused: true`, `config.go:749,1041`) rejects any unknown key
@@ -2136,6 +2159,36 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             "edge_runtime",
             { goViperCompat: true },
           );
+          // Go's `DecryptSecretHookFunc` decode hook decrypts every `config.Secret`-typed field
+          // (including `edge_runtime.secrets`) unconditionally during `Config.Load`, so the real
+          // Edge Runtime container always receives plaintext. `toPlainEdgeRuntimeConfig` only
+          // does `env()` interpolation and `Redacted`-unwrapping — it never decrypts a dotenvx
+          // `encrypted:` value — so without this step the literal ciphertext would reach the
+          // container's env file. `legacyCheckDbToml` (called unconditionally, before any Docker
+          // work) already validates every `edge_runtime.secrets.*` entry is decryptable via
+          // `legacyAssertDecryptableSecrets`, but only for that validation's own side effect — the
+          // decrypted plaintext is discarded there, not threaded back into this value.
+          const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
+          const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({
+            ...projectEnvValues,
+            ...process.env,
+          });
+          const edgeRuntimeSecrets: Record<string, string> = {};
+          for (const [secretName, secretValue] of Object.entries(rawEdgeRuntimeSecrets)) {
+            if (!legacyIsEncryptedSecret(secretValue)) {
+              edgeRuntimeSecrets[secretName] = secretValue;
+              continue;
+            }
+            const decrypted = legacyDecryptSecret(secretValue, dotenvPrivateKeys);
+            if (!decrypted.ok) {
+              return yield* Effect.fail(
+                new LegacyStartInvalidConfigError({
+                  message: `failed to parse config: ${decrypted.error}`,
+                }),
+              );
+            }
+            edgeRuntimeSecrets[secretName] = decrypted.value;
+          }
           // `edgeRuntimePolicy`/`edgeRuntimeInspectorPort` are resolved eagerly, before any
           // Docker work — see their hoisted `wrapConfigOverride` calls next to
           // `dbHealthTimeoutSeconds` above.
@@ -2148,7 +2201,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             apiPort: values.apiPort,
             edgeRuntimePolicy,
             edgeRuntimeInspectorPort,
-            edgeRuntimeSecrets: toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets,
+            edgeRuntimeSecrets,
             configDeclaredFunctions,
             configFunctions,
             rawConfigFunctions,
