@@ -9,10 +9,10 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                                          |
-| ------------------------------------------------ | ------ | ----------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (after ref resolution), via `Effect.ensuring` — on success and failure |
-| `~/.supabase/telemetry.json`                     | JSON   | always, via `Effect.ensuring` — on success and failure                        |
+| Path                                             | Format | When                                                                                                                       |
+| ------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | once the `--experimental` gate is open, after ref resolution, via `Effect.ensuring` — on success and failure               |
+| `~/.supabase/telemetry.json`                     | JSON   | once the `--experimental` gate is open, via `Effect.ensuring` — on success and failure. Not written if the gate is closed. |
 
 ## API Routes
 
@@ -22,20 +22,22 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                |
-| ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)   |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` → prompt) |
+| Variable                | Purpose                                                  | Required?                                                      |
+| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)        |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)         |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` → prompt)       |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
 
 ## Exit Codes
 
-| Code | Condition                                                                               |
-| ---- | --------------------------------------------------------------------------------------- |
-| `0`  | success — network-restrictions status printed to stdout                                 |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`) |
-| `1`  | API non-200 (`LegacyNetworkRestrictionsGetUnexpectedStatusError`)                       |
-| `1`  | transport failure (`LegacyNetworkRestrictionsGetNetworkError`)                          |
+| Code | Condition                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — network-restrictions status printed to stdout                                                                                         |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
+| `1`  | API non-200 (`LegacyNetworkRestrictionsGetUnexpectedStatusError`)                                                                               |
+| `1`  | transport failure (`LegacyNetworkRestrictionsGetNetworkError`)                                                                                  |
 
 ## Telemetry Events Fired
 
@@ -90,6 +92,8 @@ One `result` event whose `data` is the full response object.
 - The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
 - `linked-project.json` is written **after** the project ref is resolved, regardless of
   whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
-- `telemetry.json` is written on every invocation, including failures.
+- `telemetry.json` is written on every invocation past the `--experimental` gate, including
+  failures. A closed gate writes nothing (Go's `PersistentPreRunE` fails before
+  `PersistentPostRun` runs).
 - Go's `restrictions/get` itself does not honor `--output`. The legacy TS port honors both
   `--output` and `--output-format` per the legacy CLAUDE.md output-parity rules.

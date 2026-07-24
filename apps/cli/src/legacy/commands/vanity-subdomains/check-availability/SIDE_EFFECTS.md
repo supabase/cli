@@ -9,10 +9,10 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                  |
-| ------------------------------------------------ | ------ | ----------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | after ref resolution, on success and failure          |
-| `~/.supabase/telemetry.json`                     | JSON   | always, via `Effect.ensuring`, on success and failure |
+| Path                                             | Format | When                                                                                                                   |
+| ------------------------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | once the `--experimental` gate is open, after ref resolution, via `Effect.ensuring` — on success and failure           |
+| `~/.supabase/telemetry.json`                     | JSON   | once the `--experimental` gate is open, via `Effect.ensuring` — on success and failure. Not written if gate is closed. |
 
 ## API Routes
 
@@ -22,20 +22,22 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                  |
-| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring then `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)     |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref`)            |
+| Variable                | Purpose                                                  | Required?                                                      |
+| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring then `~/.supabase/access-token`)     |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)         |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref`)                |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
 
 ## Exit Codes
 
-| Code | Condition                                                                               |
-| ---- | --------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                 |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`) |
-| `1`  | API non-2xx (`LegacyVanitySubdomainsCheckUnexpectedStatusError`)                        |
-| `1`  | transport failure (`LegacyVanitySubdomainsCheckNetworkError`)                           |
+| Code | Condition                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                         |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
+| `1`  | API non-2xx (`LegacyVanitySubdomainsCheckUnexpectedStatusError`)                                                                                |
+| `1`  | transport failure (`LegacyVanitySubdomainsCheckNetworkError`)                                                                                   |
 
 ## Telemetry Events Fired
 
