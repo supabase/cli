@@ -259,6 +259,32 @@ describe("legacy branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("envelope on 402 suggests upgrade with no extra API calls", () => {
+    const { layer, out, analytics, api } = setup({
+      status: 402,
+      response: {
+        message: "Branching is supported only on the Pro plan or above",
+        error: {
+          code: "entitlement_required",
+          feature: "branching_limit",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      } as unknown as CreatedBranch,
+    });
+    return Effect.gen(function* () {
+      yield* Effect.exit(legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
+      expect(api.requests).toHaveLength(1);
+      expect(api.requests[0]?.url).toContain("/branches");
+      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(analytics.captured).toEqual([
+        {
+          event: "cli_upgrade_suggested",
+          properties: { feature_key: "branching_limit", org_slug: "env-org" },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("does NOT fire upgrade suggested on 500 (Go skips 5xx)", () => {
     const { layer, analytics } = setup({ status: 500 });
     return Effect.gen(function* () {

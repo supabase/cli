@@ -1,6 +1,5 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -16,7 +15,10 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacyBranchesCreateCancelledError,
   LegacyBranchesCreateNetworkError,
@@ -99,17 +101,15 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
         Effect.tapError(() => creating?.fail() ?? Effect.void),
         Effect.catch((cause) =>
           // Mirror Go's `create.go:34-37`: on any non-201 status (including
-          // gated 4xx), run the entitlement check; `legacySuggestUpgrade`
+          // gated 4xx), run the plan-gate check; `legacySuggestUpgrade`
           // is a no-op for 2xx/5xx itself, so we can call it unconditionally.
           Effect.gen(function* () {
-            const status =
-              HttpClientError.isHttpClientError(cause) && cause.response !== undefined
-                ? cause.response.status
-                : 0;
+            const response = legacyGateResponse(cause);
             yield* legacySuggestUpgrade({
               projectRef: ref,
               featureKey: "branching_limit",
-              statusCode: status,
+              statusCode: response?.status ?? 0,
+              response,
             });
             return yield* mapCreateErrorRaw(cause);
           }),

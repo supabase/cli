@@ -1,6 +1,5 @@
 import type { V1UpdateABranchConfigInput, V1UpdateABranchConfigOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -16,7 +15,10 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacyBranchesUpdateNetworkError,
   LegacyBranchesUpdateUnexpectedStatusError,
@@ -72,16 +74,14 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
         Effect.tapError(() => patching?.fail() ?? Effect.void),
         Effect.catch((cause) =>
           Effect.gen(function* () {
-            const status =
-              HttpClientError.isHttpClientError(cause) && cause.response !== undefined
-                ? cause.response.status
-                : 0;
+            const response = legacyGateResponse(cause);
             // Mirrors Go's `update.go:26` — pass the resolved branch's project
             // ref so the entitlements check is scoped to the branch's org.
             yield* legacySuggestUpgrade({
               projectRef: branchRef,
               featureKey: "branching_persistent",
-              statusCode: status,
+              statusCode: response?.status ?? 0,
+              response,
             });
             return yield* mapUpdateError(cause);
           }),
