@@ -706,6 +706,33 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED env override", () => {
+    // `[db.network_restrictions]` ships uncommented in Go's default template and
+    // `NetworkRestrictions` is a plain, non-pointer `db` struct field, so Viper always registers a
+    // default and decodes this override unconditionally during `Config.Load` — same bucket as
+    // `db.port`/`db.major_version` above, validated eagerly rather than skipped.
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED"];
+    });
+
+    it("does not throw for a valid SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED override", () => {
+      process.env["SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects a malformed SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED override", () => {
+      process.env["SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED"] = "notabool";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        'Invalid config for db.network_restrictions.enabled: cannot parse "notabool" as a bool',
+      );
+    });
+  });
+
   describe("db.root_key (unmodeled raw-document field)", () => {
     it("falls back to the default root key when absent", () => {
       const config = baseConfig();

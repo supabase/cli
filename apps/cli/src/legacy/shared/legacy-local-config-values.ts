@@ -2270,6 +2270,19 @@ export function legacyResolveLocalConfigValues(
   // actual resolved settings `start` needs are recomputed at their own call site (same
   // "validate early, recompute at point of use" split already used for those three fields).
   legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues);
+  // Same gap for `db.network_restrictions.enabled` — `[db.network_restrictions]` ships
+  // uncommented in Go's default template (unlike the commented-out `[db.ssl_enforcement]`) and
+  // `NetworkRestrictions` is a plain, non-pointer `db` struct field, so Viper always registers a
+  // default and decodes a malformed `SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED` override
+  // unconditionally during `Config.Load` — same bucket as `db.port`/`db.major_version` above, not
+  // the presence-gated `db.ssl_enforcement`/`auth.sms.twilio`/`auth.external.apple` cases.
+  // Validate-only: `start` doesn't otherwise consume this field (only `config push` does).
+  legacyEnvOverrideBool(
+    "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED",
+    config.db.network_restrictions.enabled,
+    "db.network_restrictions.enabled",
+    projectEnvValues,
+  );
   // `db.root_key` isn't modeled in `@supabase/config`'s schema (every other
   // `db.*` field is), so it's read off the raw pre-schema document — same
   // presence-based pattern as `authDocument` below. Go writes the
