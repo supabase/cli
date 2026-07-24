@@ -272,7 +272,10 @@ describe("legacy branches create integration", () => {
       } as unknown as CreatedBranch,
     });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
+      const exit = yield* Effect.exit(
+        legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain("/branches");
       expect(out.stderrText).toContain("/org/env-org/billing");

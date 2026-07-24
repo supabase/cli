@@ -1,5 +1,6 @@
 import { styleText } from "node:util";
 
+import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -65,6 +66,29 @@ export function legacyGateResponse(
 ): HttpClientResponse.HttpClientResponse | undefined {
   return HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
 }
+
+/**
+ * Builds an `Effect.catch` handler that runs the plan-gate check on the caught
+ * cause before delegating to the handler's error mapper. For sites whose gate
+ * is only detectable via the server envelope (the domains family, vanity get),
+ * omit `featureKey`.
+ */
+export const legacyGateMapError =
+  <E, R2>(
+    opts: { readonly projectRef: string; readonly featureKey?: string },
+    mapError: (cause: SupabaseApiError) => Effect.Effect<never, E, R2>,
+  ) =>
+  (cause: SupabaseApiError) =>
+    Effect.gen(function* () {
+      const response = legacyGateResponse(cause);
+      yield* legacySuggestUpgrade({
+        projectRef: opts.projectRef,
+        featureKey: opts.featureKey,
+        statusCode: response?.status ?? 0,
+        response,
+      });
+      return yield* mapError(cause);
+    });
 
 /**
  * Reproduces `apps/cli-go/internal/utils/plan_gate.go:SuggestUpgradeOnError`:

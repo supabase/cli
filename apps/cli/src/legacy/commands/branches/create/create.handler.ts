@@ -15,10 +15,7 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import {
-  legacyGateResponse,
-  legacySuggestUpgrade,
-} from "../../../shared/legacy-upgrade-suggest.ts";
+import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacyBranchesCreateCancelledError,
   LegacyBranchesCreateNetworkError,
@@ -99,20 +96,10 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
       })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        Effect.catch((cause) =>
-          // Mirror Go's `create.go:34-37`: on any non-201 status (including
-          // gated 4xx), run the plan-gate check; `legacySuggestUpgrade`
-          // is a no-op for 2xx/5xx itself, so we can call it unconditionally.
-          Effect.gen(function* () {
-            const response = legacyGateResponse(cause);
-            yield* legacySuggestUpgrade({
-              projectRef: ref,
-              featureKey: "branching_limit",
-              statusCode: response?.status ?? 0,
-              response,
-            });
-            return yield* mapCreateErrorRaw(cause);
-          }),
+        // Mirror Go's `create.go:34-37`: on any non-201 status (including
+        // gated 4xx), run the plan-gate check before mapping the error.
+        Effect.catch(
+          legacyGateMapError({ projectRef: ref, featureKey: "branching_limit" }, mapCreateErrorRaw),
         ),
       );
     yield* creating?.clear() ?? Effect.void;
