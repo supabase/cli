@@ -43,8 +43,8 @@
     "jose": "^6.2.3"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.207",
-    "@anthropic-ai/sdk": "^0.111.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.212",
+    "@anthropic-ai/sdk": "^0.112.1",
     "@clack/prompts": "^1.7.0",
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
@@ -68,7 +68,7 @@
     "dotenv": "^17.4.2",
     "effect": "catalog:",
     "esbuild": "^0.28.1",
-    "ink": "^7.1.0",
+    "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",
     "knip": "catalog:",
     "oxfmt": "catalog:",
@@ -76,7 +76,7 @@
     "oxlint-tsgolint": "catalog:",
     "pg": "^8.22.0",
     "pg-copy-streams": "^7.0.0",
-    "posthog-node": "^5.41.0",
+    "posthog-node": "^5.45.2",
     "react": "^19.2.7",
     "react-devtools-core": "^7.0.1",
     "semantic-release": "^25.0.6",
