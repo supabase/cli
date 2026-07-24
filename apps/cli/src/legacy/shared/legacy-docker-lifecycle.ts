@@ -2,6 +2,7 @@ import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { legacyDescribeContainerCliFailure, spawnContainerCli } from "./legacy-container-cli.ts";
+import { LEGACY_CLI_WORKDIR_LABEL } from "./legacy-docker-ids.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -41,29 +42,28 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
 }
 
 /**
- * Go's `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
- * (`docker.go:99-104`, `status.go:126-131`) via `docker ps --filter
- * label=<filterValue>`. `all: false` mirrors `status`'s running-only list;
- * `all: true` mirrors `stop`'s "every container regardless of state" list.
+ * Shared `docker ps --filter label=<filterValue> [--all] --format
+ * <formatArg>` spawn: one Docker CLI invocation is one underlying `GET
+ * /containers/json` Docker Engine API request regardless of `--format`
+ * (`--format` only controls how the CLI renders the already-returned JSON
+ * response client-side) — every exported listing function below funnels
+ * through here so two differently-formatted needs never accidentally cost
+ * two real requests. See {@link legacyListContainerIdsAndNames}'s doc
+ * comment for why that distinction matters for Go-parity request-log tests.
  */
-export const legacyListContainersByLabel = (
+function spawnDockerPsLines(
   spawner: Spawner,
-  opts: {
-    readonly projectIdFilter: string;
-    readonly all: boolean;
-    readonly format: "id" | "names";
-  },
-) =>
-  Effect.scoped(
+  opts: { readonly projectIdFilter: string; readonly all: boolean; readonly formatArg: string },
+): Effect.Effect<ReadonlyArray<string>, LegacyDockerLifecycleListError> {
+  return Effect.scoped(
     Effect.gen(function* () {
-      const formatArg = opts.format === "names" ? "{{.Names}}" : "{{.ID}}";
       const args = [
         "ps",
         "--filter",
         `label=${opts.projectIdFilter}`,
         ...(opts.all ? ["--all"] : []),
         "--format",
-        formatArg,
+        opts.formatArg,
       ];
       const child = yield* spawnContainerCli(spawner, args, {
         stdin: "ignore",
@@ -107,6 +107,77 @@ export const legacyListContainersByLabel = (
       }
       return splitNonEmptyLines(stdout);
     }),
+  );
+}
+
+/**
+ * Go's `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
+ * (`docker.go:99-104`, `status.go:126-131`) via `docker ps --filter
+ * label=<filterValue>`. `all: false` mirrors `status`'s running-only list;
+ * `all: true` mirrors `stop`'s "every container regardless of state" list.
+ */
+export const legacyListContainersByLabel = (
+  spawner: Spawner,
+  opts: {
+    readonly projectIdFilter: string;
+    readonly all: boolean;
+    readonly format: "id" | "names";
+  },
+) =>
+  spawnDockerPsLines(spawner, {
+    projectIdFilter: opts.projectIdFilter,
+    all: opts.all,
+    formatArg: opts.format === "names" ? "{{.Names}}" : "{{.ID}}",
+  });
+
+/**
+ * A single `docker ps` result row's id, name, and staging workdir together.
+ *
+ * `workdir` is `LEGACY_CLI_WORKDIR_LABEL`'s value read straight off the container (see
+ * that constant's doc comment) — empty when the container carries no such label, which
+ * `legacyCleanupStartSecrets` treats as "fall back to the caller's own workdir" (a
+ * container `start` created before this label existed, or created by a Go binary).
+ */
+export interface LegacyContainerIdName {
+  readonly id: string;
+  readonly name: string;
+  readonly workdir: string;
+}
+
+/**
+ * Combined-format sibling of {@link legacyListContainersByLabel}: fetches a
+ * container's id, name, AND staging workdir from a SINGLE `docker ps --format
+ * "{{.ID}}\t{{.Names}}\t{{.Label \"com.supabase.cli.workdir\"}}"` invocation,
+ * rather than one call per field. Go's SDK-based `Docker.ContainerList` gets
+ * all of this (and every other field) from the one Engine API response it
+ * already makes; two separately-`--format`ted CLI calls here would silently
+ * double the real Docker request count relative to Go even though each call's
+ * own output is individually correct — exactly the bug the cli-e2e-ci
+ * request-log parity harness caught for `stop` (an extra `GET /containers/json`
+ * versus Go's single call). Used by {@link legacyDockerRemoveAll}, which needs
+ * ids to stop containers, for callers (`stop`, `start`'s rollback) that ALSO
+ * need names and workdirs for {@link legacyCleanupStartSecrets} — see that
+ * function's doc comment and {@link legacyDockerRemoveAll}'s
+ * `onContainersRemoved` parameter.
+ */
+export const legacyListContainerIdsAndNames = (
+  spawner: Spawner,
+  opts: {
+    readonly projectIdFilter: string;
+    readonly all: boolean;
+  },
+): Effect.Effect<ReadonlyArray<LegacyContainerIdName>, LegacyDockerLifecycleListError> =>
+  spawnDockerPsLines(spawner, {
+    projectIdFilter: opts.projectIdFilter,
+    all: opts.all,
+    formatArg: `{{.ID}}\t{{.Names}}\t{{.Label "${LEGACY_CLI_WORKDIR_LABEL}"}}`,
+  }).pipe(
+    Effect.map((lines) =>
+      lines.map((line) => {
+        const [id = "", name = "", workdir = ""] = line.split("\t");
+        return { id, name, workdir };
+      }),
+    ),
   );
 
 /**

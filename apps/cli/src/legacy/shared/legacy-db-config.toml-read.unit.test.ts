@@ -915,6 +915,39 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("rejects an unparseable [storage.buckets.<name>].file_size_limit during load", () => {
+    // Go's config.Load decodes every bucket's file_size_limit via the sizeInBytes
+    // decode hook unconditionally (`pkg/config/config.go`), so a malformed value must
+    // fail config load itself — not only later, deep inside `legacySeedBucketsRun`,
+    // where it would go unvalidated on a reused-volume restart or the already-running
+    // short-circuit.
+    const dir = withConfig('[storage.buckets.avatars]\nfile_size_limit = "bogus"\n');
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const json = JSON.stringify(exit.cause);
+            expect(json).toContain("LegacyDbConfigLoadError");
+            expect(json).toContain("invalid storage.buckets.avatars.file_size_limit");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts a bare-number [storage.buckets.<name>].file_size_limit", () => {
+    // `@supabase/config`'s schema allows file_size_limit as either a quoted
+    // human-readable string or a bare byte count; the numeric form must normalize to
+    // a string before `ramInBytes` parses it rather than being rejected outright.
+    const dir = withConfig("[storage.buckets.avatars]\nfile_size_limit = 5242880\n");
+    return read(dir).pipe(
+      Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("parses [api] auto_expose_new_tables string with Go bool tokens (TRUE → true)", () => {
     // Go decodes the *bool via strconv.ParseBool, so `TRUE`/`1`/`t` are true — not only
     // the literal lowercase `true`.
@@ -2115,6 +2148,19 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
       "[auth.webauthn]",
       'rp_id = "localhost"',
       'rp_origins = ["http://localhost:3000"]',
+    ]),
+  );
+  it.effect("accepts a comma-separated rp_origins string instead of rejecting it as missing", () =>
+    // Go decodes `rp_origins` (a `[]string`) through the same `StringToSliceHookFunc(",")`
+    // mapstructure hook as every other `[]string` field, so a raw string (not just a literal
+    // TOML array) must split, not read as absent — matches start.handler.ts's own
+    // resolveGotruePasskeyWebauthn/legacyStrToArr handling of this identical field.
+    succeeds([
+      "[auth.passkey]",
+      "enabled = true",
+      "[auth.webauthn]",
+      'rp_id = "localhost"',
+      'rp_origins = "http://a.example,http://b.example"',
     ]),
   );
 

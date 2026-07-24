@@ -1,12 +1,32 @@
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
+import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
+import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
+import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
+import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
+import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
+import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { legacyStart } from "./start.handler.ts";
 
 const config = {
+  // Go registers `--exclude`/`-x` as a pflag `StringSliceVarP` (`cmd/start.go:58`), which
+  // CSV-splits each occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
+  // across repeats — matching `status`'s own `--exclude`/`--override-name` handling.
   exclude: Flag.string("exclude").pipe(
     Flag.atLeast(0),
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseStringSliceFlag(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
     Flag.withDescription(
-      "Names of containers to not start. [analytics,db,edge-runtime,functions,imgproxy,inbucket,kong,meta,realtime,rest,storage,studio,vector]",
+      `Names of containers to not start. [${LEGACY_START_EXCLUDABLE_KEYS.join(",")}]`,
     ),
     Flag.withDefault([] as ReadonlyArray<string>),
     Flag.withAlias("x"),
@@ -22,8 +42,38 @@ const config = {
 
 export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
+// `start` makes no Management API calls (Go's start needs no access token) and talks
+// directly to Docker, so it deliberately avoids `legacyManagementApiRuntimeLayer` —
+// it provides only the services the handler + instrumentation consume, mirroring
+// `stop`/`status`'s runtime shape. `ChildProcessSpawner`/`ProcessControl`/`RuntimeInfo`
+// are not listed here: they come from `BunServices`/`processControlLayer`/
+// `runtimeInfoLayer` in the root runtime (`shared/cli/run.ts`), the same way
+// `stop`/`status` rely on the former. `HttpClient.HttpClient` is NOT provided by the
+// root runtime — `BunServices.layer` never supplies it, and `unixHttpClientLayer` is a
+// different service tag entirely — so it's composed here via `legacyHttpClientLayer`,
+// the same `FetchHttpClient`-backed layer `db reset`/`seed buckets` use, needed for the
+// health-check probes (`legacyWaitForHealthyServices`) and `legacySeedBucketsRun`.
+// `legacyDockerRunLayer`/`legacyDbConnectionLayer` ARE listed here — the fresh-volume
+// `SetupLocalDatabase` equivalent (`start.handler.ts`'s `legacyStartSetupLocalDatabase`
+// call) needs both: the PG15+ one-shot migrate jobs run through `LegacyDockerRun`, and
+// the schema/globals/API-privileges SQL runs over a direct `LegacyDbConnection` session.
+const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+
+const legacyStartRuntimeLayer = Layer.mergeAll(
+  cliConfig,
+  legacyTelemetryStateLayer,
+  commandRuntimeLayer(["start"]),
+  legacyDockerRunLayer,
+  legacyDbConnectionLayer,
+  httpClient,
+);
+
 export const legacyStartCommand = Command.make("start", config).pipe(
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
-  Command.withHandler((flags) => legacyStart(flags)),
+  Command.withHandler((flags) =>
+    legacyStart(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+  ),
+  Command.provide(legacyStartRuntimeLayer),
 );

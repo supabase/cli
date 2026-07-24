@@ -1,5 +1,5 @@
-import { legacyAqua, legacyBold, legacyGreen, legacyYellow } from "../../shared/legacy-colors.ts";
-import type { LegacyStatusOutputNames } from "./status.values.ts";
+import { legacyAqua, legacyBold, legacyGreen, legacyYellow } from "./legacy-colors.ts";
+import type { LegacyStatusOutputNames } from "./legacy-status-values.ts";
 
 /**
  * Port of Go's `PrettyPrint` / `OutputGroup.printTable`

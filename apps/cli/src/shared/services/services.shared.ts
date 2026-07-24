@@ -115,7 +115,7 @@ export function postgresImageForDbMajorVersion(majorVersion: number): string | u
   }
 }
 
-function replaceImageTag(image: string, tag: string): string {
+export function replaceImageTag(image: string, tag: string): string {
   const index = image.lastIndexOf(":");
   if (index === -1) {
     return image;

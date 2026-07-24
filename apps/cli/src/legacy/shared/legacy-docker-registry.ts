@@ -29,31 +29,53 @@ function getLastImageSegment(imageName: string): string {
   return parts[parts.length - 1] ?? imageName;
 }
 
-function legacyGetRegistryOverride(): string | undefined {
-  const registry = process.env[LEGACY_INTERNAL_IMAGE_REGISTRY_ENV]?.trim();
+/**
+ * `projectEnvValues` (dotenv-merged env, ambient-wins) is optional and
+ * additive — every existing caller that omits it keeps today's ambient-only
+ * behavior unchanged. Only callers that already have a project's dotenv
+ * values in scope (currently `start`, via `legacyGetRegistryImageUrlCandidates`)
+ * need to pass it so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in
+ * `supabase/.env`/project-root dotenv (not the ambient shell) is honored,
+ * matching Go's `Config.Load` loading dotenv files into the process env
+ * (`loadNestedEnv`, `pkg/config/config.go:789,1220-1258`) before `GetRegistry()`
+ * (`internal/utils/docker.go:221-227`) ever reads it.
+ */
+function legacyGetRegistryOverride(
+  projectEnvValues?: Readonly<Record<string, string>>,
+): string | undefined {
+  const registry = (
+    projectEnvValues?.[LEGACY_INTERNAL_IMAGE_REGISTRY_ENV] ??
+    process.env[LEGACY_INTERNAL_IMAGE_REGISTRY_ENV]
+  )?.trim();
   return registry === undefined || registry.length === 0 ? undefined : registry.toLowerCase();
 }
 
-function legacyGetRegistry(): string {
-  return legacyGetRegistryOverride() ?? DEFAULT_REGISTRY;
+function legacyGetRegistry(projectEnvValues?: Readonly<Record<string, string>>): string {
+  return legacyGetRegistryOverride(projectEnvValues) ?? DEFAULT_REGISTRY;
 }
 
-export function legacyGetRegistryImageUrl(imageName: string): string {
-  const registry = legacyGetRegistry();
+export function legacyGetRegistryImageUrl(
+  imageName: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
+): string {
+  const registry = legacyGetRegistry(projectEnvValues);
   if (registry === DOCKER_HUB_REGISTRY) {
     return imageName;
   }
   return `${registry}/supabase/${getLastImageSegment(imageName)}`;
 }
 
-export function legacyGetRegistryImageUrlCandidates(imageName: string): ReadonlyArray<string> {
-  if (legacyGetRegistryOverride() !== undefined) {
-    return [legacyGetRegistryImageUrl(imageName)];
+export function legacyGetRegistryImageUrlCandidates(
+  imageName: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
+): ReadonlyArray<string> {
+  if (legacyGetRegistryOverride(projectEnvValues) !== undefined) {
+    return [legacyGetRegistryImageUrl(imageName, projectEnvValues)];
   }
 
   const lastPart = getLastImageSegment(imageName);
   return dedupe([
-    legacyGetRegistryImageUrl(imageName),
+    legacyGetRegistryImageUrl(imageName, projectEnvValues),
     `${GHCR_SUPABASE_REGISTRY}/${lastPart}`,
     dockerHubFallbackImage(imageName, lastPart),
   ]);

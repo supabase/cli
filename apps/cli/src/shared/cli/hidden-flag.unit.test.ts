@@ -122,11 +122,16 @@ describe("native hidden flags", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["start", "--preview"]);
-          // `stop` is natively ported (no longer a `LegacyGoProxy` forward), so it can fail for
-          // Docker-related reasons in this proxy-only test layer — the point here is only to
-          // prove the hidden `--backup` flag still parses by exact name, not that the command
-          // succeeds, matching the `functions deploy`/`serve` assertions below.
+          // `start` and `stop` are both natively ported (no longer `LegacyGoProxy` forwards),
+          // so they can fail for workdir/Docker-related reasons in this proxy-only test layer —
+          // the point here is only to prove the hidden `--preview`/`--backup` flags still parse
+          // by exact name, not that the commands succeed, matching the `functions deploy`/`serve`
+          // assertions below.
+          const startExit = yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+            "start",
+            "--preview",
+          ]).pipe(Effect.exit);
+          expect(JSON.stringify(startExit)).not.toContain("UnrecognizedFlag");
           const stopExit = yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
             "stop",
             "--backup=false",
@@ -166,7 +171,6 @@ describe("native hidden flags", () => {
     );
 
     expect(proxy.calls).toEqual([
-      ["start", "--preview"],
       ["functions", "download", "hello", "--project-ref", "abcdefghijklmnopqrst", "--use-docker"],
     ]);
   });

@@ -4,6 +4,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { legacyKongAuthHeaders } from "./legacy-kong-auth.ts";
 import {
   LegacyStorageGatewayNetworkError,
   LegacyStorageGatewayStatusError,
@@ -13,10 +14,8 @@ import { legacyGoPathSplit } from "./legacy-storage-url.ts";
 /**
  * Native TypeScript client for the Supabase Storage **service gateway** (Kong),
  * mirroring `apps/cli-go/pkg/storage/{buckets,objects,vector,api}.go` and the
- * `fetcher.NewServiceGateway` auth headers: the `apikey` header is always sent,
- * and `Authorization: Bearer <key>` is added only when the key is a JWT — Go's
- * `withAuthToken` (`pkg/fetcher/gateway.go:22`) omits it for opaque `sb_...`
- * keys, which are not bearer tokens.
+ * `fetcher.NewServiceGateway` auth headers — see {@link legacyKongAuthHeaders}
+ * for the exact `apikey`/`Authorization` header shape.
  *
  * Shared by `seed buckets` (bucket/object/vector upsert against the local stack)
  * and `storage ls/cp/mv/rm` (object list/download/move/delete + bucket delete).
@@ -389,20 +388,13 @@ export const legacyMakeStorageGateway = Effect.fnUntraced(function* (opts: {
     return new LegacyStorageGatewayNetworkError({ message: base });
   };
 
-  // Go's `withAuthToken` (`pkg/fetcher/gateway.go:22`) gates the bearer header on
-  // a plain `sb_` prefix check: opaque `sb_...` keys are not JWTs.
-  const isOpaqueServiceKey = opts.apiKey.startsWith("sb_");
   const withAuth = (
     req: HttpClientRequest.HttpClientRequest,
-  ): HttpClientRequest.HttpClientRequest => {
-    const withApiKey = req.pipe(
-      HttpClientRequest.setHeader("apikey", opts.apiKey),
+  ): HttpClientRequest.HttpClientRequest =>
+    req.pipe(
       HttpClientRequest.setHeader("User-Agent", opts.userAgent),
+      HttpClientRequest.setHeaders(legacyKongAuthHeaders(opts.apiKey)),
     );
-    return isOpaqueServiceKey
-      ? withApiKey
-      : withApiKey.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${opts.apiKey}`));
-  };
 
   // Sends a request and returns the response body text, reproducing Go's
   // fetcher error shapes (`pkg/fetcher/http.go`). Go's service gateway installs
