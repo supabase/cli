@@ -3,6 +3,7 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
+import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "./legacy-pgdelta.ts";
 
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported
@@ -19,6 +20,8 @@ const INIT_SCHEMA_PATTERN = /([0-9]{14})_init\.sql/;
 const INIT_SCHEMA_CUTOFF = 20211209000000;
 // `pkg/migration/file.go` — valid migration filenames.
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/;
+// `internal/utils/misc.go` — `ProjectHostPattern`, matches a direct `db.<ref>.supabase.{co,red}` host.
+const PROJECT_HOST_PATTERN = /^(db\.)([a-z]{20})\.supabase\.(co|red)$/;
 
 /** Inputs to `setupInputsToken` — everything `start.SetupDatabase` consumes. */
 export interface LegacySetupInputs {
@@ -41,6 +44,28 @@ export function legacySanitizedCatalogPrefix(prefix: string): string {
   const trimmed = prefix.trim();
   if (trimmed.length === 0) return "local";
   return trimmed.replace(CATALOG_PREFIX_PATTERN, "-");
+}
+
+/**
+ * Mirrors Go's `pgcache.CatalogPrefixFromConfig` (`pgcache/cache.go`): `"local"`
+ * for the local dev database, the project ref for a direct `db.<ref>.supabase.*`
+ * host, else a stable `url-<sha256[:12]>` derived from the connection.
+ */
+export function legacyCatalogPrefixFromConfig(
+  conn: {
+    readonly host: string;
+    readonly port: number;
+    readonly user: string;
+    readonly database: string;
+  },
+  isLocal: boolean,
+): string {
+  if (isLocal) return "local";
+  const match = PROJECT_HOST_PATTERN.exec(conn.host);
+  if (match?.[2] !== undefined) return match[2];
+  const key = `${conn.user}@${conn.host}:${conn.port}/${conn.database}`;
+  const digest = createHash("sha256").update(key, "utf8").digest("hex");
+  return `url-${digest.slice(0, 12)}`;
 }
 
 /** Mirrors Go's `baselineVersionToken` (`declarative.go:665`): the image tag, or `pg<major>`. */
@@ -167,18 +192,20 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
 
 /**
  * Mirrors Go's `pgcache.HashMigrations` (`pgcache/cache.go`): for each local
- * migration (in list order), hash its path then its contents. Returns full hex.
+ * migration (in list order), hash its `workdir`-relative path then its
+ * contents. Returns full hex.
  */
 export const legacyHashMigrations = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  workdir: string,
   migrationsDir: string,
 ) {
   const migrations = yield* legacyListLocalMigrations(fs, path, migrationsDir);
   const hash = createHash("sha256");
   for (const filePath of migrations) {
     const contents = yield* fs.readFile(filePath);
-    hash.update(filePath, "utf8");
+    hash.update(path.relative(workdir, filePath), "utf8");
     hash.update(contents);
   }
   return hash.digest("hex");
@@ -274,18 +301,13 @@ export const legacyResolveDeclarativeCatalogPath = Effect.fnUntraced(function* (
   return latestPath;
 });
 
-/**
- * Removes all but the newest `catalogRetentionCount` declarative catalogs for a
- * prefix family. Mirrors Go's `cleanupOldDeclarativeCatalogs` (`declarative.go:610`).
- */
-export const legacyCleanupOldDeclarativeCatalogs = Effect.fnUntraced(function* (
+const cleanupOldCatalogsByFamily = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   tempDir: string,
-  prefix: string,
+  familyPrefix: string,
 ) {
   const entries = yield* listJsonEntries(fs, tempDir);
-  const familyPrefix = `catalog-${legacySanitizedCatalogPrefix(prefix)}-declarative-`;
   const files = entries
     .filter((name) => name.startsWith(familyPrefix) && name.endsWith(".json"))
     .map((name) => ({ name, timestamp: Option.getOrElse(parseCatalogTimestamp(name), () => 0) }))
@@ -297,4 +319,118 @@ export const legacyCleanupOldDeclarativeCatalogs = Effect.fnUntraced(function* (
       .remove(path.join(tempDir, files[index]!.name))
       .pipe(Effect.orElseSucceed(() => undefined));
   }
+});
+
+/**
+ * Removes all but the newest `catalogRetentionCount` declarative catalogs for a
+ * prefix family. Mirrors Go's `cleanupOldDeclarativeCatalogs` (`declarative.go:610`).
+ */
+export const legacyCleanupOldDeclarativeCatalogs = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tempDir: string,
+  prefix: string,
+) {
+  yield* cleanupOldCatalogsByFamily(
+    fs,
+    path,
+    tempDir,
+    `catalog-${legacySanitizedCatalogPrefix(prefix)}-declarative-`,
+  );
+});
+
+/**
+ * Removes all but the newest `catalogRetentionCount` migrations catalogs for a
+ * prefix family. Mirrors Go's `pgcache.CleanupOldMigrationCatalogs` (`pgcache/cache.go`).
+ */
+export const legacyCleanupOldMigrationCatalogs = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tempDir: string,
+  prefix: string,
+) {
+  yield* cleanupOldCatalogsByFamily(
+    fs,
+    path,
+    tempDir,
+    `catalog-${legacySanitizedCatalogPrefix(prefix)}-migrations-`,
+  );
+});
+
+/** `catalog-<prefix>-migrations-<hash>-<ts>.json` (Go's `migrationsCatalogName`, `pgcache/cache.go`). */
+export function legacyMigrationCatalogFileName(
+  prefix: string,
+  hash: string,
+  timestampMillis: number,
+): string {
+  return `catalog-${legacySanitizedCatalogPrefix(prefix)}-migrations-${hash}-${timestampMillis}.json`;
+}
+
+/**
+ * Writes a migrations-catalog snapshot to `<tempDir>/catalog-<prefix>-migrations-<hash>-<ts>.json`
+ * and prunes older snapshots for the same `(prefix)` family. Mirrors Go's
+ * `pgcache.WriteMigrationCatalogSnapshot` (`pgcache/cache.go`).
+ */
+export const legacyWriteMigrationCatalogSnapshot = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tempDir: string,
+  prefix: string,
+  hash: string,
+  snapshot: string,
+  timestampMillis: number,
+) {
+  yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(Effect.ignore);
+  const filePath = path.join(
+    tempDir,
+    legacyMigrationCatalogFileName(prefix, hash, timestampMillis),
+  );
+  yield* fs.writeFileString(filePath, snapshot);
+  yield* legacyCleanupOldMigrationCatalogs(fs, path, tempDir, prefix);
+  return filePath;
+});
+
+/**
+ * Best-effort caches the migrations catalog for pg-delta after a successful
+ * `db push` migration apply. Mirrors Go's `pgcache.TryCacheMigrationsCatalog`
+ * (`pgcache/cache.go`); `enabled` is resolved by the caller since it depends on
+ * already-loaded config. Reuses `legacyExportCatalogPgDelta` (Go's correct
+ * `diff/pgdelta.go` `ExportCatalogPgDelta`) rather than porting a second copy,
+ * so this can't reintroduce the `/workspace` mount bug `pgcache/cache.go` had
+ * (supabase/cli#5921).
+ */
+export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  ctx: LegacyPgDeltaContext,
+  params: {
+    readonly enabled: boolean;
+    readonly targetUrl: string;
+    readonly conn: {
+      readonly host: string;
+      readonly port: number;
+      readonly user: string;
+      readonly database: string;
+    };
+    readonly isLocal: boolean;
+    readonly migrationsDir: string;
+    readonly nowMillis: number;
+  },
+) {
+  if (!params.enabled) return;
+  const prefix = legacyCatalogPrefixFromConfig(params.conn, params.isLocal);
+  const hash = yield* legacyHashMigrations(fs, path, ctx.cwd, params.migrationsDir);
+  const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
+    targetRef: params.targetUrl,
+    role: "postgres",
+  });
+  yield* legacyWriteMigrationCatalogSnapshot(
+    fs,
+    path,
+    legacyPgDeltaTempPath(path, ctx.cwd),
+    prefix,
+    hash,
+    snapshot,
+    params.nowMillis,
+  );
 });

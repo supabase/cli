@@ -13,15 +13,19 @@ import {
   legacyBaselineCatalogFileName,
   legacyBaselineCatalogKey,
   legacyBaselineVersionToken,
+  legacyCatalogPrefixFromConfig,
   legacyCleanupOldDeclarativeCatalogs,
+  legacyCleanupOldMigrationCatalogs,
   legacyDeclarativeCatalogCacheKey,
   legacyDeclarativeCatalogFileName,
   legacyHashDeclarativeSchemas,
   legacyHashMigrations,
   legacyListLocalMigrations,
+  legacyMigrationCatalogFileName,
   legacyResolveDeclarativeCatalogPath,
   legacySanitizedCatalogPrefix,
   legacySetupInputsToken,
+  legacyWriteMigrationCatalogSnapshot,
 } from "./legacy-pgdelta.cache.ts";
 
 const BASE: LegacySetupInputs = {
@@ -216,25 +220,57 @@ describe("legacyListLocalMigrations", () => {
 });
 
 describe("legacyHashMigrations", () => {
-  it.effect("hashes path + contents in list order (stable, content-sensitive)", () => {
-    const dir = withTemp();
-    const migrationsDir = join(dir, "supabase", "migrations");
-    mkdirSync(migrationsDir, { recursive: true });
-    const file = join(migrationsDir, "20240101120000_create.sql");
-    writeFileSync(file, "create table x();");
-    const expected = createHash("sha256")
-      .update(file, "utf8")
-      .update(Buffer.from("create table x();"))
-      .digest("hex");
-    return withServices((fs, path) => legacyHashMigrations(fs, path, migrationsDir)).pipe(
-      Effect.tap((hash) =>
-        Effect.sync(() => {
-          expect(hash).toBe(expected);
-          rmSync(dir, { recursive: true, force: true });
+  it.effect(
+    "hashes the workdir-relative path + contents in list order (stable, content-sensitive)",
+    () => {
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const file = join(migrationsDir, "20240101120000_create.sql");
+      writeFileSync(file, "create table x();");
+      const relPath = join("supabase", "migrations", "20240101120000_create.sql");
+      const expected = createHash("sha256")
+        .update(relPath, "utf8")
+        .update(Buffer.from("create table x();"))
+        .digest("hex");
+      return withServices((fs, path) => legacyHashMigrations(fs, path, dir, migrationsDir)).pipe(
+        Effect.tap((hash) =>
+          Effect.sync(() => {
+            expect(hash).toBe(expected);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "is unaffected by the absolute location of workdir (Go-parity, not machine-specific)",
+    () => {
+      const dirA = withTemp();
+      const dirB = withTemp();
+      const migrationsA = join(dirA, "supabase", "migrations");
+      const migrationsB = join(dirB, "supabase", "migrations");
+      mkdirSync(migrationsA, { recursive: true });
+      mkdirSync(migrationsB, { recursive: true });
+      writeFileSync(join(migrationsA, "20240101120000_create.sql"), "create table x();");
+      writeFileSync(join(migrationsB, "20240101120000_create.sql"), "create table x();");
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const hashA = yield* legacyHashMigrations(fs, path, dirA, migrationsA);
+          const hashB = yield* legacyHashMigrations(fs, path, dirB, migrationsB);
+          expect(hashA).toBe(hashB);
         }),
-      ),
-    );
-  });
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            rmSync(dirA, { recursive: true, force: true });
+            rmSync(dirB, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });
 
 describe("legacyHashDeclarativeSchemas", () => {
@@ -281,10 +317,125 @@ describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {
         const remaining = (yield* fs.readDirectory(tempDir)).filter((n) =>
           n.startsWith("catalog-local-declarative-"),
         );
-        // Retention keeps the 2 newest of the family (300, 200); 100 + other-50 pruned.
         expect(remaining.sort()).toEqual([
           "catalog-local-declarative-h-200.json",
           "catalog-local-declarative-h-300.json",
+        ]);
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
+});
+
+describe("legacyCatalogPrefixFromConfig", () => {
+  const CONN = { host: "127.0.0.1", port: 5432, user: "postgres", database: "postgres" };
+
+  it("returns 'local' for a local database regardless of host", () => {
+    expect(legacyCatalogPrefixFromConfig(CONN, true)).toBe("local");
+  });
+
+  it("returns the project ref for a direct db.<ref>.supabase.{co,red} host", () => {
+    const ref = "abcdefghijklmnopqrst";
+    expect(legacyCatalogPrefixFromConfig({ ...CONN, host: `db.${ref}.supabase.co` }, false)).toBe(
+      ref,
+    );
+    expect(legacyCatalogPrefixFromConfig({ ...CONN, host: `db.${ref}.supabase.red` }, false)).toBe(
+      ref,
+    );
+  });
+
+  it("falls back to a stable url-<sha256[:12]> hash for anything else", () => {
+    const conn = {
+      host: "aws-0-us-east-1.pooler.supabase.com",
+      port: 6543,
+      user: "postgres.ref",
+      database: "postgres",
+    };
+    expect(legacyCatalogPrefixFromConfig(conn, false)).toBe(
+      `url-${sha12(`${conn.user}@${conn.host}:${conn.port}/${conn.database}`)}`,
+    );
+  });
+
+  it("does not match a host with the wrong ref length or a different TLD", () => {
+    const conn = { ...CONN, host: "db.tooshort.supabase.co" };
+    const digest = createHash("sha256")
+      .update(`${conn.user}@${conn.host}:${conn.port}/${conn.database}`, "utf8")
+      .digest("hex");
+    expect(legacyCatalogPrefixFromConfig(conn, false)).toBe(`url-${digest.slice(0, 12)}`);
+  });
+});
+
+describe("legacyMigrationCatalogFileName", () => {
+  it("formats catalog-<prefix>-migrations-<hash>-<ts>.json", () => {
+    expect(legacyMigrationCatalogFileName("local", "h", 1700)).toBe(
+      "catalog-local-migrations-h-1700.json",
+    );
+  });
+});
+
+describe("legacyWriteMigrationCatalogSnapshot + cleanup", () => {
+  it.effect(
+    "writes the snapshot and prunes older migrations catalogs past the retention count",
+    () => {
+      const dir = withTemp();
+      const tempDir = join(dir, "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      for (const ts of [100, 300, 200]) {
+        writeFileSync(join(tempDir, `catalog-local-migrations-h-${ts}.json`), "{}");
+      }
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const filePath = yield* legacyWriteMigrationCatalogSnapshot(
+            fs,
+            path,
+            tempDir,
+            "local",
+            "h",
+            '{"snapshot":true}',
+            400,
+          );
+          expect(filePath.endsWith("catalog-local-migrations-h-400.json")).toBe(true);
+          expect(yield* fs.readFileString(filePath)).toBe('{"snapshot":true}');
+          const remaining = (yield* fs.readDirectory(tempDir)).filter((n) =>
+            n.startsWith("catalog-local-migrations-"),
+          );
+          expect(remaining.sort()).toEqual([
+            "catalog-local-migrations-h-300.json",
+            "catalog-local-migrations-h-400.json",
+          ]);
+        }),
+      ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    },
+  );
+
+  it.effect("creates the temp dir when it doesn't exist yet", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        yield* legacyWriteMigrationCatalogSnapshot(fs, path, tempDir, "local", "h", "{}", 100);
+        expect(yield* fs.exists(join(tempDir, "catalog-local-migrations-h-100.json"))).toBe(true);
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
+});
+
+describe("legacyCleanupOldMigrationCatalogs", () => {
+  it.effect("only prunes files matching the given prefix's family", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    mkdirSync(tempDir, { recursive: true });
+    for (const ts of [100, 200, 300]) {
+      writeFileSync(join(tempDir, `catalog-local-migrations-h-${ts}.json`), "{}");
+    }
+    writeFileSync(join(tempDir, "catalog-other-migrations-h-50.json"), "{}");
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        yield* legacyCleanupOldMigrationCatalogs(fs, path, tempDir, "local");
+        const remaining = (yield* fs.readDirectory(tempDir)).sort();
+        expect(remaining).toEqual([
+          "catalog-local-migrations-h-200.json",
+          "catalog-local-migrations-h-300.json",
+          "catalog-other-migrations-h-50.json",
         ]);
       }),
     ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));

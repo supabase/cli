@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -9,6 +9,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
+  legacyApplyProjectEnv,
   legacyCheckDbToml,
   legacyLoadProjectEnv,
 } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -18,10 +19,17 @@ import {
   legacySeedGlobals,
 } from "../../../shared/legacy-migration-apply.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
+import { redactLegacyConnectionString } from "../../../shared/legacy-db-config.parse.ts";
+import { legacyParseBoolEnv } from "../shared/legacy-diff-engine.ts";
+import {
+  legacyListLocalMigrations,
+  legacyTryCacheMigrationsCatalog,
+} from "../shared/legacy-pgdelta.cache.ts";
+import { type LegacyPgDeltaContext } from "../shared/legacy-pgdelta.ts";
 import {
   LEGACY_ERR_MISSING_LOCAL,
   LEGACY_ERR_MISSING_REMOTE,
@@ -92,6 +100,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
+    yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
     // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local"), keyed off the
     // explicitly-set flags (cobra's `Changed`), not the `--linked` default value.
@@ -286,9 +295,30 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             }
             yield* legacyUpsertVaultSecrets(session, vaultSecrets);
             yield* legacyApplyMigrations(session, fs, path, pending, applyError);
-            // Go best-effort caches the migrations catalog for pg-delta; a failure
-            // only warns (`push.go:99-101`). The catalog cache is not yet ported, so
-            // there is nothing to warn about — parity is preserved (no extra output).
+            const cacheEnabled =
+              toml.pgDelta.enabled ||
+              legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
+            const pgDeltaCtx: LegacyPgDeltaContext = {
+              projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+              cwd: workdir,
+              npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+              denoVersion: toml.denoVersion,
+            };
+            yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
+              enabled: cacheEnabled,
+              targetUrl: legacyToPostgresURL(cfg.conn),
+              conn: cfg.conn,
+              isLocal: cfg.isLocal,
+              migrationsDir: path.join(workdir, "supabase", "migrations"),
+              nowMillis: yield* Clock.currentTimeMillis,
+            }).pipe(
+              Effect.catch((error) =>
+                output.raw(
+                  `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
+                  "stderr",
+                ),
+              ),
+            );
           } else {
             yield* output.raw("Schema migrations are up to date.\n", "stderr");
           }
@@ -336,5 +366,6 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    Effect.scoped,
   );
 });

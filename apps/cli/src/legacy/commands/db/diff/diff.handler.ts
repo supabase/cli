@@ -8,7 +8,6 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
@@ -44,23 +43,6 @@ import {
 // `--file` migration is written.
 const warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
 Run ${legacyAqua("supabase db reset")} to verify that the new migration does not generate errors.`;
-
-/** Builds a plain Postgres URL from a resolved connection (Go's `ToPostgresURL`). */
-const connToUrl = (conn: LegacyPgConnInput): string =>
-  legacyToPostgresURL({
-    host: conn.host,
-    port: conn.port,
-    user: conn.user,
-    password: conn.password,
-    database: conn.database,
-    ...(conn.options !== undefined ? { options: conn.options } : {}),
-    ...(conn.runtimeParams !== undefined ? { runtimeParams: conn.runtimeParams } : {}),
-    // Preserve a `--db-url` connect_timeout; Go's ToPostgresURL serializes the
-    // parsed ConnectTimeout (`connect.go`), defaulting to 10 only when unset.
-    ...(conn.connectTimeoutSeconds !== undefined
-      ? { connectTimeoutSeconds: conn.connectTimeoutSeconds }
-      : {}),
-  });
 
 /**
  * Rebuilds the `db diff` argv for the pgAdmin / pg-schema delegate path. Flags
@@ -235,7 +217,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 mergedLinkedRef = ref2;
                 cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref2);
               }
-              return connToUrl(resolved.conn);
+              return legacyToPostgresURL(resolved.conn);
             }
             case "migrations":
               return yield* seam.exportCatalog({
@@ -362,7 +344,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     });
     const linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
-    const targetUrl = connToUrl(resolved.conn);
+    const targetUrl = legacyToPostgresURL(resolved.conn);
 
     // Read config with the resolved linked ref so a matching `[remotes.<ref>]`
     // block merges before the engine/format/runtime are read — Go loads config

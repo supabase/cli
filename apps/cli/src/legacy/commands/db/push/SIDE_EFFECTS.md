@@ -18,12 +18,12 @@ linked/remote Postgres database.
 
 ## Files Written
 
-| Path                                             | Format | When                                                                      |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | on the `--linked` path (post-run cache, Go's `ensureProjectGroupsCached`) |
-| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush)                                         |
-
-No project files are written. All other effects are database mutations (below).
+| Path                                                                            | Format | When                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | on the `--linked` path (post-run cache, Go's `ensureProjectGroupsCached`)                                                                                                                                                                            |
+| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                    |
+| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after a successful migration apply, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the push (Go's `pgcache.TryCacheMigrationsCatalog`) |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                        | PEM    | same gate as above, when the target requires SSL (`legacyPreparePgDeltaRef`)                                                                                                                                                                         |
 
 ## Database Mutations
 
@@ -43,11 +43,13 @@ No project files are written. All other effects are database mutations (below).
 
 ## Environment Variables
 
-| Variable                | Purpose                                     | Required?                                               |
-| ----------------------- | ------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection   | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`          | auto-confirm prompts (Go's `viper YES`)     | no (also `--yes`)                                       |
+| Variable                           | Purpose                                                                             | Required?                                               |
+| ---------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                         | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                           | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_YES`                     | auto-confirm prompts (Go's `viper YES`)                                             | no (also `--yes`)                                       |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset | no (project `.env` or shell)                            |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export             | no (project `.env` or shell)                            |
 
 ## Exit Codes
 
@@ -97,8 +99,14 @@ stdout is payload-only. A single `result` object is emitted:
 - **`--dry-run`** prints the plan (roles / migrations / seeds) and applies nothing.
 - **`[db.migrations].enabled = false`** / **`[db.seed].enabled = false`** print a
   skip notice naming the project ref (empty for local/db-url).
-- **Vault**: only non-empty, non-`env()` `[db.vault]` literals are synced (Go syncs
-  secrets with a non-empty SHA256). **Known gap vs Go**: `encrypted:`-prefixed
-  vault secrets are currently skipped — dotenvx/ECIES decryption is not yet ported.
-- **Migrations catalog cache** (Go's best-effort `pgcache.TryCacheMigrationsCatalog`,
-  warning-only) is not ported; it produces no output, so parity is preserved.
+- **Vault**: non-empty, non-`env()` `[db.vault]` values are synced after config
+  load, including decrypted `encrypted:` values.
+- **Migrations catalog cache**: ported (Go's best-effort `pgcache.TryCacheMigrationsCatalog`).
+  After a successful migration apply, when pg-delta is enabled, exports the target's
+  pg-delta catalog via the edge-runtime stack and writes it under
+  `supabase/.temp/pgdelta/`, pruning older snapshots for the same prefix (retains 2).
+  A failure only warns on stderr (`Warning: failed to cache migrations catalog: …`)
+  and never fails the push, matching Go exactly. Reuses `legacyExportCatalogPgDelta`
+  (the same pg-delta export path `db pull`/`db diff` use, which always mounts the
+  project root at `/workspace`) rather than a second copy, so the ENOENT bug fixed in
+  Go's `pgcache/cache.go` (supabase/cli#5921) has no TS equivalent.
