@@ -17,7 +17,7 @@ import { styleText } from "node:util";
 import { Effect, Layer, Stdio, Stream } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
-import { NonInteractiveError } from "./errors.ts";
+import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
@@ -346,8 +346,15 @@ export const textOutputLayer = Layer.effect(
           }
           if (err.suggestion !== undefined) {
             process.stderr.write(err.suggestion + "\n");
-          } else if (!process.argv.includes("--debug")) {
-            // Go's `utils.SuggestDebugFlag` (apps/cli-go/internal/utils/misc.go:41).
+          } else if (
+            err.message !== CONTEXT_CANCELED_MESSAGE &&
+            !process.argv.includes("--debug")
+          ) {
+            // Go's `utils.SuggestDebugFlag` (apps/cli-go/internal/utils/misc.go:41),
+            // withheld for the canceled sentinel exactly like `recoverAndExit`'s
+            // `!errors.Is(err, context.Canceled)` guard (apps/cli-go/cmd/root.go:287-292):
+            // a declined confirmation prompt is a user decision, so Go prints only
+            // the red `context canceled` line with no troubleshooting hint (CLI-1973).
             process.stderr.write(
               "Try rerunning the command with --debug to troubleshoot the error.\n",
             );

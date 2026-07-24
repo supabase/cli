@@ -5,6 +5,7 @@ import {
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -114,7 +115,7 @@ const runFetch = Effect.fnUntraced(function* (
       const overwrite = yield* legacyMigrationConfirm(title, { defaultValue: true, yes });
       if (!overwrite) {
         return yield* Effect.fail(
-          new LegacyOperationCanceledError({ message: "context canceled" }),
+          new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE }),
         );
       }
     }

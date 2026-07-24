@@ -7,6 +7,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import {
@@ -68,7 +69,7 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
         .promptConfirm(`Do you want to create a branch named ${gitBranch.value}?`)
         .pipe(Effect.orElseSucceed(() => true));
       if (!confirmed) {
-        return yield* new LegacyBranchesCreateCancelledError({ message: "context canceled" });
+        return yield* new LegacyBranchesCreateCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
       }
       branchName = gitBranch.value;
       if (gitBranchForBody === undefined) {

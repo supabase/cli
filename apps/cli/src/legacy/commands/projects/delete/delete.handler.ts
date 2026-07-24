@@ -13,6 +13,7 @@ import {
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
@@ -81,7 +82,7 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
       confirmed = yield* output.promptConfirm(title).pipe(Effect.orElseSucceed(() => false));
     }
     if (!confirmed) {
-      return yield* new LegacyProjectsDeleteCancelledError({ message: "context canceled" });
+      return yield* new LegacyProjectsDeleteCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
 
     const mapDeleteError = mapLegacyHttpError({

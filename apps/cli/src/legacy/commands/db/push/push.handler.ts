@@ -3,6 +3,7 @@ import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -268,7 +269,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             );
             if (!ok) {
               return yield* Effect.fail(
-                new LegacyDbPushCancelledError({ message: "context canceled" }),
+                new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
               );
             }
             yield* legacySeedGlobals(
@@ -290,7 +291,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             );
             if (!ok) {
               return yield* Effect.fail(
-                new LegacyDbPushCancelledError({ message: "context canceled" }),
+                new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
               );
             }
             yield* legacyUpsertVaultSecrets(session, vaultSecrets);
@@ -333,7 +334,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             );
             if (!ok) {
               return yield* Effect.fail(
-                new LegacyDbPushCancelledError({ message: "context canceled" }),
+                new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
               );
             }
             yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
