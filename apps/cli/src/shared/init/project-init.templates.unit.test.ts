@@ -21,9 +21,18 @@ function readGoTemplate(...segments: ReadonlyArray<string>): string {
   return normalizeNewlines(readFileSync(join(goCliRoot, ...segments), "utf8"));
 }
 
+// Go renders its config.toml scaffold through text/template (config.Eject), so an action
+// containing a backtick raw string — {{ (backtick){{ .Code }}(backtick) }} in the template
+// source — is rendered to the literal string it quotes: {{ .Code }} in the ejected file.
+function resolveGoTemplateEscapes(template: string): string {
+  return template.replace(/\{\{\s*`([^`]*)`\s*\}\}/g, "$1");
+}
+
 describe("project init templates", () => {
-  it("renders config.toml with the same content as the Go scaffold", () => {
-    const expected = readGoTemplate("pkg", "config", "templates", "config.toml")
+  it("renders config.toml with the same content as the Go CLI ejects", () => {
+    const expected = resolveGoTemplateEscapes(
+      readGoTemplate("pkg", "config", "templates", "config.toml"),
+    )
       .replace("{{ .ProjectId }}", "demo-project")
       .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
       // supabase init always opts new projects into pg-delta; the Go template renders
@@ -31,6 +40,15 @@ describe("project init templates", () => {
       .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true");
 
     expect(normalizeNewlines(renderProjectConfigTemplate("demo-project", true))).toBe(expected);
+  });
+
+  it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw Go escapes", () => {
+    const rendered = renderProjectConfigTemplate("demo-project", false);
+    const otpTemplateLines = rendered.split("\n").filter((line) => line.startsWith("template = "));
+    expect(otpTemplateLines).toEqual([
+      'template = "Your code is {{ .Code }}"',
+      'template = "Your code is {{ .Code }}"',
+    ]);
   });
 
   it("enables pg-delta by default in the generated config", () => {
