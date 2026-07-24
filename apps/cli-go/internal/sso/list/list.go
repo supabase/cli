@@ -18,8 +18,8 @@ func Run(ctx context.Context, ref, format string) error {
 	}
 
 	if resp.JSON200 == nil {
-		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, ref, "auth.saml_2", resp.StatusCode()); isGated {
-			telemetry.TrackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
+		if feature, orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, ref, "auth.saml_2", resp.StatusCode(), resp.Body); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, feature, orgSlug)
 		}
 		if resp.StatusCode() == http.StatusNotFound {
 			return errors.New("Looks like SAML 2.0 support is not enabled for this project. Please use the dashboard to enable it.")

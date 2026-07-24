@@ -19,8 +19,8 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 	if err != nil {
 		return errors.Errorf("failed activate vanity subdomain: %w", err)
 	} else if resp.JSON201 == nil {
-		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "vanity_subdomain", resp.StatusCode()); isGated {
-			telemetry.TrackUpgradeSuggested(ctx, "vanity_subdomain", orgSlug)
+		if feature, orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "vanity_subdomain", resp.StatusCode(), resp.Body); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, feature, orgSlug)
 		}
 		return errors.Errorf("unexpected activate vanity subdomain status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
