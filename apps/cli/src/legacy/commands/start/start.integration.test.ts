@@ -700,6 +700,42 @@ describe("legacy start integration", () => {
         expect(out.stderrText).not.toContain("Stopped services");
       }).pipe(Effect.provide(layer));
     });
+
+    it.live(
+      "fails on a bucket's invalid file_size_limit even when already running, matching Go's Config.Load",
+      () => {
+        // `legacyCheckDbToml` runs unconditionally at the very top of this handler, before
+        // `dbContainerId`/the already-running short-circuit are even computed — unlike the later
+        // wrapConfigOverride checks (e.g. storage.analytics.enabled), which sit AFTER the
+        // already-running early return and therefore never run in this branch. A malformed
+        // per-bucket file_size_limit must still fail here, before the already-running banner ever
+        // prints, matching Go's Config.Load decrypting/decoding unconditionally regardless of
+        // whether the stack is already up.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
+          route: (args) => {
+            if (args[0] === "container" && args[1] === "inspect") {
+              return { stdout: [HEALTHY_STATE] };
+            }
+            if (args[0] === "ps") return { stdout: [] };
+            return { exitCode: 0 };
+          },
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyDbConfigLoadError");
+            expect(serialized).toContain(
+              "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+            );
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("config load / validation failures", () => {
@@ -1172,6 +1208,38 @@ content_path = "./templates/custom_notice.html"
               if (previous === undefined)
                 delete process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
               else process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_ENABLED even when storage is excluded, matching Go's Config.Load",
+      () => {
+        // `storage.analytics.enabled` is the `Enabled` bool sibling of the
+        // max_namespaces/max_tables/max_catalogs uint fields below, decoded via Go's generic
+        // Viper pass in Config.Load, unconditionally — same class of gap as
+        // storage.s3_protocol.enabled above, now fixed the same way (hoisted eager
+        // wrapConfigOverride in start.handler.ts).
+        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"];
+        process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"] = "not-a-bool";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for storage.analytics.enabled");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"];
+              else process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"] = previous;
             }),
           ),
         );
@@ -1865,6 +1933,34 @@ content_path = "./templates/custom_notice.html"
             }),
           ),
         );
+      },
+    );
+
+    it.live(
+      "fails on a bucket's invalid file_size_limit even on a non-fresh volume, matching Go's Config.Load",
+      () => {
+        // Same class of gap as the `[db.vault]` test above: the per-bucket `file_size_limit`
+        // (Go's same `sizeInBytes` decode hook as the storage-level default) was previously only
+        // parsed deep inside `legacySeedBucketsRun`, reached only on a fresh volume with Storage
+        // actually seeding — a malformed value on an ordinary restart against an existing
+        // (non-fresh) volume went completely unvalidated. `legacyCheckDbToml` now catches it
+        // eagerly, before any Docker work, regardless of volume state.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyDbConfigLoadError");
+            expect(serialized).toContain(
+              "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+            );
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
       },
     );
 
@@ -4235,6 +4331,38 @@ content_path = "./templates/custom_notice.html"
         ),
       );
     });
+
+    it.live(
+      "fails with a typed config error, before any container is created, on an invalid SUPABASE_ANALYTICS_VECTOR_PORT",
+      () => {
+        // `analytics.vector_port` (Logflare's deprecated Vector port) is decoded in the same
+        // Config.Load pass as `analytics.port` above — nothing downstream in `start` reads the
+        // resolved value, but a malformed override must still fail eagerly, same reasoning as
+        // the SUPABASE_LOCAL_SMTP_SMTP_PORT/SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT tests elsewhere
+        // in this file.
+        const previous = process.env["SUPABASE_ANALYTICS_VECTOR_PORT"];
+        process.env["SUPABASE_ANALYTICS_VECTOR_PORT"] = "not-a-port";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for analytics.vector_port");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_ANALYTICS_VECTOR_PORT"];
+              else process.env["SUPABASE_ANALYTICS_VECTOR_PORT"] = previous;
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("SUPABASE_DB_HEALTH_TIMEOUT override", () => {

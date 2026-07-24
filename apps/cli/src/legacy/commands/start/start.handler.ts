@@ -1375,6 +1375,21 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         projectEnvValues,
       ),
     );
+    // Same gap for `storage.analytics.enabled` — the `Enabled` bool sibling of the
+    // `max_namespaces`/`max_tables`/`max_catalogs` uint fields validated below, all decoded in
+    // the same generic Viper/mapstructure `Config.Load` pass, unconditionally, before any Docker
+    // work. `start` itself never reads this field locally (only `seed buckets --linked` does,
+    // unreachable from `start`'s own inline seeding since every call here passes
+    // `projectRef: ""`) — validate purely for Go's fail-fast parity and discard the result, same
+    // as the uint siblings below.
+    yield* wrapConfigOverride("storage.analytics.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_STORAGE_ANALYTICS_ENABLED",
+        config.storage.analytics.enabled,
+        "storage.analytics.enabled",
+        projectEnvValues,
+      ),
+    );
     // Go decodes `storage.analytics.{max_namespaces,max_tables,max_catalogs}` and
     // `storage.vector.{max_buckets,max_indexes}` as plain `uint`s in the same generic
     // Viper/mapstructure `Config.Load` pass as every other field above (`pkg/config/
@@ -1491,6 +1506,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         "SUPABASE_ANALYTICS_PORT",
         config.analytics.port,
         "analytics.port",
+        projectEnvValues,
+      ),
+    );
+    // Same gap for Logflare's deprecated Vector port — Go's Config.Load decodes
+    // `analytics.vector_port` (a `uint16`, "Deprecated together with syslog") unconditionally in
+    // the same pass as `analytics.port` above; nothing downstream in `start` reads the resolved
+    // value, but a malformed override must still fail before any Docker work, matching Go.
+    // Result discarded — no native code path consumes it.
+    yield* wrapConfigOverride("analytics.vector_port", () =>
+      legacyEnvOverridePort(
+        "SUPABASE_ANALYTICS_VECTOR_PORT",
+        config.analytics.vector_port ?? 0,
+        "analytics.vector_port",
         projectEnvValues,
       ),
     );
