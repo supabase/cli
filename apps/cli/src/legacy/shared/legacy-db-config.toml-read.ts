@@ -24,6 +24,7 @@ import {
 import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 import { legacyStrToArr } from "./legacy-local-config-values.ts";
+import { ramInBytes } from "./legacy-size-units.ts";
 import {
   legacyCollectDotenvPrivateKeys,
   legacyDecryptSecret,
@@ -1307,6 +1308,32 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // Bucket-name/function-slug validation (`config.go:898-903`/`993-998`) now lives in
   // `legacyValidateResolvedConfig` (called once, below); only the pure extraction stays here.
   const bucketsRaw = asRecord(storageRaw?.["buckets"]);
+  // Same gap for each bucket's own `file_size_limit` — Go decodes it via the same `sizeInBytes`
+  // hook as the storage-level default (validated eagerly in `start.handler.ts`), unconditionally
+  // during `Config.Load`, for every configured bucket, before any command-specific logic runs.
+  // This reader only ever extracted bucket NAMES above — the per-bucket size itself was only
+  // parsed deep inside `legacySeedBucketsRun`, reached only on a fresh volume with Storage
+  // actually started, so a malformed value on a reused-volume restart (or the already-running
+  // short-circuit, which never reaches bring-up at all) went completely unvalidated. An absent
+  // key is skipped (Go's decode hook never fires over one; the bucket inherits the storage-level
+  // default later). Validate-only: `legacySeedBucketsRun`'s own call re-parses the real value.
+  if (bucketsRaw !== undefined) {
+    for (const [bucketName, bucketRaw] of Object.entries(bucketsRaw)) {
+      const rawLimit = asRecord(bucketRaw)?.["file_size_limit"];
+      if (typeof rawLimit !== "string" && typeof rawLimit !== "number") continue;
+      const limitString =
+        typeof rawLimit === "number" ? String(rawLimit) : legacyExpandEnv(rawLimit, lookup);
+      try {
+        ramInBytes(limitString);
+      } catch {
+        return yield* Effect.fail(
+          new LegacyDbConfigLoadError({
+            message: `failed to parse config: invalid storage.buckets.${bucketName}.file_size_limit.`,
+          }),
+        );
+      }
+    }
+  }
 
   // Go's config.Validate runs the full `if c.Auth.Enabled` block (`config.go:1036-1102`) after
   // the bucket/function checks. Gated on `auth.enabled` (default true); Go's viper AutomaticEnv
