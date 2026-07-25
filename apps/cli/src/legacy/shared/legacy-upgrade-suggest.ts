@@ -31,13 +31,7 @@ interface LegacyPlanGateEnvelope {
   readonly upgradeUrl: string;
 }
 
-/**
- * Parses the management API's plan-gate error body,
- * `{ message, error: { code: "entitlement_required", feature, upgrade_url } }`.
- * The `packages/api` codegen intentionally emits no non-2xx schemas, so this
- * shape is hand-validated here (the Go twin uses the generated
- * `api.PlanGateErrorBody`).
- */
+// Hand-validated: the packages/api codegen emits no non-2xx schemas.
 function parseLegacyPlanGateEnvelope(body: unknown): LegacyPlanGateEnvelope | undefined {
   if (typeof body !== "object" || body === null) return undefined;
   const error = (body as { readonly error?: unknown }).error;
@@ -56,23 +50,12 @@ function legacyOrgSlugFromUpgradeUrl(upgradeUrl: string): string {
   return match?.[1] ?? "";
 }
 
-/**
- * Extracts the failed HttpClientResponse from a caught SupabaseApiError so
- * call sites can hand `legacySuggestUpgrade` the body without repeating the
- * isHttpClientError narrowing.
- */
 export function legacyGateResponse(
   cause: unknown,
 ): HttpClientResponse.HttpClientResponse | undefined {
   return HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
 }
 
-/**
- * Builds an `Effect.catch` handler that runs the plan-gate check on the caught
- * cause before delegating to the handler's error mapper. For sites whose gate
- * is only detectable via the server envelope (the domains family, vanity get),
- * omit `featureKey`.
- */
 export const legacyGateMapError =
   <E, R2>(
     opts: { readonly projectRef: string; readonly featureKey?: string },
@@ -91,48 +74,25 @@ export const legacyGateMapError =
     });
 
 /**
- * Reproduces `apps/cli-go/internal/utils/plan_gate.go:SuggestUpgradeOnError`:
+ * Ports Go's `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
  *
- *   - Skip non-4xx statuses (2xx / 5xx).
- *   - Envelope first: when `response` carries the `entitlement_required` body,
- *     print the billing-link suggestion from its `upgrade_url` with zero extra
- *     API calls; telemetry `feature_key` comes from the envelope and `org_slug`
- *     from the URL's `/org/<slug>/` segment.
- *   - Fallback (only when `featureKey` is provided): GET `/v1/projects/{ref}`
- *     → `organization_slug`, then GET `/v1/organizations/{slug}/entitlements`
- *     → look for the requested feature key with `hasAccess: false`.
- *   - On gated: write the billing-link suggestion to stderr (text mode only,
- *     matches Go's `CmdSuggestion` print) **and** fire the
- *     `cli_upgrade_suggested` telemetry event with `{feature_key, org_slug}`.
- *
- * Never fails the caller; lookup and parse errors swallow into a no-op.
- *
- * The fallback bypasses the typed Management API client to GET
- * `/v1/projects/{ref}` and `/v1/organizations/{slug}/entitlements` directly
- * via `HttpClient`. The generated `V1GetProjectOutput` schema enforces
- * `ref: isMinLength(20)`, which the cli-e2e replay fixtures cannot satisfy
- * (they embed the literal 15-char `__PROJECT_REF__` placeholder in response
- * bodies). Strict decode would fail silently inside `Effect.option`, the
- * entitlements GET would be skipped, and parity with Go's request log would
- * break. Same workaround used by `legacy-linked-project-cache.layer.ts`.
+ * The fallback bypasses the typed API client: its strict response schemas
+ * reject the cli-e2e replay fixtures' placeholder refs (same workaround as
+ * `legacy-linked-project-cache.layer.ts`).
  */
 export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   /**
-   * Entitlements-fallback feature key. Omit for envelope-only sites (the
-   * domains family and vanity get): their gates are add-on or read-path
-   * checks the plan-level entitlement key cannot represent, so the fallback
-   * would false-positive on unrelated 4xxs.
+   * Entitlements-fallback key. Omit for envelope-only sites: the domains
+   * add-on gate has no plan-level entitlement key, so the fallback would
+   * false-positive on unrelated 4xxs.
    */
   readonly featureKey?: string;
   readonly statusCode: number;
-  /** The failed response; enables the zero-round-trip envelope path. */
   readonly response?: HttpClientResponse.HttpClientResponse;
   /**
-   * Whether to fire the `cli_upgrade_suggested` analytics event when a gate is
-   * detected. Defaults to `true`. Pass `false` for Go call-sites that invoke
-   * `SuggestUpgradeOnError` without a following `TrackUpgradeSuggested`
-   * (e.g. `vanity-subdomains check-availability`), so telemetry stays 1:1 with Go.
+   * Set false where the Go twin fires no `TrackUpgradeSuggested` (vanity
+   * check-availability), keeping telemetry 1:1.
    */
   readonly trackAnalytics?: boolean;
 }) {
