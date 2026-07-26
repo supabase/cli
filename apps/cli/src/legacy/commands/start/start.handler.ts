@@ -58,7 +58,9 @@ import {
 import {
   legacyInspectContainerState,
   legacyListContainersByLabel,
+  type LegacyContainerIdName,
 } from "../../shared/legacy-docker-lifecycle.ts";
+import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
 import {
   legacyEnvOverride,
   legacyEnvOverrideApiMaxRows,
@@ -94,6 +96,7 @@ import {
   type LegacyLocalProjectContext,
 } from "../../shared/legacy-local-project-context.ts";
 import { legacySeedBucketsRun } from "../../shared/legacy-seed-buckets.ts";
+import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
 import {
   LegacyStatusDbInspectError,
   LegacyStatusDbNotReadyError,
@@ -928,20 +931,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       return legacyStatusValuesFromState(state, new Map());
     });
 
-    // 3. Go's `AssertSupabaseDbIsRunning` (`internal/utils/misc.go:144-146`) —
-    // a bare `ContainerInspect` EXISTENCE check, true even for a merely
-    // present-but-stopped container. "Not found" is the ONE outcome that means
-    // "proceed to bring up the stack"; any OTHER inspect failure (e.g. the
-    // Docker daemon itself being unreachable) must propagate and fail `start`
-    // outright, matching Go's `!errors.Is(err, utils.ErrNotRunning)` branch.
-    const alreadyRunning = yield* legacyInspectContainerState(spawner, dbContainerId).pipe(
-      Effect.map(() => true),
+    // 3. Missing proceeds to startup; other inspect failures propagate.
+    // Verified stopped stacks are removed without pruning named volumes.
+    const dbState = yield* legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.succeed(false) : Effect.fail(error),
+        isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
       ),
     );
+    const isStopped = dbState?.running === false && dbState.status.length > 0;
 
-    if (alreadyRunning) {
+    if (dbState !== undefined && !isStopped) {
       // `start.go:55`: printed unconditionally in Go (which has no JSON output
       // mode to protect); gated here on text mode for internal consistency
       // with every other supplementary stderr line this handler prints (see
@@ -2332,6 +2331,25 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
       ),
     );
+
+    if (isStopped) {
+      // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.
+      if (projectId.length === 0) {
+        return yield* Effect.fail(
+          new LegacyStartInvalidConfigError({
+            message: "Invalid config: project_id must contain at least one alphanumeric character.",
+          }),
+        );
+      }
+      let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
+      yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
+        removedContainers = containers;
+      }).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
+        ),
+      );
+    }
 
     const bringUpResult = yield* bringUp;
 

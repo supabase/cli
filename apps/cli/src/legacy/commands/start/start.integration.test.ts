@@ -173,6 +173,7 @@ function mockStartContainerCliSpawner(
 
 const HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 const STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
+const STOPPED_STATE = '{"Running":false,"Status":"exited"}';
 
 function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
   const nameIndex = args.indexOf("--name");
@@ -190,11 +191,8 @@ function rollbackWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
 }
 
 /**
- * Stateful default route: a container only inspects successfully once it has
- * actually been "created" — mirrors real Docker semantics and is what makes
- * `legacyStart`'s own "already running" existence check correctly report
- * `false` before bring-up and `true` for any container this same run created
- * (e.g. Postgres's own post-create health wait).
+ * Stateful default route: only created containers inspect successfully,
+ * mirroring Docker across initial state detection and post-create health waits.
  */
 function defaultRoute(opts: { readonly neverHealthy?: ReadonlySet<string> } = {}) {
   const created = new Set<string>();
@@ -569,9 +567,6 @@ describe("legacy start integration", () => {
     it.live(
       "fails when the already-running DB container stops running before the health re-check",
       () => {
-        // The FIRST inspect (`AssertSupabaseDbIsRunning`) only needs to prove the container
-        // exists; the SECOND inspect (Go's `status.Run` re-check, `!ignoreHealthCheck`) is what
-        // actually gates on `Running`/`Health` — a container can transition between the two.
         let inspectCalls = 0;
         const { layer, child } = setup({
           route: (args) => {
@@ -736,6 +731,190 @@ describe("legacy start integration", () => {
         }).pipe(Effect.provide(layer));
       },
     );
+  });
+
+  describe("stopped project recovery", () => {
+    it.live("recreates stopped project containers without pruning the database volume", () => {
+      const workdir = tempRoot.current;
+      const route = defaultRoute();
+      let recovering = false;
+      const { layer, out, child } = setup({
+        route: (args) => {
+          if (
+            args[0] === "container" &&
+            args[1] === "inspect" &&
+            args[2] === "supabase_db_demo" &&
+            !recovering
+          ) {
+            return { stdout: [STOPPED_STATE] };
+          }
+          if (args[0] === "ps" && args.includes("--all")) {
+            recovering = true;
+            return {
+              stdout: [
+                `db-id\tsupabase_db_demo\t${workdir}`,
+                `kong-id\tsupabase_kong_demo\t${workdir}`,
+              ],
+            };
+          }
+          return route(args);
+        },
+      });
+
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+
+        expect(out.stderrText).not.toContain("is already running");
+        expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
+        expect(
+          child.spawned
+            .filter((spawn) => spawn.args[0] === "stop")
+            .map((spawn) => spawn.args[1])
+            .sort(),
+        ).toEqual(["db-id", "kong-id"]);
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              spawn.args[0] === "ps" &&
+              spawn.args.includes("--all") &&
+              spawn.args.includes("label=com.supabase.cli.project=demo"),
+          ),
+        ).toBe(true);
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              spawn.args[0] === "container" &&
+              spawn.args[1] === "prune" &&
+              spawn.args.includes("label=com.supabase.cli.project=demo"),
+          ),
+        ).toBe(true);
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              spawn.args[0] === "network" &&
+              spawn.args[1] === "prune" &&
+              spawn.args.includes("label=com.supabase.cli.project=demo"),
+          ),
+        ).toBe(true);
+        expect(
+          child.spawned.some((spawn) => spawn.args[0] === "volume" && spawn.args[1] === "prune"),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("does not remove containers when the project id sanitizes to empty", () => {
+      const { layer, child } = setup({
+        configContents: 'project_id = "!!!"\n',
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect" && args[2] === "supabase_db_") {
+            return { stdout: [STOPPED_STATE] };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+        }
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) || spawn.args[1] === "prune",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("does not remove containers when inspect returns an unknown state", () => {
+      const { layer, child } = setup({
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            return { stdout: [""] };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) || spawn.args[1] === "prune",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("cleans removed-container secrets and aborts when network pruning fails", () => {
+      const workdir = tempRoot.current;
+      const staleSecretDir = join(
+        workdir,
+        "supabase",
+        ".temp",
+        "start-secrets",
+        "supabase_db_demo",
+      );
+      const staleSecret = join(staleSecretDir, "stale-secret");
+      mkdirSync(staleSecretDir, { recursive: true });
+      writeFileSync(staleSecret, "stale");
+
+      const { layer, child } = setup({
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            return { stdout: [STOPPED_STATE] };
+          }
+          if (args[0] === "ps" && args.includes("--all")) {
+            return { stdout: [`db-id\tsupabase_db_demo\t${workdir}`] };
+          }
+          if (args[0] === "network" && args[1] === "prune") {
+            return { exitCode: 1 };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyDockerRemoveAllNetworkPruneError");
+        }
+        expect(existsSync(staleSecret)).toBe(false);
+        expect(createdContainerNames(child.spawned)).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("keeps a stopped stack intact when a later config field fails to parse", () => {
+      const { layer, child } = setup({
+        configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "not-a-duration"\n',
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            return { stdout: [STOPPED_STATE] };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+        }
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) || spawn.args[1] === "prune",
+          ),
+        ).toBe(false);
+        expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("config load / validation failures", () => {
