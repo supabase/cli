@@ -828,11 +828,13 @@ describe("legacy start integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("does not remove containers when inspect returns an unknown state", () => {
+    it.live("does not remove containers when re-inspect returns an unknown state", () => {
+      let dbInspects = 0;
       const { layer, child } = setup({
         route: (args) => {
           if (args[0] === "container" && args[1] === "inspect") {
-            return { stdout: [""] };
+            dbInspects += 1;
+            return { stdout: [dbInspects === 1 ? STOPPED_STATE : ""] };
           }
           return { exitCode: 0 };
         },
@@ -845,6 +847,40 @@ describe("legacy start integration", () => {
           child.spawned.some(
             (spawn) =>
               (spawn.args[0] === "ps" && spawn.args.includes("--all")) || spawn.args[1] === "prune",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("starts normally when the stopped database disappears before recovery", () => {
+      const route = defaultRoute();
+      let dbInspects = 0;
+      const { layer, child } = setup({
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect" && args[2] === "supabase_db_demo") {
+            dbInspects += 1;
+            if (dbInspects === 1) return { stdout: [STOPPED_STATE] };
+            if (dbInspects === 2) {
+              return {
+                exitCode: 1,
+                stderr: ["Error: No such container: supabase_db_demo"],
+              };
+            }
+          }
+          return route(args);
+        },
+      });
+
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+
+        expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+              spawn.args[0] === "stop" ||
+              spawn.args[1] === "prune",
           ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
@@ -915,6 +951,44 @@ describe("legacy start integration", () => {
         expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
       }).pipe(Effect.provide(layer));
     });
+
+    it.live(
+      "reports status instead of tearing down when the stack recovers before teardown",
+      () => {
+        let dbInspects = 0;
+        const { layer, out, child } = setup({
+          route: (args) => {
+            if (
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              args[2] === "supabase_db_demo"
+            ) {
+              dbInspects += 1;
+              return { stdout: [dbInspects === 1 ? STOPPED_STATE : HEALTHY_STATE] };
+            }
+            if (args[0] === "ps") {
+              return { stdout: ["supabase_db_demo"] };
+            }
+            return { exitCode: 0 };
+          },
+        });
+
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+
+          expect(out.stderrText).toContain("is already running");
+          expect(
+            child.spawned.some(
+              (spawn) =>
+                (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+                spawn.args[1] === "prune",
+            ),
+          ).toBe(false);
+          expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
+          expect(createdContainerNames(child.spawned)).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("config load / validation failures", () => {

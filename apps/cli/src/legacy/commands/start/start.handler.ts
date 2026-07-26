@@ -932,15 +932,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     });
 
     // 3. Missing proceeds to startup; other inspect failures propagate.
-    // Verified stopped stacks are removed without pruning named volumes.
-    const dbState = yield* legacyInspectContainerState(spawner, dbContainerId).pipe(
+    // Unlike Go, verified stopped stacks are recovered without pruning named volumes.
+    const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
         isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
       ),
     );
+    const dbState = yield* inspectDbState;
     const isStopped = dbState?.running === false && dbState.status.length > 0;
 
-    if (dbState !== undefined && !isStopped) {
+    const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
       // `start.go:55`: printed unconditionally in Go (which has no JSON output
       // mode to protect); gated here on text mode for internal consistency
       // with every other supplementary stderr line this handler prints (see
@@ -1005,7 +1006,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         const { values: statusValues } = yield* buildStatusValues(excluded);
         yield* output.success("", statusValues);
       }
-      return;
+    });
+
+    if (dbState !== undefined && !isStopped) {
+      return yield* reportAlreadyRunningStatus();
     }
 
     // 4. Go's `flags.LoadProjectRef`/`services.CheckVersions` best-effort
@@ -2333,22 +2337,31 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     );
 
     if (isStopped) {
-      // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.
-      if (projectId.length === 0) {
-        return yield* Effect.fail(
-          new LegacyStartInvalidConfigError({
-            message: "Invalid config: project_id must contain at least one alphanumeric character.",
-          }),
+      // Recheck after preflight in case Docker or another process restarted the stack.
+      const recheckedState = yield* inspectDbState;
+      const isStillStopped = recheckedState?.running === false && recheckedState.status.length > 0;
+      if (recheckedState !== undefined && !isStillStopped) {
+        return yield* reportAlreadyRunningStatus();
+      }
+      if (isStillStopped) {
+        // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.
+        if (projectId.length === 0) {
+          return yield* Effect.fail(
+            new LegacyStartInvalidConfigError({
+              message:
+                "Invalid config: project_id must contain at least one alphanumeric character.",
+            }),
+          );
+        }
+        let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
+        yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
+          removedContainers = containers;
+        }).pipe(
+          Effect.ensuring(
+            Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
+          ),
         );
       }
-      let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-      yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
-        removedContainers = containers;
-      }).pipe(
-        Effect.ensuring(
-          Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
-        ),
-      );
     }
 
     const bringUpResult = yield* bringUp;
