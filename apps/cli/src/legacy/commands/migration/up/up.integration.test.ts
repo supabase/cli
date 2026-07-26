@@ -174,6 +174,8 @@ describe("legacy migration up", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe(
           "LegacyMigrationMissingLocalError",
         );
+        expect(JSON.stringify(exit.cause)).toContain("migration repair --local --status reverted");
+        expect(JSON.stringify(exit.cause)).toContain("supabase db pull --local");
       }
     }).pipe(Effect.provide(layer));
   });

@@ -422,7 +422,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           path,
           path.join(cliConfig.workdir, "supabase", "migrations"),
         );
-        const sync = legacyReconcileMigrations(remote, local);
+        const sync = legacyReconcileMigrations(remote, local, connType === "local");
         if (sync.kind === "conflict") {
           return yield* Effect.fail(
             new LegacyDbPullMigrationConflictError({

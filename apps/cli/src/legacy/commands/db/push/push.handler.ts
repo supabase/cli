@@ -178,7 +178,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             return yield* Effect.fail(
               new LegacyDbPushMissingLocalError({
                 message: LEGACY_ERR_MISSING_LOCAL,
-                suggestion: legacySuggestRevertHistory(result.versions),
+                suggestion: legacySuggestRevertHistory(result.versions, connType === "local"),
               }),
             );
           }

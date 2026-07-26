@@ -458,9 +458,28 @@ describe("legacy db push", () => {
         expect(JSON.stringify(exit.cause)).toContain(
           "Remote migration versions not found in local migrations directory.",
         );
-        expect(JSON.stringify(exit.cause)).toContain("migration repair --status reverted");
+        expect(JSON.stringify(exit.cause)).toContain("migration repair --local --status reverted");
+        expect(JSON.stringify(exit.cause)).toContain("supabase db pull --local");
       }
       expect(out).toBeDefined();
+    });
+  });
+
+  it.live("keeps repair suggestions targetless for an explicit local database URL", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", "--db-url", dbUrl],
+      remoteMigrations: ["20240101000000"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        dbUrl: Option.some(dbUrl),
+        local: false,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(JSON.stringify(exit)).toContain("migration repair --status reverted");
+      expect(JSON.stringify(exit)).not.toContain("migration repair --local");
     });
   });
 

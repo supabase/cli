@@ -1239,6 +1239,16 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("db pull --local keeps migration repair suggestions local", () => {
+    seedMigration(tmp.current, "20240102000000");
+    const s = setup(tmp.current, { remoteVersions: ["20240101000000"] });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      expect(JSON.stringify(exit)).toContain("migration repair --local --status reverted");
+      expect(JSON.stringify(exit)).toContain("migration repair --local --status applied");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect(
     "a migration name with a path separator fails instead of an empty-version repair",
     () => {
