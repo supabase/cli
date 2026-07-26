@@ -101,23 +101,6 @@ export function legacyIncludeAllPending(
   return [...diff, ...localMigrations.slice(remoteCount + diff.length)];
 }
 
-/**
- * Go's `suggestRevertHistory` (`internal/migration/up/up.go:55-61`). `fmt.Sprintln`
- * appends a trailing newline to each line, so the suggestion ends with `\n`.
- */
-export function legacySuggestRevertHistory(
-  versions: ReadonlyArray<string>,
-  isLocal = false,
-): string {
-  const localFlag = isLocal ? " --local" : "";
-  return (
-    "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n" +
-    `${legacyBold(`supabase migration repair${localFlag} --status reverted ${versions.join(" ")}`)}\n` +
-    "\nAnd update local migrations to match remote database:\n" +
-    `${legacyBold(`supabase db pull${localFlag}`)}\n`
-  );
-}
-
 /** Go's `suggestIgnoreFlag` (`internal/migration/up/up.go:63-67`). */
 export function legacySuggestIgnoreFlag(paths: ReadonlyArray<string>): string {
   return (

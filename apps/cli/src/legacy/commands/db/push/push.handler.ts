@@ -36,7 +36,6 @@ import {
   legacyFindPendingMigrations,
   legacyIncludeAllPending,
   legacySuggestIgnoreFlag,
-  legacySuggestRevertHistory,
 } from "../shared/legacy-migration-pending.ts";
 import {
   type LegacySeedFile,
@@ -46,7 +45,10 @@ import {
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
 // Listing the remote `schema_migrations` history (with the 42P01 → empty rule)
 // lives in the shared migration-history module (Go's `migration.ListRemoteMigrations`).
-import { legacyListRemoteMigrations } from "../../../shared/legacy-migration-history.ts";
+import {
+  legacyListRemoteMigrations,
+  legacySuggestRevertHistory,
+} from "../../../shared/legacy-migration-history.ts";
 import type { LegacyDbPushFlags } from "./push.command.ts";
 import {
   LegacyDbPushApplyError,

@@ -213,6 +213,23 @@ export function legacySuggestMigrationRepair(
 }
 
 /**
+ * Go's `suggestRevertHistory` (`internal/migration/up/up.go:55-61`). `fmt.Sprintln`
+ * appends a trailing newline to each line, so the suggestion ends with `\n`.
+ */
+export function legacySuggestRevertHistory(
+  versions: ReadonlyArray<string>,
+  isLocal = false,
+): string {
+  const localFlag = isLocal ? " --local" : "";
+  return (
+    "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n" +
+    `${legacyBold(`supabase migration repair${localFlag} --status reverted ${versions.join(" ")}`)}\n` +
+    "\nAnd update local migrations to match remote database:\n" +
+    `${legacyBold(`supabase db pull${localFlag}`)}\n`
+  );
+}
+
+/**
  * Lists the remote project's applied migration versions. Mirrors Go's
  * `migration.ListRemoteMigrations` (`pkg/migration/list.go:18-31`): ONLY a missing
  * history table (`pgerrcode.UndefinedTable` = `42P01`) means the remote has no
