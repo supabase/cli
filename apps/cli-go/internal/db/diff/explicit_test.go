@@ -23,7 +23,7 @@ func TestResolveExplicitDatabaseRef(t *testing.T) {
 		ref, err := resolveExplicitDatabaseRef(context.Background(), "local", fsys, nil, nil)
 
 		require.NoError(t, err)
-		assert.Equal(t, "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10", ref)
+		assert.Equal(t, "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10&sslmode=disable", ref)
 	})
 
 	t.Run("passes through database url", func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestResolveExplicitDatabaseRef(t *testing.T) {
 		}, nil)
 
 		require.NoError(t, err)
-		assert.Equal(t, "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?connect_timeout=10", ref)
+		assert.Equal(t, "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?connect_timeout=10&sslmode=disable", ref)
 	})
 
 	t.Run("rejects unknown target", func(t *testing.T) {

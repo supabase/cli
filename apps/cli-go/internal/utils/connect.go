@@ -43,6 +43,9 @@ func toPostgresURL(config pgconn.Config, userinfo *url.Userinfo) string {
 		timeoutSecond = 10
 	}
 	queryParams := fmt.Sprintf("connect_timeout=%d", timeoutSecond)
+	if _, ok := config.RuntimeParams["sslmode"]; !ok {
+		queryParams += fmt.Sprintf("&sslmode=%s", getSSLMode(config))
+	}
 	for k, v := range config.RuntimeParams {
 		queryParams += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
 	}
@@ -60,6 +63,26 @@ func toPostgresURL(config pgconn.Config, userinfo *url.Userinfo) string {
 		queryParams,
 	)
 }
+
+func getSSLMode(config pgconn.Config) string {
+	if mode, ok := config.RuntimeParams["sslmode"]; ok {
+		return mode
+	}
+	if config.TLSConfig == nil {
+		if len(config.Fallbacks) > 0 && config.Fallbacks[0].TLSConfig != nil {
+			return "allow"
+		}
+		return "disable"
+	}
+	if len(config.Fallbacks) > 0 && config.Fallbacks[0].TLSConfig == nil {
+		return "prefer"
+	}
+	if !config.TLSConfig.InsecureSkipVerify {
+		return "verify-full"
+	}
+	return "require"
+}
+
 
 var ErrPrimaryNotFound = errors.New("primary database not found")
 

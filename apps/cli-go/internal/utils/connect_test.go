@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -392,7 +393,7 @@ func TestPostgresURL(t *testing.T) {
 			"options": "test",
 		},
 	})
-	assert.Equal(t, `postgresql://postgres:%21%40%23$%25%5E&%2A%28%29@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
+	assert.Equal(t, `postgresql://postgres:%21%40%23$%25%5E&%2A%28%29@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&sslmode=disable&options=test`, url)
 }
 
 func TestPostgresURLWithoutPassword(t *testing.T) {
@@ -408,6 +409,41 @@ func TestPostgresURLWithoutPassword(t *testing.T) {
 	url := ToPostgresURLWithoutPassword(config)
 	// Same as ToPostgresURL but with the password omitted from the userinfo, so a
 	// credential is never written to stdout by the db __shadow seam.
-	assert.Equal(t, `postgresql://postgres@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
+	assert.Equal(t, `postgresql://postgres@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&sslmode=disable&options=test`, url)
 	assert.NotContains(t, url, "%21%40%23")
 }
+
+func TestPostgresURL_SSLModePreserved(t *testing.T) {
+	modes := []struct {
+		mode         string
+		expectedMode string
+	}{
+		{"disable", "disable"},
+		{"allow", "allow"},
+		{"prefer", "prefer"},
+		{"require", "require"},
+		{"verify-full", "verify-full"},
+	}
+
+	for _, tc := range modes {
+		t.Run(tc.mode, func(t *testing.T) {
+			inputURL := fmt.Sprintf("postgresql://postgres:password@localhost:5432/postgres?sslmode=%s", tc.mode)
+			config, err := pgconn.ParseConfig(inputURL)
+			require.NoError(t, err)
+
+			resURL := ToPostgresURL(*config)
+			assert.Contains(t, resURL, fmt.Sprintf("sslmode=%s", tc.expectedMode))
+
+			reparsedConfig, err := pgconn.ParseConfig(resURL)
+			require.NoError(t, err)
+
+			assert.Equal(t, config.TLSConfig != nil, reparsedConfig.TLSConfig != nil)
+			assert.Equal(t, len(config.Fallbacks), len(reparsedConfig.Fallbacks))
+			if config.TLSConfig != nil {
+				assert.Equal(t, config.TLSConfig.InsecureSkipVerify, reparsedConfig.TLSConfig.InsecureSkipVerify)
+			}
+		})
+	}
+}
+
+
