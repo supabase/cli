@@ -142,6 +142,7 @@ export type LegacyMigrationSync =
 export function legacyReconcileMigrations(
   remote: ReadonlyArray<string>,
   local: ReadonlyArray<string>,
+  isLocal = false,
 ): LegacyMigrationSync {
   // `LEGACY_MIGRATION_VERSION_MAX` is Go's `math.MaxInt` (int64 max) and pins the
   // exhausted side; `legacyParseMigrationVersion` mirrors Go's `strconv.Atoi`
@@ -182,7 +183,10 @@ export function legacyReconcileMigrations(
     }
   }
   if (extraRemote.length + extraLocal.length > 0) {
-    return { kind: "conflict", suggestion: legacySuggestMigrationRepair(extraRemote, extraLocal) };
+    return {
+      kind: "conflict",
+      suggestion: legacySuggestMigrationRepair(extraRemote, extraLocal, isLocal),
+    };
   }
   if (local.length === 0) {
     return { kind: "missing" };
@@ -194,16 +198,35 @@ export function legacyReconcileMigrations(
 export function legacySuggestMigrationRepair(
   extraRemote: ReadonlyArray<string>,
   extraLocal: ReadonlyArray<string>,
+  isLocal = false,
 ): string {
+  const localFlag = isLocal ? " --local" : "";
   let result =
     "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n";
   for (const version of extraRemote) {
-    result += `${legacyBold(`supabase migration repair --status reverted ${version}`)}\n`;
+    result += `${legacyBold(`supabase migration repair${localFlag} --status reverted ${version}`)}\n`;
   }
   for (const version of extraLocal) {
-    result += `${legacyBold(`supabase migration repair --status applied ${version}`)}\n`;
+    result += `${legacyBold(`supabase migration repair${localFlag} --status applied ${version}`)}\n`;
   }
   return result;
+}
+
+/**
+ * Go's `suggestRevertHistory` (`internal/migration/up/up.go:55-61`). `fmt.Sprintln`
+ * appends a trailing newline to each line, so the suggestion ends with `\n`.
+ */
+export function legacySuggestRevertHistory(
+  versions: ReadonlyArray<string>,
+  isLocal = false,
+): string {
+  const localFlag = isLocal ? " --local" : "";
+  return (
+    "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n" +
+    `${legacyBold(`supabase migration repair${localFlag} --status reverted ${versions.join(" ")}`)}\n` +
+    "\nAnd update local migrations to match remote database:\n" +
+    `${legacyBold(`supabase db pull${localFlag}`)}\n`
+  );
 }
 
 /**
