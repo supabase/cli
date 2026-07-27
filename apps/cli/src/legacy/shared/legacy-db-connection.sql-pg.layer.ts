@@ -11,7 +11,7 @@ import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 // resolves, so the COPY path and the pooled path use the same driver.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
-import { legacyConnectSuggestion } from "./legacy-connect-errors.ts";
+import { legacyConnectFailureMessage, legacyConnectSuggestion } from "./legacy-connect-errors.ts";
 import {
   LegacyDbConnectError,
   LegacyDbCopyError,
@@ -584,13 +584,18 @@ const connect = (
     // (`connect.go:187`), mapping the driver error to an actionable hint that replaces
     // the generic "--debug" suggestion. The resolver attaches the profile context to
     // `cfg.suggestionContext`; map it here so the suggestion travels on the error.
+    // The message mirrors Go's `pgxv5.Connect` wrap of pgconn's `connectError`
+    // (`pkg/pgxv5/connect.go:33`, pgconn `errors.go:66-72`): the `failed to connect
+    // to postgres:` prefix plus the `host=… user=… database=…` identity and the
+    // underlying driver cause — not the bare `SqlError` toString, which drops all
+    // of that detail.
     const toConnectError = (error: unknown) => {
       const suggestion =
         cfg.suggestionContext === undefined
           ? undefined
           : legacyConnectSuggestion(error, cfg.suggestionContext);
       return new LegacyDbConnectError({
-        message: `failed to connect to postgres: ${error}`,
+        message: `failed to connect to postgres: ${legacyConnectFailureMessage(cfg, error)}`,
         ...(suggestion === undefined ? {} : { suggestion }),
       });
     };
