@@ -257,7 +257,14 @@ text above is suppressed in these modes — stdout stays payload-only.
 - `--preview` is a hidden, parsed-but-inert flag, matching Go exactly (never read by
   Go's own `start.Run`).
 - The already-running check uses `docker container inspect` on the Postgres container,
-  not a health check — matching Go's `AssertSupabaseDbIsRunning` check (for a verified
-  stopped container outside Bitbucket Pipelines, `start` now removes all current-project
-  containers — including running siblings — and unused networks, cleans staged secrets,
-  preserves named volumes, and continues normal startup).
+  not a health check — matching Go's `AssertSupabaseDbIsRunning` check. For a verified
+  stopped container outside Bitbucket Pipelines, `start` removes all current-project
+  containers — including running siblings — and unused networks, preserves named volumes,
+  and continues normal startup. After container removal succeeds, it deletes
+  `<invoking-workdir>/supabase/.temp/start-secrets/<containerName>` only for containers
+  whose workdir label matches the invoking workdir, or whose missing label uses that
+  workdir as a fallback. Removed containers labeled with another workdir keep their
+  `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory.
+- Docker status `created` is not considered a recoverable stopped stack: the container and
+  named volume are preserved because the volume may not have completed its first database
+  initialization, and `start` reports the existing not-running status instead.

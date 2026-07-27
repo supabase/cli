@@ -17,6 +17,7 @@ const execFileAsync = promisify(execFile);
 
 const START_TIMEOUT_MS = 280_000;
 const SHORT_LIVE_TIMEOUT_MS = 30_000;
+const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
  * `--exclude` values for the 3 heaviest/least-relevant services — same intent
@@ -76,7 +77,7 @@ describeLive("supabase start (live)", () => {
 
   test(
     "recreates a stopped real stack and preserves database data",
-    { timeout: START_TIMEOUT_MS * 2 },
+    { timeout: START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-"));
       // No `project_id` override, so the cli resolves it from the workdir

@@ -944,8 +944,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     const dbState = yield* inspectDbState;
-    const isStopped = dbState?.running === false && dbState.status.length > 0;
-    const shouldRecoverStoppedStack = isStopped && !isBitbucketPipeline;
+    const isRecoverableStoppedState = (
+      state: { readonly running: boolean; readonly status: string } | undefined,
+    ) =>
+      // `created` may own a just-provisioned volume that Postgres never initialized.
+      state?.running === false && state.status.length > 0 && state.status !== "created";
+    const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !isBitbucketPipeline;
 
     const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
       // `start.go:55`: printed unconditionally in Go (which has no JSON output
@@ -1220,6 +1224,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       search: false,
     });
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
+    // Resolve once during preflight so a missing function source cannot fail only after stopped
+    // containers have been removed. Studio consumes the cached binds later during bring-up.
+    const studioFunctionBinds = gates.studio
+      ? yield* resolveFunctionBindMounts(
+          projectId,
+          cliConfig.workdir,
+          `${cliConfig.workdir}/supabase`,
+          { configDeclaredFunctions, configFunctions, rawConfigFunctions },
+          Option.none(),
+          Option.none(),
+          cliConfig.workdir,
+        )
+      : new Set<string>();
 
     // Go's `config.Load` reads `supabase/.temp/storage-migration` (written by
     // `supabase link`) into `Config.Storage.TargetMigration` whenever present
@@ -1830,28 +1847,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           };
 
         case "studio": {
-          // Go's `start.go:1149-1159` computes Studio's function bind mounts
-          // via `serve.PopulatePerFunctionConfigs` unconditionally whenever
-          // Studio is enabled — NOT gated on `Config.EdgeRuntime.Enabled` —
-          // so function sources/import maps/static assets stay mounted for
-          // Studio's local function management even when Edge Runtime itself
-          // is disabled or excluded.
-          const functionBinds = yield* resolveFunctionBindMounts(
-            projectId,
-            cliConfig.workdir,
-            `${cliConfig.workdir}/supabase`,
-            { configDeclaredFunctions, configFunctions, rawConfigFunctions },
-            Option.none(),
-            Option.none(),
-            cliConfig.workdir,
-          );
           return {
             spec: legacyBuildStudioContainerSpec({
               image,
               containerName: studioContainerName,
               networkId,
               port: values.studioPort,
-              functionBinds: [...functionBinds],
+              // Go computes these whenever Studio is enabled, independently of Edge Runtime.
+              // They are resolved during preflight above so recovery teardown remains reversible.
+              functionBinds: [...studioFunctionBinds],
               env: {
                 dbPassword,
                 workdir: cliConfig.workdir,
@@ -2336,8 +2340,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     if (shouldRecoverStoppedStack) {
       // Recheck after preflight in case Docker or another process restarted the stack.
       const recheckedState = yield* inspectDbState;
-      const isStillStopped = recheckedState?.running === false && recheckedState.status.length > 0;
-      if (recheckedState !== undefined && !isStillStopped) {
+      if (recheckedState !== undefined && !isRecoverableStoppedState(recheckedState)) {
         return yield* reportAlreadyRunningStatus();
       }
       // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.

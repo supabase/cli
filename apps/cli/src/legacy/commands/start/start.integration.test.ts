@@ -174,6 +174,7 @@ function mockStartContainerCliSpawner(
 const HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 const STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
 const STOPPED_STATE = '{"Running":false,"Status":"exited"}';
+const CREATED_STATE = '{"Running":false,"Status":"created"}';
 
 function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
   const nameIndex = args.indexOf("--name");
@@ -890,6 +891,36 @@ describe("legacy start integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.live("does not recover a created database container with unknown volume state", () => {
+      const { layer, child } = setup({
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            return { stdout: [CREATED_STATE] };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = JSON.stringify(exit.cause);
+          expect(serialized).toContain("LegacyStatusDbNotRunningError");
+          expect(serialized).toContain("container is not running: created");
+        }
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+              spawn.args[0] === "stop" ||
+              spawn.args[1] === "prune" ||
+              spawn.args[0] === "create",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.live("validates custom TLS files before removing a stopped stack", () => {
       const workdir = tempRoot.current;
       const certPath = join(workdir, "supabase", "certs", "server.crt");
@@ -918,6 +949,39 @@ describe("legacy start integration", () => {
           expect(serialized).toContain("LegacyStartInvalidConfigError");
           expect(serialized).toContain("failed to read TLS cert");
         }
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+              spawn.args[0] === "stop" ||
+              spawn.args[1] === "prune" ||
+              spawn.args[0] === "create",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("validates function bind mounts before removing a stopped stack", () => {
+      const workdir = tempRoot.current;
+      const entrypointPath = join(workdir, "supabase", "functions", "foo", "index.ts");
+      mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
+      writeFileSync(entrypointPath, "export {};\n");
+
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "demo"\n[functions.foo]\nentrypoint = "./functions/foo/index.ts"\n',
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            if (existsSync(entrypointPath)) rmSync(entrypointPath);
+            return { stdout: [STOPPED_STATE] };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
         expect(
           child.spawned.some(
             (spawn) =>
