@@ -32,6 +32,18 @@ async function extractEszip(
     const absPath = path.fromFileUrl(specifier);
     const relPath = path.relative(basePath, absPath);
     const dest = path.join(destPath, relPath);
+
+    const resolvedRoot = path.resolve(destPath);
+    const resolvedDest = path.resolve(dest);
+    if (
+      resolvedDest !== resolvedRoot &&
+      !resolvedDest.startsWith(resolvedRoot + path.sep)
+    ) {
+      throw new Error(
+        `Refusing to extract "${specifier}" outside of ${destPath}`,
+      );
+    }
+
     console.info(path.resolve(dest));
     await write(dest, module);
   }
