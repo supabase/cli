@@ -27,6 +27,8 @@ import { legacyResolveStudioApiUrl } from "../../shared/legacy-api-url.ts";
 import { legacyIsBitbucketPipeline } from "../../shared/legacy-bitbucket-pipeline.ts";
 import { legacyAqua, legacyYellow } from "../../shared/legacy-colors.ts";
 import {
+  legacyApiTlsCertReadErrorMessage,
+  legacyApiTlsKeyReadErrorMessage,
   legacyResolveApiTlsPath,
   legacyResolveEmailTemplateContentPath,
 } from "../../shared/legacy-config-validate.ts";
@@ -1315,6 +1317,39 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       config.api.tls.key_path,
       projectEnvValues,
     );
+    // Go's `NewConfig` seeds these from the embedded defaults, then `Validate`
+    // replaces them from disk before `start.Run` can mutate Docker.
+    let tlsCertContent = LEGACY_KONG_LOCAL_TLS_CERT;
+    let tlsKeyContent = LEGACY_KONG_LOCAL_TLS_KEY;
+    if (
+      apiEnabled &&
+      apiTlsEnabled &&
+      apiTlsCertPath !== undefined &&
+      apiTlsCertPath.length > 0 &&
+      apiTlsKeyPath !== undefined &&
+      apiTlsKeyPath.length > 0
+    ) {
+      tlsCertContent = yield* fs
+        .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyStartInvalidConfigError({
+                message: legacyApiTlsCertReadErrorMessage(cause),
+              }),
+          ),
+        );
+      tlsKeyContent = yield* fs
+        .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsKeyPath))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyStartInvalidConfigError({
+                message: legacyApiTlsKeyReadErrorMessage(cause),
+              }),
+          ),
+        );
+    }
 
     // Same generic-Viper-override gap as `apiTlsEnabled` above, for Realtime's
     // two `SUPABASE_REALTIME_*` fields — both the Realtime container spec
@@ -1661,47 +1696,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
 
         case "kong": {
-          // Go's `NewConfig` seeds `Api.Tls.{CertContent,KeyContent}`
-          // unconditionally from the embedded default cert/key
-          // (`pkg/config/config.go:452-455`); `Validate` only overwrites them
-          // from disk when API itself is enabled, TLS is enabled, AND both
-          // `cert_path`/`key_path` are set (`config.go:1006-1027` — the whole
-          // disk-read branch is nested inside `if c.Api.Enabled`). So a
-          // `[api.tls] enabled = true` project with no custom paths still
-          // gets a real cert/key here — never empty strings — matching
-          // Kong's own unconditional write of these fields to
-          // `/home/kong/localhost.{crt,key}` (`start.go:585-601`).
-          let tlsCertContent: string = LEGACY_KONG_LOCAL_TLS_CERT;
-          let tlsKeyContent: string = LEGACY_KONG_LOCAL_TLS_KEY;
-          if (
-            apiEnabled &&
-            apiTlsEnabled &&
-            apiTlsCertPath !== undefined &&
-            apiTlsCertPath.length > 0 &&
-            apiTlsKeyPath !== undefined &&
-            apiTlsKeyPath.length > 0
-          ) {
-            tlsCertContent = yield* fs
-              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyStartInvalidConfigError({
-                      message: `failed to read api tls cert: ${String(cause)}`,
-                    }),
-                ),
-              );
-            tlsKeyContent = yield* fs
-              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsKeyPath))
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyStartInvalidConfigError({
-                      message: `failed to read api tls key: ${String(cause)}`,
-                    }),
-                ),
-              );
-          }
           return {
             spec: legacyBuildKongContainerSpec({
               image,
@@ -2343,25 +2337,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       if (recheckedState !== undefined && !isStillStopped) {
         return yield* reportAlreadyRunningStatus();
       }
-      if (isStillStopped) {
-        // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.
-        if (projectId.length === 0) {
-          return yield* Effect.fail(
-            new LegacyStartInvalidConfigError({
-              message:
-                "Invalid config: project_id must contain at least one alphanumeric character.",
-            }),
-          );
-        }
-        let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-        yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
-          removedContainers = containers;
-        }).pipe(
-          Effect.ensuring(
-            Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
-          ),
+      // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.
+      if (projectId.length === 0) {
+        return yield* Effect.fail(
+          new LegacyStartInvalidConfigError({
+            message: "Invalid config: project_id must contain at least one alphanumeric character.",
+          }),
         );
       }
+      let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
+      yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
+        removedContainers = containers;
+      }).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
+        ),
+      );
     }
 
     const bringUpResult = yield* bringUp;

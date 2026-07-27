@@ -852,7 +852,48 @@ describe("legacy start integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("starts normally when the stopped database disappears before recovery", () => {
+    it.live("validates custom TLS files before removing a stopped stack", () => {
+      const workdir = tempRoot.current;
+      const certPath = join(workdir, "supabase", "certs", "server.crt");
+      const keyPath = join(workdir, "supabase", "certs", "server.key");
+      mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
+      writeFileSync(certPath, "-----BEGIN CERTIFICATE-----");
+      writeFileSync(keyPath, "-----BEGIN PRIVATE KEY-----");
+
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = "certs/server.crt"\nkey_path = "certs/server.key"\n',
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            if (existsSync(certPath)) rmSync(certPath);
+            return { stdout: [STOPPED_STATE] };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = JSON.stringify(exit.cause);
+          expect(serialized).toContain("LegacyStartInvalidConfigError");
+          expect(serialized).toContain("failed to read TLS cert");
+        }
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+              spawn.args[0] === "stop" ||
+              spawn.args[1] === "prune" ||
+              spawn.args[0] === "create",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("removes remaining project containers when the stopped database disappears", () => {
+      const workdir = tempRoot.current;
       const route = defaultRoute();
       let dbInspects = 0;
       const { layer, child } = setup({
@@ -867,6 +908,9 @@ describe("legacy start integration", () => {
               };
             }
           }
+          if (args[0] === "ps" && args.includes("--all")) {
+            return { stdout: [`kong-id\tsupabase_kong_demo\t${workdir}`] };
+          }
           return route(args);
         },
       });
@@ -876,12 +920,26 @@ describe("legacy start integration", () => {
 
         expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
         expect(
+          child.spawned.filter((spawn) => spawn.args[0] === "stop").map((spawn) => spawn.args[1]),
+        ).toEqual(["kong-id"]);
+        expect(
           child.spawned.some(
             (spawn) =>
-              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
-              spawn.args[0] === "stop" ||
-              spawn.args[1] === "prune",
+              spawn.args[0] === "container" &&
+              spawn.args[1] === "prune" &&
+              spawn.args.includes("label=com.supabase.cli.project=demo"),
           ),
+        ).toBe(true);
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              spawn.args[0] === "network" &&
+              spawn.args[1] === "prune" &&
+              spawn.args.includes("label=com.supabase.cli.project=demo"),
+          ),
+        ).toBe(true);
+        expect(
+          child.spawned.some((spawn) => spawn.args[0] === "volume" && spawn.args[1] === "prune"),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     });
