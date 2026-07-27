@@ -2007,13 +2007,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         configImage: postgresImage,
         rootKey: values.rootKey,
       });
-      const postgresContainerId = yield* legacyStartContainer(spawner, postgresSpec, startOpts);
+      yield* legacyStartContainer(spawner, postgresSpec, startOpts);
       // `dbHealthTimeoutSeconds` is resolved eagerly, before any Docker work — see its
       // definition above, alongside the other eagerly-validated config-override fields.
+      // Watched by container name, matching Go's `utils.DbId`.
       const postgresHealthResult = yield* legacyWaitForHealthyServices(
         spawner,
-        [postgresContainerId],
-        { timeoutSeconds: dbHealthTimeoutSeconds },
+        [postgresSpec.containerName],
+        {
+          timeoutSeconds: dbHealthTimeoutSeconds,
+          images: new Map([[postgresSpec.containerName, postgresSpec.image]]),
+        },
       ).pipe(Effect.result);
       if (Result.isFailure(postgresHealthResult)) {
         const error = postgresHealthResult.failure;
@@ -2030,7 +2034,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // falls through to the SAME unconditional tail every other path
           // reaches (`start.go:84-87`), not an early return from the whole
           // command.
-          yield* output.raw(`${error.message}\n`, "stderr");
+          yield* output.raw(`${error.warningText}\n`, "stderr");
           return { kind: "postgresUnhealthyIgnored" as const };
         }
         return yield* Effect.fail(error);
@@ -2162,7 +2166,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         yield* output.raw(LEGACY_START_STARTING_CONTAINERS_MESSAGE, "stderr");
       }
 
-      const started: Array<string> = [];
+      // Go's `started` slice, as an insertion-ordered container NAME -> resolved
+      // image map. Go watches container names (`started = append(started,
+      // utils.XxxId)`, `start.go:393-1267`), not the ids `docker create`
+      // returns, so an unhealthy container reports as `supabase_auth_demo`
+      // rather than 64 hex characters. Keying the images by that same name
+      // keeps the watch list and its images from drifting apart.
+      const started = new Map<string, string>();
       let postgrestGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let edgeRuntimeGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let storageContainerId: string | undefined;
@@ -2259,7 +2269,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // EdgeRuntimeContainer` already runs `cleanup` on a failed or
           // interrupted bring-up internally, so only the success path must
           // leave it alone.
-          started.push(runtime.containerId);
+          started.set(runtime.containerId, edgeRuntimeInput.image);
           edgeRuntimeGateway = {
             containerId: runtime.containerId,
             apiExternalUrl: values.apiUrl,
@@ -2295,19 +2305,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             ),
           ),
         );
-        const containerId = yield* legacyStartContainer(spawner, spec, startOpts);
+        yield* legacyStartContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
-          started.push(containerId);
+          started.set(spec.containerName, spec.image);
         }
         if (entry.service === "postgrest") {
           postgrestGateway = {
-            containerId,
+            containerId: spec.containerName,
             apiExternalUrl: values.apiUrl,
             secretKey: values.secretKey,
           };
         }
         if (entry.service === "storage") {
-          storageContainerId = containerId;
+          storageContainerId = spec.containerName;
         }
       }
 
@@ -2473,9 +2483,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           projectRef: "",
           config: effectiveLocalStorageConfig,
         });
-        const healthResult = yield* legacyWaitForHealthyServices(spawner, started, {
+        const healthResult = yield* legacyWaitForHealthyServices(spawner, [...started.keys()], {
           postgrest: postgrestGateway,
           edgeRuntime: edgeRuntimeGateway,
+          images: started,
         }).pipe(
           Effect.result,
           localKongCa !== undefined
@@ -2499,9 +2510,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             // the same downgrade-to-warning as every other ignored-unhealthy
             // failure.
             if (isFreshVolume && storageContainerId !== undefined) {
-              const storageHealthResult = yield* legacyWaitForHealthyServices(spawner, [
-                storageContainerId,
-              ]).pipe(Effect.result);
+              const storageHealthResult = yield* legacyWaitForHealthyServices(
+                spawner,
+                [storageContainerId],
+                { images: started },
+              ).pipe(Effect.result);
               if (Result.isSuccess(storageHealthResult)) {
                 const seedResult = yield* legacySeedBucketsRun({
                   projectRef: "",
@@ -2521,7 +2534,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               }
             }
             // Downgrade to a warning and fall through to the success path, no rollback.
-            yield* output.raw(`${error.message}\n`, "stderr");
+            yield* output.raw(`${error.warningText}\n`, "stderr");
           } else {
             // No manual `legacyRollbackStart` here — the outer `Effect.onError`
             // below rolls back on this failure too.
