@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
@@ -126,8 +127,6 @@ const flags = (over: Partial<LegacyMigrationUpFlags> = {}): LegacyMigrationUpFla
   local: over.local ?? true,
 });
 
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 const seed = (workdir: string, name: string, body = "create table a;\n") => {
   const dir = join(workdir, "supabase", "migrations");
   mkdirSync(dir, { recursive: true });

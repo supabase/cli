@@ -13,6 +13,8 @@ import {
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
 
+export { stripAnsi } from "./ansi.ts";
+
 const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
 const LEGACY_BINARY_PATH = fileURLToPath(

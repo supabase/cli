@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
 import { Cause, Effect, Exit, Layer, Sink, Stdio, Stream } from "effect";
-import { NonInteractiveError } from "./errors.ts";
+import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { Output } from "./output.service.ts";
 import {
@@ -245,6 +245,62 @@ describe("Output", () => {
           Effect.sync(() => {
             process.stderr.write = originalWrite;
             process.argv = originalArgv;
+          }),
+        ),
+      );
+    });
+
+    it.effect("fail withholds the --debug fallback for a declined-prompt cancellation", () => {
+      const writes: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      const originalArgv = process.argv;
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      // Strip --debug from argv so only the canceled-sentinel check can suppress the hint.
+      process.argv = originalArgv.filter((arg) => arg !== "--debug");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        // Same shape `normalizeCause` produces for any declined confirmation prompt
+        // (logout, migration fetch/repair/down, db push/reset, functions deploy
+        // --prune, ...): Go's `recoverAndExit` prints only the red `context canceled`
+        // line for `context.Canceled` (apps/cli-go/cmd/root.go:287-303) — CLI-1973.
+        yield* out.fail({ code: "LegacyLogoutCancelledError", message: CONTEXT_CANCELED_MESSAGE });
+        expect(writes).toEqual(["\x1B[31mcontext canceled\x1B[39m\n"]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.stderr.write = originalWrite;
+            process.argv = originalArgv;
+          }),
+        ),
+      );
+    });
+
+    it.effect("fail still prints an explicit caller suggestion for a cancellation", () => {
+      const writes: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        // Go prints a pre-set `utils.CmdSuggestion` even for `context.Canceled` —
+        // only the `SuggestDebugFlag` fallback is withheld (cmd/root.go:287-292).
+        yield* out.fail({
+          code: "E_TEST",
+          message: CONTEXT_CANCELED_MESSAGE,
+          suggestion: "custom hint",
+        });
+        expect(writes).toEqual(["\x1B[31mcontext canceled\x1B[39m\n", "custom hint\n"]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.stderr.write = originalWrite;
           }),
         ),
       );

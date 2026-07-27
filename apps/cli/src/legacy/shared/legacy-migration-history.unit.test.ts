@@ -1,6 +1,7 @@
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
@@ -21,10 +22,6 @@ const failingSession = (error: LegacyDbExecError): LegacyDbSession => ({
   copyToCsv: () => Effect.die("unused"),
   queryRaw: () => Effect.die("unused"),
 });
-
-// Strip ANSI so the bold repair suggestions compare regardless of TTY colour.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("legacyReconcileMigrations", () => {
   it("reports in-sync when remote and local match", () => {

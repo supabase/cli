@@ -11,6 +11,7 @@ import {
 import { Duration, Effect, Option, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
@@ -2084,7 +2085,9 @@ const pruneFunctions = Effect.fnUntraced(function* (
   ].join("\n");
   const confirmed = yes || (yield* output.promptConfirm(`${prompt}\n`, { defaultValue: false }));
   if (!confirmed) {
-    return yield* Effect.fail(new FunctionDeployCancelledError({ message: "context canceled" }));
+    return yield* Effect.fail(
+      new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
+    );
   }
 
   for (const slug of toDelete) {

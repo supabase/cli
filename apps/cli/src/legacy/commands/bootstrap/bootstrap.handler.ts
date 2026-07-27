@@ -6,6 +6,7 @@ import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyWorkdirFlag, legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -135,7 +136,9 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
             { defaultValue: true },
           );
       if (!overwrite) {
-        return yield* new LegacyBootstrapOverwriteDeclinedError({ message: "context canceled" });
+        return yield* new LegacyBootstrapOverwriteDeclinedError({
+          message: CONTEXT_CANCELED_MESSAGE,
+        });
       }
     }
 

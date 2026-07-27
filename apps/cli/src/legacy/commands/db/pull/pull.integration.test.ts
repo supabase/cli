@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
@@ -304,8 +305,6 @@ const flags = (over: Partial<LegacyDbPullFlags> = {}): LegacyDbPullFlags => ({
   password: over.password ?? Option.none(),
 });
 
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 const streamText = (out: ReturnType<typeof mockOutput>, stream: "stdout" | "stderr") =>
   stripAnsi(
     out.rawChunks

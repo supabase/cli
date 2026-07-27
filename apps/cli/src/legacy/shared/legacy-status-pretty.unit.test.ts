@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import {
   legacyRenderStatusPretty,
   legacyStatusColumnLayout,
@@ -7,14 +8,6 @@ import {
   legacyWrapStatusLabel,
 } from "./legacy-status-pretty.ts";
 import type { LegacyStatusOutputNames } from "./legacy-status-values.ts";
-
-// The renderer applies Go-parity ANSI styling via `legacy-colors.ts`, which
-// no-ops on a real non-TTY stream but the vitest process presents its stderr
-// as color-capable. Strip escapes so these assertions target the plain
-// structural output — the golden contract per the port plan — not whichever
-// TTY heuristic the test runner happens to report.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 // Default (un-overridden) output names, matching `legacy-status-values.ts`'s
 // `resolveOutputNames` with an empty override map — the KEYs the pretty
