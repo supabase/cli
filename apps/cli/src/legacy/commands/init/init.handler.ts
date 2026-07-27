@@ -7,7 +7,11 @@ import {
   InitExperimentalRequiredError,
 } from "../../../shared/init/project-init.errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyExperimentalFlag, LegacyWorkdirFlag } from "../../../shared/legacy/global-flags.ts";
+import {
+  LegacyExperimentalFlag,
+  LegacyWorkdirFlag,
+  legacyResolveYes,
+} from "../../../shared/legacy/global-flags.ts";
 import type { LegacyInitFlags } from "./init.command.ts";
 
 export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitFlags) {
@@ -30,6 +34,10 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
     force: flags.force,
     useOrioledb: flags.useOrioledb,
     interactive: flags.interactive,
+    // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320):
+    // auto-accepts the `-i` IDE prompts with Go's stderr echo instead of
+    // prompting anyway (CLI-1974).
+    yes: yield* legacyResolveYes,
     withVscodeSettings: flags.withVscodeWorkspace || flags.withVscodeSettings,
     withIntellijSettings: flags.withIntellijSettings,
   });

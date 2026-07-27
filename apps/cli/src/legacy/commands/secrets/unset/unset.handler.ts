@@ -6,9 +6,9 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacySecretsListNetworkError,
@@ -47,7 +47,6 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
   const yes = yield* legacyResolveYes;
-  const tty = yield* Tty;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -70,21 +69,12 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
 
     const label = `Do you want to unset these function secrets?\n • ${names.join("\n • ")}\n\n`;
 
-    let confirmed: boolean;
-    if (yes) {
-      // Match Go's confirm-by-flag UX byte-for-byte: `PromptYesNo` formats the
-      // line as `fmt.Sprintf("%s [%s] ", label, choices)` then `Fprintln` adds
-      // the `y` and trailing newline. The single space between `${label}` and
-      // `[Y/n]` is intentional — `console.go:69`.
-      yield* output.raw(`${label} [Y/n] y\n`, "stderr");
-      confirmed = true;
-    } else if (!tty.stdinIsTty) {
-      // Go's `PromptYesNo` defaults to true after a 100ms non-TTY read timeout
-      // (no stderr echo). Mirror that.
-      confirmed = true;
-    } else {
-      confirmed = yield* output.promptConfirm(label).pipe(Effect.orElseSucceed(() => false));
-    }
+    // Go's `PromptYesNo(msg, true)` (`unset.go:34`, `console.go:64-82`):
+    // `--yes`/`SUPABASE_YES` auto-confirms with the `<label> [Y/n] y` stderr
+    // echo; a non-TTY stdin still prints the label and scans one piped line
+    // (100ms), so `echo n | supabase secrets unset` declines like Go instead of
+    // hardcoding the Yes default (CLI-1974).
+    const confirmed = yield* legacyPromptYesNo(output, yes, label, true);
 
     if (!confirmed) {
       return yield* Effect.fail(

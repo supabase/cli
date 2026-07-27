@@ -7,7 +7,8 @@ import {
   validateFunctionSlugMessage,
 } from "../../../../shared/functions/functions.shared.ts";
 import { writeIntelliJConfig, writeVscodeConfig } from "../../../../shared/init/project-init.ts";
-import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -105,42 +106,23 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (workdir: string, slug
 // never scaffold IDE settings as an undisclosed side effect.
 const promptForIdeSettings = Effect.fnUntraced(function* (workdir: string) {
   const output = yield* Output;
-  const tty = yield* Tty;
-  const yes = yield* LegacyYesFlag;
+  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320).
+  const yes = yield* legacyResolveYes;
 
-  // `--yes`: echo the accepted prompt and write, matching Go's `viper.GetBool("YES")` branch
-  // (`fmt.Fprintln(os.Stderr, label+"y")`).
-  if (yes) {
-    yield* output.raw("Generate VS Code settings for Deno? [Y/n] y\n", "stderr");
+  // Both questions route through `legacyPromptYesNo`, mirroring Go's
+  // `PromptForIDESettings` (`init.go:61-75`, `console.go:64-82`): `--yes`/
+  // `SUPABASE_YES` auto-accepts VS Code with the `[Y/n] y` stderr echo; a
+  // non-TTY stdin prints the label and scans one piped line (100ms), so
+  // `echo n | supabase functions new` declines VS Code and falls through to
+  // the IntelliJ question instead of hardcoding the default (CLI-1974).
+  if (yield* legacyPromptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
     yield* writeVscodeConfig(workdir).pipe(
       Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),
     );
     return;
   }
 
-  // Non-TTY: Go's `PromptYesNo` prints the label, reads nothing within the 100ms timeout, and
-  // falls back to the default (`true` for VS Code). The trailing space + newline matches the
-  // bytes Go writes — the `"... [Y/n] "` label followed by the echoed empty line.
-  if (!tty.stdinIsTty) {
-    yield* output.raw("Generate VS Code settings for Deno? [Y/n] \n", "stderr");
-    yield* writeVscodeConfig(workdir).pipe(
-      Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),
-    );
-    return;
-  }
-
-  if (yield* output.promptConfirm("Generate VS Code settings for Deno?", { defaultValue: true })) {
-    yield* writeVscodeConfig(workdir).pipe(
-      Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),
-    );
-    return;
-  }
-
-  if (
-    yield* output.promptConfirm("Generate IntelliJ IDEA settings for Deno?", {
-      defaultValue: false,
-    })
-  ) {
+  if (yield* legacyPromptYesNo(output, yes, "Generate IntelliJ IDEA settings for Deno?", false)) {
     yield* writeIntelliJConfig(workdir).pipe(
       Effect.mapError(mapLegacyFunctionsNewWriteError(".idea/deno.xml")),
     );

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { legacyViperEnvBool } from "./legacy-viper-env.ts";
+import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./legacy-viper-env.ts";
 
 const KEY = "SUPABASE_TEST_VIPER_BOOL";
 
@@ -28,5 +28,45 @@ describe("legacyViperEnvBool", () => {
   it("is false when the env var is absent", () => {
     delete process.env[KEY];
     expect(legacyViperEnvBool(KEY)).toBe(false);
+  });
+});
+
+describe("legacyViperEnvBoolWithProjectFallback", () => {
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  // Go truth table: godotenv.Load only sets project-.env keys ABSENT from the
+  // shell env (presence is key-existence, so even an empty shell value blocks
+  // the file value), then viper.GetBool reads the merged env
+  // (godotenv@v1.5.1/godotenv.go:184-200, apps/cli-go/pkg/config/config.go).
+
+  it("falls back to the project value only when the shell var is absent", () => {
+    delete process.env[KEY];
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(true);
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(false);
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, {})).toBe(false);
+  });
+
+  it("keeps a false shell override even when the project .env says true", () => {
+    process.env[KEY] = "false";
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
+  });
+
+  it("treats an empty shell value as present (blocks the project value) and false", () => {
+    // godotenv's presence check is key-existence in os.Environ(), and viper
+    // without AllowEmptyEnv resolves "" to the false default.
+    process.env[KEY] = "";
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
+  });
+
+  it("treats an unparsable shell value as present and false (cast.ToBool swallows the error)", () => {
+    process.env[KEY] = "banana";
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
+  });
+
+  it("keeps a true shell value over a false project value", () => {
+    process.env[KEY] = "true";
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(true);
   });
 });
