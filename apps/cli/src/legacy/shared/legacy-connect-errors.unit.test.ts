@@ -346,7 +346,10 @@ describe("legacyConnectSuggestion", () => {
     // the last error (`pgconn.go:171-203`) and `SetConnectSuggestion` classifies
     // that same rendered string (`connect.go:317`). An earlier IPv6 EHOSTUNREACH
     // followed by a final unclassified IPv4 timeout must NOT fire the IPv6 hint.
+    // The parent carries `code` copied from errors[0] (node's `aggregateErrors`),
+    // which must not leak into the wrong-profile branch either.
     const aggregate = Object.assign(new AggregateError([], ""), {
+      code: "EHOSTUNREACH",
       errors: [
         dialError("EHOSTUNREACH", "2600:1f18::1", 5432),
         dialError("ETIMEDOUT", "10.0.0.9", 5432),
@@ -357,8 +360,10 @@ describe("legacyConnectSuggestion", () => {
 
   it("fires the IPv6 pooler suggestion when the LAST aggregate attempt is the IPv6 dial failure", () => {
     // The surfaced (last) attempt drives both the rendered cause and the
-    // suggestion — an earlier refused IPv4 attempt is ignored, like Go.
+    // suggestion — an earlier refused IPv4 attempt is ignored, like Go, even
+    // though node copies its `code` onto the aggregate parent.
     const aggregate = Object.assign(new AggregateError([], ""), {
+      code: "ECONNREFUSED",
       errors: [
         dialError("ECONNREFUSED", "10.0.0.9", 5432),
         dialError("EHOSTUNREACH", "2600:1f18::1", 5432),
@@ -366,6 +371,41 @@ describe("legacyConnectSuggestion", () => {
     });
     expect(legacyConnectSuggestion(realSqlConnectError(aggregate), ctx)).toBe(
       legacyIpv6Suggestion(),
+    );
+  });
+
+  it("ignores the parent aggregate's copied first-attempt code (node aggregateErrors shape)", () => {
+    // Node's `aggregateErrors` (`lib/internal/errors.js`, Bun matches) copies
+    // `errors[0].code` onto the AggregateError itself. A refused first attempt
+    // followed by a final unreachable-IPv6 attempt must classify the LAST
+    // attempt (IPv6 pooler hint), not the parent's copied ECONNREFUSED —
+    // otherwise the suggestion disagrees with the rendered cause, which Go
+    // makes impossible (`pgconn.go:171-203`, `connect.go:317`).
+    const aggregate = Object.assign(new AggregateError([], ""), {
+      code: "ECONNREFUSED",
+      errors: [
+        dialError("ECONNREFUSED", "10.0.0.9", 5432),
+        dialError("ENETUNREACH", "2600:1f18::1", 5432),
+      ],
+    });
+    expect(legacyConnectSuggestion(realSqlConnectError(aggregate), ctx)).toBe(
+      legacyIpv6Suggestion(),
+    );
+  });
+
+  it("classifies a refused LAST attempt as network restrictions despite an IPv6 first attempt", () => {
+    // Reverse direction: the parent's copied ENETUNREACH (from the abandoned
+    // IPv6 first attempt) must not fabricate the IPv6 hint when the surfaced
+    // last attempt is a plain refusal.
+    const aggregate = Object.assign(new AggregateError([], ""), {
+      code: "ENETUNREACH",
+      errors: [
+        dialError("ENETUNREACH", "2600:1f18::1", 5432),
+        dialError("ECONNREFUSED", "10.0.0.9", 5432),
+      ],
+    });
+    expect(legacyConnectSuggestion(realSqlConnectError(aggregate), ctx)).toContain(
+      "Network Restrictions and Network Bans",
     );
   });
 

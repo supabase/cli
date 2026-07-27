@@ -79,13 +79,16 @@ export interface LegacyConnectSuggestionContext {
  * nested `message` and `code`. The `@effect/sql` `SqlError` wraps the
  * node-postgres / node `net` driver error on its `cause`; a multi-address dial
  * wraps an `AggregateError` whose `errors[]` carry the per-IP `ECONNREFUSED` /
- * `ENETUNREACH` system errors — only the LAST child is visited, because that is
- * the attempt pgconn surfaces: its fallback loop overwrites the error on every
- * attempt so only the last one survives (`pgconn.go:171-203`), and Go's
- * `SetConnectSuggestion` classifies exactly that `err.Error()` string
- * (`connect.go:317`). Including the `code` strings lets the matcher key off
- * node's `ECONNREFUSED` the way Go keys off pgconn's `connect: connection
- * refused`.
+ * `ENETUNREACH` system errors — an aggregate node contributes NOTHING itself
+ * and only its LAST child is visited, because that is the attempt pgconn
+ * surfaces: its fallback loop overwrites the error on every attempt so only the
+ * last one survives (`pgconn.go:171-203`), and Go's `SetConnectSuggestion`
+ * classifies exactly that `err.Error()` string (`connect.go:317`). The parent's
+ * own fields must be skipped: node's `aggregateErrors` copies `errors[0].code`
+ * onto the aggregate itself (`lib/internal/errors.js`, Bun matches), so reading
+ * them would blame an abandoned first attempt. Including the `code` strings of
+ * the visited nodes lets the matcher key off node's `ECONNREFUSED` the way Go
+ * keys off pgconn's `connect: connection refused`.
  */
 function legacyCollectConnectErrorText(error: unknown): string {
   const parts: string[] = [];
@@ -93,13 +96,16 @@ function legacyCollectConnectErrorText(error: unknown): string {
   const visit = (node: unknown, depth: number): void => {
     if (depth > 8 || typeof node !== "object" || node === null || seen.has(node)) return;
     seen.add(node);
+    const errors = Reflect.get(node, "errors");
+    if (Array.isArray(errors) && errors.length > 0) {
+      visit(errors[errors.length - 1], depth + 1);
+      return;
+    }
     const message = Reflect.get(node, "message");
     if (typeof message === "string") parts.push(message);
     const code = Reflect.get(node, "code");
     if (typeof code === "string") parts.push(code);
     visit(Reflect.get(node, "cause"), depth + 1);
-    const errors = Reflect.get(node, "errors");
-    if (Array.isArray(errors) && errors.length > 0) visit(errors[errors.length - 1], depth + 1);
   };
   visit(error, 0);
   return parts.join("\n");
