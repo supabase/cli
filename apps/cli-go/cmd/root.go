@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -184,6 +185,9 @@ func Execute() {
 		panic(err)
 	}
 	// Check upgrade last because --version flag is initialised after execute
+	if shouldSkipUpdateNotifier() {
+		return
+	}
 	ctx := rootCmd.Context()
 	if executedCmd != nil {
 		ctx = executedCmd.Context()
@@ -201,6 +205,15 @@ func Execute() {
 	if len(utils.CmdSuggestion) > 0 {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
+}
+
+func shouldSkipUpdateNotifier() bool {
+	val := os.Getenv("SUPABASE_NO_UPDATE_NOTIFIER")
+	if len(val) == 0 {
+		return false
+	}
+	enabled, err := strconv.ParseBool(val)
+	return err == nil && enabled
 }
 
 // ensureProjectGroupsCached populates the telemetry linked-project cache when

@@ -119,3 +119,26 @@ func TestEnvSignals(t *testing.T) {
 	assert.Equal(t, strings.Repeat("x", 80), signals["TERM"])
 	assert.NotContains(t, signals, "AI_AGENT")
 }
+
+func TestShouldSkipUpdateNotifier(t *testing.T) {
+	t.Run("returns true when SUPABASE_NO_UPDATE_NOTIFIER is true", func(t *testing.T) {
+		t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", "true")
+		assert.True(t, shouldSkipUpdateNotifier())
+	})
+
+	t.Run("returns true when SUPABASE_NO_UPDATE_NOTIFIER is 1", func(t *testing.T) {
+		t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", "1")
+		assert.True(t, shouldSkipUpdateNotifier())
+	})
+
+	t.Run("returns false when SUPABASE_NO_UPDATE_NOTIFIER is false", func(t *testing.T) {
+		t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", "false")
+		assert.False(t, shouldSkipUpdateNotifier())
+	})
+
+	t.Run("returns false when SUPABASE_NO_UPDATE_NOTIFIER is unset", func(t *testing.T) {
+		t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", "")
+		assert.False(t, shouldSkipUpdateNotifier())
+	})
+}
+
