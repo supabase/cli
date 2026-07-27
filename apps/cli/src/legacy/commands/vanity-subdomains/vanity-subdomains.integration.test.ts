@@ -249,7 +249,7 @@ describe("legacy vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsCheckAvailability({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toBe("Subdomain example.com available: true\n");
       expect(api.requests[0]?.method).toBe("POST");
@@ -268,7 +268,7 @@ describe("legacy vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsCheckAvailability({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toContain('"available": true');
     }).pipe(Effect.provide(layer));
@@ -282,7 +282,7 @@ describe("legacy vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsCheckAvailability({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toContain("available: true");
     }).pipe(Effect.provide(layer));
@@ -296,7 +296,7 @@ describe("legacy vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsCheckAvailability({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toBe("Available = true\n\n");
     }).pipe(Effect.provide(layer));
@@ -310,7 +310,7 @@ describe("legacy vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsCheckAvailability({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toContain('AVAILABLE="true"');
     }).pipe(Effect.provide(layer));
@@ -324,7 +324,7 @@ describe("legacy vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsCheckAvailability({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ available: true });
@@ -341,7 +341,7 @@ describe("legacy vanity-subdomains check-availability", () => {
       const exit = yield* Effect.exit(
         legacyVanitySubdomainsCheckAvailability({
           projectRef: Option.none(),
-          desiredSubdomain: "example.com",
+          desiredSubdomain: Option.some("example.com"),
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -360,7 +360,7 @@ describe("legacy vanity-subdomains check-availability", () => {
       const exit = yield* Effect.exit(
         legacyVanitySubdomainsCheckAvailability({
           projectRef: Option.none(),
-          desiredSubdomain: "example.com",
+          desiredSubdomain: Option.some("example.com"),
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -369,6 +369,44 @@ describe("legacy vanity-subdomains check-availability", () => {
         expect(errorJson).toContain("LegacyVanitySubdomainsCheckNetworkError");
         expect(errorJson).toContain("failed to check vanity subdomain");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Go marks --desired-subdomain required but cobra validates it only after
+  // PersistentPreRunE (gate → login → ref resolution), so the handler enforces
+  // it with cobra's exact wording after the ref resolves.
+  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        legacyVanitySubdomainsCheckAvailability({
+          projectRef: Option.none(),
+          desiredSubdomain: Option.none(),
+        }),
+      );
+      expect(error._tag).toBe("LegacyDesiredSubdomainRequiredError");
+      expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Cobra's MarkFlagRequired checks the flag was *changed*, not non-empty —
+  // an explicit empty value must pass the check and reach the API.
+  it.live("passes an explicit empty --desired-subdomain through to the API", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* legacyVanitySubdomainsCheckAvailability({
+        projectRef: Option.none(),
+        desiredSubdomain: Option.some(""),
+      });
+      expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "" });
+      expect(out.stdoutText).toBe("Subdomain  available: true\n");
     }).pipe(Effect.provide(layer));
   });
 });
@@ -382,7 +420,7 @@ describe("legacy vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsActivate({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toBe("Activated vanity subdomain at example.com\n");
       expect(api.requests[0]?.method).toBe("POST");
@@ -401,7 +439,7 @@ describe("legacy vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsActivate({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toContain('"custom_domain": "example.com"');
     }).pipe(Effect.provide(layer));
@@ -415,7 +453,7 @@ describe("legacy vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsActivate({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toContain("custom_domain: example.com");
     }).pipe(Effect.provide(layer));
@@ -429,7 +467,7 @@ describe("legacy vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsActivate({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toBe('CustomDomain = "example.com"\n\n');
     }).pipe(Effect.provide(layer));
@@ -443,7 +481,7 @@ describe("legacy vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsActivate({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       expect(out.stdoutText).toContain('CUSTOM_DOMAIN="example.com"');
     }).pipe(Effect.provide(layer));
@@ -457,7 +495,7 @@ describe("legacy vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsActivate({
         projectRef: Option.none(),
-        desiredSubdomain: "example.com",
+        desiredSubdomain: Option.some("example.com"),
       });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ custom_domain: "example.com" });
@@ -474,7 +512,7 @@ describe("legacy vanity-subdomains activate", () => {
       const exit = yield* Effect.exit(
         legacyVanitySubdomainsActivate({
           projectRef: Option.none(),
-          desiredSubdomain: "example.com",
+          desiredSubdomain: Option.some("example.com"),
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -499,7 +537,7 @@ describe("legacy vanity-subdomains activate", () => {
       const exit = yield* Effect.exit(
         legacyVanitySubdomainsActivate({
           projectRef: Option.none(),
-          desiredSubdomain: "example.com",
+          desiredSubdomain: Option.some("example.com"),
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -510,6 +548,43 @@ describe("legacy vanity-subdomains activate", () => {
       }
       // A network failure is not a billing gate, so no upgrade is suggested.
       expect(analytics.captured).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Go marks --desired-subdomain required but cobra validates it only after
+  // PersistentPreRunE (gate → login → ref resolution), so the handler enforces
+  // it with cobra's exact wording after the ref resolves.
+  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        legacyVanitySubdomainsActivate({
+          projectRef: Option.none(),
+          desiredSubdomain: Option.none(),
+        }),
+      );
+      expect(error._tag).toBe("LegacyDesiredSubdomainRequiredError");
+      expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Cobra's MarkFlagRequired checks the flag was *changed*, not non-empty —
+  // an explicit empty value must pass the check and reach the API.
+  it.live("passes an explicit empty --desired-subdomain through to the API", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* legacyVanitySubdomainsActivate({
+        projectRef: Option.none(),
+        desiredSubdomain: Option.some(""),
+      });
+      expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "" });
     }).pipe(Effect.provide(layer));
   });
 });
@@ -625,4 +700,36 @@ describe("legacy vanity-subdomains PersistentPostRun parity", () => {
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  // In Go the missing-required-flag failure happens AFTER PersistentPreRunE
+  // completes, so PersistentPostRun still fires telemetry and writes the
+  // linked-project cache (`cmd/root.go:171-181,212-233`). The handler-level
+  // check sits inside both `Effect.ensuring` wrappers to match.
+  it.live(
+    "flushes telemetry and writes linked-project cache on a missing --desired-subdomain",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
+      const telemetry = mockLegacyTelemetryStateTracked();
+      const cache = mockLegacyLinkedProjectCacheTracked();
+      const layer = runtimeWith({
+        out,
+        api,
+        telemetry: telemetry.layer,
+        linkedProjectCache: cache.layer,
+      });
+
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          legacyVanitySubdomainsActivate({
+            projectRef: Option.none(),
+            desiredSubdomain: Option.none(),
+          }),
+        );
+        expect(error._tag).toBe("LegacyDesiredSubdomainRequiredError");
+        expect(telemetry.flushed).toBe(true);
+        expect(cache.cached).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
