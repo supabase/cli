@@ -1852,9 +1852,9 @@ content_path = "./templates/custom_notice.html"
           const authMigrateJob = dbSetupJobCalls(child.spawned).find((s) =>
             s.args.some((arg) => arg.includes("gotrue")),
           );
-          expect(authMigrateJob?.args.some((arg) => arg.includes("registry.example.com"))).toBe(
-            true,
-          );
+          expect(
+            authMigrateJob?.args.some((arg) => arg.startsWith("registry.example.com/supabase/")),
+          ).toBe(true);
         }).pipe(Effect.provide(layer));
       },
     );
