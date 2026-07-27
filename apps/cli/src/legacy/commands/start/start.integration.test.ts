@@ -828,6 +828,44 @@ describe("legacy start integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.live("preserves a stopped Bitbucket database container", () => {
+      const previous = process.env["BITBUCKET_CLONE_DIR"];
+      process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
+      const { layer, child } = setup({
+        route: (args) => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            return { stdout: [STOPPED_STATE] };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStart(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotRunningError");
+        }
+        expect(
+          child.spawned.some(
+            (spawn) =>
+              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+              spawn.args[0] === "stop" ||
+              spawn.args[1] === "prune" ||
+              spawn.args[0] === "create",
+          ),
+        ).toBe(false);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["BITBUCKET_CLONE_DIR"];
+            else process.env["BITBUCKET_CLONE_DIR"] = previous;
+          }),
+        ),
+      );
+    });
+
     it.live("does not remove containers when re-inspect returns an unknown state", () => {
       let dbInspects = 0;
       const { layer, child } = setup({

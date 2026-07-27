@@ -933,8 +933,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       return legacyStatusValuesFromState(state, new Map());
     });
 
+    const isBitbucketPipeline = legacyIsBitbucketPipeline();
+
     // 3. Missing proceeds to startup; other inspect failures propagate.
-    // Unlike Go, verified stopped stacks are recovered without pruning named volumes.
+    // Unlike Go, verified stopped stacks are recovered unless Bitbucket's lack of named volumes
+    // makes removing the Postgres container destructive.
     const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
         isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
@@ -942,6 +945,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     );
     const dbState = yield* inspectDbState;
     const isStopped = dbState?.running === false && dbState.status.length > 0;
+    const shouldRecoverStoppedStack = isStopped && !isBitbucketPipeline;
 
     const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
       // `start.go:55`: printed unconditionally in Go (which has no JSON output
@@ -1010,7 +1014,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       }
     });
 
-    if (dbState !== undefined && !isStopped) {
+    if (dbState !== undefined && !shouldRecoverStoppedStack) {
       return yield* reportAlreadyRunningStatus();
     }
 
@@ -1238,7 +1242,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const networkId = Option.isSome(networkIdFlag)
       ? networkIdFlag.value
       : localNetworkId(projectId);
-    const isBitbucketPipeline = legacyIsBitbucketPipeline();
     // Go's `DockerStart` unconditionally appends the Linux-only
     // `host.docker.internal:host-gateway` extra host for every container it
     // starts (`docker_linux.go`; empty on darwin/windows, where Docker
@@ -2330,7 +2333,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
 
-    if (isStopped) {
+    if (shouldRecoverStoppedStack) {
       // Recheck after preflight in case Docker or another process restarted the stack.
       const recheckedState = yield* inspectDbState;
       const isStillStopped = recheckedState?.running === false && recheckedState.status.length > 0;

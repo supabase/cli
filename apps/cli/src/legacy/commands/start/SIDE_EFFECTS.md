@@ -258,6 +258,6 @@ text above is suppressed in these modes — stdout stays payload-only.
   Go's own `start.Run`).
 - The already-running check uses `docker container inspect` on the Postgres container,
   not a health check — matching Go's `AssertSupabaseDbIsRunning` check (for a verified
-  stopped container, `start` now removes all current-project containers — including running
-  siblings — and unused networks, cleans staged secrets, preserves named volumes, and
-  continues normal startup).
+  stopped container outside Bitbucket Pipelines, `start` now removes all current-project
+  containers — including running siblings — and unused networks, cleans staged secrets,
+  preserves named volumes, and continues normal startup).
