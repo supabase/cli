@@ -14,6 +14,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
@@ -81,7 +82,7 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
     // falls back to the No default (CLI-1974).
     const confirmed = yield* legacyPromptYesNo(output, yes, title, false);
     if (!confirmed) {
-      return yield* new LegacyProjectsDeleteCancelledError({ message: "context canceled" });
+      return yield* new LegacyProjectsDeleteCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
 
     const mapDeleteError = mapLegacyHttpError({

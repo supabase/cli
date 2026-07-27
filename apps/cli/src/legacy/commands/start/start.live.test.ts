@@ -9,6 +9,7 @@ import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts
 import {
   legacySanitizeProjectId,
   legacyServiceContainerName,
+  localDbContainerId,
 } from "../../shared/legacy-docker-ids.ts";
 import { LEGACY_SERVICE_CATALOG } from "../../shared/legacy-service-catalog.ts";
 
@@ -16,6 +17,7 @@ const execFileAsync = promisify(execFile);
 
 const START_TIMEOUT_MS = 280_000;
 const SHORT_LIVE_TIMEOUT_MS = 30_000;
+const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
  * `--exclude` values for the 3 heaviest/least-relevant services — same intent
@@ -74,8 +76,8 @@ describeLive("supabase start (live)", () => {
   });
 
   test(
-    "starts a reduced real local stack, running only the non-excluded containers",
-    { timeout: START_TIMEOUT_MS },
+    "recreates a stopped real stack and preserves database data",
+    { timeout: START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-"));
       // No `project_id` override, so the cli resolves it from the workdir
@@ -84,6 +86,17 @@ describeLive("supabase start (live)", () => {
       // alphanumeric/`-`), but mirrors the port's actual resolution rather
       // than assuming that stays true.
       const projectId = legacySanitizeProjectId(path.basename(projectDir));
+      const projectFilter = `label=com.supabase.cli.project=${projectId}`;
+      const dbContainerId = localDbContainerId(projectId);
+      const startArgs = [
+        "start",
+        "--exclude",
+        "studio",
+        "--exclude",
+        "logflare",
+        "--exclude",
+        "vector",
+      ];
 
       const init = await runSupabaseLive(["init"], {
         cwd: projectDir,
@@ -91,11 +104,72 @@ describeLive("supabase start (live)", () => {
       });
       expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
 
-      const start = await runSupabaseLive(
-        ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
-      );
+      const start = await runSupabaseLive(startArgs, {
+        cwd: projectDir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
       expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+
+      const persistedValue = "survived-stopped-container-recovery";
+      await execFileAsync("docker", [
+        "exec",
+        dbContainerId,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        `CREATE TABLE start_restart_regression (value text NOT NULL); INSERT INTO start_restart_regression VALUES ('${persistedValue}');`,
+      ]);
+
+      const { stdout: containerIdOutput } = await execFileAsync("docker", [
+        "ps",
+        "--filter",
+        projectFilter,
+        "--format",
+        "{{.ID}}",
+      ]);
+      const containerIds = splitNonEmptyLines(containerIdOutput);
+      expect(containerIds.length).toBeGreaterThan(0);
+      await execFileAsync("docker", ["stop", "--time", "0", ...containerIds], {
+        timeout: SHORT_LIVE_TIMEOUT_MS,
+      });
+
+      const { stdout: stoppedState } = await execFileAsync("docker", [
+        "container",
+        "inspect",
+        dbContainerId,
+        "--format",
+        "{{json .State}}",
+      ]);
+      expect(JSON.parse(stoppedState.trim())).toMatchObject({
+        Running: false,
+        Status: "exited",
+      });
+
+      const restart = await runSupabaseLive(startArgs, {
+        cwd: projectDir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
+      expect(restart.exitCode, `stdout:\n${restart.stdout}\nstderr:\n${restart.stderr}`).toBe(0);
+      expect(restart.stderr).not.toContain("is already running");
+      expect(restart.stderr).not.toContain("container is not running");
+
+      const { stdout: persistedData } = await execFileAsync("docker", [
+        "exec",
+        dbContainerId,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-Atc",
+        "SELECT value FROM start_restart_regression;",
+      ]);
+      expect(persistedData.trim()).toBe(persistedValue);
 
       // The real Docker daemon must agree with the CLI's own exit code: every
       // non-excluded service is actually running under this project's label,
@@ -104,7 +178,7 @@ describeLive("supabase start (live)", () => {
       const { stdout: psOutput } = await execFileAsync("docker", [
         "ps",
         "--filter",
-        `label=com.supabase.cli.project=${projectId}`,
+        projectFilter,
         "--format",
         "{{.Names}}",
       ]);

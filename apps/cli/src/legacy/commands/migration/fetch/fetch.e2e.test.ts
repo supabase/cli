@@ -3,12 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { runSupabase } from "../../../../../tests/helpers/cli.ts";
+import { runSupabase, stripAnsi } from "../../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
-
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("supabase migration fetch (legacy)", () => {
   let workdir: string;
@@ -40,9 +37,15 @@ describe("supabase migration fetch (legacy)", () => {
         stdin: "n\n",
       });
 
-      // Declined → cancelled (non-zero), and the Go-style prompt label reached stderr.
-      expect(exitCode).not.toBe(0);
+      // Declined → cancelled (exit 1), and the Go-style prompt label reached stderr.
+      expect(exitCode).toBe(1);
       expect(stripAnsi(stderr)).toContain("[Y/n]");
+      // Byte-parity with Go's `recoverAndExit` (apps/cli-go/cmd/root.go:287-303):
+      // a declined prompt renders a lone `context canceled` line, with NO
+      // `SuggestDebugFlag` troubleshooting hint appended. CLI-1973.
+      const lines = stripAnsi(stderr).trimEnd().split("\n");
+      expect(lines.at(-1)).toBe("context canceled");
+      expect(stderr).not.toContain("Try rerunning the command with --debug");
       // The existing file was NOT overwritten — the piped answer was honored.
       expect(readdirSync(join(workdir, "supabase", "migrations"))).toEqual([
         "20240101000000_existing.sql",

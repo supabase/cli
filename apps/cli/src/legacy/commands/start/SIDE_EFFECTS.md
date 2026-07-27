@@ -175,7 +175,9 @@ not implemented.
 | `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                                                                                                                                           |
 | `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                              |
 | `1`  | malformed `config.toml` / `Config.Validate` failure                                                                                                                                                                                                                                                            |
+| `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                  |
+| `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                 |
 | `1`  | image pull exhausted across every registry candidate                                                                                                                                                                                                                                                           |
 | `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                               |
 | `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                          |
@@ -254,6 +256,15 @@ text above is suppressed in these modes — stdout stays payload-only.
   table).
 - `--preview` is a hidden, parsed-but-inert flag, matching Go exactly (never read by
   Go's own `start.Run`).
-- The already-running check is a plain container-existence check (`docker container
-inspect` on the Postgres container), not a health check — matching Go's
-  `AssertSupabaseDbIsRunning` naming despite what it actually verifies.
+- The already-running check uses `docker container inspect` on the Postgres container,
+  not a health check — matching Go's `AssertSupabaseDbIsRunning` check. For a verified
+  stopped container outside Bitbucket Pipelines, `start` removes all current-project
+  containers — including running siblings — and unused networks, preserves named volumes,
+  and continues normal startup. After container removal succeeds, it deletes
+  `<invoking-workdir>/supabase/.temp/start-secrets/<containerName>` only for containers
+  whose workdir label matches the invoking workdir, or whose missing label uses that
+  workdir as a fallback. Removed containers labeled with another workdir keep their
+  `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory.
+- Docker status `created` is not considered a recoverable stopped stack: the container and
+  named volume are preserved because the volume may not have completed its first database
+  initialization, and `start` reports the existing not-running status instead.

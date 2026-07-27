@@ -3,9 +3,10 @@ import { Effect } from "effect";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
-import { LegacyLogoutCancelledError, LEGACY_LOGOUT_CANCELLED_MESSAGE } from "./logout.errors.ts";
+import { LegacyLogoutCancelledError } from "./logout.errors.ts";
 
 const LOGGED_OUT_MSG = "Access token deleted successfully. You are now logged out.";
 
@@ -39,7 +40,7 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
     });
     if (!confirmed) {
       return yield* Effect.fail(
-        new LegacyLogoutCancelledError({ message: LEGACY_LOGOUT_CANCELLED_MESSAGE }),
+        new LegacyLogoutCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
       );
     }
 

@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"testing"
@@ -26,11 +27,17 @@ func TestGenerateToken(t *testing.T) {
 	privateKeyECDSA, err := signingkeys.GeneratePrivateKey(config.AlgES256)
 	require.NoError(t, err)
 	// Setup public key for validation
-	publicKeyECDSA := ecdsa.PublicKey{Curve: elliptic.P256()}
-	publicKeyECDSA.X, err = config.NewBigIntFromBase64(privateKeyECDSA.X)
+	xBytes, err := base64.RawURLEncoding.DecodeString(privateKeyECDSA.X)
 	require.NoError(t, err)
-	publicKeyECDSA.Y, err = config.NewBigIntFromBase64(privateKeyECDSA.Y)
+	yBytes, err := base64.RawURLEncoding.DecodeString(privateKeyECDSA.Y)
 	require.NoError(t, err)
+	uncompressedPoint := make([]byte, 0, 1+len(xBytes)+len(yBytes))
+	uncompressedPoint = append(uncompressedPoint, 0x04)
+	uncompressedPoint = append(uncompressedPoint, xBytes...)
+	uncompressedPoint = append(uncompressedPoint, yBytes...)
+	publicKeyECDSAPtr, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), uncompressedPoint)
+	require.NoError(t, err)
+	publicKeyECDSA := *publicKeyECDSAPtr
 
 	// Setup private key - RSA
 	privateKeyRSA, err := signingkeys.GeneratePrivateKey(config.AlgRS256)

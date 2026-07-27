@@ -1,18 +1,13 @@
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 import { LegacyDeclarativeNotEnabledError } from "./declarative.errors.ts";
 import {
   legacyIsPgDeltaEnabled,
   legacyPgDeltaSuggestion,
   legacyRequirePgDelta,
 } from "./declarative.gate.ts";
-
-// `legacyAqua`/`legacyBold` colour their tokens when stderr is a TTY (matching
-// Go's lipgloss). Strip ANSI so the assertions validate text content exactly,
-// independent of the runner's colour profile.
-const stripAnsi = (text: string) =>
-  text.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
 
 const EXPECTED_SUGGESTION =
   "Either pass --experimental or add [experimental.pgdelta] with enabled = true to supabase/config.toml";

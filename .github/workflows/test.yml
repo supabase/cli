@@ -85,7 +85,7 @@ jobs:
         shard: [ 1, 2, 3 ]
     steps:
       - name: Checkout
-        uses: useblacksmith/checkout@c9796daa2a4bdebdab5bd16be2c09a70cd4e1121 # v1.0.0-beta
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
         with:
           fetch-depth: 0
 

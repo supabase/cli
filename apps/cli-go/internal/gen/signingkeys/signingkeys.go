@@ -78,6 +78,17 @@ func generateECDSAKeyPair(keyID uuid.UUID) (*config.JWK, error) {
 
 	publicKey := &privateKey.PublicKey
 
+	// SEC1 uncompressed point: 0x04 || X || Y, each coordinate fixed-length for the curve.
+	pubBytes, err := publicKey.Bytes()
+	if err != nil {
+		return nil, errors.Errorf("failed to encode ECDSA public key: %w", err)
+	}
+	privBytes, err := privateKey.Bytes()
+	if err != nil {
+		return nil, errors.Errorf("failed to encode ECDSA private key: %w", err)
+	}
+	coordLen := (len(pubBytes) - 1) / 2
+
 	// Convert to JWK format
 	privateJWK := config.JWK{
 		KeyType:         "EC",
@@ -87,9 +98,9 @@ func generateECDSAKeyPair(keyID uuid.UUID) (*config.JWK, error) {
 		Algorithm:       "ES256",
 		Extractable:     cast.Ptr(true),
 		Curve:           "P-256",
-		X:               base64.RawURLEncoding.EncodeToString(publicKey.X.Bytes()),
-		Y:               base64.RawURLEncoding.EncodeToString(publicKey.Y.Bytes()),
-		PrivateExponent: base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
+		X:               base64.RawURLEncoding.EncodeToString(pubBytes[1 : 1+coordLen]),
+		Y:               base64.RawURLEncoding.EncodeToString(pubBytes[1+coordLen:]),
+		PrivateExponent: base64.RawURLEncoding.EncodeToString(privBytes),
 	}
 
 	return &privateJWK, nil

@@ -11,6 +11,7 @@ import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.t
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
@@ -316,7 +317,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
                 );
           if (!confirmed) {
             return yield* Effect.fail(
-              new LegacyGenSigningKeyCancelledError({ message: "context canceled" }),
+              new LegacyGenSigningKeyCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
             );
           }
           return [key];

@@ -108,7 +108,7 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 	for i, meta := range toDeploy {
 		param := api.V1DeployAFunctionParams{
 			Slug:       meta.Name,
-			BundleOnly: cast.Ptr(true),
+			BundleOnly: cast.Ptr("true"),
 		}
 		bundle := func() error {
 			fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)

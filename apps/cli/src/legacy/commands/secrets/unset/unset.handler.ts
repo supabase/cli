@@ -7,6 +7,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
@@ -77,7 +78,7 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
 
     if (!confirmed) {
       return yield* Effect.fail(
-        new LegacySecretsUnsetCancelledError({ message: "context canceled" }),
+        new LegacySecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
       );
     }
 
