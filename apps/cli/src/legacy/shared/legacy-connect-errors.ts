@@ -151,16 +151,42 @@ const LEGACY_DIAL_ERROR_CODES = new Set([
   "EHOSTUNREACH",
   "EADDRNOTAVAIL",
 ]);
-// Node/OpenSSL certificate-verification codes plus node's ERR_TLS_*/ERR_SSL_*
-// families — pgconn wraps TLS negotiation failures as `tls error (…)`
-// (`pgconn.go:288`).
+// The complete documented Node/OpenSSL X509 certificate-verification code
+// family (Node tls docs "X509 certificate error codes", OpenSSL's
+// `X509_verify_cert_error` set), complemented by node's ERR_TLS_*/ERR_SSL_*
+// prefixes at the use site. pgconn stages by connection PHASE — ANY `startTLS`
+// failure becomes `tls error (…)` (`pgconn.go:283-289`) — but node exposes no
+// phase marker, so the full code family is the proxy. These strings are unique
+// to TLS-layer verification: server SQLSTATEs and dial/DNS `E…` errnos are
+// classified by earlier branches.
 const LEGACY_TLS_ERROR_CODES = new Set([
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "SELF_SIGNED_CERT_IN_CHAIN",
-  "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "CERT_HAS_EXPIRED",
   "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_CRL",
+  "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+  "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
+  "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+  "CERT_SIGNATURE_FAILURE",
+  "CRL_SIGNATURE_FAILURE",
+  "CERT_NOT_YET_VALID",
+  "CERT_HAS_EXPIRED",
+  "CRL_NOT_YET_VALID",
+  "CRL_HAS_EXPIRED",
+  "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+  "ERROR_IN_CERT_NOT_AFTER_FIELD",
+  "ERROR_IN_CRL_LAST_UPDATE_FIELD",
+  "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
+  "OUT_OF_MEM",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
   "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "CERT_CHAIN_TOO_LONG",
+  "CERT_REVOKED",
+  "INVALID_CA",
+  "PATH_LENGTH_EXCEEDED",
+  "INVALID_PURPOSE",
+  "CERT_UNTRUSTED",
+  "CERT_REJECTED",
   "HOSTNAME_MISMATCH",
 ]);
 // node-postgres' own message when the server answers `N` to SSLRequest
