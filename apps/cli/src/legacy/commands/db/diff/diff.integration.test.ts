@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
@@ -230,10 +231,6 @@ const flags = (over: Partial<LegacyDbDiffFlags> = {}): LegacyDbDiffFlags => ({
   schema: over.schema ?? [],
 });
 
-// Strip ANSI so assertions are colour-independent: `legacyAqua`/`legacyYellow`
-// emit colour only when the test runner's stderr is a TTY.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 const stdout = (out: ReturnType<typeof mockOutput>) =>
   stripAnsi(
     out.rawChunks

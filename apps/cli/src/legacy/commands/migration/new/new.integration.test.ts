@@ -5,6 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
 import { badArgument } from "effect/PlatformError";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
@@ -34,10 +35,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   return { layer, out, telemetry };
 }
-
-// Strip ANSI so assertions are colour-independent (`legacyBold` emits colour on a TTY).
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 const tmp = useLegacyTempWorkdir();
 

@@ -13,9 +13,7 @@ import {
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
 
-/** Strip ANSI SGR escape sequences (colors/styles) from captured CLI output. */
-// eslint-disable-next-line no-control-regex
-export const stripAnsi = (text: string): string => text.replace(/\x1b\[[0-9;]*m/gu, "");
+export { stripAnsi } from "./ansi.ts";
 
 const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));

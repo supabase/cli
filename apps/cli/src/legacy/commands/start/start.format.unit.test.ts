@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_START_STARTING_CONTAINERS_MESSAGE,
   LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
@@ -9,13 +10,6 @@ import {
   legacyStartCompletedMessage,
   legacyStartSecurityNotice,
 } from "./start.format.ts";
-
-// The formatters apply Go-parity ANSI styling via `legacy-colors.ts`, which
-// no-ops on a real non-TTY stream but the vitest process presents its stderr
-// as color-capable. Strip escapes so these assertions target the plain text
-// content — matching `status.pretty.unit.test.ts`'s convention.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("legacyStartAlreadyRunningMessage", () => {
   it("matches Go's exact stderr line, with a single trailing newline", () => {
