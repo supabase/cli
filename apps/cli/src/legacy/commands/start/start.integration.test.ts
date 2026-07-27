@@ -982,7 +982,7 @@ describe("legacy start integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("cleans removed-container secrets and aborts when network pruning fails", () => {
+    it.live("cleans only current-workdir secrets when recovery fails", () => {
       const workdir = tempRoot.current;
       const staleSecretDir = join(
         workdir,
@@ -994,6 +994,17 @@ describe("legacy start integration", () => {
       const staleSecret = join(staleSecretDir, "stale-secret");
       mkdirSync(staleSecretDir, { recursive: true });
       writeFileSync(staleSecret, "stale");
+      const foreignWorkdir = join(workdir, "foreign");
+      const foreignSecretDir = join(
+        foreignWorkdir,
+        "supabase",
+        ".temp",
+        "start-secrets",
+        "supabase_kong_demo",
+      );
+      const foreignSecret = join(foreignSecretDir, "stale-secret");
+      mkdirSync(foreignSecretDir, { recursive: true });
+      writeFileSync(foreignSecret, "foreign");
 
       const { layer, child } = setup({
         route: (args) => {
@@ -1001,7 +1012,12 @@ describe("legacy start integration", () => {
             return { stdout: [STOPPED_STATE] };
           }
           if (args[0] === "ps" && args.includes("--all")) {
-            return { stdout: [`db-id\tsupabase_db_demo\t${workdir}`] };
+            return {
+              stdout: [
+                `db-id\tsupabase_db_demo\t${workdir}`,
+                `kong-id\tsupabase_kong_demo\t${foreignWorkdir}`,
+              ],
+            };
           }
           if (args[0] === "network" && args[1] === "prune") {
             return { exitCode: 1 };
@@ -1017,6 +1033,7 @@ describe("legacy start integration", () => {
           expect(JSON.stringify(exit.cause)).toContain("LegacyDockerRemoveAllNetworkPruneError");
         }
         expect(existsSync(staleSecret)).toBe(false);
+        expect(existsSync(foreignSecret)).toBe(true);
         expect(createdContainerNames(child.spawned)).toEqual([]);
       }).pipe(Effect.provide(layer));
     });

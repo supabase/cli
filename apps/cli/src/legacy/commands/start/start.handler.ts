@@ -2350,7 +2350,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       }
       let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
       yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
-        removedContainers = containers;
+        // Recovery only trusts its own workdir; empty labels use the existing fallback.
+        removedContainers = containers.filter(
+          (container) => container.workdir.length === 0 || container.workdir === cliConfig.workdir,
+        );
       }).pipe(
         Effect.ensuring(
           Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
