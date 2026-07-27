@@ -295,6 +295,34 @@ describe("legacyConnectSuggestion", () => {
     );
   });
 
+  it("classifies only the LAST attempt of a mixed-family aggregate (pgconn last-fallback parity)", () => {
+    // Go can never blame an abandoned attempt: pgconn's fallback loop keeps only
+    // the last error (`pgconn.go:171-203`) and `SetConnectSuggestion` classifies
+    // that same rendered string (`connect.go:317`). An earlier IPv6 EHOSTUNREACH
+    // followed by a final unclassified IPv4 timeout must NOT fire the IPv6 hint.
+    const aggregate = Object.assign(new AggregateError([], ""), {
+      errors: [
+        dialError("EHOSTUNREACH", "2600:1f18::1", 5432),
+        dialError("ETIMEDOUT", "10.0.0.9", 5432),
+      ],
+    });
+    expect(legacyConnectSuggestion(realSqlConnectError(aggregate), ctx)).toBeUndefined();
+  });
+
+  it("fires the IPv6 pooler suggestion when the LAST aggregate attempt is the IPv6 dial failure", () => {
+    // The surfaced (last) attempt drives both the rendered cause and the
+    // suggestion — an earlier refused IPv4 attempt is ignored, like Go.
+    const aggregate = Object.assign(new AggregateError([], ""), {
+      errors: [
+        dialError("ECONNREFUSED", "10.0.0.9", 5432),
+        dialError("EHOSTUNREACH", "2600:1f18::1", 5432),
+      ],
+    });
+    expect(legacyConnectSuggestion(realSqlConnectError(aggregate), ctx)).toBe(
+      legacyIpv6Suggestion(),
+    );
+  });
+
   it("keeps an IPv4 EADDRNOTAVAIL unclassified, like Go without an IPv6 literal", () => {
     const err = realSqlConnectError(dialError("EADDRNOTAVAIL", "10.1.2.3", 5432));
     expect(legacyConnectSuggestion(err, ctx)).toBeUndefined();

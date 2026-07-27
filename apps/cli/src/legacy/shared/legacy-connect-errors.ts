@@ -75,13 +75,17 @@ export interface LegacyConnectSuggestionContext {
 }
 
 /**
- * Flatten an error's `cause` chain and any `AggregateError.errors` into a single
- * searchable string of every nested `message` and `code`. The `@effect/sql`
- * `SqlError` wraps the node-postgres / node `net` driver error on its `cause`; a
- * multi-address dial wraps an `AggregateError` whose `errors[]` carry the per-IP
- * `ECONNREFUSED` / `ENETUNREACH` system errors. Including the `code` strings lets
- * the matcher key off node's `ECONNREFUSED` the way Go keys off pgconn's
- * `connect: connection refused`.
+ * Flatten an error's `cause` chain into a single searchable string of every
+ * nested `message` and `code`. The `@effect/sql` `SqlError` wraps the
+ * node-postgres / node `net` driver error on its `cause`; a multi-address dial
+ * wraps an `AggregateError` whose `errors[]` carry the per-IP `ECONNREFUSED` /
+ * `ENETUNREACH` system errors — only the LAST child is visited, because that is
+ * the attempt pgconn surfaces: its fallback loop overwrites the error on every
+ * attempt so only the last one survives (`pgconn.go:171-203`), and Go's
+ * `SetConnectSuggestion` classifies exactly that `err.Error()` string
+ * (`connect.go:317`). Including the `code` strings lets the matcher key off
+ * node's `ECONNREFUSED` the way Go keys off pgconn's `connect: connection
+ * refused`.
  */
 function legacyCollectConnectErrorText(error: unknown): string {
   const parts: string[] = [];
@@ -95,7 +99,7 @@ function legacyCollectConnectErrorText(error: unknown): string {
     if (typeof code === "string") parts.push(code);
     visit(Reflect.get(node, "cause"), depth + 1);
     const errors = Reflect.get(node, "errors");
-    if (Array.isArray(errors)) for (const child of errors) visit(child, depth + 1);
+    if (Array.isArray(errors) && errors.length > 0) visit(errors[errors.length - 1], depth + 1);
   };
   visit(error, 0);
   return parts.join("\n");
@@ -255,8 +259,11 @@ const LEGACY_IPV6_DIAL_CODES = new Set(["ENETUNREACH", "EHOSTUNREACH", "EADDRNOT
  * Go, where a failed lookup renders `hostname resolving error` and sets no
  * suggestion. Use THIS one for the connect suggestion; the container-level
  * pooler fallback keeps the broader `legacyIsIPv6ConnectivityErrorCause`.
- * Depth-bounded recursion (no `seen` set): a pathological cause cycle re-walks
- * at most 8 levels, which is cheap and cannot loop.
+ * Like {@link legacyDeepestConnectCause}, an `AggregateError` descends into its
+ * LAST child only — the attempt pgconn surfaces (`pgconn.go:171-203`) and the
+ * one Go's classifier reads (`connect.go:317`). Depth-bounded recursion (no
+ * `seen` set): a pathological cause cycle re-walks at most 8 levels, which is
+ * cheap and cannot loop.
  */
 function legacyHasIPv6DialCause(error: unknown, depth = 0): boolean {
   if (depth > 8 || typeof error !== "object" || error === null) return false;
@@ -271,8 +278,8 @@ function legacyHasIPv6DialCause(error: unknown, depth = 0): boolean {
     return true;
   }
   const errors = Reflect.get(error, "errors");
-  if (Array.isArray(errors) && errors.some((child) => legacyHasIPv6DialCause(child, depth + 1))) {
-    return true;
+  if (Array.isArray(errors) && errors.length > 0) {
+    return legacyHasIPv6DialCause(errors[errors.length - 1], depth + 1);
   }
   return legacyHasIPv6DialCause(Reflect.get(error, "cause"), depth + 1);
 }
@@ -287,11 +294,14 @@ function legacyHasIPv6DialCause(error: unknown, depth = 0): boolean {
  * Returns `undefined` when no specific suggestion applies (the caller then falls
  * back to the generic suggestion, like Go leaving `CmdSuggestion` empty).
  *
- * Sourcing note: the rendered message ({@link legacyConnectFailureMessage})
- * surfaces only the LAST fallback attempt (pgconn parity), while this classifier
- * deliberately scans the WHOLE chain — do not "align" one to the other. Real
- * Supabase aggregates are single-family (direct = IPv6-only, pooler = IPv4-only),
- * so the two never disagree in practice.
+ * Sourcing note: the rendered message ({@link legacyConnectFailureMessage}) and
+ * this classifier inspect the SAME surfaced attempt, as Go guarantees by
+ * construction — pgconn's fallback loop overwrites its error on every attempt so
+ * only the last one survives (`pgconn.go:171-203`), and `SetConnectSuggestion`
+ * classifies exactly that rendered `err.Error()` string (`connect.go:317`). The
+ * collectors above therefore descend into only the LAST aggregate child, the
+ * same attempt {@link legacyDeepestConnectCause} surfaces for rendering, so the
+ * displayed cause and the suggestion can never disagree.
  */
 export function legacyConnectSuggestion(
   error: unknown,
