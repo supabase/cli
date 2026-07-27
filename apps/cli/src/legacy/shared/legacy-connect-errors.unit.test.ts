@@ -220,6 +220,33 @@ describe("legacyConnectFailureMessage", () => {
     }
   });
 
+  it("stages a mid-handshake TLS disconnect as tls error despite its ECONNRESET code", () => {
+    // Node/Bun's `_tls_wrap.js` onConnectEnd shape: the server accepted
+    // SSLRequest but closed the socket before the handshake completed. The
+    // message is phase-specific (only ever raised pre-secure-connection), so it
+    // stages like pgconn's startTLS wrap (`tls error (…)`, pgconn.go:283-289).
+    const midHandshake = Object.assign(
+      new Error("Client network socket disconnected before secure TLS connection was established"),
+      { code: "ECONNRESET" },
+    );
+    expect(legacyConnectFailureMessage(target, realSqlConnectError(midHandshake))).toBe(
+      `${prefix} tls error (Client network socket disconnected before secure TLS connection was established)`,
+    );
+  });
+
+  it("renders a raw socket reset verbatim — not phase-specific, so no stage is guessed", () => {
+    // Node's hard-RST shape (`read ECONNRESET`, syscall "read") is identical
+    // before and after the handshake, so unlike the message above it must NOT
+    // be staged as tls error.
+    const rawReset = Object.assign(new Error("read ECONNRESET"), {
+      code: "ECONNRESET",
+      syscall: "read",
+    });
+    expect(legacyConnectFailureMessage(target, realSqlConnectError(rawReset))).toBe(
+      `${prefix} read ECONNRESET`,
+    );
+  });
+
   it("renders an unrecognized cause verbatim (CLI-1942 session-pooler EOF shape)", () => {
     // node-postgres raises `Connection terminated unexpectedly` where pgconn
     // says `failed to receive message (unexpected EOF)` — no stage is guessed.
@@ -407,6 +434,17 @@ describe("legacyConnectSuggestion", () => {
     expect(legacyConnectSuggestion(realSqlConnectError(aggregate), ctx)).toContain(
       "Network Restrictions and Network Bans",
     );
+  });
+
+  it("sets no suggestion for a mid-handshake TLS disconnect, like Go", () => {
+    // Go's `SetConnectSuggestion` (`connect.go:313-335`) has no branch matching
+    // resets or TLS failures — the staged `tls error (…)` rendering must not
+    // change that.
+    const midHandshake = Object.assign(
+      new Error("Client network socket disconnected before secure TLS connection was established"),
+      { code: "ECONNRESET" },
+    );
+    expect(legacyConnectSuggestion(realSqlConnectError(midHandshake), ctx)).toBeUndefined();
   });
 
   it("keeps an IPv4 EADDRNOTAVAIL unclassified, like Go without an IPv6 literal", () => {

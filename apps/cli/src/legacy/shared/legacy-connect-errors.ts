@@ -198,6 +198,15 @@ const LEGACY_TLS_ERROR_CODES = new Set([
 // node-postgres' own message when the server answers `N` to SSLRequest
 // (`pg/lib/connection.js`); pgconn: `tls error (server refused TLS connection)`.
 const LEGACY_SERVER_REFUSED_SSL = "The server does not support SSL connections";
+// Node/Bun's TLS-socket message when the server accepts SSLRequest but closes
+// the socket before the handshake completes (node `lib/_tls_wrap.js`
+// `onConnectEnd`; Bun emits the same text for both FIN and RST). Phase-specific
+// by construction — only ever raised pre-secure-connection — so it maps to
+// pgconn's startTLS stage (`tls error (…)`, `pgconn.go:283-289`). Its code is
+// ECONNRESET, deliberately absent from LEGACY_DIAL_ERROR_CODES: a raw
+// post-handshake `read ECONNRESET` is not phase-specific and stays verbatim.
+const LEGACY_TLS_DISCONNECT_MESSAGE =
+  "Client network socket disconnected before secure TLS connection was established";
 // A Postgres SQLSTATE is exactly five uppercase alphanumerics. Combined with the
 // `severity` field this identifies a node-postgres `DatabaseError` (a server
 // ErrorResponse), never a node system error (whose codes are longer `E…` names).
@@ -247,6 +256,7 @@ function legacyConnectCauseDetail(cause: unknown): string {
   }
   if (
     text === LEGACY_SERVER_REFUSED_SSL ||
+    text === LEGACY_TLS_DISCONNECT_MESSAGE ||
     (typeof code === "string" &&
       (LEGACY_TLS_ERROR_CODES.has(code) ||
         code.startsWith("ERR_TLS") ||
