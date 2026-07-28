@@ -3,7 +3,7 @@ FROM supabase/postgres:17.6.1.143 AS pg
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.30.2 AS mailpit
-FROM postgrest/postgrest:v14.16 AS postgrest
+FROM postgrest/postgrest:v14.15 AS postgrest
 FROM supabase/postgres-meta:v0.96.6 AS pgmeta
 FROM supabase/studio:2026.07.27-sha-cbb076d AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
