@@ -56,7 +56,7 @@ func TestPostgresProxy(t *testing.T) {
 			if _, err := io.ReadFull(conn, request); err != nil {
 				return
 			}
-			assert.Equal(t, int32(sslRequestCode), int32(binary.BigEndian.Uint32(request[4:])))
+			assert.Equal(t, uint32(sslRequestCode), binary.BigEndian.Uint32(request[4:]))
 			_, _ = conn.Write([]byte("N"))
 		}()
 		_, err = config.DialFunc(context.Background(), "tcp", ln.Addr().String())
