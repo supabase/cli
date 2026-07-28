@@ -24,49 +24,116 @@ function legacyTelemetryPath(env: Record<string, string | undefined>, pathSvc: P
 }
 
 interface PriorState {
-  enabled?: boolean;
-  device_id?: string;
-  session_id?: string;
-  session_last_active?: string;
-  distinct_id?: string;
+  readonly enabled: boolean;
+  readonly device_id: string;
+  readonly session_id: string;
+  readonly session_last_active: string;
+  readonly distinct_id?: string;
+  readonly schema_version: number;
 }
 
-function hasOwn(record: Record<string, unknown>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, key);
-}
+// Go's `time.Parse(time.RFC3339Nano, …)` shape: date, `T`, time, optional
+// fraction, `Z` or a `±hh:mm` offset. JS `new Date(…)` alone accepts far more
+// (bare dates, RFC 2822, …) that Go rejects as malformed.
+const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
+/**
+ * Faithful port of Go's `decodeState` (`internal/telemetry/state.go:87-115`):
+ * ALL-OR-NOTHING. Go decodes the whole file or classifies it as
+ * `errMalformedState` — it never salvages individual fields. A file missing
+ * (or mistyping) any required piece — an `enabled` bool (or a
+ * `granted`/`denied` `consent`), a parseable `session_last_active`, and
+ * non-empty `device_id` AND `session_id` — is treated as wholly malformed, so
+ * `LoadOrCreateState` recreates EVERYTHING fresh: `enabled` back to `true`,
+ * new `device_id`, new `session_id`. Notably, a corrupt file that still says
+ * `"enabled": false` does NOT stay disabled.
+ *
+ * Two Go strictness corners are not reproducible here: `JSON.parse` collapses
+ * `2.0` → `2`, so an integer-valued float `schema_version`/millis passes where
+ * Go's unmarshal-into-int rejects it; and `enabled`'s type is only checked on
+ * the non-consent path, where Go's single-shot `json.Unmarshal` type-checks
+ * every field regardless. Both require a hand-corrupted file the CLI never
+ * writes.
+ */
 function readExistingState(text: string): PriorState | undefined {
   try {
     const parsed = JSON.parse(text);
-    if (typeof parsed !== "object" || parsed === null) return undefined;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
     const record = parsed as Record<string, unknown>;
-    const out: PriorState = {};
-    if (hasOwn(record, "enabled")) {
-      if (typeof record.enabled !== "boolean") return undefined;
-      out.enabled = record.enabled;
+
+    // Go's `parseConsent` (`state.go:52-67`): a non-null `consent` must be
+    // `granted`/`denied` (and unlocks the unix-millis timestamp form);
+    // otherwise a bool `enabled` is required.
+    let enabled: boolean;
+    let allowUnixMillis = false;
+    const consent = record.consent;
+    if (consent !== undefined && consent !== null) {
+      if (consent === "granted") {
+        enabled = true;
+        allowUnixMillis = true;
+      } else if (consent === "denied") {
+        enabled = false;
+        allowUnixMillis = true;
+      } else {
+        return undefined;
+      }
+    } else if (typeof record.enabled === "boolean") {
+      enabled = record.enabled;
+    } else {
+      return undefined;
     }
-    if (hasOwn(record, "device_id")) {
-      if (typeof record.device_id !== "string") return undefined;
-      out.device_id = record.device_id;
+
+    // Go's `parseSessionLastActive` (`state.go:69-85`): an RFC3339Nano string,
+    // or — only on the consent form — integer unix millis.
+    const rawLastActive = record.session_last_active;
+    let sessionLastActive: string;
+    if (typeof rawLastActive === "string") {
+      if (!RFC3339_RE.test(rawLastActive) || !Number.isFinite(Date.parse(rawLastActive))) {
+        return undefined;
+      }
+      sessionLastActive = rawLastActive;
+    } else if (allowUnixMillis && typeof rawLastActive === "number") {
+      if (!Number.isInteger(rawLastActive)) return undefined;
+      sessionLastActive = new Date(rawLastActive).toISOString();
+    } else {
+      return undefined;
     }
-    if (hasOwn(record, "session_id")) {
-      if (typeof record.session_id !== "string") return undefined;
-      out.session_id = record.session_id;
+
+    // Go: `if raw.DeviceID == "" || raw.SessionID == ""` → "missing identity".
+    if (typeof record.device_id !== "string" || record.device_id === "") return undefined;
+    if (typeof record.session_id !== "string" || record.session_id === "") return undefined;
+
+    // `DistinctID string` / `SchemaVersion int`: absent → zero value; a wrong
+    // JSON type is a field-level unmarshal error → malformed.
+    if (
+      record.distinct_id !== undefined &&
+      record.distinct_id !== null &&
+      typeof record.distinct_id !== "string"
+    ) {
+      return undefined;
     }
-    if (hasOwn(record, "session_last_active")) {
-      if (typeof record.session_last_active !== "string") return undefined;
-      const parsedTime = new Date(record.session_last_active).getTime();
-      if (!Number.isFinite(parsedTime)) return undefined;
-      out.session_last_active = record.session_last_active;
+    if (
+      record.schema_version !== undefined &&
+      record.schema_version !== null &&
+      !Number.isInteger(record.schema_version)
+    ) {
+      return undefined;
     }
-    if (hasOwn(record, "distinct_id")) {
-      if (typeof record.distinct_id !== "string") return undefined;
-      out.distinct_id = record.distinct_id;
-    }
-    if (hasOwn(record, "schema_version")) {
-      if (!Number.isInteger(record.schema_version)) return undefined;
-    }
-    return out;
+    const schemaVersion =
+      typeof record.schema_version === "number" && record.schema_version !== 0
+        ? record.schema_version
+        : SCHEMA_VERSION;
+
+    return {
+      enabled,
+      device_id: record.device_id,
+      session_id: record.session_id,
+      session_last_active: sessionLastActive,
+      ...(typeof record.distinct_id === "string" && record.distinct_id.length > 0
+        ? { distinct_id: record.distinct_id }
+        : {}),
+      schema_version: schemaVersion,
+    };
   } catch {
     return undefined;
   }
@@ -95,7 +162,8 @@ export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.load
         !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
       session_last_active: nowIso,
       ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
-      schema_version: SCHEMA_VERSION,
+      // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
+      schema_version: prior?.schema_version ?? SCHEMA_VERSION,
     };
 
     yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });

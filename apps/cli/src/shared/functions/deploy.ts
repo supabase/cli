@@ -15,7 +15,7 @@ import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
-import { legacyBold } from "../../legacy/shared/legacy-colors.ts";
+import { legacyAqua, legacyBold } from "../../legacy/shared/legacy-colors.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
@@ -1344,7 +1344,9 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   verbose = false,
 ) {
   const output = yield* Output;
-  yield* output.raw(`Bundling Function: ${config.slug}\n`, "stderr");
+  // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
+  // (`internal/functions/deploy/bundle.go:30`).
+  yield* output.raw(`Bundling Function: ${legacyBold(config.slug)}\n`, "stderr");
 
   const outputRoot = resolve(functionsDir, "..", ".temp");
   yield* Effect.tryPromise(() => mkdir(outputRoot, { recursive: true }));
@@ -2197,7 +2199,9 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     if (slugs.length === 0) {
       return yield* Effect.fail(
         new NoFunctionsToDeployError({
-          message: `No Functions specified or found in ${SUPABASE_FUNCTIONS_DIR}`,
+          // Go: `errors.Errorf("No Functions specified or found in %s",
+          // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`).
+          message: `No Functions specified or found in ${legacyBold(SUPABASE_FUNCTIONS_DIR)}`,
         }),
       );
     }
@@ -2265,7 +2269,12 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     }
 
     if (output.format === "text") {
-      yield* output.raw(`Deployed Functions on project ${projectRef}: ${uniqueSlugs.join(", ")}\n`);
+      // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
+      // utils.Aqua(flags.ProjectRef), …)` (`internal/functions/deploy/deploy.go:70`)
+      // — stdout-bound, so the TTY gate must check stdout.
+      yield* output.raw(
+        `Deployed Functions on project ${legacyAqua(projectRef, process.stdout)}: ${uniqueSlugs.join(", ")}\n`,
+      );
       yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
     } else {
       yield* output.success("Deployed Functions.", {

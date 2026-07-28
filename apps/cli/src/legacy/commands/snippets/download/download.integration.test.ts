@@ -19,6 +19,9 @@ import { legacySnippetsDownload } from "./download.handler.ts";
 // ---------------------------------------------------------------------------
 
 const VALID_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
+// Raw 32-hex form of VALID_ID, uppercase — a form Go's `uuid.Parse` accepts
+// (google/uuid v1.6.0) that the old handler rejected before this fix.
+const UPPER_HEX32_ID = "0B0D48F6878B419088D72CA33ED800BC";
 const INVALID_ID = "not-a-uuid"; // length 10 → "invalid UUID length: 10"
 const TOO_LONG_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc-extra"; // length 42 (3 ungrouped: 32, 36, 38, 41)
 const WRONG_FORMAT_ID = "0b0d48f6.878b.4190.88d7.2ca33ed800bc"; // length 36, no dashes in canonical positions
@@ -202,6 +205,18 @@ describe("legacy snippets download integration", () => {
       expect(api.requests[0]?.urlParams).toBe("");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "a 32-hex UPPERCASE snippet id resolves to the canonical lowercase hyphenated URL (Go parity)",
+    () => {
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        yield* legacySnippetsDownload({ snippetId: UPPER_HEX32_ID, projectRef: Option.none() });
+        expect(api.requests).toHaveLength(1);
+        expect(api.requests[0]?.url).toContain(`/v1/snippets/${VALID_ID}`);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("uses --project-ref flag value when resolving the linked-project cache", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";

@@ -113,7 +113,7 @@ describe("legacy functions deploy", () => {
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/deploy",
       );
       expect(deployRequest?.urlParams).toContain("slug=hello-world");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
       expect(linkedProjectCache.cached).toBe(true);
@@ -253,7 +253,7 @@ describe("legacy functions deploy", () => {
       });
 
       expect(api.requests).toHaveLength(2);
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
     }).pipe(
@@ -402,7 +402,7 @@ describe("legacy functions deploy", () => {
         (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
       );
       expect(deployRequest?.urlParams).toContain("slug=custom-entry");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: custom-entry\n",
       );
     }).pipe(
@@ -636,7 +636,7 @@ describe("legacy functions deploy", () => {
           jobs: Option.some(2),
         });
 
-        expect(out.stdoutText).toContain(
+        expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(
@@ -694,7 +694,7 @@ describe("legacy functions deploy", () => {
           jobs: Option.some(0),
         });
 
-        expect(out.stdoutText).toContain(
+        expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(
@@ -765,7 +765,7 @@ describe("legacy functions deploy", () => {
         // it wasn't running, so the command fell back to the API and still succeeded.
         expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
         expect(out.stderrText).toContain("WARNING: Docker is not running\n");
-        expect(out.stdoutText).toContain(
+        expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(

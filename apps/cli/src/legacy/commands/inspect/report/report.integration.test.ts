@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -197,9 +197,10 @@ describe("legacy inspect report", () => {
   it.live("writes one CSV per inspect query for the linked project", () => {
     const base = tempDir("supabase-report-out-");
     const { layer, connection } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const prevUmask = process.umask(0);
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base }));
-      const { files } = dateFolderContents(base);
+      const { dir, files } = dateFolderContents(base);
       expect(files.length).toBe(14);
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
@@ -211,7 +212,11 @@ describe("legacy inspect report", () => {
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
         ),
       ).toBe(true);
-    }).pipe(Effect.provide(layer));
+      // Go pins the date folder to 0755 and each CSV to 0644 (report.handler.ts
+      // mirrors `internal/utils/misc.go:273,281-284`).
+      expect(statSync(dir).mode & 0o777).toBe(0o755);
+      expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
   });
 
   it.live("inspects the local database with --local", () => {

@@ -126,6 +126,54 @@ function collectDockerCliText(stream: Stream.Stream<Uint8Array, unknown>) {
 }
 
 /**
+ * Like {@link containerCliExitCode}, but also collecting the child's stdout —
+ * for callers that need the CLI's own report of what it did (e.g. the `docker
+ * … prune` deleted-ID lists backing Go's `--debug` "Pruned …" reports in
+ * `DockerRemoveAll`, `docker.go:123-143`). Collecting (i.e. reading) stdout
+ * also sidesteps the unread-pipe hang that `stdout: "ignore"` callers avoid by
+ * discarding it. stderr is discarded, matching the exit-code-only helper.
+ * `podmanArgs` has the same meaning as on {@link containerCliExitCode}.
+ */
+export const legacyContainerCliExitCodeAndStdout = (
+  spawner: Spawner,
+  args: ReadonlyArray<string>,
+  podmanArgs?: ReadonlyArray<string>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const options = {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      } satisfies ChildProcess.CommandOptions;
+      const handle = yield* spawner
+        .spawn(ChildProcess.make("docker", args, options))
+        .pipe(
+          Effect.catch(() =>
+            spawner
+              .spawn(ChildProcess.make("podman", podmanArgs ?? args, options))
+              .pipe(
+                Effect.catch(() =>
+                  Effect.fail(
+                    new LegacyContainerRuntimeNotFoundError({ message: RUNTIME_NOT_FOUND_MESSAGE }),
+                  ),
+                ),
+              ),
+          ),
+        );
+      // Subscribe to stdout concurrently with awaiting the exit code — Node's
+      // "exit" event can fire before a fast process's stdio pipes are drained,
+      // so a late subscriber would see an already-ended, empty stream (same
+      // pattern as `legacy-docker-lifecycle.ts`'s `spawnDockerPsLines`).
+      const [exitCode, stdout] = yield* Effect.all(
+        [handle.exitCode.pipe(Effect.map(Number)), collectDockerCliText(handle.stdout)],
+        { concurrency: "unbounded" },
+      );
+      return { exitCode, stdout };
+    }),
+  );
+
+/**
  * Mirrors Go's `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`,
  * used by `apps/cli-go/internal/utils/docker.go:128`): splits each version on
  * `.` and compares the parts numerically, component by component — not a

@@ -96,8 +96,16 @@ describe("legacyMakeDockerImageResolver", () => {
         // list built by `legacyGetRegistryImageUrlCandidates`.
         const previousRegistry = process.env[REGISTRY_ENV];
         process.env[REGISTRY_ENV] = "docker.io";
+        // Records every chunk written to stderr, including the `docker pull` child's own
+        // stdout/stderr, which `pullImage` tees live to the parent's stderr as `Uint8Array`
+        // chunks — only the `Retrying after …` banner is ever written as a plain `string`, so
+        // filtering by `typeof chunk === "string"` isolates the banner from the tee below.
+        const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
-        globalThis.process.stderr.write = (() => true) as typeof globalThis.process.stderr.write;
+        globalThis.process.stderr.write = ((chunk: unknown) => {
+          stderrChunks.push(chunk);
+          return true;
+        }) as typeof globalThis.process.stderr.write;
 
         try {
           // Mirrors Go's own `docker_test.go` "throws error on failure to pull
@@ -133,6 +141,17 @@ describe("legacyMakeDockerImageResolver", () => {
           for (const options of mock.imageInspectOptions) {
             expect(options).toMatchObject({ stdin: "ignore", stdout: "ignore", stderr: "pipe" });
           }
+          // Go's per-retry banner (`docker.go:314`): `Fprintf(os.Stderr, "Retrying after %v: %s\n", …)`
+          // — one banner before each of the 2 retries, escalating 4s then 8s, naming the exact
+          // candidate this resolver pinned to (see the comment above on `REGISTRY_ENV`).
+          const retryBanners = stderrChunks.filter(
+            (chunk): chunk is string =>
+              typeof chunk === "string" && chunk.startsWith("Retrying after"),
+          );
+          expect(retryBanners).toEqual([
+            "Retrying after 4s: supabase/postgres:17.6.1.138\n",
+            "Retrying after 8s: supabase/postgres:17.6.1.138\n",
+          ]);
         } finally {
           globalThis.process.stderr.write = originalWrite;
           if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
@@ -147,8 +166,12 @@ describe("legacyMakeDockerImageResolver", () => {
       Effect.gen(function* () {
         const previousRegistry = process.env[REGISTRY_ENV];
         process.env[REGISTRY_ENV] = "docker.io";
+        const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
-        globalThis.process.stderr.write = (() => true) as typeof globalThis.process.stderr.write;
+        globalThis.process.stderr.write = ((chunk: unknown) => {
+          stderrChunks.push(chunk);
+          return true;
+        }) as typeof globalThis.process.stderr.write;
 
         try {
           const mock = mockSpawner([
@@ -165,12 +188,52 @@ describe("legacyMakeDockerImageResolver", () => {
 
           expect(mock.pulls).toHaveLength(2);
           expect(image).toBe("supabase/postgres:17.6.1.138");
+          // Only the first candidate's failed attempt sleeps through a retry banner — the
+          // second attempt succeeds immediately, so the 8s banner (and a third pull) must
+          // never happen.
+          const retryBanners = stderrChunks.filter(
+            (chunk): chunk is string =>
+              typeof chunk === "string" && chunk.startsWith("Retrying after"),
+          );
+          expect(retryBanners).toEqual(["Retrying after 4s: supabase/postgres:17.6.1.138\n"]);
         } finally {
           globalThis.process.stderr.write = originalWrite;
           if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
           else process.env[REGISTRY_ENV] = previousRegistry;
         }
       }),
+  );
+
+  it.effect("prints no Retrying banner when the first pull attempt succeeds", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      process.env[REGISTRY_ENV] = "docker.io";
+      const stderrChunks: Array<unknown> = [];
+      const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
+      globalThis.process.stderr.write = ((chunk: unknown) => {
+        stderrChunks.push(chunk);
+        return true;
+      }) as typeof globalThis.process.stderr.write;
+
+      try {
+        const mock = mockSpawner([{ exitCode: 0 }]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const image = yield* resolve("supabase/postgres:17.6.1.138");
+
+        expect(mock.pulls).toHaveLength(1);
+        expect(image).toBe("supabase/postgres:17.6.1.138");
+        const retryBanners = stderrChunks.filter(
+          (chunk): chunk is string =>
+            typeof chunk === "string" && chunk.startsWith("Retrying after"),
+        );
+        expect(retryBanners).toEqual([]);
+      } finally {
+        globalThis.process.stderr.write = originalWrite;
+        if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+        else process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
   );
 
   it.effect("fails fast on a daemon-unreachable image inspect without ever attempting a pull", () =>

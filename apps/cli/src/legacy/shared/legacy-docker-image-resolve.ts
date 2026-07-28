@@ -190,6 +190,16 @@ export function legacyMakeDockerImageResolver(
           if (delay === undefined) {
             break;
           }
+          // Go prints a per-retry banner before sleeping (`docker.go:314`):
+          // `fmt.Fprintf(os.Stderr, "Retrying after %v: %s\n", period, image)`
+          // — `%v` of the 4s/8s backoff `time.Duration` renders as `4s`/`8s`.
+          // Go also `Fprintln`s the failed attempt's error just before the
+          // banner (`docker.go:312`); here the `docker pull` child's own
+          // stderr — already teed live to the parent's stderr above — plays
+          // that role, so only the banner itself is added.
+          yield* Effect.sync(() => {
+            globalThis.process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);
+          });
           yield* Effect.sleep(`${delay} millis`);
         }
       }

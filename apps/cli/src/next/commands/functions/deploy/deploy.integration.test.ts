@@ -458,6 +458,11 @@ function setup(
   return { out, api, layer };
 }
 
+// Strip ANSI SGR (bold/aqua via `legacyBold`/`legacyAqua`) so byte-assertions
+// are stable whether or not the test stdio supports color.
+// eslint-disable-next-line no-control-regex
+const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+
 describe("functions deploy", () => {
   it.live("deploys multiple local functions through the API by default", () => {
     const tempDir = makeTempDir();
@@ -498,7 +503,7 @@ describe("functions deploy", () => {
       });
       expect(out.stderrText).toContain("Deploying Function: hello-world\n");
       expect(out.stderrText).toContain("Deploying Function: bye-world\n");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         `Deployed Functions on project ${PROJECT_REF}: hello-world, bye-world\n`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
@@ -515,7 +520,7 @@ describe("functions deploy", () => {
 
       yield* functionsDeploy(BASE_FLAGS).pipe(Effect.provide(layer));
 
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
       );
       expect(out.stdoutText).not.toContain("hello-world, hello-world");
@@ -656,7 +661,7 @@ describe("functions deploy", () => {
         (request) => request.method === "POST" && request.path.endsWith("/functions/deploy"),
       );
       expect(deployRequest?.urlParams).toContain("slug=custom-entry");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         `Deployed Functions on project ${PROJECT_REF}: custom-entry\n`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
@@ -693,7 +698,7 @@ describe("functions deploy", () => {
       expect(out.stderrText).toContain(
         "Rate limit exceeded while bulk updating functions. Retrying in 0s.\n",
       );
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         `Deployed Functions on project ${PROJECT_REF}: hello-world, bye-world\n`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
@@ -1327,7 +1332,7 @@ describe("functions deploy", () => {
         path: `/v1/projects/${PROJECT_REF}/functions/deploy`,
       });
       expect(out.stderrText).toContain("WARNING: Docker is not running\n");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
@@ -1554,9 +1559,9 @@ describe("functions deploy", () => {
           expectedDockerBind(join(tempDir, "supabase", "custom_import_map.json")),
         ),
       );
-      expect(out.stderrText).toContain("Bundling Function: hello-world\n");
+      expect(stripSgr(out.stderrText)).toContain("Bundling Function: hello-world\n");
       expect(out.stderrText).toContain("Deploying Function: hello-world (script size:");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
@@ -1751,7 +1756,7 @@ describe("functions deploy", () => {
         expect(error.message).toContain("failed to open eszip:");
         expect(error.message).toContain("output.eszip");
       }
-      expect(out.stderrText).toContain("Bundling Function: hello-world\n");
+      expect(stripSgr(out.stderrText)).toContain("Bundling Function: hello-world\n");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -2296,16 +2301,12 @@ describe("functions deploy", () => {
           jobs: Option.some(2),
         }).pipe(Effect.provide(layer));
 
-        expect(out.stdoutText).toContain(`Deployed Functions on project ${PROJECT_REF}`);
+        expect(stripSgr(out.stdoutText)).toContain(`Deployed Functions on project ${PROJECT_REF}`);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     });
   });
 
   describe("--prune confirmation (Go parity: deploy.go:180-195, console.go:64-102)", () => {
-    // Strip ANSI SGR (bold slugs via `legacyBold`) so byte-assertions are stable
-    // whether or not the test stderr supports color.
-    // eslint-disable-next-line no-control-regex
-    const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
     const PRUNE_PROMPT =
       "Do you want to delete the following Functions from your project?\n \u2022 remote-only\n\n [y/N] ";
 

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
@@ -7,6 +7,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
 import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
+import { LegacyStorageInvalidJobsError } from "../storage.errors.ts";
 import {
   LegacyStorageLinkedFlagDef,
   LegacyStorageLocalFlagDef,
@@ -70,6 +71,13 @@ export const legacyStorageCpCommand = Command.make("cp", config).pipe(
       // legacyRequireExperimental's doc comment for why.
       yield* legacyRequireExperimental;
       const cliArgs = yield* CliArgs;
+      // Go's `--jobs` is a pflag uint (`UintVarP`, `cmd/storage.go:107`), so a
+      // negative fails at flag-parse time — before cobra's group validation
+      // and RunE, and without emitting telemetry. `Flag.integer` accepts
+      // negatives, so reject here, before the mutex check and instrumentation.
+      if (Option.isSome(flags.jobs) && flags.jobs.value < 0) {
+        return yield* new LegacyStorageInvalidJobsError(flags.jobs.value);
+      }
       yield* legacyAssertStorageTargetsExclusive(cliArgs.args);
       const telemetryFlags = {
         recursive: flags.recursive,

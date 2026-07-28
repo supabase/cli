@@ -10,7 +10,10 @@ import { afterEach, beforeEach } from "vitest";
 import { mockAnalytics } from "../../../tests/helpers/mocks.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
-import { legacyTelemetryStateLayer } from "./legacy-telemetry-state.layer.ts";
+import {
+  legacyTelemetryStateLayer,
+  loadOrCreateLegacyTelemetryState,
+} from "./legacy-telemetry-state.layer.ts";
 import { LegacyTelemetryState } from "./legacy-telemetry-state.service.ts";
 
 let tempHome: string;
@@ -169,4 +172,100 @@ describe("legacyTelemetryStateLayer.stitchLogin / clearDistinctId", () => {
       }).pipe(Effect.provide(makeLayer(analytics, runtime)));
     },
   );
+});
+
+// Go's `decodeState` (`internal/telemetry/state.go:87-115`) is all-or-nothing:
+// any missing/mistyped required field invalidates the WHOLE file, not just that
+// field, so `LoadOrCreateState` regenerates enabled/device_id/session_id fresh.
+describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothing recovery)", () => {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+  const runLoad = () => loadOrCreateLegacyTelemetryState().pipe(Effect.provide(BunServices.layer));
+
+  it.effect("a bool-only file missing device_id/session_id is wholly regenerated", () => {
+    writeFileSync(telemetryPath(), JSON.stringify({ enabled: false }));
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).toMatch(UUID_RE);
+      expect(state.session_id).toMatch(UUID_RE);
+    });
+  });
+
+  it.effect("an empty device_id string invalidates an otherwise-valid file", () => {
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "",
+        session_id: "session-1",
+        session_last_active: new Date().toISOString(),
+        schema_version: 2,
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).toMatch(UUID_RE);
+      expect(state.session_id).not.toBe("session-1");
+    });
+  });
+
+  it.effect("a fully valid file with a recent session is preserved verbatim", () => {
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: new Date().toISOString(),
+        schema_version: 2,
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+      expect(state.session_id).toBe("s");
+      expect(state.schema_version).toBe(2);
+    });
+  });
+
+  it.effect(
+    "the consent form with a unix-millis session_last_active decodes and preserves enabled:false",
+    () => {
+      writeFileSync(
+        telemetryPath(),
+        JSON.stringify({
+          consent: "denied",
+          device_id: "d",
+          session_id: "s",
+          session_last_active: 1750000000000,
+        }),
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.device_id).toBe("d");
+      });
+    },
+  );
+
+  it.effect("an unrecognized consent value is malformed and is wholly regenerated", () => {
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        consent: "maybe",
+        device_id: "d",
+        session_id: "s",
+        session_last_active: new Date().toISOString(),
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
 });

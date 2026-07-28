@@ -1,6 +1,7 @@
 import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
 import { Effect, type Option } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { legacyAqua } from "../../legacy/shared/legacy-colors.ts";
 import { Output } from "../output/output.service.ts";
 import {
   DeleteFunctionNetworkError,
@@ -86,6 +87,11 @@ export function deleteFunction<ResolveError, ResolveRequirements>(
       return;
     }
 
-    yield* output.raw(`Deleted Function ${flags.slug} from project ${projectRef}.\n`);
+    // Go: `fmt.Printf("Deleted Function %s from project %s.\n", utils.Aqua(slug),
+    // utils.Aqua(projectRef))` (`internal/functions/delete/delete.go:20`) —
+    // stdout-bound, so the TTY gate must check stdout.
+    yield* output.raw(
+      `Deleted Function ${legacyAqua(flags.slug, process.stdout)} from project ${legacyAqua(projectRef, process.stdout)}.\n`,
+    );
   }).pipe(Effect.withSpan("functions.delete"));
 }
