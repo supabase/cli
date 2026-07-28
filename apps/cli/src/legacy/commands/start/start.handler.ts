@@ -153,6 +153,7 @@ import { legacyEnsureImagesCached } from "./lib/image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckPostgrestGateway,
+  type LegacyHealthCheckTimeoutError,
 } from "./lib/health-check.ts";
 import {
   legacyStartInternalDbPassword,
@@ -685,6 +686,17 @@ function buildKongEmailTemplateMounts(
           }) ?? "",
       })),
   ];
+}
+
+/**
+ * What `--ignore-health-check` prints when it downgrades a health-check timeout
+ * to a warning. That decision belongs to this caller, not `lib/health-check.ts`
+ * (which only implements the polling contract), and it writes straight to
+ * stderr — bypassing the `Output.fail` renderer that would otherwise append the
+ * error's `suggestion` for it.
+ */
+function legacyHealthWarningText(error: LegacyHealthCheckTimeoutError): string {
+  return error.suggestion === undefined ? error.message : `${error.message}\n${error.suggestion}`;
 }
 
 export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacyStartFlags) {
@@ -2034,7 +2046,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // falls through to the SAME unconditional tail every other path
           // reaches (`start.go:84-87`), not an early return from the whole
           // command.
-          yield* output.raw(`${error.warningText}\n`, "stderr");
+          yield* output.raw(`${legacyHealthWarningText(error)}\n`, "stderr");
           return { kind: "postgresUnhealthyIgnored" as const };
         }
         return yield* Effect.fail(error);
@@ -2510,6 +2522,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             // the same downgrade-to-warning as every other ignored-unhealthy
             // failure.
             if (isFreshVolume && storageContainerId !== undefined) {
+              // `images` is intentionally the whole run's registry, not scoped to
+              // this one-container watch list — the hint can only ever key off
+              // containers that actually appear in this call's own failures.
               const storageHealthResult = yield* legacyWaitForHealthyServices(
                 spawner,
                 [storageContainerId],
@@ -2534,7 +2549,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               }
             }
             // Downgrade to a warning and fall through to the success path, no rollback.
-            yield* output.raw(`${error.warningText}\n`, "stderr");
+            yield* output.raw(`${legacyHealthWarningText(error)}\n`, "stderr");
           } else {
             // No manual `legacyRollbackStart` here — the outer `Effect.onError`
             // below rolls back on this failure too.

@@ -231,18 +231,19 @@ supabase local development setup.`
   `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`
   throughout, matching Go's `started = append(started, utils.InbucketId)` rather than the
   id `docker create` returns.
+- stderr (conditional, `exec format error` in those logs) — **TS-port-only, beyond Go
+  parity**: a recovery `suggestion` printed after the reasons, naming each affected
+  container **with** its image (they can be named after different things —
+  `supabase_inbucket_*` runs `mailpit`), then a `supabase stop` / `<runtime> image rm -f` /
+  `supabase start` sequence, then a closing line for the case re-pulling cannot fix. The
+  runtime named is whichever of `docker`/`podman` actually answered. `supabase stop` leads
+  because `--ignore-health-check` leaves the stack up, so a bare restart would hit the
+  already-running short-circuit and never recreate the broken container. Being a
+  `suggestion` also replaces the usual "rerun with --debug" line, which cannot help here.
+  Nothing is ever removed automatically, and Go prints no such guidance.
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
-
-**Cached-image recovery advice — TS-port-only, beyond Go parity.** If an unhealthy
-container's logs contained `exec format error`, the timeout carries a `suggestion` printed
-after the reasons above, naming each affected container **with** its image (they can be
-named after different things — `supabase_inbucket_*` runs `mailpit`) plus a
-`docker image rm -f` command. It states both possible causes — a corrupt cached copy, or no
-build for the host architecture — without claiming which applies, since re-pulling only
-fixes the first. Go prints no such guidance. Being a `suggestion` also replaces the usual
-"rerun with --debug" line, which cannot help here. Nothing is ever removed automatically.
 
 ### `--output-format json` / `--output-format stream-json`
 
@@ -250,7 +251,8 @@ A single JSON object (or a `result` NDJSON event) carrying the same value shape
 `supabase status --output json` produces. All the progress/warning/banner/security-notice
 text above is suppressed in these modes — stdout stays payload-only. On a health-check
 timeout the error payload carries the advice above as a discrete `error.suggestion` string
-alongside `error.message`, so it stays machine-readable rather than prose.
+alongside `error.message`, so a caller can surface it without re-parsing the message. It is
+prose, not structured data.
 
 ## Notes
 

@@ -3115,6 +3115,12 @@ content_path = "./templates/custom_notice.html"
             const name = containerNameFromCreateArgs(args);
             if (name.includes("_db_")) neverHealthy.add(name);
           }
+          // Postgres's own health wait builds its `images` map separately from the
+          // bulk one, so this scripts the marker here too rather than assuming the
+          // two call sites are wired the same way.
+          if (args[0] === "logs" && (args[1] ?? "").includes("_db_")) {
+            return { stdout: ["exec /usr/local/bin/docker-entrypoint.sh: exec format error\n"] };
+          }
           return base(args);
         };
         const { layer, out, child, analytics } = setup({
@@ -3126,6 +3132,14 @@ content_path = "./templates/custom_notice.html"
           expect(out.stderrText).toContain("is not ready");
           expect(out.stderrText).toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
+          // Reported by container name, with the recovery advice naming the image
+          // Postgres's own health wait resolved for it.
+          expect(out.stderrText).toContain("supabase_db_demo: container is not ready");
+          expect(out.stderrText).toContain("supabase_db_demo's image");
+          expect(out.stderrText).toContain("image rm -f public.ecr.aws/supabase/postgres:");
+          // `--ignore-health-check` leaves the stack up, so a bare restart would be a
+          // no-op — the sequence must stop first.
+          expect(out.stderrText).toContain("supabase stop");
           // No other service's container is ever created — Go's `StartDatabase`
           // returns before `run()`'s "Starting containers..." message or any other
           // service's bring-up even begins.

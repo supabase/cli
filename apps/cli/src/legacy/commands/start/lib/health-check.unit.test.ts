@@ -27,54 +27,86 @@ const LOG_STREAM_FAILS = Symbol("log stream fails");
  * container — an array so a test can script chunk boundaries, optionally
  * terminated by {@link LOG_STREAM_FAILS} — and with empty output otherwise.
  */
+type LogChunks = ReadonlyArray<string | typeof LOG_STREAM_FAILS>;
+
+/** A container's scripted `docker logs` output; a bare array targets stdout. */
+type LogScript = LogChunks | { readonly stdout?: LogChunks; readonly stderr?: LogChunks };
+
+const isLogChunks = (script: LogScript): script is LogChunks => Array.isArray(script);
+
 function mockHealthSpawner(
   inspectResponse: (containerId: string, callIndex: number) => string,
-  logs: Readonly<Record<string, ReadonlyArray<string | typeof LOG_STREAM_FAILS>>> = {},
+  logs: Readonly<Record<string, LogScript>> = {},
+  opts: { readonly runtime?: "docker" | "podman" } = {},
 ) {
   const counts = new Map<string, number>();
   const encoder = new TextEncoder();
   const spawned: Array<ReadonlyArray<string>> = [];
 
+  const toStream = (chunks: LogChunks) => {
+    const emitted = Stream.fromIterable(
+      chunks
+        .filter((chunk): chunk is string => typeof chunk === "string" && chunk.length > 0)
+        .map((chunk) => encoder.encode(chunk)),
+    );
+    return chunks.includes(LOG_STREAM_FAILS)
+      ? Stream.concat(
+          emitted,
+          Stream.fail(
+            PlatformError.systemError({
+              _tag: "BadResource",
+              module: "ChildProcess",
+              method: "stdout",
+              description: "broken pipe",
+            }),
+          ),
+        )
+      : emitted;
+  };
+
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       const args = command._tag === "StandardCommand" ? command.args : [];
+      const binary = command._tag === "StandardCommand" ? command.command : "";
+      // Mirrors a host where only one runtime is installed: `spawnContainerCli`
+      // tries `docker` first and falls back to `podman` when the spawn fails.
+      if (opts.runtime !== undefined && binary !== opts.runtime) {
+        return yield* Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: `${binary}: command not found`,
+          }),
+        );
+      }
       spawned.push(args);
 
-      let chunks: ReadonlyArray<string | typeof LOG_STREAM_FAILS> = [];
+      let stdoutChunks: LogChunks = [];
+      let stderrChunks: LogChunks = [];
       if (args[0] === "container" && args[1] === "inspect") {
         const containerId = args[2] ?? "";
         const callIndex = counts.get(containerId) ?? 0;
         counts.set(containerId, callIndex + 1);
-        chunks = [inspectResponse(containerId, callIndex)];
+        stdoutChunks = [inspectResponse(containerId, callIndex)];
       } else if (args[0] === "logs") {
-        chunks = logs[args[1] ?? ""] ?? [];
+        const script = logs[args[1] ?? ""];
+        if (script !== undefined) {
+          if (isLogChunks(script)) {
+            stdoutChunks = script;
+          } else {
+            stdoutChunks = script.stdout ?? [];
+            stderrChunks = script.stderr ?? [];
+          }
+        }
       }
-
-      const emitted = Stream.fromIterable(
-        chunks
-          .filter((chunk): chunk is string => typeof chunk === "string" && chunk.length > 0)
-          .map((chunk) => encoder.encode(chunk)),
-      );
-      const stdout = chunks.includes(LOG_STREAM_FAILS)
-        ? Stream.concat(
-            emitted,
-            Stream.fail(
-              PlatformError.systemError({
-                _tag: "BadResource",
-                module: "ChildProcess",
-                method: "stdout",
-                description: "broken pipe",
-              }),
-            ),
-          )
-        : emitted;
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        stdout,
-        stderr: Stream.empty,
+        stdout: toStream(stdoutChunks),
+        stderr: toStream(stderrChunks),
         all: Stream.empty,
         exitCode: Deferred.await(exitDeferred),
         isRunning: Effect.succeed(false),
@@ -350,12 +382,53 @@ describe("legacyWaitForHealthyServices", () => {
 
         expect(error.message).toBe("supabase_storage_proj: container is not running: exited");
         expect(error.suggestion).toBeUndefined();
-        // `--ignore-health-check` prints the reasons alone, with no dangling blank line.
-        expect(error.warningText).toBe(error.message);
       }),
     );
 
-    it.effect("carries both halves into the --ignore-health-check warning", () =>
+    it.effect("detects the marker when it arrives on the container's stderr stream", () =>
+      Effect.gen(function* () {
+        // Where the container runtime actually writes it: `docker logs` demuxes
+        // the container's stderr onto its own stderr pipe, so this is the real
+        // path, not the stdout one every other scenario here scripts.
+        const mock = mockHealthSpawner(() => notRunning, {
+          supabase_inbucket_proj: { stderr: ["exec /mailpit: exec format error\n"] },
+        });
+
+        const error = yield* timeoutError(
+          mock,
+          ["supabase_inbucket_proj"],
+          new Map([["supabase_inbucket_proj", "public.ecr.aws/supabase/mailpit:v1.30.2"]]),
+        );
+
+        expect(error.suggestion).toContain(
+          "docker image rm -f public.ecr.aws/supabase/mailpit:v1.30.2",
+        );
+      }),
+    );
+
+    it.effect("names podman in the recovery command on a Podman-only host", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(
+          () => notRunning,
+          { supabase_inbucket_proj: { stderr: ["exec format error\n"] } },
+          { runtime: "podman" },
+        );
+
+        const error = yield* timeoutError(
+          mock,
+          ["supabase_inbucket_proj"],
+          new Map([["supabase_inbucket_proj", "public.ecr.aws/supabase/mailpit:v1.30.2"]]),
+        );
+
+        // A `docker ...` line would be uncopyable on a host without Docker.
+        expect(error.suggestion).toContain(
+          "podman image rm -f public.ecr.aws/supabase/mailpit:v1.30.2",
+        );
+        expect(error.suggestion).not.toContain("docker image rm");
+      }),
+    );
+
+    it.effect("leads the recovery sequence with supabase stop", () =>
       Effect.gen(function* () {
         const mock = mockHealthSpawner(() => notRunning, {
           supabase_inbucket_proj: ["exec format error\n"],
@@ -367,11 +440,17 @@ describe("legacyWaitForHealthyServices", () => {
           new Map([["supabase_inbucket_proj", "public.ecr.aws/supabase/mailpit:v1.30.2"]]),
         );
 
-        // Both downgrade sites print `warningText`, so this covers the reason
-        // block and the advice arriving together on the warning path.
-        expect(error.warningText).toBe(`${error.message}\n${error.suggestion}`);
-        expect(error.warningText).toContain("supabase_inbucket_proj: container is not running");
-        expect(error.warningText).toContain("docker image rm -f");
+        // Without `supabase stop`, the `--ignore-health-check` path leaves the
+        // stack up and the next `supabase start` short-circuits on
+        // already-running, never recreating the broken container.
+        const suggestion = error.suggestion ?? "";
+        expect(suggestion).toContain("supabase stop");
+        expect(suggestion.indexOf("supabase stop")).toBeLessThan(suggestion.indexOf("image rm -f"));
+        expect(suggestion.indexOf("image rm -f")).toBeLessThan(
+          suggestion.indexOf("supabase start"),
+        );
+        // And a next step for the cause re-pulling cannot fix.
+        expect(suggestion).toContain("no build for this machine's architecture");
       }),
     );
 
@@ -421,16 +500,17 @@ describe("legacyWaitForHealthyServices", () => {
           ]),
         );
 
-        // Both containers are named against the shared image, which the removal
-        // command lists once; the healthy-logged container is never mentioned.
+        // Both containers are named against the shared image...
+        expect(error.suggestion).toContain("supabase_rest_proj's image");
+        expect(error.suggestion).toContain("supabase_realtime_proj's image");
+        // ...which the removal command lists once, not twice.
         expect(error.suggestion).toContain(
-          "supabase_rest_proj's image public.ecr.aws/supabase/postgrest:v14.15, supabase_realtime_proj's image public.ecr.aws/supabase/postgrest:v14.15",
+          "docker image rm -f public.ecr.aws/supabase/postgrest:v14.15",
         );
-        expect(
-          error.suggestion?.endsWith(
-            "  docker image rm -f public.ecr.aws/supabase/postgrest:v14.15",
-          ),
-        ).toBe(true);
+        expect(error.suggestion).not.toContain(
+          "postgrest:v14.15 public.ecr.aws/supabase/postgrest:v14.15",
+        );
+        // The healthy-logged container's own image is never suggested.
         expect(error.suggestion).not.toContain("storage-api");
       }),
     );
