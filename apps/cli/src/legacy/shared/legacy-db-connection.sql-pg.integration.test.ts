@@ -198,14 +198,12 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
       }),
   );
 
-  it.live(
-    "surfaces the local-stack hint when a local connection is refused",
-    () =>
-      Effect.gen(function* () {
-        const port = yield* Effect.promise(acquireClosedPort);
-        const error = yield* connectFailure({ port });
-        expect(error.suggestion).toBe(LEGACY_SUGGEST_LOCAL_STACK);
-      }),
+  it.live("surfaces the local-stack hint when a local connection is refused", () =>
+    Effect.gen(function* () {
+      const port = yield* Effect.promise(acquireClosedPort);
+      const error = yield* connectFailure({ port });
+      expect(error.suggestion).toBe(LEGACY_SUGGEST_LOCAL_STACK);
+    }),
   );
 
   it.live(
