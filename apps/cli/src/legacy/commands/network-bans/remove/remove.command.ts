@@ -6,21 +6,31 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
 import { LEGACY_RESOURCE_OUTPUT_FORMATS } from "../../../shared/legacy-go-output-flag.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { legacyParseStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import {
   legacyValidateOutputFormat,
   withLegacyCommandInstrumentation,
 } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyNetworkBansRemove } from "./remove.handler.ts";
 
+// Go declares `--db-unban-ip` with pflag's `StringSliceVar` (`cmd/bans.go:48`),
+// which CSV-splits each occurrence (`--db-unban-ip=1.2.3.4,5.6.7.8` → two IPs)
+// and appends across repeats.
+export const legacyNetworkBansRemoveDbUnbanIpFlag = Flag.string("db-unban-ip").pipe(
+  Flag.withDescription("IP to allow DB connections from."),
+  Flag.atLeast(0),
+  Flag.mapTryCatch(
+    (rawValues) => legacyParseStringSliceFlag(rawValues),
+    (err) => (err instanceof Error ? err.message : String(err)),
+  ),
+);
+
 const config = {
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  dbUnbanIp: Flag.string("db-unban-ip").pipe(
-    Flag.withDescription("IP to allow DB connections from."),
-    Flag.atLeast(0),
-  ),
+  dbUnbanIp: legacyNetworkBansRemoveDbUnbanIpFlag,
 } as const;
 
 export type LegacyNetworkBansRemoveFlags = CliCommand.Command.Config.Infer<typeof config>;
