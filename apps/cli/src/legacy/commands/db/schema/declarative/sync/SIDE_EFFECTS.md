@@ -60,7 +60,10 @@ surfaces before an `--apply`/`--no-apply` conflict is ever checked.
 ## Output
 
 Text mode only. The generated SQL, the created-migration path, drop-statement
-warnings, and apply status are written to stderr.
+warnings, and apply status are written to stderr. The no-files bootstrap also
+prints `Declarative schema written to <dir>` (the relative declarative dir, Go's
+`GetDeclarativeDir()`) to stderr after generating, writing, and warming the
+catalog cache — on both the interactive-accept and `--yes` paths.
 `--no-apply` writes the migration only (never prompts/applies); `--apply` applies
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
