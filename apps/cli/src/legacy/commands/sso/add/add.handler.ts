@@ -1,10 +1,14 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  hasExplicitValueFlag,
+} from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   encodeGoJson,
@@ -42,6 +46,37 @@ const readAttributeMapping = readAttributeMappingFile({
   openError: (args) => new LegacySsoAddAttributeMappingFileError(args),
 });
 
+const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
+
+/**
+ * `sso add`'s single mutually-exclusive group, in Go's registration order
+ * (`cmd/sso.go:164` — `MarkFlagsMutuallyExclusive("metadata-file",
+ * "metadata-url")`). Registration order determines the first bracket of
+ * cobra's error template; only the violating subset gets sorted.
+ */
+const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
+
+/**
+ * Every value-taking (non-boolean) flag `sso add` declares
+ * (`add.command.ts`) — tells `hasExplicitValueFlag` which bare tokens
+ * consume the next argv token as their value. `--skip-url-validation` is
+ * this command's only boolean flag and is deliberately excluded; booleans
+ * never consume a following token. `--type`'s `-t` shorthand is not covered
+ * — the raw-argv scan only understands long flags, same limitation as
+ * `sso update`'s scan (a shorthand's consumed value could in principle be
+ * misread, but pflag would fail `-t`'s enum validation on any dash-prefixed
+ * value before flag groups are even checked).
+ */
+const SSO_ADD_VALUE_FLAG_NAMES = new Set([
+  "project-ref",
+  "type",
+  "domains",
+  "metadata-file",
+  "metadata-url",
+  "attribute-mapping-file",
+  "name-id-format",
+]);
+
 export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: LegacySsoAddFlags) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
@@ -50,12 +85,34 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
+  const stdio = yield* Stdio.Stdio;
+  const rawArgs = yield* stdio.args;
 
   yield* Effect.gen(function* () {
-    if (Option.isSome(flags.metadataFile) && Option.isSome(flags.metadataUrl)) {
+    // cobra runs `ValidateFlagGroups` (`command.go:1010`) before `RunE`
+    // (`command.go:1014`), so the mutex check must precede everything Go does
+    // inside `RunE` — project-ref resolution included. Keep this block first.
+    //
+    // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
+    // all — not the resulting value: `--metadata-file= --metadata-url x` must
+    // still trip the error even though the file path is empty. Scanning raw
+    // argv (like `sso update` does) keeps detection aligned with pflag's
+    // semantics rather than with whatever the TS parser produced — e.g. a
+    // bare `--metadata-file --metadata-url` parses to two `none`s here but
+    // is a single consumed value in pflag (CLI-1982).
+    //
+    // `hasExplicitValueFlag` (not the simpler `hasExplicitLongFlag`) is
+    // required here because both flags in the group take a value: a bare
+    // `--metadata-file --metadata-url` is pflag consuming `--metadata-url` as
+    // `metadata-file`'s (oddly named) value, not two flags being set — see
+    // that function's doc comment.
+    const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) =>
+      hasExplicitValueFlag(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_VALUE_FLAG_NAMES, flagName),
+    );
+    if (changed.length > 1) {
       return yield* Effect.fail(
         new LegacySsoMutexFlagError({
-          message: "only one of --metadata-file or --metadata-url may be set",
+          message: cobraMutuallyExclusiveErrorMessage(SSO_ADD_MUTEX_GROUP, changed),
         }),
       );
     }

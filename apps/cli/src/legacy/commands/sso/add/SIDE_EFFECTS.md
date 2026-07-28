@@ -78,7 +78,7 @@ Single `success` event with the parsed response as data.
 ## Notes
 
 - `--type saml` is **required** (Go's `MarkFlagRequired("type")`).
-- `--metadata-file` and `--metadata-url` are mutually exclusive.
+- `--metadata-file` and `--metadata-url` are mutually exclusive (Go's `MarkFlagsMutuallyExclusive`, `cmd/sso.go:164`). Violations emit cobra's exact template: `if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set`. "Set" follows `pflag.Changed` semantics — an explicit empty value (`--metadata-file=`) still counts.
 - `--skip-url-validation` skips the HTTPS-only + 10s GET + UTF-8 body validation against the metadata URL.
 - Metadata URL validation error message: `only HTTPS Metadata URLs are supported Use --skip-url-validation to suppress this error` (no trailing period — matches Go's `create.go:47`; differs from `sso update`'s variant).
 - The `## Attribute Mapping` / `## SAML 2.0 Metadata XML` sections are emitted as plain markdown (heading + fence). Visual styling of the headings does not match Go's Glamour-rendered output; the XML body inside the fence is byte-parity via `formatSsoMetadataXml`.

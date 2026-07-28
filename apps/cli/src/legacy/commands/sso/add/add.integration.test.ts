@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -39,6 +39,13 @@ interface SetupOpts {
   upgradeGate?: "gated" | "notGated";
   // Metadata-URL fetch responses keyed by URL prefix.
   metadataUrlResponse?: { status: number; body: string };
+  /**
+   * Raw argv the handler sees via `Stdio.Stdio` — drives the
+   * `hasExplicitValueFlag`-based mutex check. Defaults to a bare invocation
+   * with neither of the mutually-exclusive metadata flags present; tests
+   * that exercise the check must pass the matching flags explicitly here.
+   */
+  cliArgs?: ReadonlyArray<string>;
 }
 
 function jsonResponse(
@@ -132,15 +139,20 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
-    out,
-    api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
-    cliConfig,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-    analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
-  });
+  const layer = Layer.mergeAll(
+    buildLegacyTestRuntime({
+      out,
+      api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
+      cliConfig,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+      analytics,
+      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    }),
+    Stdio.layerTest({
+      args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
+    }),
+  );
 
   return { layer, out, api, analytics, telemetry, cache };
 }
@@ -173,27 +185,109 @@ describe("legacy sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with mutex-flag error when both metadata flags set", () => {
-    const { layer } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacySsoAdd({
-          ...defaultFlags,
-          metadataFile: Option.some("/tmp/missing.xml"),
-          metadataUrl: Option.some("https://idp.example.com/m"),
-        }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoMutexFlagError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "mutex check: --metadata-file + --metadata-url fails with cobra's exact error text",
+    () => {
+      const { layer } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--type",
+          "saml",
+          "--metadata-file",
+          "/tmp/missing.xml",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoAdd({
+            ...defaultFlags,
+            metadataFile: Option.some("/tmp/missing.xml"),
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoMutexFlagError");
+          // Byte-matches cobra's `validateExclusiveFlagGroups` template
+          // (`flag_groups.go:204`): group in Go's registration order
+          // (`cmd/sso.go:164`), changed flags sorted alphabetically.
+          expect(dump).toContain(
+            "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "mutex check: an explicit but empty --metadata-file= still conflicts with --metadata-url (changed, not truthy)",
+    () => {
+      // `--metadata-file=` parses to an empty string, but cobra's
+      // `pflag.Changed` tracks that the flag was passed at all, not the
+      // resulting value — the mutex must trip on an explicit empty value,
+      // and with cobra's exact template, not the old hand-written message.
+      const { layer } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--type",
+          "saml",
+          "--metadata-file=",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoAdd({
+            ...defaultFlags,
+            metadataFile: Option.some(""),
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoMutexFlagError");
+          expect(dump).toContain(
+            "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "mutex check: a bare --metadata-file followed by --metadata-url is not a violation",
+    () => {
+      // pflag's `--flag arg` branch consumes the very next argv token as the
+      // value unconditionally (`flag.go:1013-1031`), so real cobra parses
+      // this as `metadata-file` receiving the literal value
+      // `"--metadata-url"` — `metadata-url` is never parsed as its own flag
+      // and stays unset. The raw-argv mutex scan must reach the same "not a
+      // violation" conclusion pflag does, not double-count the
+      // `--metadata-url` token as a second explicit flag.
+      const { layer } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--metadata-file", "--metadata-url"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("reads metadata file and sends as metadata_xml", () => {
     const path = join(tempRoot.current, "good.xml");
     writeFileSync(path, '<?xml version="1.0"?><md/>');
-    const { layer, api } = setup();
+    // A single metadata flag on the raw argv must sail through the mutex scan.
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", "--metadata-file", path],
+    });
     return Effect.gen(function* () {
       yield* legacySsoAdd({ ...defaultFlags, metadataFile: Option.some(path) });
       const req = api.requests.find((r) => r.method === "POST");
@@ -217,7 +311,18 @@ describe("legacy sso add integration", () => {
   });
 
   it.live("sends metadata_url verbatim when --skip-url-validation", () => {
-    const { layer, api } = setup();
+    // A single metadata flag on the raw argv must sail through the mutex scan.
+    const { layer, api } = setup({
+      cliArgs: [
+        "sso",
+        "add",
+        "--type",
+        "saml",
+        "--metadata-url",
+        "https://idp.example.com/m",
+        "--skip-url-validation",
+      ],
+    });
     return Effect.gen(function* () {
       yield* legacySsoAdd({
         ...defaultFlags,
