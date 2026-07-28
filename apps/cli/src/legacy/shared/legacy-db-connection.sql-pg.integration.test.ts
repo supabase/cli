@@ -11,7 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import { LEGACY_SUGGEST_ENV_VAR } from "./legacy-connect-errors.ts";
-import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
+import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import { type LegacyPgConnInput, LegacyDbConnection } from "./legacy-db-connection.service.ts";
 import { legacyDbConnectionSqlPgLayer } from "./legacy-db-connection.sql-pg.layer.ts";
 
@@ -106,6 +106,74 @@ const fakePostgresServer = (
     });
   });
 
+/** Encode a Postgres wire-protocol message with a 1-byte type + int32 length + body. */
+const wireMessage = (type: string, body: Buffer): Buffer => {
+  const head = Buffer.alloc(5);
+  head.write(type, 0, "ascii");
+  head.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([head, body]);
+};
+
+// AuthenticationOk ('R', code 0) + ReadyForQuery ('Z', idle).
+const AUTHENTICATION_OK = wireMessage("R", Buffer.from([0, 0, 0, 0]));
+const READY_FOR_QUERY = wireMessage("Z", Buffer.from("I", "ascii"));
+const commandComplete = (tag: string): Buffer =>
+  wireMessage("C", Buffer.concat([Buffer.from(tag, "utf8"), Buffer.from([0])]));
+
+/**
+ * A fake Postgres server that completes the startup handshake (no auth) and
+ * answers every simple-protocol query ('Q') via `onQuery`, so tests can drive
+ * the REAL driver stack — node-postgres wire parsing → `DatabaseError` →
+ * `@effect/sql-pg`'s `SqlError` wrapping → `legacyToExecError` — through real
+ * server-side statement failures.
+ */
+const fakeQueryServer = (
+  onQuery: (sql: string) => Buffer,
+): Promise<{ readonly port: number; readonly close: () => void }> =>
+  new Promise((resolve) => {
+    const server = net.createServer((socket) => {
+      let sawStartup = false;
+      let pending = Buffer.alloc(0);
+      socket.on("data", (data: Buffer) => {
+        pending = Buffer.concat([pending, data]);
+        for (;;) {
+          if (!sawStartup) {
+            if (pending.length < 8) return;
+            const length = pending.readInt32BE(0);
+            if (pending.length < length) return;
+            // SSLRequest: request code 80877103 → answer `N` (no TLS).
+            if (pending.readInt32BE(4) === 80877103) {
+              socket.write("N");
+            } else {
+              sawStartup = true;
+              socket.write(Buffer.concat([AUTHENTICATION_OK, READY_FOR_QUERY]));
+            }
+            pending = pending.subarray(length);
+            continue;
+          }
+          // Regular frames: [type:1][length:4][body:length-4].
+          if (pending.length < 5) return;
+          const length = pending.readInt32BE(1);
+          if (pending.length < length + 1) return;
+          const type = String.fromCharCode(pending[0] ?? 0);
+          const body = pending.subarray(5, length + 1);
+          pending = pending.subarray(length + 1);
+          if (type === "Q") {
+            // Query body is a NUL-terminated SQL string.
+            const sql = body.toString("utf8", 0, body.length - 1);
+            socket.write(onQuery(sql));
+          }
+          // Ignore Terminate ('X') and anything else.
+        }
+      });
+      socket.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as net.AddressInfo;
+      resolve({ port: address.port, close: () => server.close() });
+    });
+  });
+
 describe("legacyDbConnectionSqlPgLayer connect failures", () => {
   it.live(
     "surfaces host, user, database, and the driver cause when the connection is refused",
@@ -179,6 +247,72 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
             "Connection terminated unexpectedly",
         );
         expect(error.suggestion).toBeUndefined();
+      }),
+  );
+});
+
+describe("legacyDbConnectionSqlPgLayer exec failures", () => {
+  it.live(
+    "maps a real wire ErrorResponse to pgconn's PgError rendering with detail and position",
+    () =>
+      // Tripwire for the server-error extraction: drives the REAL driver stack
+      // (node-postgres wire parsing → `DatabaseError` → `@effect/sql-pg`'s
+      // `SqlError` cause chain → `legacyToExecError`), so a dependency bump that
+      // changes the error wrapping fails here instead of silently degrading
+      // migration-apply failures back to the opaque driver text.
+      Effect.gen(function* () {
+        const failing = "CREATE TABLE test (path ltree NOT NULL)";
+        const server = yield* Effect.promise(() =>
+          fakeQueryServer((sql) =>
+            sql === failing
+              ? Buffer.concat([
+                  errorResponse({
+                    S: "ERROR",
+                    V: "ERROR",
+                    C: "42704",
+                    M: 'type "ltree" does not exist',
+                    D: "Detail from the server.",
+                    P: "25",
+                    F: "parse_type.c",
+                    L: "270",
+                    R: "typenameType",
+                  }),
+                  READY_FOR_QUERY,
+                ])
+              : Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]),
+          ),
+        );
+        const error: LegacyDbConnectError | LegacyDbExecError = yield* Effect.gen(function* () {
+          const conn = yield* LegacyDbConnection;
+          return yield* conn
+            .connect(
+              {
+                host: "127.0.0.1",
+                port: server.port,
+                user: "postgres",
+                password: "postgres",
+                database: "postgres",
+              },
+              { isLocal: true, dnsResolver: "native" },
+            )
+            .pipe(
+              Effect.flatMap((session) => session.exec(failing)),
+              Effect.scoped,
+              Effect.flip,
+              Effect.mapError(() => new Error("expected the statement to fail")),
+              Effect.orDie,
+            );
+        }).pipe(
+          Effect.provide(legacyDbConnectionSqlPgLayer),
+          Effect.ensuring(Effect.sync(server.close)),
+        );
+        expect(error._tag).toBe("LegacyDbExecError");
+        expect(error.message).toBe('ERROR: type "ltree" does not exist (SQLSTATE 42704)');
+        if (error._tag === "LegacyDbExecError") {
+          expect(error.code).toBe("42704");
+          expect(error.detail).toBe("Detail from the server.");
+          expect(error.position).toBe(25);
+        }
       }),
   );
 });

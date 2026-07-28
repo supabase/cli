@@ -10,20 +10,31 @@ import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
   legacyIsPipelineIncompatible,
+  legacyMarkError,
   legacySeedGlobals,
 } from "./legacy-migration-apply.ts";
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
 
-class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{ readonly message: string }> {}
+class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
+  readonly message: string;
+  readonly code?: string;
+  readonly detail?: string;
+  readonly position?: number;
+}> {}
 
-function fakeSession(opts: { failOn?: string } = {}) {
+function fakeSession(
+  opts: {
+    failOn?: string;
+    failWith?: { message: string; code?: string; detail?: string; position?: number };
+  } = {},
+) {
   const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
   const session: LegacyDbSession = {
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
-        ? Effect.fail(new FakeExecError({ message: "exec failed" }))
+        ? Effect.fail(new FakeExecError(opts.failWith ?? { message: "exec failed" }))
         : Effect.void;
     },
     query: (sql, params) => {
@@ -181,6 +192,163 @@ describe("legacyApplyMigrationFile", () => {
         }),
       ),
     );
+  });
+});
+
+describe("migration failure rendering (Go ExecBatch parity)", () => {
+  // Byte-exact ports of Go's `(*MigrationFile).ExecBatch` error layout
+  // (`pkg/migration/file.go:88-113`): `<pg error>\n[Detail]\n[42704 hint]\n`
+  // `At statement: <i>\n<caret-marked statement>`.
+  const failing = (
+    sql: string,
+    failWith: { message: string; code?: string; detail?: string; position?: number },
+  ) => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, `${sql};`);
+    const { session } = fakeSession({ failOn: sql, failWith });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.map((error) => error.message),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  };
+
+  it.effect("marks the error position with a caret under the failing statement", () => {
+    const stat = "CREATE TABLE test (path ltree NOT NULL)";
+    return failing(stat, {
+      message: 'ERROR: type "ltree" does not exist (SQLSTATE 42704)',
+      code: "42704",
+      position: 25,
+    }).pipe(
+      Effect.tap((message) =>
+        Effect.sync(() => {
+          expect(message).toBe(
+            'ERROR: type "ltree" does not exist (SQLSTATE 42704)\n' +
+              "\n" +
+              "Hint: This type may be defined in a schema that's not in your search_path.\n" +
+              "      Use schema-qualified type references to avoid this error:\n" +
+              "        CREATE TABLE example (col extensions.ltree);\n" +
+              "      Learn more: supabase migration new --help\n" +
+              "At statement: 0\n" +
+              "CREATE TABLE test (path ltree NOT NULL)\n" +
+              "                        ^",
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("renders the server Detail line before the statement context", () => {
+    const stat = "INSERT INTO child VALUES (1)";
+    return failing(stat, {
+      message:
+        'ERROR: insert or update on table "child" violates foreign key constraint "child_parent_id_fkey" (SQLSTATE 23503)',
+      code: "23503",
+      detail: 'Key (parent_id)=(1) is not present in table "parent".',
+    }).pipe(
+      Effect.tap((message) =>
+        Effect.sync(() => {
+          expect(message).toBe(
+            'ERROR: insert or update on table "child" violates foreign key constraint "child_parent_id_fkey" (SQLSTATE 23503)\n' +
+              'Key (parent_id)=(1) is not present in table "parent".\n' +
+              "At statement: 0\n" +
+              "INSERT INTO child VALUES (1)",
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("skips the hint when the SQLSTATE is not 42704", () => {
+    // Go gates the hint on `pgErr.Code == "42704"` in addition to the message
+    // pattern — a matching message under a different code must stay hint-free.
+    const stat = "CREATE TABLE test (path ltree NOT NULL)";
+    return failing(stat, {
+      message: 'ERROR: type "ltree" does not exist (SQLSTATE 42P01)',
+      code: "42P01",
+    }).pipe(
+      Effect.tap((message) =>
+        Effect.sync(() => {
+          expect(message).toBe(
+            'ERROR: type "ltree" does not exist (SQLSTATE 42P01)\n' +
+              "At statement: 0\n" +
+              "CREATE TABLE test (path ltree NOT NULL)",
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("skips the 42704 hint when the type is already schema-qualified", () => {
+    const stat = "CREATE TABLE test (path extensions.ltree NOT NULL)";
+    return failing(stat, {
+      message: 'ERROR: type "extensions.ltree" does not exist (SQLSTATE 42704)',
+      code: "42704",
+    }).pipe(
+      Effect.tap((message) =>
+        Effect.sync(() => {
+          expect(message).toBe(
+            'ERROR: type "extensions.ltree" does not exist (SQLSTATE 42704)\n' +
+              "At statement: 0\n" +
+              "CREATE TABLE test (path extensions.ltree NOT NULL)",
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the plain layout for errors without position or detail", () => {
+    const stat = "ALTER TABLE a ADD COLUMN b int";
+    return failing(stat, { message: "exec failed" }).pipe(
+      Effect.tap((message) =>
+        Effect.sync(() => {
+          expect(message).toBe("exec failed\nAt statement: 0\nALTER TABLE a ADD COLUMN b int");
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyMarkError", () => {
+  // Every expectation below is pinned against Go's `markError` output
+  // (`pkg/migration/file.go:117-132`), captured by running the Go function
+  // directly on the same inputs.
+  it("places the caret under a mid-statement position", () => {
+    expect(legacyMarkError("create table t (col ltree)", 21)).toBe(
+      "create table t (col ltree)\n                    ^",
+    );
+  });
+
+  it("returns the statement unchanged for position 0 (absent)", () => {
+    expect(legacyMarkError("create table t (col ltree)", 0)).toBe("create table t (col ltree)");
+  });
+
+  it("returns the statement unchanged when the position is past the end", () => {
+    expect(legacyMarkError("abc", 99)).toBe("abc");
+  });
+
+  it("returns the statement unchanged when the position lands on a line break", () => {
+    expect(legacyMarkError("ab\ncd", 3)).toBe("ab\ncd");
+  });
+
+  it("marks a position on a later line and drops the lines after it", () => {
+    expect(legacyMarkError("create table t (\n  col ltree\n)", 20)).toBe(
+      "create table t (\n  col ltree\n  ^",
+    );
+    expect(legacyMarkError("l1\nl2\nl3\nl4", 4)).toBe("l1\nl2\n^");
+  });
+
+  it("places the caret under the last character when the position equals the line length", () => {
+    expect(legacyMarkError("abcde", 5)).toBe("abcde\n    ^");
+  });
+
+  it("consumes the position in UTF-8 bytes like Go, not characters", () => {
+    // "héllo" is 5 characters but 6 bytes; Go decrements the position by the
+    // BYTE length + 1 per line, so position 8 lands on column 1 of "world"
+    // (character counting would land on column 2). Verified against Go.
+    expect(legacyMarkError("héllo\nworld", 8)).toBe("héllo\nworld\n^");
+    expect(legacyMarkError("sélect 1", 3)).toBe("sélect 1\n  ^");
   });
 });
 
