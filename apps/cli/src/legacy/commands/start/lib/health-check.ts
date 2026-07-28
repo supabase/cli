@@ -16,7 +16,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
-  spawnContainerCliWithRuntime,
+  legacySpawnContainerCliWithRuntime,
   type LegacyContainerRuntime,
 } from "../../../shared/legacy-container-cli.ts";
 import { legacyInspectContainerState } from "../../../shared/legacy-docker-lifecycle.ts";
@@ -262,7 +262,7 @@ function legacyStreamContainerLogsOnce(
   let runtime: LegacyContainerRuntime | undefined;
   return Effect.scoped(
     Effect.gen(function* () {
-      const spawned = yield* spawnContainerCliWithRuntime(spawner, ["logs", containerId], {
+      const spawned = yield* legacySpawnContainerCliWithRuntime(spawner, ["logs", containerId], {
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

@@ -52,7 +52,7 @@ export type LegacyContainerRuntime = "docker" | "podman";
  * callers that print a command for the user to run themselves, where naming
  * `docker` on a Podman-only host would be uncopyable advice.
  */
-export const spawnContainerCliWithRuntime = (
+export const legacySpawnContainerCliWithRuntime = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
@@ -82,7 +82,7 @@ export const spawnContainerCli = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
-) => spawnContainerCliWithRuntime(spawner, args, options).pipe(Effect.map((it) => it.handle));
+) => legacySpawnContainerCliWithRuntime(spawner, args, options).pipe(Effect.map((it) => it.handle));
 
 /**
  * Run a container-CLI command and resolve to its exit code, mirroring the
