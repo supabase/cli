@@ -181,6 +181,19 @@ function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
   return nameIndex !== -1 ? (args[nameIndex + 1] ?? "unknown") : "unknown";
 }
 
+/**
+ * Real `docker create` prints a 64-hex id, never the `--name`. The mock does
+ * too, so a caller that carries that opaque id into the health watch fails the
+ * assertions here instead of shipping unreadable output to users.
+ */
+function fakeContainerId(name: string): string {
+  return [...name]
+    .map((char) => (char.codePointAt(0) ?? 0).toString(16).padStart(2, "0"))
+    .join("")
+    .padEnd(64, "0")
+    .slice(0, 64);
+}
+
 function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> {
   return spawned
     .filter((s) => s.args[0] === "create")
@@ -205,7 +218,7 @@ function defaultRoute(opts: { readonly neverHealthy?: ReadonlySet<string> } = {}
     if (args[0] === "create") {
       const name = containerNameFromCreateArgs(args);
       created.add(name);
-      return { stdout: [name] };
+      return { stdout: [fakeContainerId(name)] };
     }
     if (args[0] === "start") return { exitCode: 0 };
     if (args[0] === "container" && args[1] === "inspect") {
@@ -3102,6 +3115,12 @@ content_path = "./templates/custom_notice.html"
             const name = containerNameFromCreateArgs(args);
             if (name.includes("_db_")) neverHealthy.add(name);
           }
+          // Postgres's own health wait builds its `images` map separately from the
+          // bulk one, so this scripts the marker here too rather than assuming the
+          // two call sites are wired the same way.
+          if (args[0] === "logs" && (args[1] ?? "").includes("_db_")) {
+            return { stdout: ["exec /usr/local/bin/docker-entrypoint.sh: exec format error\n"] };
+          }
           return base(args);
         };
         const { layer, out, child, analytics } = setup({
@@ -3113,6 +3132,14 @@ content_path = "./templates/custom_notice.html"
           expect(out.stderrText).toContain("is not ready");
           expect(out.stderrText).toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
+          // Reported by container name, with the recovery advice naming the image
+          // Postgres's own health wait resolved for it.
+          expect(out.stderrText).toContain("supabase_db_demo: container is not ready");
+          expect(out.stderrText).toContain("supabase_db_demo's image");
+          expect(out.stderrText).toContain("image rm -f public.ecr.aws/supabase/postgres:");
+          // `--ignore-health-check` leaves the stack up, so a bare restart would be a
+          // no-op — the sequence must stop first.
+          expect(out.stderrText).toContain("supabase stop");
           // No other service's container is ever created — Go's `StartDatabase`
           // returns before `run()`'s "Starting containers..." message or any other
           // service's bring-up even begins.
@@ -3190,6 +3217,12 @@ content_path = "./templates/custom_notice.html"
             const name = containerNameFromCreateArgs(args);
             if (name.includes("_auth_")) neverHealthy.add(name);
           }
+          // The timeout path dumps this container's logs; scripting the
+          // `exec format error` signature into them exercises the whole
+          // recovery-advice wiring (name -> resolved image -> rendered hint).
+          if (args[0] === "logs" && (args[1] ?? "").includes("_auth_")) {
+            return { stdout: ["exec /usr/local/bin/auth: exec format error\n"] };
+          }
           return route(args);
         },
         // Sidesteps the PostgREST/Edge Runtime HTTP-HEAD readiness probes
@@ -3205,6 +3238,10 @@ content_path = "./templates/custom_notice.html"
         expect(out.stderrText).toContain("is not ready");
         expect(out.stderrText).toContain("Started");
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        // Reported by container name, not `docker create`'s opaque id, and the
+        // advice names the image actually resolved for that container.
+        expect(out.stderrText).toContain("supabase_auth_demo: container is not ready");
+        expect(out.stderrText).toContain("docker image rm -f public.ecr.aws/supabase/gotrue:");
         // Go never fires `cli_stack_started` on the ignored-unhealthy
         // fallthrough (`start.go:1287` sits after the `if err != nil` block) —
         // only a genuine bulk health-check SUCCESS reaches that capture.

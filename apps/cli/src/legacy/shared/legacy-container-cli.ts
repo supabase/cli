@@ -44,6 +44,36 @@ export function legacyDescribeContainerCliFailure(cause: unknown): string {
   return String(cause);
 }
 
+/** Which of the two supported container CLIs actually answered a spawn. */
+export type LegacyContainerRuntime = "docker" | "podman";
+
+/**
+ * {@link spawnContainerCli}, but also reporting which runtime answered — for
+ * callers that print a command for the user to run themselves, where naming
+ * `docker` on a Podman-only host would be uncopyable advice.
+ */
+export const legacySpawnContainerCliWithRuntime = (
+  spawner: Spawner,
+  args: ReadonlyArray<string>,
+  options?: ChildProcess.CommandOptions,
+) =>
+  spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+    Effect.map((handle) => ({ handle, runtime: dockerRuntime })),
+    Effect.catch(() =>
+      spawner.spawn(ChildProcess.make("podman", args, options)).pipe(
+        Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
+        Effect.catch(() =>
+          Effect.fail(
+            new LegacyContainerRuntimeNotFoundError({ message: RUNTIME_NOT_FOUND_MESSAGE }),
+          ),
+        ),
+      ),
+    ),
+  );
+
+const dockerRuntime: LegacyContainerRuntime = "docker";
+const podmanRuntime: LegacyContainerRuntime = "podman";
+
 /**
  * Spawn a container-CLI command and return the process handle. Use when the
  * caller needs to read stdout/stderr or await the exit code itself.
@@ -52,22 +82,7 @@ export const spawnContainerCli = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
-) =>
-  spawner
-    .spawn(ChildProcess.make("docker", args, options))
-    .pipe(
-      Effect.catch(() =>
-        spawner
-          .spawn(ChildProcess.make("podman", args, options))
-          .pipe(
-            Effect.catch(() =>
-              Effect.fail(
-                new LegacyContainerRuntimeNotFoundError({ message: RUNTIME_NOT_FOUND_MESSAGE }),
-              ),
-            ),
-          ),
-      ),
-    );
+) => legacySpawnContainerCliWithRuntime(spawner, args, options).pipe(Effect.map((it) => it.handle));
 
 /**
  * Run a container-CLI command and resolve to its exit code, mirroring the
