@@ -41,9 +41,10 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                                                                           | Notable properties / groups         |
-| ---------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` |
+| Event                   | When                                                                                           | Notable properties / groups                                                                                        |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `cli_command_executed`  | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags`                                                                                |
+| `cli_upgrade_suggested` | 4xx carrying the `entitlement_required` envelope (gate open, so the request was made)          | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback |
 
 ## Output
 

@@ -14,7 +14,10 @@ import {
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoListNetworkError,
   LegacySsoListSamlDisabledError,
@@ -41,6 +44,7 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
+        response: legacyGateResponse(cause),
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(

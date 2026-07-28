@@ -10,6 +10,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { verifyLegacyCname } from "../domains.cname.ts";
 import { emitLegacyHostnameResult } from "../domains.emit.ts";
 import { mapLegacyDomainsHttpError } from "../domains.errors.ts";
+import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import type { LegacyDomainsCreateFlags } from "./create.command.ts";
 
 const mapCreateError = mapLegacyDomainsHttpError("create");
@@ -45,7 +46,7 @@ export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* 
       .updateHostnameConfig({ ref, custom_hostname: flags.customHostname })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        Effect.catch(mapCreateError),
+        Effect.catch(legacyGateMapError({ projectRef: ref }, mapCreateError)),
       );
     yield* creating?.clear() ?? Effect.void;
 

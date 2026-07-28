@@ -118,4 +118,24 @@ func TestCreateCommand(t *testing.T) {
 		assert.ErrorContains(t, err, "unexpected create branch status 402")
 		assert.Contains(t, utils.CmdSuggestion, "/org/test-org/billing")
 	})
+
+	t.Run("suggests upgrade from envelope without entitlements round-trip", func(t *testing.T) {
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/" + flags.ProjectRef + "/branches").
+			Reply(http.StatusPaymentRequired).
+			JSON(map[string]interface{}{
+				"message": "Branching is supported only on the Pro plan or above",
+				"error": map[string]interface{}{
+					"code":        "entitlement_required",
+					"feature":     "branching_limit",
+					"upgrade_url": "https://supabase.com/dashboard/org/acme/billing",
+				},
+			})
+		fsys := afero.NewMemMapFs()
+		err := Run(context.Background(), api.CreateBranchBody{Region: cast.Ptr("sin")}, fsys)
+		assert.ErrorContains(t, err, "unexpected create branch status 402")
+		assert.Contains(t, utils.CmdSuggestion, "org/acme/billing")
+	})
 }
