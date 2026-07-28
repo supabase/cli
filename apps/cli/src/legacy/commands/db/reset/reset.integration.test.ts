@@ -702,8 +702,15 @@ describe("legacy db reset", () => {
         version: Option.some("not-a-number"),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit))
-        expect(JSON.stringify(exit.cause)).toContain("invalid version number");
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe(
+          "LegacyDbResetInvalidVersionError",
+        );
+        // Go's reset.Run returns the bare repair.ErrInvalidVersion (reset.go:35-36) —
+        // no `failed to parse <v>:` wrapper (that belongs to `migration repair`).
+        expect(Option.isSome(failure) && failure.value.message).toBe("invalid version number");
+      }
     });
   });
 

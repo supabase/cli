@@ -190,9 +190,11 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     if (Option.isSome(flags.version)) {
       const v = flags.version.value;
       if (!INTEGER_PATTERN.test(v)) {
+        // Go's reset.Run returns the bare repair.ErrInvalidVersion (reset.go:35-36);
+        // the `failed to parse <v>:` wrapper belongs to `migration repair` only.
         return yield* Effect.fail(
           new LegacyDbResetInvalidVersionError({
-            message: `failed to parse ${v}: invalid version number`,
+            message: "invalid version number",
           }),
         );
       }
