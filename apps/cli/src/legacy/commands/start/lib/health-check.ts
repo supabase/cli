@@ -15,7 +15,10 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import {
+  legacySpawnContainerCliWithRuntime,
+  type LegacyContainerRuntime,
+} from "../../../shared/legacy-container-cli.ts";
 import { legacyInspectContainerState } from "../../../shared/legacy-docker-lifecycle.ts";
 import { legacyKongAuthHeaders } from "../../../shared/legacy-kong-auth.ts";
 
@@ -50,6 +53,11 @@ const LEGACY_EDGE_RUNTIME_READY_PATH = "/functions/v1/_internal/health";
 
 /** Identifies a single container's readiness failure this round. */
 export interface LegacyHealthCheckFailure {
+  /**
+   * The container NAME (`supabase_<service>_<project id>`), not the opaque id
+   * `docker create` returns — both work with `docker container inspect`/`docker
+   * logs`, but only the name tells a user which service failed.
+   */
   readonly containerId: string;
   readonly reason: string;
 }
@@ -69,6 +77,12 @@ export class LegacyHealthCheckTimeoutError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly unhealthy: ReadonlyArray<LegacyHealthCheckFailure>;
+  /**
+   * Kept out of {@link message} so `Output.fail` renders it unstyled and drops
+   * the generic "rerun with --debug" line: once an exact command is named,
+   * pointing at an HTTP request logger is a non-sequitur (as in CLI-1973).
+   */
+  readonly suggestion?: string;
 }> {}
 
 /**
@@ -110,6 +124,77 @@ export interface LegacyWaitForHealthyServicesOptions {
   readonly postgrest?: LegacyHealthCheckPostgrestGateway;
   /** See {@link LEGACY_EDGE_RUNTIME_READY_PATH}'s doc comment for why this reuses the same gateway shape as {@link postgrest}. */
   readonly edgeRuntime?: LegacyHealthCheckPostgrestGateway;
+  /** Each watched container's already-resolved image, keyed by container name. */
+  readonly images?: ReadonlyMap<string, string>;
+}
+
+/** The container runtime's message when an image cannot be executed by the host kernel. */
+const LEGACY_EXEC_FORMAT_ERROR = "exec format error";
+
+/**
+ * Scans a byte stream for {@link LEGACY_EXEC_FORMAT_ERROR} in constant memory:
+ * retaining the trailing marker-length window is exactly enough to match a
+ * marker split across a chunk boundary. One scanner per stream, so stdout and
+ * stderr bytes cannot splice into a marker neither stream contains.
+ */
+function legacyMakeExecFormatScanner() {
+  const decoder = new TextDecoder();
+  let tail = "";
+  let found = false;
+  return {
+    scan(chunk: Uint8Array): void {
+      const text = tail + decoder.decode(chunk, { stream: true });
+      found ||= text.includes(LEGACY_EXEC_FORMAT_ERROR);
+      tail = text.slice(-LEGACY_EXEC_FORMAT_ERROR.length);
+    },
+    get found(): boolean {
+      return found;
+    },
+  };
+}
+
+/**
+ * Recovery advice for a timeout whose logs showed {@link LEGACY_EXEC_FORMAT_ERROR},
+ * or `undefined` when no affected image can be named.
+ *
+ * `supabase stop` leads the sequence because a bare restart is a no-op on the
+ * `--ignore-health-check` path: that path leaves the stack up by design, so the
+ * next `supabase start` takes the already-running short-circuit and never
+ * recreates the broken container. `stop` without `--no-backup` preserves the
+ * database volume, and is harmless after the hard-fail path's own rollback.
+ *
+ * Both `supabase` steps resolve their own project the way this run did, so the
+ * sequence names that requirement rather than embedding the resolved workdir:
+ * a path rendered into a copy-pasteable command needs shell quoting, and the
+ * correct quoting differs between POSIX shells and `cmd.exe`.
+ *
+ * `-f` because the container may still reference the image, and `runtime`
+ * rather than a hardcoded `docker` because `spawnContainerCli` falls back to
+ * Podman on hosts without Docker. The closing line covers the case re-pulling
+ * cannot fix: a pinned version with no build for this host (supabase/cli#3718,
+ * #4674), where the same image comes straight back.
+ */
+function legacyExecFormatRecoveryHint(
+  containerIds: ReadonlyArray<string>,
+  images: ReadonlyMap<string, string> | undefined,
+  runtime: LegacyContainerRuntime,
+): string | undefined {
+  // Both names, always: a container and its image can be named after different
+  // things (`supabase_inbucket_*` runs `mailpit`), so naming only one leaves
+  // the reader guessing whether this is the same failure as the reason above.
+  const affected = containerIds.flatMap((containerId) => {
+    const image = images?.get(containerId);
+    return image === undefined ? [] : [{ containerId, image }];
+  });
+  if (affected.length === 0) return undefined;
+  const uniqueImages = [...new Set(affected.map((entry) => entry.image))];
+  return [
+    `${affected.map((entry) => `${entry.containerId}'s image ${entry.image}`).join(", ")} could not be executed ("${LEGACY_EXEC_FORMAT_ERROR}").`,
+    "Either the cached copy is corrupt, or it was built for a different architecture.",
+    "Remove the cached copy and start again, from this project directory or with the same --workdir:",
+    `\n  supabase stop\n  ${runtime} image rm -f ${uniqueImages.join(" ")}\n  supabase start\n`,
+    "If it fails the same way, that image has no build for this machine's architecture.",
+  ].join("\n");
 }
 
 /**
@@ -165,25 +250,42 @@ function legacyCheckHttpReady(
  * via `docker logs <id>`, teed to this process's stderr — best-effort: a
  * failure to stream logs must never mask the timeout error it was printed
  * alongside, so every failure here is swallowed.
+ *
+ * Resolves to whether the logs contained {@link LEGACY_EXEC_FORMAT_ERROR},
+ * scanned off the bytes already being teed — no extra Docker call, no buffer —
+ * and to the runtime that answered, so recovery advice can name the binary the
+ * user actually has.
  */
-function legacyStreamContainerLogsOnce(spawner: Spawner, containerId: string): Effect.Effect<void> {
+function legacyStreamContainerLogsOnce(
+  spawner: Spawner,
+  containerId: string,
+): Effect.Effect<LegacyExecFormatScanResult> {
+  // Outside the effect that can fail, so a stream breaking mid-dump cannot
+  // discard a marker the scanner has already seen.
+  const stdoutScanner = legacyMakeExecFormatScanner();
+  const stderrScanner = legacyMakeExecFormatScanner();
+  let runtime: LegacyContainerRuntime | undefined;
   return Effect.scoped(
     Effect.gen(function* () {
-      const handle = yield* spawnContainerCli(spawner, ["logs", containerId], {
+      const spawned = yield* legacySpawnContainerCliWithRuntime(spawner, ["logs", containerId], {
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
       });
+      runtime = spawned.runtime;
+      const handle = spawned.handle;
       yield* Effect.all(
         [
           Stream.runForEach(handle.stdout, (chunk) =>
             Effect.sync(() => {
               globalThis.process.stderr.write(chunk);
+              stdoutScanner.scan(chunk);
             }),
           ),
           Stream.runForEach(handle.stderr, (chunk) =>
             Effect.sync(() => {
               globalThis.process.stderr.write(chunk);
+              stderrScanner.scan(chunk);
             }),
           ),
         ],
@@ -191,16 +293,29 @@ function legacyStreamContainerLogsOnce(spawner: Spawner, containerId: string): E
       );
       yield* handle.exitCode;
     }),
-  ).pipe(Effect.orElseSucceed(() => undefined));
+  ).pipe(
+    Effect.orElseSucceed(() => undefined),
+    Effect.map(() => ({ found: stdoutScanner.found || stderrScanner.found, runtime })),
+  );
+}
+
+/** What one container's log dump learned, beyond the bytes it teed to stderr. */
+interface LegacyExecFormatScanResult {
+  readonly found: boolean;
+  /** `undefined` only when neither runtime could be spawned at all. */
+  readonly runtime: LegacyContainerRuntime | undefined;
 }
 
 /** Go's `fmt.Fprintln(os.Stderr, containerId, "container logs:")` (`start.go:218`) + the log dump itself. */
-function legacyDumpContainerLogs(spawner: Spawner, containerId: string): Effect.Effect<void> {
+function legacyDumpContainerLogs(
+  spawner: Spawner,
+  containerId: string,
+): Effect.Effect<LegacyExecFormatScanResult> {
   return Effect.gen(function* () {
     yield* Effect.sync(() => {
       globalThis.process.stderr.write(`${containerId} container logs:\n`);
     });
-    yield* legacyStreamContainerLogsOnce(spawner, containerId);
+    return yield* legacyStreamContainerLogsOnce(spawner, containerId);
   });
 }
 
@@ -278,8 +393,18 @@ export function legacyWaitForHealthyServices(
           // `!errors.Is(err, context.Canceled)`) — an interrupted fiber never
           // reaches this `Effect.catch` handler at all, so no separate check
           // is needed here.
-          yield* Effect.forEach(probeError.failures, (failure) =>
-            legacyDumpContainerLogs(spawner, failure.containerId),
+          const scans = yield* Effect.forEach(probeError.failures, (failure) =>
+            legacyDumpContainerLogs(spawner, failure.containerId).pipe(
+              Effect.map((scan) => ({ ...scan, containerId: failure.containerId })),
+            ),
+          );
+          const execFormatErrors = scans
+            .filter((scan) => scan.found)
+            .map((scan) => scan.containerId);
+          const suggestion = legacyExecFormatRecoveryHint(
+            execFormatErrors,
+            opts.images,
+            scans.find((scan) => scan.runtime !== undefined)?.runtime ?? "docker",
           );
           return yield* Effect.fail(
             new LegacyHealthCheckTimeoutError({
@@ -287,6 +412,7 @@ export function legacyWaitForHealthyServices(
                 .map((failure) => `${failure.containerId}: ${failure.reason}`)
                 .join("\n"),
               unhealthy: probeError.failures,
+              ...(suggestion === undefined ? {} : { suggestion }),
             }),
           );
         }),

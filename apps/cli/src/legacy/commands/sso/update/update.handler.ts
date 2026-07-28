@@ -22,7 +22,10 @@ import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/leg
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoMutexFlagError,
   LegacySsoUpdateAttributeMappingFileError,
@@ -94,6 +97,7 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
+        response: legacyGateResponse(cause),
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(
@@ -115,13 +119,15 @@ function mergeDomains(
   add: ReadonlyArray<string>,
   remove: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  // Mirrors Go's `update.go:93-117` — seed from current domains, apply
+  // Mirrors Go's `update.go:84-109` — seed from current domains, apply
   // removals, then add new entries. Go uses a `map[string]bool`, so iteration
-  // order is unspecified; integration tests sort before asserting.
+  // order is unspecified; integration tests sort before asserting. Go's seed
+  // check is nil-ness only (`domain.Domain != nil`), so an empty-string domain
+  // from the GET response is kept, not filtered.
   const set = new Set<string>();
   if (existing !== undefined) {
     for (const item of existing) {
-      if (typeof item.domain === "string" && item.domain.length > 0) {
+      if (typeof item.domain === "string") {
         set.add(item.domain);
       }
     }
@@ -228,7 +234,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
 
       if (flags.domains.length > 0) {
         body["domains"] = [...flags.domains];
-      } else if (flags.addDomains.length > 0 || flags.removeDomains.length > 0) {
+      } else {
+        // Go's `update.go:84` reads as gating the merge on
+        // `params.AddDomains != nil || params.RemoveDomains != nil`, but
+        // `cmd/sso.go:171-172` declares both flags with a non-nil `[]string{}`
+        // default and passes them unconditionally — so from the CLI that
+        // condition is always true and every `sso update` PUT recomputes and
+        // sends `domains`, even when no domain flag was passed. `body.Domains`
+        // is a non-nil `*[]string` under `json:"domains,omitempty"`, so an
+        // empty merged set serializes as `"domains":[]`, never omitted
+        // (CLI-1981; live-captured against the Go binary).
         body["domains"] = mergeDomains(existing.domains, flags.addDomains, flags.removeDomains);
       }
 
@@ -267,6 +282,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           projectRef: ref,
           featureKey: "auth.saml_2",
           statusCode: response.status,
+          response,
         });
         yield* fetching?.fail() ?? Effect.void;
         return yield* Effect.fail(

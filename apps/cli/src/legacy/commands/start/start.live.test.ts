@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -11,7 +11,9 @@ import {
   legacyServiceContainerName,
   localDbContainerId,
 } from "../../shared/legacy-docker-ids.ts";
+import { legacyGetRegistryImageUrl } from "../../shared/legacy-docker-registry.ts";
 import { LEGACY_SERVICE_CATALOG } from "../../shared/legacy-service-catalog.ts";
+import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -200,6 +202,65 @@ describeLive("supabase start (live)", () => {
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
       expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
+    },
+  );
+
+  // The health watch inspects and dumps logs by container NAME against a real
+  // daemon, and derives recovery advice from a real container's real log bytes.
+  // Neither is observable through the in-process mocks, so this reproduces
+  // supabase/cli#5952 for real: a locally cached image that cannot be executed.
+  test(
+    "names the container and its image when a cached image cannot be executed",
+    { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
+    async () => {
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-exec-"));
+      const projectId = legacySanitizeProjectId(path.basename(projectDir));
+      const mailpitContainer = legacyServiceContainerName("inbucket", projectId);
+      // The exact tag `start` resolves for Mailpit, so its already-cached check
+      // finds this deliberately broken build and never reaches a registry.
+      const mailpitImage = legacyGetRegistryImageUrl(dockerfileServiceImage("mailpit"));
+
+      const init = await runSupabaseLive(["init"], {
+        cwd: projectDir,
+        exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
+      });
+      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+
+      // A `scratch` image whose entrypoint is not an executable binary — the
+      // kernel refuses it with exactly the "exec format error" this diagnoses.
+      const buildDir = path.join(projectDir, "broken-image");
+      await mkdir(buildDir, { recursive: true });
+      await writeFile(path.join(buildDir, "mailpit"), "not an executable\n", { mode: 0o755 });
+      await writeFile(
+        path.join(buildDir, "Dockerfile"),
+        'FROM scratch\nCOPY mailpit /mailpit\nENTRYPOINT ["/mailpit"]\n',
+      );
+      await execFileAsync("docker", ["build", "-q", "-t", mailpitImage, buildDir]);
+
+      try {
+        // Everything except Postgres and Mailpit is excluded: this scenario only
+        // needs one container that cannot start.
+        const excludeArgs = LEGACY_SERVICE_CATALOG.flatMap((entry) =>
+          entry.excludeKey === undefined || entry.excludeKey === "mailpit"
+            ? []
+            : ["--exclude", entry.excludeKey],
+        );
+        const start = await runSupabaseLive(["start", ...excludeArgs], {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+        });
+
+        expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).not.toBe(0);
+        // Go reports `utils.InbucketId`, not the id `docker create` returns.
+        expect(start.stderr).toContain(`${mailpitContainer} container logs:`);
+        expect(start.stderr).toContain(`${mailpitContainer}: container is not ready`);
+        // ...and the advice names that container's actual resolved image.
+        expect(start.stderr).toContain(`${mailpitContainer}'s image ${mailpitImage}`);
+        expect(start.stderr).toContain(`image rm -f ${mailpitImage}`);
+      } finally {
+        // Never leave a poisoned tag behind for later jobs on this runner.
+        await execFileAsync("docker", ["image", "rm", "-f", mailpitImage]).catch(() => undefined);
+      }
     },
   );
 });

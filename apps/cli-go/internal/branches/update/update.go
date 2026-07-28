@@ -23,8 +23,8 @@ func Run(ctx context.Context, branchId string, body api.UpdateBranchBody, fsys a
 	if err != nil {
 		return errors.Errorf("failed to update preview branch: %w", err)
 	} else if resp.JSON200 == nil {
-		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "branching_persistent", resp.StatusCode()); isGated {
-			telemetry.TrackUpgradeSuggested(ctx, "branching_persistent", orgSlug)
+		if feature, orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "branching_persistent", resp.StatusCode(), resp.Body); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, feature, orgSlug)
 		}
 		return errors.Errorf("unexpected update branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}

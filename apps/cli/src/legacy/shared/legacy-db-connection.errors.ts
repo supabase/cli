@@ -24,6 +24,20 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
    * missing migration-history table, not an undefined column.
    */
   readonly code?: string;
+  /**
+   * Postgres `Detail` field of a server ErrorResponse (Go's `pgErr.Detail`).
+   * Only set for server errors that carry a non-empty detail; the migration-apply
+   * error context renders it on its own line, matching Go's `ExecBatch`
+   * (`pkg/migration/file.go:99-101`).
+   */
+  readonly detail?: string;
+  /**
+   * Postgres error cursor of a server ErrorResponse (Go's `pgErr.Position`): a
+   * 1-based index into the failing statement. Only set when the server reported a
+   * position > 0. The migration-apply error context uses it to render Go's `^`
+   * caret under the error position (`pkg/migration/file.go:98`, `markError`).
+   */
+  readonly position?: number;
 }> {}
 
 /**

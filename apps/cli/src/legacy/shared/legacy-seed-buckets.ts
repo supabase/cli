@@ -13,7 +13,7 @@ import { legacyResolveYesWithProjectEnv } from "../../shared/legacy/global-flags
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
-import { legacyPromptYesNo } from "./legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   legacyResolveStorageCredentials,
   legacyStorageGatewayFetch,

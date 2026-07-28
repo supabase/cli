@@ -24,8 +24,8 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 	}
 
 	if resp.JSON200 == nil {
-		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, ref, "auth.saml_2", resp.StatusCode()); isGated {
-			telemetry.TrackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
+		if feature, orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, ref, "auth.saml_2", resp.StatusCode(), resp.Body); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, feature, orgSlug)
 		}
 		if resp.StatusCode() == http.StatusNotFound {
 			return errors.Errorf("An identity provider with ID %q could not be found.", providerId)

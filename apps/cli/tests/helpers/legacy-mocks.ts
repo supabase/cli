@@ -38,13 +38,14 @@ import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-re
 import { LegacyLinkedProjectCache } from "../../src/legacy/telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import type { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
-import { mockAnalytics, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
+import { mockAnalytics, mockProcessControl, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
 
 // ---------------------------------------------------------------------------
 // Constants — Go-parity test fixtures used across every native-port integration
@@ -710,6 +711,12 @@ export interface BuildLegacyTestRuntimeOpts {
   };
   readonly cliConfig: Layer.Layer<LegacyCliConfig>;
   readonly tty?: Layer.Layer<Tty>;
+  /**
+   * `Stdin` for prompts routed through `legacyPromptYesNo` (piped-answer reads on
+   * a non-TTY, Go's `Console.ReadLine`). Defaults to a non-TTY stdin with no
+   * piped input, i.e. every bounded read times out like Go's empty 100ms scan.
+   */
+  readonly stdin?: Layer.Layer<Stdin>;
   readonly processControl?: { readonly layer: Layer.Layer<ProcessControl> };
   readonly runtimeInfo?: Layer.Layer<RuntimeInfo>;
   readonly telemetry?: Layer.Layer<LegacyTelemetryState>;
@@ -722,6 +729,7 @@ export interface BuildLegacyTestRuntimeOpts {
 
 export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
   const tty = opts.tty ?? mockTty({ stdinIsTty: false, stdoutIsTty: false });
+  const stdin = opts.stdin ?? mockStdin(false);
   const processControl = (opts.processControl ?? mockProcessControl()).layer;
   const runtimeInfo = opts.runtimeInfo ?? mockRuntimeInfo();
   const telemetry = opts.telemetry ?? mockLegacyTelemetryStateLayer;
@@ -753,6 +761,7 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     topLevelFactory,
     opts.cliConfig,
     tty,
+    stdin,
     processControl,
     runtimeInfo,
     legacyProjectRefLayer.pipe(

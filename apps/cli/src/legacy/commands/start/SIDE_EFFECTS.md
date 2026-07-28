@@ -226,6 +226,23 @@ output modes.
   volume) → Postgres create+start+health-wait → `Starting containers...` → (image
   pre-pull) → per-container create+start → `Waiting for health checks...` → `Started
 supabase local development setup.`
+- stderr (conditional, health-check timeout): per unhealthy container, a
+  `<container> container logs:` header and that container's `docker logs` output, then one
+  `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`
+  throughout, matching Go's `started = append(started, utils.InbucketId)` rather than the
+  id `docker create` returns.
+- stderr (conditional, `exec format error` in those logs) — **TS-port-only, beyond Go
+  parity**: a recovery `suggestion` printed after the reasons, naming each affected
+  container **with** its image (they can be named after different things —
+  `supabase_inbucket_*` runs `mailpit`), then a `supabase stop` / `<runtime> image rm -f` /
+  `supabase start` sequence, then a closing line for the case re-pulling cannot fix. The
+  runtime named is whichever of `docker`/`podman` actually answered. `supabase stop` leads
+  because `--ignore-health-check` leaves the stack up, so a bare restart would hit the
+  already-running short-circuit and never recreate the broken container. The sequence tells
+  the reader to run it from the project directory or with the same `--workdir`, rather than
+  embedding the resolved path, which would need shell quoting that differs per platform. Being a
+  `suggestion` also replaces the usual "rerun with --debug" line, which cannot help here.
+  Nothing is ever removed automatically, and Go prints no such guidance.
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
@@ -234,7 +251,10 @@ supabase local development setup.`
 
 A single JSON object (or a `result` NDJSON event) carrying the same value shape
 `supabase status --output json` produces. All the progress/warning/banner/security-notice
-text above is suppressed in these modes — stdout stays payload-only.
+text above is suppressed in these modes — stdout stays payload-only. On a health-check
+timeout the error payload carries the advice above as a discrete `error.suggestion` string
+alongside `error.message`, so a caller can surface it without re-parsing the message. It is
+prose, not structured data.
 
 ## Notes
 

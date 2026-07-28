@@ -141,6 +141,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
           projectRef: ref,
           featureKey: "auth.saml_2",
           statusCode: response.status,
+          response,
         });
         yield* creating?.fail() ?? Effect.void;
         if (response.status === 404) {

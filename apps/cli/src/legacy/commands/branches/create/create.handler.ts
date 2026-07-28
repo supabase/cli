@@ -1,15 +1,16 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyOutputFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
+import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import {
   encodeEnv,
   encodeGoJson,
@@ -17,7 +18,7 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacyBranchesCreateCancelledError,
   LegacyBranchesCreateNetworkError,
@@ -60,14 +61,19 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   if (branchName.length === 0) {
     const gitBranch = yield* detectGitBranch();
     if (Option.isSome(gitBranch) && gitBranch.value.length > 0) {
-      // Go's `create.go:20-25` calls `utils.NewConsole().PromptYesNo(...)`
-      // unconditionally — on a TTY it blocks for input, off-TTY it reads stdin
-      // with a 100ms timeout and defaults to `true` on EOF. We always fire the
-      // confirm; the non-interactive `Output` layer auto-falls-through (via
-      // `Effect.orElseSucceed(true)`) which matches Go's EOF-default-true.
-      const confirmed = yield* output
-        .promptConfirm(`Do you want to create a branch named ${gitBranch.value}?`)
-        .pipe(Effect.orElseSucceed(() => true));
+      // Go's `create.go:20-25` routes this through `PromptYesNo(title, true)`
+      // (`console.go:64-82`), so `--yes`/`SUPABASE_YES` auto-confirms with the
+      // `<title> [Y/n] y` stderr echo instead of blocking a TTY, and a non-TTY
+      // stdin prints the label and scans one piped line (100ms) before falling
+      // back to the Yes default — `echo n | supabase branches create` cancels
+      // (CLI-1974). Go wraps the branch name in `utils.Aqua` (`create.go:20`).
+      const yes = yield* legacyResolveYes;
+      const confirmed = yield* legacyPromptYesNo(
+        output,
+        yes,
+        `Do you want to create a branch named ${legacyAqua(gitBranch.value)}?`,
+        true,
+      );
       if (!confirmed) {
         return yield* new LegacyBranchesCreateCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
       }
@@ -98,22 +104,10 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
       })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        Effect.catch((cause) =>
-          // Mirror Go's `create.go:34-37`: on any non-201 status (including
-          // gated 4xx), run the entitlement check; `legacySuggestUpgrade`
-          // is a no-op for 2xx/5xx itself, so we can call it unconditionally.
-          Effect.gen(function* () {
-            const status =
-              HttpClientError.isHttpClientError(cause) && cause.response !== undefined
-                ? cause.response.status
-                : 0;
-            yield* legacySuggestUpgrade({
-              projectRef: ref,
-              featureKey: "branching_limit",
-              statusCode: status,
-            });
-            return yield* mapCreateErrorRaw(cause);
-          }),
+        // Mirror Go's `create.go:34-37`: on any non-201 status (including
+        // gated 4xx), run the plan-gate check before mapping the error.
+        Effect.catch(
+          legacyGateMapError({ projectRef: ref, featureKey: "branching_limit" }, mapCreateErrorRaw),
         ),
       );
     yield* creating?.clear() ?? Effect.void;

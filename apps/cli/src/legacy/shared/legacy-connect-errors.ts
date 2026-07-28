@@ -213,6 +213,14 @@ const LEGACY_TLS_DISCONNECT_MESSAGE =
 const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
 
 /**
+ * Whether a driver error `code` is a Postgres SQLSTATE (a server ErrorResponse)
+ * rather than a node system errno (`ECONNRESET`, …). Shared by the connect-cause
+ * renderer below and the driver layer's exec-error mapping, which both need to
+ * distinguish server errors from socket/driver failures.
+ */
+export const legacyIsSqlState = (code: string): boolean => SQLSTATE_PATTERN.test(code);
+
+/**
  * Render the underlying driver failure the way pgconn stages its
  * `connectError.msg` (`server error` / `hostname resolving error` /
  * `dial error` / `tls error`, each with the cause parenthesized —
@@ -245,7 +253,7 @@ function legacyConnectCauseDetail(cause: unknown): string {
       : typeof code === "string"
         ? code
         : String(cause);
-  if (typeof severity === "string" && typeof code === "string" && SQLSTATE_PATTERN.test(code)) {
+  if (typeof severity === "string" && typeof code === "string" && legacyIsSqlState(code)) {
     return `server error (${severity}: ${text} (SQLSTATE ${code}))`;
   }
   if (syscall === "getaddrinfo" || code === "ENOTFOUND" || code === "EAI_AGAIN") {

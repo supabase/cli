@@ -10,7 +10,7 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,
@@ -323,9 +323,34 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         yield* proxy.exec(rebuildDelegateArgs(flags), { env });
       });
 
+    // viper resolves `EXPERIMENTAL` from *either* the global `--experimental`
+    // pflag or `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,327,334`), so honor
+    // both forms; the legacy root only forwards `--experimental` to Go proxy
+    // argv, never into env. Resolved before connecting so the Connecting line
+    // below knows whether this run delegates to the Go child. Declarative mode
+    // never delegates (Go checks `usePgDelta` before `EXPERIMENTAL`,
+    // `pull.go:47-50`).
+    const delegatesExperimentalPull =
+      !useDeclarative &&
+      (experimental || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL")));
+
     // Connectivity check (Go's `ConnectByConfig` at the top of `pull.Run`).
     yield* Effect.scoped(
       Effect.gen(function* () {
+        // Go's `ConnectByConfigStream` prints this to stderr before dialing
+        // (`internal/utils/connect.go:344-348`), local vs remote keyed off
+        // `utils.IsLocalDatabase` (mirrored by the resolver's `isLocal`). The
+        // delegated `--experimental` branch skips it: the Go child's own
+        // `ConnectByConfig` already prints the line, so the parent printing too
+        // would double it. (The parent still dials below — mirroring Go's early
+        // connectivity check — so a parent-side connect failure on the delegate
+        // path surfaces without the line; pre-existing delegate behavior.)
+        if (!delegatesExperimentalPull) {
+          yield* output.raw(
+            `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
+            "stderr",
+          );
+        }
         const session = yield* connection.connect(resolved.conn, {
           isLocal: resolved.isLocal,
           dnsResolver,
@@ -373,8 +398,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
             );
           }
+          // Go prints `utils.GetDeclarativeDir()` verbatim (`pull.go:119`): the
+          // config's declarative_schema_path or the relative `supabase/database`
+          // default — never the resolved absolute directory. The json payload
+          // below keeps the absolute path for machine consumers.
           yield* output.raw(
-            `Declarative schema written to ${legacyBold(declarativeDir)}\n`,
+            `Declarative schema written to ${legacyBold(declarativeDirRel)}\n`,
             "stderr",
           );
           if (output.format !== "text") {
@@ -397,12 +426,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // dumped statement with a PostgreSQL DDL AST parser (`multigres`, ~50 node
         // types) to route objects into structured files. No Postgres DDL parser
         // exists in TS yet, so porting it is tracked separately; until then the
-        // experimental path delegates the whole pull to Go. viper resolves
-        // `EXPERIMENTAL` from *either* the global `--experimental` pflag or
-        // `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,327,334`), so honor both
-        // forms here; the legacy root only forwards `--experimental` to Go proxy
-        // argv, never into env.
-        if (experimental || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL"))) {
+        // experimental path delegates the whole pull to Go.
+        if (delegatesExperimentalPull) {
           // Go's structured-dump path returns before writing a migration or
           // touching schema_migrations (`pull.go:49-61`), so no history repair.
           yield* delegatePull(usePgDeltaDiff ? "pg-delta" : "migra", {
@@ -742,7 +767,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         }
 
         for (const written of writtenMigrations) {
-          yield* output.raw(`Schema written to ${legacyBold(written.path)}\n`, "stderr");
+          // Go prints the workdir-relative path (`pull.go:76`): `GetMigrationPath`
+          // joins the relative `utils.MigrationsDir` and Go chdirs into the
+          // workdir. Display-only — `writtenMigrations` keeps absolute paths for
+          // file I/O and the json payload.
+          yield* output.raw(
+            `Schema written to ${legacyBold(path.relative(cliConfig.workdir, written.path))}\n`,
+            "stderr",
+          );
         }
 
         // Prompt to update the remote migration history table. Go calls

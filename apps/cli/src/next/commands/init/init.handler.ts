@@ -5,7 +5,7 @@ import { initProject, type ProjectInitOptions } from "../../../shared/init/proje
 import { InitExperimentalRequiredError } from "../../../shared/init/project-init.errors.ts";
 
 export const init = Effect.fnUntraced(function* (
-  flags: Omit<ProjectInitOptions, "cwd" | "withVscodeSettings" | "withIntellijSettings"> & {
+  flags: Omit<ProjectInitOptions, "cwd" | "yes" | "withVscodeSettings" | "withIntellijSettings"> & {
     readonly experimental: boolean;
   },
 ) {
@@ -23,11 +23,13 @@ export const init = Effect.fnUntraced(function* (
 
   yield* output.intro("Initialize local Supabase project");
 
-  // The next shell does not expose the hidden IDE compat flags; editor settings
-  // are only generated when the user opts in through interactive mode.
+  // The next shell does not expose the hidden IDE compat flags (nor a `--yes`
+  // on init); editor settings are only generated when the user opts in through
+  // interactive mode.
   const result = yield* initProject({
     cwd: runtimeInfo.cwd,
     ...flags,
+    yes: false,
     withVscodeSettings: false,
     withIntellijSettings: false,
   });

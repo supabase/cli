@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
+import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import {
@@ -129,6 +130,14 @@ export interface ProjectInitOptions {
   readonly force: boolean;
   readonly useOrioledb: boolean;
   readonly interactive: boolean;
+  /**
+   * Auto-confirms the interactive IDE-settings prompts, mirroring Go's
+   * `viper.GetBool("YES")` branch inside `PromptYesNo` (`console.go:70-72`):
+   * with `--yes`/`SUPABASE_YES`, `init -i` echoes the accepted VS Code prompt
+   * to stderr and writes the settings instead of blocking on a TTY (CLI-1974).
+   * The next shell exposes no `--yes` on init and always passes `false`.
+   */
+  readonly yes: boolean;
   readonly withVscodeSettings: boolean;
   readonly withIntellijSettings: boolean;
 }
@@ -209,19 +218,19 @@ export const writeIntelliJConfig = Effect.fnUntraced(function* (
   }
 });
 
-const promptForIdeSettings = Effect.fnUntraced(function* (cwd: string) {
+// Mirrors Go's `PromptForIDESettings` (`apps/cli-go/internal/init/init.go:61-75`):
+// both questions go through `PromptYesNo`, so `--yes`/`SUPABASE_YES` auto-accepts
+// the VS Code prompt with the `[Y/n] y` stderr echo and never reaches the
+// IntelliJ one — Go returns after writing the VS Code settings (CLI-1974).
+const promptForIdeSettings = Effect.fnUntraced(function* (cwd: string, yes: boolean) {
   const output = yield* Output;
 
-  if (yield* output.promptConfirm("Generate VS Code settings for Deno?", { defaultValue: true })) {
+  if (yield* legacyPromptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
     yield* writeVscodeConfig(cwd);
     return;
   }
 
-  if (
-    yield* output.promptConfirm("Generate IntelliJ IDEA settings for Deno?", {
-      defaultValue: false,
-    })
-  ) {
+  if (yield* legacyPromptYesNo(output, yes, "Generate IntelliJ IDEA settings for Deno?", false)) {
     yield* writeIntelliJConfig(cwd);
   }
 });
@@ -295,9 +304,21 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   );
   yield* ensureSupabaseGitignore(options.cwd);
 
-  const effectiveInteractive = options.interactive && tty.stdinIsTty && output.interactive;
+  // Go gates the IDE prompts on `-i` plus a TTY stdin only (`cmd/init.go:40`).
+  // TS additionally requires text mode (json/stream-json runs stay payload-only
+  // and never scaffold IDE settings as an undisclosed side effect) and — because
+  // clack renders its prompt UI on stdout, unlike Go's stderr prompts — an
+  // interactive stdout. `yes` lifts the stdout requirement: no clack prompt is
+  // rendered when the answer is auto-confirmed (the `[Y/n] y` echo goes to
+  // stderr), so `init -i --yes` with a piped stdout writes the VS Code settings
+  // exactly like Go (CLI-1974).
+  const effectiveInteractive =
+    options.interactive &&
+    tty.stdinIsTty &&
+    output.format === "text" &&
+    (output.interactive || options.yes);
   if (effectiveInteractive) {
-    yield* promptForIdeSettings(options.cwd);
+    yield* promptForIdeSettings(options.cwd, options.yes);
   }
   if (options.withVscodeSettings) {
     yield* writeVscodeConfig(options.cwd);

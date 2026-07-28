@@ -13,6 +13,7 @@ import {
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
+  mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { initCommand } from "./init.command.ts";
@@ -46,6 +47,7 @@ function buildLayer(
         stdinIsTty: opts.stdinIsTty ?? false,
         stdoutIsTty: opts.interactive ?? false,
       }),
+      mockStdin(opts.stdinIsTty ?? false),
       BunServices.layer,
     ),
   };

@@ -1,6 +1,8 @@
+import { Layer } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyProjectsDelete } from "./delete.handler.ts";
@@ -28,5 +30,9 @@ export const legacyProjectsDeleteCommand = Command.make("delete", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["projects", "delete"])),
+  // `stdinLayer`: the delete confirmation reads piped stdin via `legacyPromptYesNo`
+  // (Go's `Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
+  Command.provide(
+    Layer.mergeAll(legacyManagementApiRuntimeLayer(["projects", "delete"]), stdinLayer),
+  ),
 );

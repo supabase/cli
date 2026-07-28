@@ -1,8 +1,8 @@
 import { Effect, Option } from "effect";
 
-import { Output } from "../../shared/output/output.service.ts";
-import { Stdin } from "../../shared/runtime/stdin.service.ts";
-import { Tty } from "../../shared/runtime/tty.service.ts";
+import { Output } from "../output/output.service.ts";
+import { Stdin } from "../runtime/stdin.service.ts";
+import { Tty } from "../runtime/tty.service.ts";
 
 /** Go's non-TTY `Console.ReadLine` timeout (`internal/utils/console.go:36`). */
 const LEGACY_NON_TTY_TIMEOUT_MILLIS = 100;
@@ -25,8 +25,11 @@ export const legacyParseYesNo = (input: string): boolean | undefined => {
 
 /**
  * Confirm-or-default prompt mirroring Go's `console.PromptYesNo`
- * (`apps/cli-go/internal/utils/console.go:64-82`), shared by `config push`,
- * `db pull`, `seed buckets`, and `storage rm`:
+ * (`apps/cli-go/internal/utils/console.go:64-82`) — the single Go-faithful
+ * confirmation helper for every legacy-parity prompt (CLI-1974). It lives in
+ * `shared/legacy/` (not `legacy/shared/`) because Go-parity confirmations also
+ * fire from shell-agnostic shared code (`shared/functions/deploy.ts` prune,
+ * `shared/init/project-init.ts` IDE settings):
  *  - when `yes` is set, echoes `<label> [Y/n|y/N] y` and returns true even on a
  *    TTY (Go auto-confirms with the affirmative echo, `console.go:70-72`);
  *  - when `interactive` is false (Go callers that force `console.IsTTY = false`,
@@ -41,6 +44,12 @@ export const legacyParseYesNo = (input: string): boolean | undefined => {
  *
  * Callers resolve `yes` via `legacyResolveYes` so it honors both `--yes` and
  * `SUPABASE_YES`, matching Go's `viper.GetBool("YES")` (root.go:318-320,334).
+ *
+ * NOTE: the migration family's `legacyMigrationConfirm`
+ * (`legacy/commands/migration/migration.prompt.ts`) intentionally diverges on
+ * the TS-only machine modes (it prompts regardless of `output.format`) and on a
+ * real TTY (raw stdin read instead of clack) — see its doc comment before
+ * consolidating the two (CLI-1974 review).
  */
 export const legacyPromptYesNo = Effect.fnUntraced(function* (
   output: typeof Output.Service,

@@ -2,7 +2,10 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -80,6 +83,7 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
                   projectRef: ref,
                   featureKey: "vanity_subdomain",
                   statusCode: mapped.status,
+                  response: legacyGateResponse(cause),
                   trackAnalytics: false,
                 });
               }

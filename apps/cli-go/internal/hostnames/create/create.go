@@ -7,6 +7,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/hostnames"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -24,6 +25,9 @@ func Run(ctx context.Context, projectRef string, customHostname string, fsys afe
 	if err != nil {
 		return errors.Errorf("failed to create custom hostname: %w", err)
 	} else if resp.JSON201 == nil {
+		if feature, orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "", resp.StatusCode(), resp.Body); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, feature, orgSlug)
+		}
 		return errors.Errorf("unexpected create hostname status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	hostnames.PrintStatus(resp.JSON201, os.Stderr)

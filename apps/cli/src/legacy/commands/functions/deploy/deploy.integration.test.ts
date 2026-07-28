@@ -49,6 +49,11 @@ async function writeLocalFunction(
   await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
 }
 
+// Strip ANSI SGR (color/bold) sequences — `legacyBold` styles the pruned slugs
+// only when stderr supports color, so byte-assertions normalize first.
+// eslint-disable-next-line no-control-regex
+const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+
 describe("legacy functions deploy", () => {
   it.live("deploys a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
@@ -476,6 +481,12 @@ describe("legacy functions deploy", () => {
       yield* legacyFunctionsDeploy({ ...baseFlags, prune: true });
 
       expect(out.promptConfirmCalls).toHaveLength(0);
+      // Go's `PromptYesNo` echoes the accepted prompt to stderr under the global
+      // YES flag (`console.go:70-72`) — byte-match `confirmPruneAll` + choices
+      // (each slug is bolded like Go's `utils.Bold`, so strip SGR codes first).
+      expect(stripSgr(out.stderrText)).toContain(
+        "Do you want to delete the following Functions from your project?\n • remote-only\n\n [y/N] y\n",
+      );
       expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
     }).pipe(
       Effect.provide(layer),
