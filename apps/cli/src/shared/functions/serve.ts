@@ -17,7 +17,7 @@ import {
   sign as signJwtBytes,
   type JsonWebKeyInput,
 } from "node:crypto";
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
@@ -25,6 +25,10 @@ import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
+import {
+  LEGACY_SUGGEST_DOCKER_INSTALL,
+  legacyIsDockerDaemonUnreachable,
+} from "../../legacy/shared/legacy-docker-suggest.ts";
 import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
 import {
   resolveRemoteJwks,
@@ -47,7 +51,6 @@ import {
   dockerWorkdirLabel,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
-  isDockerRunning,
   localDockerId,
   normalizeProjectId,
   rawFunctionConfigRecord,
@@ -284,12 +287,19 @@ export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
       Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
-            const watcher = watch(root, { recursive: true }, (_eventType, filename) => {
+            const watcher = watch(root, { recursive: true }, (eventType, filename) => {
               const pathname =
                 filename === null || filename === undefined || filename.length === 0
                   ? root
                   : resolve(root, filename.toString());
-              Queue.offerUnsafe(queue, [{ path: pathname, type: "update" }]);
+              // Node's `fs.watch` only distinguishes "rename" (create/delete/
+              // rename) from "change" (write); Go prints the real fsnotify op
+              // (`internal/functions/serve/watcher.go:100`). The closest
+              // recoverable equivalent is an existence check on "rename"
+              // events: present → create, gone → delete; "change" → update.
+              const type: FileWatchEvent["type"] =
+                eventType === "rename" ? (existsSync(pathname) ? "create" : "delete") : "update";
+              Queue.offerUnsafe(queue, [{ path: pathname, type }]);
             });
             watcher.on("error", (cause) => {
               Queue.failCauseUnsafe(queue, Cause.fail(new FileWatcherError({ path: root, cause })));
@@ -383,7 +393,7 @@ function toPlainAuthConfig(
 /**
  * Exported so `start`'s own edge-runtime bring-up
  * (`legacy/commands/start/services/edge-runtime.service.ts`) can reuse this
- * exact `Redacted`-unwrapping/key-uppercasing logic against its own,
+ * exact `Redacted`-unwrapping/zero-hash-filtering logic against its own,
  * already-loaded `ProjectConfig` instead of duplicating it — see
  * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
  */
@@ -394,9 +404,21 @@ export function toPlainEdgeRuntimeConfig(
     policy: reveal(edgeRuntime.policy) ?? "",
     inspector_port: edgeRuntime.inspector_port,
     deno_version: edgeRuntime.deno_version,
+    // Go injects `[edge_runtime.secrets]` keys VERBATIM (no case
+    // normalization) and only those with a non-empty SHA256
+    // (`set.ListSecrets`, `internal/secrets/set/set.go:48-52`).
+    // `DecryptSecretHookFunc` (`pkg/config/secret.go:94-107`) leaves the
+    // SHA256 empty exactly when the value is empty or a still-unresolved
+    // `env(VAR)` literal. In the TS pipeline `resolveProjectSubtree` wraps
+    // resolved secret leaves in `Redacted` and leaves unresolved `env()`
+    // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
+    // both zero-hash cases — the same guard `secrets set` uses
+    // (`legacy/commands/secrets/set/set.handler.ts`).
     secrets: Object.fromEntries(
       Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
-        Redacted.isRedacted(value) ? [[name.toUpperCase(), Redacted.value(value)] as const] : [],
+        Redacted.isRedacted(value) && Redacted.value(value).length > 0
+          ? [[name, Redacted.value(value)] as const]
+          : [],
       ),
     ),
   };
@@ -1034,6 +1056,14 @@ function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
   return spec.matchPaths.has(event.path);
 }
 
+/**
+ * fsnotify op tokens as Go prints them in the file-change line
+ * (`event.Op.String()`, `internal/functions/serve/watcher.go:100`). RENAME and
+ * CHMOD are unreachable here: Node's `fs.watch` folds renames into
+ * create/delete pairs and does not report metadata-only changes.
+ */
+const goFileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
+
 const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyArray<WatchSpec>) {
   if (watchSpecs.length === 0) {
     return yield* Effect.never;
@@ -1053,7 +1083,10 @@ const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyAr
   ).pipe(
     Stream.tap((events) =>
       Effect.forEach(events, (event) =>
-        output.raw(`File change detected: ${event.path} (${event.type})\n`, "stderr"),
+        output.raw(
+          `File change detected: ${event.path} (${goFileEventOp[event.type]})\n`,
+          "stderr",
+        ),
       ).pipe(Effect.asVoid),
     ),
     Stream.debounce(Duration.millis(500)),
@@ -1186,12 +1219,19 @@ const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
     return yield* Effect.fail(new Error("supabase start is not running."));
   }
 
+  const message =
+    result.stderr.trim().length > 0
+      ? `failed to inspect service: ${result.stderr.trim()}`
+      : "failed to inspect service";
+  // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
+  // on a daemon-connection failure (`internal/utils/misc.go:155-166`), which
+  // `recoverAndExit` prints on its own stderr line after the red error
+  // (`cmd/root.go:300-303`) — mirrored here by the `suggestion` property that
+  // `normalizeCliError`/`Output.fail` render the same way.
   return yield* Effect.fail(
-    new Error(
-      result.stderr.trim().length > 0
-        ? `failed to inspect service: ${result.stderr.trim()}`
-        : "failed to inspect service",
-    ),
+    legacyIsDockerDaemonUnreachable(result.stderr)
+      ? Object.assign(new Error(message), { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL })
+      : new Error(message),
   );
 });
 
@@ -1205,11 +1245,17 @@ const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: stri
 const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
-  const result = yield* runChildProcess(
-    "docker",
-    ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
-    { stdout: "ignore", stderr: "pipe" },
-  ).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  // Bare `kong reload`, exactly Go's `restartEdgeRuntime`
+  // (`internal/functions/serve/serve.go:129`). The `--nginx-conf
+  // /home/kong/custom_nginx.template` argument belongs to `start`'s Kong
+  // bring-up entrypoint (`internal/start/start.go:589-592`, mirrored by
+  // `legacy/commands/start/services/kong.service.ts`) — `kong reload` reuses
+  // the prefix configuration that bring-up already prepared, so passing the
+  // template again here is not part of Go's serve path.
+  const result = yield* runChildProcess("docker", ["exec", kongId, "kong", "reload"], {
+    stdout: "ignore",
+    stderr: "pipe",
+  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
 
   if (result.exitCode !== 0) {
     const suffix = result.stderr.trim().length > 0 ? ` ${result.stderr.trim()}` : "";
@@ -1580,14 +1626,13 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   readonly inspectMode: FunctionsServeInspectMode | undefined;
 }) {
   const output = yield* Output;
-  if (!(yield* isDockerRunning())) {
-    return yield* Effect.fail(
-      new Error(
-        "failed to run docker. Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
-      ),
-    );
-  }
-
+  // Deliberately NO docker precheck here — Go's `restartEdgeRuntime`
+  // (`internal/functions/serve/serve.go:107-113`) runs its sanity checks in
+  // order: `flags.LoadConfig` first, then `utils.AssertSupabaseDbIsRunning()`.
+  // A down Docker daemon therefore surfaces from the DB inspect below
+  // (`assertLocalDbRunning`) as `failed to inspect service: …` with the
+  // Docker Desktop install hint as a suggestion (`misc.go:155-166`), never as
+  // an upfront `failed to run docker.` failure.
   const resolved = yield* resolveServeConfig(
     input.dependencies.projectRoot,
     input.dependencies.projectIdOverride,

@@ -93,9 +93,11 @@ export interface LegacyEdgeRuntimeBringUpInput {
   /** `config.edge_runtime.inspector_port` — only published when `inspectMode` is set, which `start` never does (Go's `serve.RuntimeOption{}` zero value). */
   readonly edgeRuntimeInspectorPort: number;
   /**
-   * `config.edge_runtime.secrets`, already unwrapped/uppercased — build via
-   * `shared/functions/serve.ts`'s exported `toPlainEdgeRuntimeConfig(config.edge_runtime).secrets`
-   * rather than re-deriving the `Redacted`-unwrap/uppercase logic here.
+   * `config.edge_runtime.secrets`, already unwrapped — keys verbatim, empty
+   * and unresolved-`env()` values filtered out (Go's `SHA256 > 0` gate).
+   * Build via `shared/functions/serve.ts`'s exported
+   * `toPlainEdgeRuntimeConfig(config.edge_runtime).secrets` rather than
+   * re-deriving the `Redacted`-unwrap/zero-hash-filter logic here.
    */
   readonly edgeRuntimeSecrets: Readonly<Record<string, string>>;
   /**
