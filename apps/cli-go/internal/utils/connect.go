@@ -346,7 +346,7 @@ func ConnectByConfigStream(ctx context.Context, config pgconn.Config, w io.Write
 		return ConnectLocalPostgres(ctx, config, options...)
 	}
 	fmt.Fprintln(w, "Connecting to remote database...")
-	opts := append(options, func(cc *pgx.ConnConfig) {
+	opts := append(options, preserveTLSConfig(config), func(cc *pgx.ConnConfig) {
 		if DNSResolver.Value == DNS_OVER_HTTPS {
 			cc.LookupFunc = FallbackLookupIP
 		}
@@ -359,6 +359,33 @@ func ConnectByConfigStream(ctx context.Context, config pgconn.Config, w io.Write
 		}
 	})
 	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)
+}
+
+// preserveTLSConfig replays the TLS state pgconn resolved from sslmode, which
+// ToPostgresURL cannot serialize (it lives in TLSConfig/Fallbacks, not
+// RuntimeParams) so the rebuilt URL re-resolves it from PGSSLMODE and libpq's
+// "prefer" default. Nil Fallbacks, which ParseConfig never produces, marks a
+// config assembled in code with no preference to replay.
+func preserveTLSConfig(config pgconn.Config) func(*pgx.ConnConfig) {
+	return func(cc *pgx.ConnConfig) {
+		if config.Fallbacks == nil {
+			return
+		}
+		cc.TLSConfig = config.TLSConfig
+		// Rebuild against the URL's endpoint: callers may override the port
+		// (GetPoolerConfig pins 5432), and extra HA hosts are dropped anyway.
+		cc.Fallbacks = nil
+		for _, fb := range config.Fallbacks {
+			if fb.Host != config.Host {
+				break
+			}
+			cc.Fallbacks = append(cc.Fallbacks, &pgconn.FallbackConfig{
+				Host:      cc.Host,
+				Port:      cc.Port,
+				TLSConfig: fb.TLSConfig,
+			})
+		}
+	}
 }
 
 func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
