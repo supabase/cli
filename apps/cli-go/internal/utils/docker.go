@@ -157,7 +157,8 @@ func CliProjectFilter(projectId string) filters.Args {
 }
 
 var (
-	registryAuth sync.Map
+	registryAuth     sync.Map
+	dockerSuggestion sync.Mutex
 )
 
 // registryAuthEntry memoises a single registry's encoded auth so that
@@ -454,8 +455,59 @@ type DockerJob struct {
 	Cmd   []string
 }
 
+const dockerDiagnosticLogLimit = 64 << 10
+
+type boundedLogBuffer struct {
+	bytes.Buffer
+}
+
+func (b *boundedLogBuffer) Write(p []byte) (int, error) {
+	written := len(p)
+	if written >= dockerDiagnosticLogLimit {
+		b.Reset()
+		_, _ = b.Buffer.Write(p[written-dockerDiagnosticLogLimit:])
+		return written, nil
+	}
+	if overflow := b.Len() + written - dockerDiagnosticLogLimit; overflow > 0 {
+		b.Next(overflow)
+	}
+	_, _ = b.Buffer.Write(p)
+	return written, nil
+}
+
 func DockerRunJob(ctx context.Context, job DockerJob, stdout, stderr io.Writer) error {
-	return DockerRunOnceWithStream(ctx, job.Image, job.Env, job.Cmd, stdout, stderr)
+	var stdoutLogs, stderrLogs boundedLogBuffer
+	err := DockerRunOnceWithStream(ctx, job.Image, job.Env, job.Cmd, io.MultiWriter(stdout, &stdoutLogs), io.MultiWriter(stderr, &stderrLogs))
+	if err != nil {
+		SuggestDockerExecFormat(stdoutLogs.String()+stderrLogs.String(), job.Image)
+	}
+	return err
+}
+
+// SuggestDockerExecFormat adds an actionable hint when Docker reports that an
+// image entrypoint or shell cannot be executed. This commonly means the pulled
+// image has corrupt/truncated files or targets the wrong architecture; retrying
+// the same start command otherwise only surfaces a generic container exit code.
+func SuggestDockerExecFormat(logs, image string) bool {
+	if !strings.Contains(strings.ToLower(logs), "exec format error") {
+		return false
+	}
+	suggestion := "A Docker image entrypoint could not be executed. Check free disk space and image architecture"
+	if image != "" {
+		suggestion += fmt.Sprintf(", then remove image %q and retry so Docker pulls a fresh copy", image)
+	} else {
+		suggestion += ", then remove and pull the affected image again"
+	}
+	suggestion += ". If multiple images fail, restart Docker before retrying."
+	dockerSuggestion.Lock()
+	defer dockerSuggestion.Unlock()
+	if !strings.Contains(CmdSuggestion, suggestion) {
+		if CmdSuggestion != "" {
+			CmdSuggestion += "\n"
+		}
+		CmdSuggestion += suggestion
+	}
+	return true
 }
 
 // Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.

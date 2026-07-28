@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -352,6 +353,59 @@ func TestRunOnce(t *testing.T) {
 	})
 }
 
+func TestDockerRunJobSuggestsCorruptImageRecovery(t *testing.T) {
+	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+	require.NoError(t, apitest.MockDocker(Docker))
+	defer gock.OffAll()
+	apitest.MockDockerStart(Docker, imageId, containerId)
+	var body bytes.Buffer
+	writer := stdcopy.NewStdWriter(&body, stdcopy.Stderr)
+	_, err := writer.Write([]byte("exec /usr/bin/sh: exec format error"))
+	require.NoError(t, err)
+	gock.New("http:///var/run/docker.sock").
+		Get("/v"+Docker.ClientVersion()+"/containers/"+containerId+"/logs").
+		Reply(http.StatusOK).
+		SetHeader("Content-Type", "application/vnd.docker.raw-stream").
+		Body(&body)
+	gock.New("http:///var/run/docker.sock").
+		Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
+		Reply(http.StatusOK).
+		JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			State: &container.State{ExitCode: 1},
+		}})
+	gock.New(Docker.DaemonHost()).
+		Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+		Reply(http.StatusOK)
+	original := CmdSuggestion
+	t.Cleanup(func() { CmdSuggestion = original })
+	CmdSuggestion = ""
+	var stderr bytes.Buffer
+
+	err = DockerRunJob(context.Background(), DockerJob{Image: imageId}, &bytes.Buffer{}, &stderr)
+
+	assert.ErrorContains(t, err, "error running container: exit 1")
+	assert.Contains(t, stderr.String(), "exec format error")
+	assert.Contains(t, CmdSuggestion, `remove image "`+imageId+`"`)
+	assert.Empty(t, apitest.ListUnmatchedRequests())
+}
+
+func TestDockerRunJobIgnoresSuccessfulMarker(t *testing.T) {
+	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+	require.NoError(t, apitest.MockDocker(Docker))
+	defer gock.OffAll()
+	apitest.MockDockerStart(Docker, imageId, containerId)
+	require.NoError(t, apitest.MockDockerLogs(Docker, containerId, "exec format error"))
+	original := CmdSuggestion
+	t.Cleanup(func() { CmdSuggestion = original })
+	CmdSuggestion = "existing suggestion"
+
+	err := DockerRunJob(context.Background(), DockerJob{Image: imageId}, &bytes.Buffer{}, &bytes.Buffer{})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "existing suggestion", CmdSuggestion)
+	assert.Empty(t, apitest.ListUnmatchedRequests())
+}
+
 func TestExecOnce(t *testing.T) {
 	t.Run("throws error on failure to exec", func(t *testing.T) {
 		// Setup mock server
@@ -383,4 +437,41 @@ func TestExecOnce(t *testing.T) {
 	})
 
 	// TODO: mock tcp hijack
+}
+
+func TestBoundedLogBufferKeepsTail(t *testing.T) {
+	var logs boundedLogBuffer
+	_, err := logs.Write(bytes.Repeat([]byte("a"), dockerDiagnosticLogLimit))
+	require.NoError(t, err)
+	_, err = logs.Write([]byte("exec for"))
+	require.NoError(t, err)
+	_, err = logs.Write([]byte("mat error"))
+	require.NoError(t, err)
+
+	assert.Equal(t, dockerDiagnosticLogLimit, logs.Len())
+	assert.NotContains(t, logs.String(), strings.Repeat("a", dockerDiagnosticLogLimit))
+	assert.True(t, strings.HasSuffix(logs.String(), "exec format error"))
+}
+
+func TestSuggestDockerExecFormat(t *testing.T) {
+	t.Run("sets actionable suggestion", func(t *testing.T) {
+		original := CmdSuggestion
+		t.Cleanup(func() { CmdSuggestion = original })
+		CmdSuggestion = "existing suggestion"
+
+		assert.True(t, SuggestDockerExecFormat("exec /usr/bin/sh: exec format error", "test-image"))
+		assert.True(t, strings.HasPrefix(CmdSuggestion, "existing suggestion\n"))
+		assert.Contains(t, CmdSuggestion, `remove image "test-image"`)
+		assert.True(t, SuggestDockerExecFormat("exec format error", "test-image"))
+		assert.Equal(t, 1, strings.Count(CmdSuggestion, `remove image "test-image"`))
+	})
+
+	t.Run("ignores unrelated logs", func(t *testing.T) {
+		original := CmdSuggestion
+		t.Cleanup(func() { CmdSuggestion = original })
+		CmdSuggestion = "existing suggestion"
+
+		assert.False(t, SuggestDockerExecFormat("connection refused", "test-image"))
+		assert.Equal(t, "existing suggestion", CmdSuggestion)
+	})
 }
