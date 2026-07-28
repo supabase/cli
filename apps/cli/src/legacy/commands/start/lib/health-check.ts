@@ -163,6 +163,11 @@ function legacyMakeExecFormatScanner() {
  * recreates the broken container. `stop` without `--no-backup` preserves the
  * database volume, and is harmless after the hard-fail path's own rollback.
  *
+ * Both `supabase` steps resolve their own project the way this run did, so the
+ * sequence names that requirement rather than embedding the resolved workdir:
+ * a path rendered into a copy-pasteable command needs shell quoting, and the
+ * correct quoting differs between POSIX shells and `cmd.exe`.
+ *
  * `-f` because the container may still reference the image, and `runtime`
  * rather than a hardcoded `docker` because `spawnContainerCli` falls back to
  * Podman on hosts without Docker. The closing line covers the case re-pulling
@@ -186,7 +191,7 @@ function legacyExecFormatRecoveryHint(
   return [
     `${affected.map((entry) => `${entry.containerId}'s image ${entry.image}`).join(", ")} could not be executed ("${LEGACY_EXEC_FORMAT_ERROR}").`,
     "Either the cached copy is corrupt, or it was built for a different architecture.",
-    "Remove the cached copy and start again:",
+    "Remove the cached copy and start again, from this project directory or with the same --workdir:",
     `\n  supabase stop\n  ${runtime} image rm -f ${uniqueImages.join(" ")}\n  supabase start\n`,
     "If it fails the same way, that image has no build for this machine's architecture.",
   ].join("\n");

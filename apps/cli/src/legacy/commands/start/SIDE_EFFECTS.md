@@ -238,7 +238,9 @@ supabase local development setup.`
   `supabase start` sequence, then a closing line for the case re-pulling cannot fix. The
   runtime named is whichever of `docker`/`podman` actually answered. `supabase stop` leads
   because `--ignore-health-check` leaves the stack up, so a bare restart would hit the
-  already-running short-circuit and never recreate the broken container. Being a
+  already-running short-circuit and never recreate the broken container. The sequence tells
+  the reader to run it from the project directory or with the same `--workdir`, rather than
+  embedding the resolved path, which would need shell quoting that differs per platform. Being a
   `suggestion` also replaces the usual "rerun with --debug" line, which cannot help here.
   Nothing is ever removed automatically, and Go prints no such guidance.
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).

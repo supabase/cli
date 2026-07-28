@@ -449,6 +449,9 @@ describe("legacyWaitForHealthyServices", () => {
         expect(suggestion.indexOf("image rm -f")).toBeLessThan(
           suggestion.indexOf("supabase start"),
         );
+        // Both `supabase` steps resolve their own project, so a run made with
+        // `--workdir` has to repeat it rather than rely on the current directory.
+        expect(suggestion).toContain("--workdir");
         // And a next step for the cause re-pulling cannot fix.
         expect(suggestion).toContain("no build for this machine's architecture");
       }),
