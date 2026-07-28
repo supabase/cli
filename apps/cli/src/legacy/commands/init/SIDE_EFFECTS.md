@@ -53,6 +53,20 @@ In interactive mode (`-i`/`--interactive`), may prompt for IDE settings preferen
 
 Success is emitted as raw text even when the legacy shell is invoked with non-text output modes.
 
+When `supabase/config.toml` already exists and `--force` is not set (stderr, byte-matching Go's wrapped `O_EXCL` open error and `CmdSuggestion` on Linux/macOS; on Windows the Go CLI surfaces the OS path separator and errno text instead, which this port does not reproduce):
+
+```
+failed to create config file: open supabase/config.toml: file exists
+Run supabase init --force to overwrite existing config file.
+```
+
+When `--use-orioledb` is passed without `--experimental` (stderr, byte-matching cobra's required-flag message from Go's `PreRun` `MarkFlagRequired("experimental")`; the second line is the generic debug hint Go's `recoverAndExit` appends):
+
+```
+required flag(s) "experimental" not set
+Try rerunning the command with --debug to troubleshoot the error.
+```
+
 ## Notes
 
 - Uses the invocation cwd directly and does not recurse upward looking for an existing project.
