@@ -8,6 +8,7 @@ import { legacyConfigCommand } from "../commands/config/config.command.ts";
 import { legacyDbCommand } from "../commands/db/db.command.ts";
 import { legacyDomainsCommand } from "../commands/domains/domains.command.ts";
 import { legacyEncryptionCommand } from "../commands/encryption/encryption.command.ts";
+import { legacyFeedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { legacyFunctionsCommand } from "../commands/functions/functions.command.ts";
 import { legacyGenCommand } from "../commands/gen/gen.command.ts";
 import { legacyInitCommand } from "../commands/init/init.command.ts";
@@ -70,6 +71,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyDbCommand,
     legacyDomainsCommand,
     legacyEncryptionCommand,
+    legacyFeedbackCommand,
     legacyFunctionsCommand,
     legacyGenCommand,
     legacyInitCommand,

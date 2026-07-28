@@ -19,7 +19,10 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
-import { mockLegacyTelemetryStateTracked } from "../../../../tests/helpers/legacy-mocks.ts";
+import {
+  mockLegacyTelemetryStateTracked,
+  useLegacyTempWorkdir,
+} from "../../../../tests/helpers/legacy-mocks.ts";
 import {
   listLocalServiceVersions,
   postgresImageForDbMajorVersion,
@@ -40,6 +43,11 @@ if (LOCAL_POSTGRES_SERVICE === undefined) {
 }
 
 const LOCAL_POSTGRES_VERSION = LOCAL_POSTGRES_SERVICE.local;
+
+// Isolated default workdir: `process.cwd()` would read the developer's real
+// `apps/cli/supabase/.temp/` state (e.g. the pinned `postgres-version` written
+// by a local `supabase start`), making these tests machine-dependent.
+const defaultWorkdir = useLegacyTempWorkdir("supabase-services-legacy-");
 
 function setup(
   opts: {
@@ -77,7 +85,7 @@ function setup(
           dashboardUrl: "https://supabase.com/dashboard",
           accessToken: Option.none(),
           projectId: Option.none(),
-          workdir: opts.workdir ?? process.cwd(),
+          workdir: opts.workdir ?? defaultWorkdir.current,
           userAgent: "SupabaseCLI/test",
         }),
       ),
