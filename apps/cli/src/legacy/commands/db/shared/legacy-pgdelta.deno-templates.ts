@@ -35,7 +35,7 @@ export const legacyPgDeltaDeclarativeApplyScript =
  * config field) is absent or empty. Mirrors Go's `DefaultPgDeltaNpmVersion`
  * (`apps/cli-go/pkg/config/pgdelta_version.go:7`).
  */
-export const LEGACY_DEFAULT_PG_DELTA_NPM_VERSION = "1.0.0-alpha.32";
+export const LEGACY_DEFAULT_PG_DELTA_NPM_VERSION = "1.0.0-alpha.33";
 
 /**
  * The literal version baked into the embedded templates above, replaced by
