@@ -10,7 +10,7 @@ import * as net from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { LEGACY_SUGGEST_ENV_VAR } from "./legacy-connect-errors.ts";
+import { LEGACY_SUGGEST_ENV_VAR, LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import { type LegacyPgConnInput, LegacyDbConnection } from "./legacy-db-connection.service.ts";
 import { legacyDbConnectionSqlPgLayer } from "./legacy-db-connection.sql-pg.layer.ts";
@@ -26,9 +26,13 @@ const SUGGESTION_CONTEXT = {
 // host/user/database — never the password).
 const SENTINEL_PASSWORD = "s3cr3t-pw-do-not-leak";
 
-/** Connect through the real layer and flip the expected failure into the value. */
+/**
+ * Connect through the real layer and flip the expected failure into the value.
+ * `isLocal` defaults to `true`, pass `false` to drive the remote/`--linked` suggestion branch instead.
+ */
 const connectFailure = (
   cfg: Partial<LegacyPgConnInput> & { readonly port: number },
+  isLocal = true,
 ): Effect.Effect<LegacyDbConnectError> =>
   Effect.gen(function* () {
     const conn = yield* LegacyDbConnection;
@@ -42,7 +46,7 @@ const connectFailure = (
           suggestionContext: SUGGESTION_CONTEXT,
           ...cfg,
         },
-        { isLocal: true, dnsResolver: "native" },
+        { isLocal, dnsResolver: "native" },
       )
       .pipe(
         Effect.scoped,
@@ -176,11 +180,11 @@ const fakeQueryServer = (
 
 describe("legacyDbConnectionSqlPgLayer connect failures", () => {
   it.live(
-    "surfaces host, user, database, and the driver cause when the connection is refused",
+    "surfaces host, user, database, and the driver cause when a remote (--linked) connection is refused",
     () =>
       Effect.gen(function* () {
         const port = yield* Effect.promise(acquireClosedPort);
-        const error = yield* connectFailure({ port });
+        const error = yield* connectFailure({ port }, false);
         expect(error._tag).toBe("LegacyDbConnectError");
         expect(error.message).toBe(
           "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: " +
@@ -191,6 +195,16 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
             "https://supabase.com/dashboard/project/_/database/settings",
         );
         expect(error.message).not.toContain(SENTINEL_PASSWORD);
+      }),
+  );
+
+  it.live(
+    "surfaces the local-stack hint when a local connection is refused",
+    () =>
+      Effect.gen(function* () {
+        const port = yield* Effect.promise(acquireClosedPort);
+        const error = yield* connectFailure({ port });
+        expect(error.suggestion).toBe(LEGACY_SUGGEST_LOCAL_STACK);
       }),
   );
 

@@ -64,6 +64,15 @@ export function legacyIsIPv6ConnectivityError(message: string): boolean {
 export const LEGACY_SUGGEST_ENV_VAR =
   "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD";
 
+/**
+ * TS-only addition — Go's `SetConnectSuggestion` has no local/remote distinction,
+ * so a refused `--local` connection (Docker/Postgres not running) got the same
+ * remote-only "Network Restrictions" dashboard hint as an actual network-restricted
+ * connection, which is a dead end locally. Shown instead of that hint when
+ * `ctx.isLocal` is true — see `legacyConnectSuggestion`.
+ */
+export const LEGACY_SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
+
 /** Context the connect-suggestion needs but cannot derive from the error alone. */
 export interface LegacyConnectSuggestionContext {
   /** Active profile's dashboard URL (Go's `CurrentProfile.DashboardURL`). */
@@ -355,16 +364,20 @@ function legacyHasIPv6DialCause(error: unknown, depth = 0): boolean {
  */
 export function legacyConnectSuggestion(
   error: unknown,
-  ctx: LegacyConnectSuggestionContext,
+  ctx: LegacyConnectSuggestionContext & { readonly isLocal: boolean },
 ): string | undefined {
   const text = legacyCollectConnectErrorText(error);
-  // connect: connection refused / Address not in tenant allow_list → network restrictions.
-  if (
-    text.includes("ECONNREFUSED") ||
-    text.includes("connection refused") ||
-    text.includes("Address not in tenant allow_list")
-  ) {
+  // connect: connection refused - "Address not in tenant allow_list" only ever comes from the remote pooler
+  // rejecting the caller's IP, so it always means network restrictions.
+  if (text.includes("Address not in tenant allow_list")) {
     return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${ctx.dashboardUrl}/project/_/database/settings`;
+  }
+  // connect: connection refused — don't send the user to the
+  // dashboard's Network Restrictions page for a --local connection.
+  if (text.includes("ECONNREFUSED") || text.includes("connection refused")) {
+    return ctx.isLocal
+      ? LEGACY_SUGGEST_LOCAL_STACK
+      : `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${ctx.dashboardUrl}/project/_/database/settings`;
   }
   // SSL connection is required (only under --debug, which disables TLS).
   if (text.includes("SSL connection is required") && ctx.debug) {
