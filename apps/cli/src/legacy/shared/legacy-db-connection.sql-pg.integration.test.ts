@@ -266,8 +266,15 @@ describe("legacyDbConnectionSqlPgLayer exec failures", () => {
           fakeQueryServer((sql) =>
             sql === failing
               ? Buffer.concat([
+                  // `S` (localized) and `V` (unlocalized) are deliberately distinct:
+                  // Go renders pgconn's `PgError.Severity`, populated from the wire
+                  // `S` field (pgproto3 `error_response.go` maps 'S'→Severity,
+                  // 'V'→SeverityUnlocalized), so a localized server prints e.g.
+                  // `FEHLER: …`. pg-protocol likewise assigns `severity = fields.S`
+                  // (`parser.js` parseErrorMessage); asserting `FEHLER` below fails
+                  // the tripwire if a dependency bump ever renders `V` instead.
                   errorResponse({
-                    S: "ERROR",
+                    S: "FEHLER",
                     V: "ERROR",
                     C: "42704",
                     M: 'type "ltree" does not exist',
@@ -307,7 +314,7 @@ describe("legacyDbConnectionSqlPgLayer exec failures", () => {
           Effect.ensuring(Effect.sync(server.close)),
         );
         expect(error._tag).toBe("LegacyDbExecError");
-        expect(error.message).toBe('ERROR: type "ltree" does not exist (SQLSTATE 42704)');
+        expect(error.message).toBe('FEHLER: type "ltree" does not exist (SQLSTATE 42704)');
         if (error._tag === "LegacyDbExecError") {
           expect(error.code).toBe("42704");
           expect(error.detail).toBe("Detail from the server.");
