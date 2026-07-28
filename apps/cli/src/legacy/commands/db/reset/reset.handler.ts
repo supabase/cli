@@ -8,6 +8,7 @@ import {
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -20,7 +21,7 @@ import {
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   type LegacyDbConnType,
   resolveLegacyDbTargetFlags,
@@ -415,7 +416,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       false,
     );
     if (!shouldReset) {
-      return yield* Effect.fail(new LegacyDbResetCancelledError({ message: "context canceled" }));
+      return yield* Effect.fail(
+        new LegacyDbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
+      );
     }
     yield* output.raw(`Resetting remote database${toLogMessage(resolvedVersion)}\n`, "stderr");
 

@@ -51,11 +51,15 @@ const deployMockState = vi.hoisted(() => ({
         command: string,
         args: ReadonlyArray<string>,
         options: unknown,
-      ) => {
-        exitCode: number;
-        stdout: string;
-        stderr: string;
-      }),
+      ) =>
+        | {
+            exitCode: number;
+            stdout: string;
+            stderr: string;
+          }
+        // Never resolves — lets a test fork+interrupt while this specific call is in flight,
+        // matching Effect's own canonical "forever pending, interruptible" primitive.
+        | { pending: true }),
   reset() {
     this.isDockerRunning = true;
     this.runCalls = [];
@@ -83,7 +87,7 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
         deployMockState.volumeCalls.push({ volumeName, projectId });
       }),
     runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const envFile = args.flatMap((value, index) =>
           args[index - 1] === "--env-file" ? [value] : [],
         )[0];
@@ -117,13 +121,12 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
                     }),
               };
         deployMockState.runCalls.push({ command, args: [...args], options: enrichedOptions });
-        return (
-          deployMockState.runHandler?.(command, args, options) ?? {
-            exitCode: 0,
-            stdout: "",
-            stderr: "",
-          }
-        );
+        const result = deployMockState.runHandler?.(command, args, options) ?? {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        };
+        return "pending" in result ? Effect.never : Effect.succeed(result);
       }),
   };
 });
@@ -155,33 +158,6 @@ function baseFlags(overrides: Partial<LegacyFunctionsServeFlags> = {}): LegacyFu
 
 function extractFlagValues(args: ReadonlyArray<string>, flag: string) {
   return args.flatMap((value, index) => (args[index - 1] === flag ? [value] : []));
-}
-
-function withConfiguredTempDir<A, E, R>(
-  directory: string,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> {
-  const names = ["TMPDIR", "TMP", "TEMP"] as const;
-  const previous = names.map((name) => [name, process.env[name]] as const);
-
-  return Effect.sync(() => {
-    for (const name of names) {
-      process.env[name] = directory;
-    }
-  }).pipe(
-    Effect.andThen(effect),
-    Effect.ensuring(
-      Effect.sync(() => {
-        for (const [name, value] of previous) {
-          if (value === undefined) {
-            delete process.env[name];
-          } else {
-            process.env[name] = value;
-          }
-        }
-      }),
-    ),
-  );
 }
 
 async function extractDockerEnvEntries(call: { args: ReadonlyArray<string>; options: unknown }) {
@@ -677,91 +653,86 @@ describe("legacy functions serve integration", () => {
     });
   });
 
-  it.live("creates a missing configured temp directory for runtime artifacts", () => {
-    const configuredTempDir = join(tempRoot.current, "missing-temp");
-    const multilineValue = "line-1\nline-2";
+  it.live(
+    "cleans up a stale multiline-env directory from a previous run even when this run has no multiline secrets",
+    () => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
 
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(
-          ".env.local",
-          [`SINGLE_LINE=value`, `MULTILINE_VALUE="${multilineValue}"`, ""].join("\n"),
-        ),
-      );
+      const childSpawner = mockDockerLogSpawner([
+        {
+          exitCode: 1,
+          stderr: "error running container: exit 1",
+        },
+      ]);
 
-      const { layer } = setupServe();
-      const error = yield* withConfiguredTempDir(
-        configuredTempDir,
-        legacyFunctionsServe(
-          baseFlags({
-            envFile: Option.some(".env.local"),
-            noVerifyJwt: Option.some(true),
-          }),
-        ).pipe(Effect.provide(layer), Effect.flip),
-      );
-
-      expect(error).toBeInstanceOf(Error);
-      expect(existsSync(configuredTempDir)).toBe(true);
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
-      }
-
-      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      expect(envs).toContain("SINGLE_LINE=value");
-
-      const options =
-        typeof dockerRun.options === "object" && dockerRun.options !== null
-          ? dockerRun.options
-          : undefined;
-      const multilineEnvFiles =
-        options !== undefined && "multilineEnvFiles" in options
-          ? (options.multilineEnvFiles as Record<string, string> | undefined)
-          : undefined;
-      expect(multilineEnvFiles).toEqual({ "env-0": multilineValue });
-    });
-  });
-
-  it.live("surfaces filesystem errors for an unusable configured temp path", () => {
-    const configuredTempPath = join(tempRoot.current, "temp-file");
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFile(configuredTempPath, "not a directory"));
-
-      const { layer } = setupServe();
-      const error = yield* withConfiguredTempDir(
-        configuredTempPath,
-        legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip),
+      const staleMultilineEnvDir = join(
+        tempRoot.current,
+        "supabase",
+        ".temp",
+        "start-secrets",
+        "supabase_edge_runtime_test-project",
+        "multiline-env",
       );
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(configuredTempPath);
-        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
-      }
-      expect(
-        deployMockState.runCalls.filter(
+      return Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() =>
+          writeProjectFile(join("supabase", "functions", ".env"), ["HELLO=WORLD", ""].join("\n")),
+        );
+        // Simulate a stale directory left behind by an earlier run that DID have multiline secrets.
+        yield* Effect.promise(async () => {
+          await mkdir(join(staleMultilineEnvDir, "values"), { recursive: true, mode: 0o700 });
+          await writeFile(join(staleMultilineEnvDir, "multiline-env.sh"), "stale script\n");
+          await writeFile(join(staleMultilineEnvDir, "values", "env-0"), "stale secret\n");
+        });
+
+        const { layer } = setupServe({ childSpawner });
+
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(Error);
+
+        expect(existsSync(staleMultilineEnvDir)).toBe(false);
+
+        const dockerRun = deployMockState.runCalls.find(
           (call) => call.command === "docker" && call.args[0] === "run",
-        ),
-      ).toHaveLength(0);
-    });
-  });
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker run call");
+        }
+        expect(
+          extractFlagValues(dockerRun.args, "-v").some((value) =>
+            value.endsWith(":/root/.supabase/multiline-env:ro"),
+          ),
+        ).toBe(false);
+      });
+    },
+  );
 
   it.live("fails before startup when a multiline env name is not a shell identifier", () => {
     return Effect.gen(function* () {
@@ -1150,6 +1121,19 @@ describe("legacy functions serve integration", () => {
         ),
       ).toHaveLength(2);
       expect(out.stderrText).toContain("File change detected:");
+
+      // `functions serve`'s restart wrapper (`startEdgeRuntime`, Go's
+      // `restartEdgeRuntime`) reloads Kong after each successful bring-up —
+      // once for the initial start, once for the file-change-triggered restart.
+      expect(
+        deployMockState.runCalls.filter(
+          (call) =>
+            call.command === "docker" &&
+            call.args[0] === "exec" &&
+            call.args.includes("supabase_kong_test-project") &&
+            call.args.includes("reload"),
+        ),
+      ).toHaveLength(2);
     });
   });
 
@@ -1268,6 +1252,84 @@ describe("legacy functions serve integration", () => {
       expect(out.stdoutText).toContain("Stopped serving");
     });
   });
+
+  it.live(
+    "cleans up staged secrets when interrupted while reloading Kong after a successful bring-up",
+    () => {
+      const processControl = mockQueuedProcessControl();
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          // Hangs Kong reload so the interrupt below lands after bring-up succeeded (staged
+          // secrets already written, `startedRuntime` already assigned) but before this
+          // wrapper's own `reloadKong` call returns.
+          return { pending: true };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([{ pending: true }]);
+
+      const stagingDir = join(
+        tempRoot.current,
+        "supabase",
+        ".temp",
+        "start-secrets",
+        "supabase_edge_runtime_test-project",
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        const { layer } = setupServe({ processControl, childSpawner });
+        const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* waitFor(
+          () =>
+            deployMockState.runCalls.some(
+              (call) => call.command === "docker" && call.args[0] === "exec",
+            ),
+          "timed out waiting for Kong reload to start",
+        );
+        expect(existsSync(stagingDir)).toBe(true);
+        processControl.signal("SIGINT");
+
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isSuccess(exit)).toBe(true);
+
+        expect(
+          deployMockState.runCalls.some(
+            (call) =>
+              call.command === "docker" &&
+              call.args[0] === "container" &&
+              call.args[1] === "rm" &&
+              call.args.includes("supabase_edge_runtime_test-project"),
+          ),
+        ).toBe(true);
+        expect(existsSync(stagingDir)).toBe(false);
+      });
+    },
+  );
 
   it.live("passes inspect, debug, and custom network settings through to edge-runtime", () => {
     deployMockState.runHandler = (command, args) => {
@@ -1619,6 +1681,98 @@ describe("legacy functions serve integration", () => {
         if (error instanceof Error) {
           expect(error.message).toContain("jwks logs failed");
         }
+
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker run call");
+        }
+
+        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+        const jwks = envs.find((entry) => entry.startsWith("SUPABASE_JWKS="));
+        expect(jwks).toBeDefined();
+        if (jwks === undefined) {
+          throw new Error("missing SUPABASE_JWKS");
+        }
+        expect(JSON.parse(jwks.slice("SUPABASE_JWKS=".length))).toEqual({
+          keys: expect.arrayContaining([
+            expect.objectContaining({ kid: "b81269f1-21d8-4f2e-b719-c2240a840d90" }),
+            expect.objectContaining({ kty: "oct" }),
+          ]),
+        });
+      });
+    },
+  );
+
+  it.live(
+    "does not fail startup on a malformed third-party provider config when auth is disabled",
+    () => {
+      // Go's `Auth.ThirdParty.validate()` (the "required field" check) only runs inside
+      // `Config.Validate`'s `if Auth.Enabled` block — `functions serve`'s own JWKS resolution
+      // discards `ResolveJWKS`'s error unconditionally, regardless of `auth.enabled`. So a
+      // workos provider enabled without an `issuer_url` must not block startup here.
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "jwks logs failed" }]);
+
+      return Effect.gen(function* () {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            fetchMock.mockRestore();
+          }),
+        );
+
+        yield* Effect.promise(() =>
+          writeProjectConfig(
+            [
+              'project_id = "test-project"',
+              "",
+              "[auth]",
+              "enabled = false",
+              "",
+              "[auth.third_party.workos]",
+              "enabled = true",
+              "",
+            ].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        const { layer } = setupServe({ childSpawner });
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toContain("jwks logs failed");
+        }
+        expect(fetchMock).not.toHaveBeenCalled();
 
         const dockerRun = deployMockState.runCalls.find(
           (call) => call.command === "docker" && call.args[0] === "run",

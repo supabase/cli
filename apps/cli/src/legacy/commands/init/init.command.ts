@@ -1,7 +1,9 @@
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { legacyInit } from "./init.handler.ts";
 
@@ -38,5 +40,9 @@ export const legacyInitCommand = Command.make("init", config).pipe(
   Command.withHandler((flags) =>
     legacyInit(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(commandRuntimeLayer(["init"])),
+  // `stdinLayer` satisfies `legacyPromptYesNo`'s `Stdin` requirement (via the
+  // shared `initProject` IDE prompts). The prompts are gated on a TTY stdin, so
+  // init never actually reads a piped line at runtime — the layer is here for
+  // the effect's type requirements only.
+  Command.provide(Layer.mergeAll(commandRuntimeLayer(["init"]), stdinLayer)),
 );

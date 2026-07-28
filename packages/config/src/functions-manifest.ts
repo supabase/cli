@@ -25,6 +25,8 @@ export type FunctionsManifest = Readonly<Record<string, ResolvedFunctionConfig>>
 interface InferFunctionsManifestOptions {
   readonly cwd: string;
   readonly config?: ProjectConfig;
+  /** Forwarded to {@link findProjectPaths}'s own `search` option — see its doc comment. */
+  readonly search?: boolean;
 }
 
 function filesystemFunctionConfig(slug: string, hasDenoJson: boolean): ResolvedFunctionConfig {
@@ -78,7 +80,7 @@ export const inferFunctionsManifest = Effect.fnUntraced(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectPaths = yield* findProjectPaths(options.cwd);
+  const projectPaths = yield* findProjectPaths(options.cwd, { search: options.search });
   const projectRoot = projectPaths?.projectRoot ?? options.cwd;
   const config =
     options.config ??

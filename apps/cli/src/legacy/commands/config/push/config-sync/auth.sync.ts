@@ -13,6 +13,7 @@ import type { ProjectConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { type TomlField, type TomlValue, encodeToml } from "./config-sync.toml.ts";
+import { legacyStrToArr } from "../../../../shared/legacy-local-config-values.ts";
 import { intToUint } from "../../../../shared/legacy-size-units.ts";
 import { durationString, parseDuration, secondsToDurationString } from "./config-sync.duration.ts";
 import type { AuthEmailContent } from "./config-sync.auth-email-content.ts";
@@ -838,11 +839,6 @@ const AUTH_FIELDS: ReadonlyArray<TomlField> = [
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Go `strToArr`: empty string → `[]`, else comma-split. */
-function strToArr(v: string): Array<string> {
-  return v.length === 0 ? [] : v.split(",");
-}
-
 /** Go `cast.IntToUint`: clamp negatives to 0. */
 function valOrDefault<T>(v: T | null | undefined, def: T): T {
   return v == null ? def : v;
@@ -1299,7 +1295,7 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
 
   // Base scalar fields
   const siteUrl = valOrDefault(remote.site_url, "");
-  const additionalRedirectUrls = strToArr(valOrDefault(remote.uri_allow_list, ""));
+  const additionalRedirectUrls = legacyStrToArr(valOrDefault(remote.uri_allow_list, ""));
   const jwtExpiry = intToUint(valOrDefault(remote.jwt_exp, 0));
   const enableRefreshTokenRotation = valOrDefault(remote.refresh_token_rotation_enabled, false);
   const refreshTokenReuseInterval = intToUint(
@@ -1322,7 +1318,7 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     webauthn = {
       rp_display_name: valOrDefault(remote.webauthn_rp_display_name, ""),
       rp_id: valOrDefault(remote.webauthn_rp_id, ""),
-      rp_origins: strToArr(valOrDefault(remote.webauthn_rp_origins, "")),
+      rp_origins: legacyStrToArr(valOrDefault(remote.webauthn_rp_origins, "")),
     };
   }
 
@@ -1786,7 +1782,7 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
 
 /** Port of Go `sms.fromAuthConfig` → `envToMap`. */
 function envToMap(input: string): Record<string, string> {
-  const env = strToArr(input);
+  const env = legacyStrToArr(input);
   const result: Record<string, string> = {};
   for (const kv of env) {
     const eqIdx = kv.indexOf("=");

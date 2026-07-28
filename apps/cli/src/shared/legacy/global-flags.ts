@@ -2,7 +2,7 @@ import { Effect, Option } from "effect";
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 import { CliArgs } from "../cli/cli-args.service.ts";
-import { legacyViperBool, legacyViperEnvBool } from "./legacy-viper-env.ts";
+import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./legacy-viper-env.ts";
 
 // The Effect CLI hoists global flags out of the token stream before the leaf
 // parse and builds ONE tree-wide registry, so a command cannot redeclare an
@@ -174,11 +174,13 @@ export const legacyResolveYes = Effect.gen(function* () {
 /**
  * `--yes` resolved with the project `.env` consulted too, for commands that load the nested
  * project env before prompting (`migration down`, `migration repair --all`). Go runs
- * `loadNestedEnv` — which `os.Setenv`s each project-.env key — inside `ParseDatabaseConfig`
- * before `PromptYesNo` reads `viper.GetBool("YES")` (`pkg/config/config.go:701`,
- * `internal/utils/console.go:71`), so a `SUPABASE_YES` set only in `supabase/.env`
- * auto-confirms. The shell env still wins over the file value. An explicit `--yes`
- * (including `--yes=false`) wins over both. `projectEnv` is the loaded map from
+ * `loadNestedEnv` — `godotenv.Load`, which only sets keys absent from the shell env —
+ * inside `ParseDatabaseConfig` before `PromptYesNo` reads `viper.GetBool("YES")`
+ * (`pkg/config/config.go:701`, `internal/utils/console.go:71`), so a `SUPABASE_YES` set
+ * only in `supabase/.env` auto-confirms. Shell *presence* — any value, including `false`,
+ * empty, or garbage — suppresses the file value entirely (see
+ * {@link legacyViperEnvBoolWithProjectFallback}). An explicit `--yes` (including
+ * `--yes=false`) wins over both. `projectEnv` is the loaded map from
  * `legacyLoadProjectEnv`.
  */
 export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
@@ -188,9 +190,7 @@ export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string
     if (legacyYesFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return (
-      flag || legacyViperEnvBool("SUPABASE_YES") || legacyViperBool(projectEnv["SUPABASE_YES"])
-    );
+    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
   });
 
 /**
@@ -231,12 +231,13 @@ export const legacyResolveExperimental = Effect.gen(function* () {
  * `--experimental` resolved with the project `.env` consulted too, for commands that load the
  * nested project env before branching on the experimental gate (`db reset`,
  * `db schema declarative generate`/`sync`). Go's `ParseDatabaseConfig` /
- * `dbDeclarativeCmd.PersistentPreRunE` run `loadNestedEnv` — which `os.Setenv`s each
- * project-.env key — before reading `viper.GetBool("EXPERIMENTAL")`, so a
- * `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` enables the experimental path. The
- * shell env still wins over the file value; an explicit `--experimental` — including
- * `--experimental=false` — wins over both, matching viper's bound-pflag precedence.
- * `projectEnv` is the loaded map from `legacyLoadProjectEnv`.
+ * `dbDeclarativeCmd.PersistentPreRunE` run `loadNestedEnv` — `godotenv.Load`, which only
+ * sets keys absent from the shell env — before reading `viper.GetBool("EXPERIMENTAL")`, so
+ * a `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` enables the experimental path.
+ * Shell *presence* — any value, including `false`, empty, or garbage — suppresses the file
+ * value entirely (see {@link legacyViperEnvBoolWithProjectFallback}); an explicit
+ * `--experimental` — including `--experimental=false` — wins over both, matching viper's
+ * bound-pflag precedence. `projectEnv` is the loaded map from `legacyLoadProjectEnv`.
  */
 export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -245,9 +246,5 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
     if (legacyExperimentalFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return (
-      flag ||
-      legacyViperEnvBool("SUPABASE_EXPERIMENTAL") ||
-      legacyViperBool(projectEnv["SUPABASE_EXPERIMENTAL"])
-    );
+    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
   });

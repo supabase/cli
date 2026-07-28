@@ -10,7 +10,7 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,
@@ -422,7 +422,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           path,
           path.join(cliConfig.workdir, "supabase", "migrations"),
         );
-        const sync = legacyReconcileMigrations(remote, local);
+        const sync = legacyReconcileMigrations(remote, local, connType === "local");
         if (sync.kind === "conflict") {
           return yield* Effect.fail(
             new LegacyDbPullMigrationConflictError({

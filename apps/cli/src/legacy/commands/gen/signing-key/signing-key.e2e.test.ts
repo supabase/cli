@@ -43,6 +43,8 @@ describe("supabase gen signing-key (legacy)", () => {
       });
       expect(exitCode).toBe(1);
       expect(stderr).toContain("context canceled");
+      // No SuggestDebugFlag fallback for context.Canceled (cmd/root.go:287-303, CLI-1973).
+      expect(stderr).not.toContain("Try rerunning the command with --debug");
       expect(stderr).not.toContain("Service not found");
       const saved = readFileSync(join(projectDir, "supabase", "signing_keys.json"), "utf8");
       expect(JSON.parse(saved)).toEqual([]);

@@ -86,6 +86,7 @@ func (e ActionRunResponseRunStepsStatus) Valid() bool {
 // Defines values for ApiKeyResponseType.
 const (
 	ApiKeyResponseTypeLegacy      ApiKeyResponseType = "legacy"
+	ApiKeyResponseTypeLessThannil ApiKeyResponseType = "<nil>"
 	ApiKeyResponseTypePublishable ApiKeyResponseType = "publishable"
 	ApiKeyResponseTypeSecret      ApiKeyResponseType = "secret"
 )
@@ -94,6 +95,8 @@ const (
 func (e ApiKeyResponseType) Valid() bool {
 	switch e {
 	case ApiKeyResponseTypeLegacy:
+		return true
+	case ApiKeyResponseTypeLessThannil:
 		return true
 	case ApiKeyResponseTypePublishable:
 		return true
@@ -260,6 +263,7 @@ func (e ApplyProjectAddonBodyAddonVariant3) Valid() bool {
 // Defines values for AuthConfigResponseDbMaxPoolSizeUnit.
 const (
 	AuthConfigResponseDbMaxPoolSizeUnitConnections AuthConfigResponseDbMaxPoolSizeUnit = "connections"
+	AuthConfigResponseDbMaxPoolSizeUnitLessThannil AuthConfigResponseDbMaxPoolSizeUnit = "<nil>"
 	AuthConfigResponseDbMaxPoolSizeUnitPercent     AuthConfigResponseDbMaxPoolSizeUnit = "percent"
 )
 
@@ -267,6 +271,8 @@ const (
 func (e AuthConfigResponseDbMaxPoolSizeUnit) Valid() bool {
 	switch e {
 	case AuthConfigResponseDbMaxPoolSizeUnitConnections:
+		return true
+	case AuthConfigResponseDbMaxPoolSizeUnitLessThannil:
 		return true
 	case AuthConfigResponseDbMaxPoolSizeUnitPercent:
 		return true
@@ -301,14 +307,17 @@ func (e AuthConfigResponsePasswordRequiredCharacters) Valid() bool {
 
 // Defines values for AuthConfigResponseSecurityCaptchaProvider.
 const (
-	AuthConfigResponseSecurityCaptchaProviderHcaptcha  AuthConfigResponseSecurityCaptchaProvider = "hcaptcha"
-	AuthConfigResponseSecurityCaptchaProviderTurnstile AuthConfigResponseSecurityCaptchaProvider = "turnstile"
+	AuthConfigResponseSecurityCaptchaProviderHcaptcha    AuthConfigResponseSecurityCaptchaProvider = "hcaptcha"
+	AuthConfigResponseSecurityCaptchaProviderLessThannil AuthConfigResponseSecurityCaptchaProvider = "<nil>"
+	AuthConfigResponseSecurityCaptchaProviderTurnstile   AuthConfigResponseSecurityCaptchaProvider = "turnstile"
 )
 
 // Valid indicates whether the value is a known member of the AuthConfigResponseSecurityCaptchaProvider enum.
 func (e AuthConfigResponseSecurityCaptchaProvider) Valid() bool {
 	switch e {
 	case AuthConfigResponseSecurityCaptchaProviderHcaptcha:
+		return true
+	case AuthConfigResponseSecurityCaptchaProviderLessThannil:
 		return true
 	case AuthConfigResponseSecurityCaptchaProviderTurnstile:
 		return true
@@ -319,6 +328,7 @@ func (e AuthConfigResponseSecurityCaptchaProvider) Valid() bool {
 
 // Defines values for AuthConfigResponseSmsProvider.
 const (
+	AuthConfigResponseSmsProviderLessThannil  AuthConfigResponseSmsProvider = "<nil>"
 	AuthConfigResponseSmsProviderMessagebird  AuthConfigResponseSmsProvider = "messagebird"
 	AuthConfigResponseSmsProviderTextlocal    AuthConfigResponseSmsProvider = "textlocal"
 	AuthConfigResponseSmsProviderTwilio       AuthConfigResponseSmsProvider = "twilio"
@@ -329,6 +339,8 @@ const (
 // Valid indicates whether the value is a known member of the AuthConfigResponseSmsProvider enum.
 func (e AuthConfigResponseSmsProvider) Valid() bool {
 	switch e {
+	case AuthConfigResponseSmsProviderLessThannil:
+		return true
 	case AuthConfigResponseSmsProviderMessagebird:
 		return true
 	case AuthConfigResponseSmsProviderTextlocal:
@@ -577,16 +589,16 @@ func (e BulkUpdateFunctionResponseFunctionsStatus) Valid() bool {
 
 // Defines values for CreateApiKeyBodyType.
 const (
-	CreateApiKeyBodyTypePublishable CreateApiKeyBodyType = "publishable"
-	CreateApiKeyBodyTypeSecret      CreateApiKeyBodyType = "secret"
+	Publishable CreateApiKeyBodyType = "publishable"
+	Secret      CreateApiKeyBodyType = "secret"
 )
 
 // Valid indicates whether the value is a known member of the CreateApiKeyBodyType enum.
 func (e CreateApiKeyBodyType) Valid() bool {
 	switch e {
-	case CreateApiKeyBodyTypePublishable:
+	case Publishable:
 		return true
-	case CreateApiKeyBodyTypeSecret:
+	case Secret:
 		return true
 	default:
 		return false
@@ -1451,60 +1463,6 @@ func (e JitAccessRequestRequestState) Valid() bool {
 	}
 }
 
-// Defines values for JitStateResponse0State.
-const (
-	JitStateResponse0StateDisabled JitStateResponse0State = "disabled"
-	JitStateResponse0StateEnabled  JitStateResponse0State = "enabled"
-)
-
-// Valid indicates whether the value is a known member of the JitStateResponse0State enum.
-func (e JitStateResponse0State) Valid() bool {
-	switch e {
-	case JitStateResponse0StateDisabled:
-		return true
-	case JitStateResponse0StateEnabled:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for JitStateResponse1State.
-const (
-	Unavailable JitStateResponse1State = "unavailable"
-)
-
-// Valid indicates whether the value is a known member of the JitStateResponse1State enum.
-func (e JitStateResponse1State) Valid() bool {
-	switch e {
-	case Unavailable:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for JitStateResponse1UnavailableReason.
-const (
-	PostgresUpgradeRequired JitStateResponse1UnavailableReason = "postgres_upgrade_required"
-	SslEnforcementRequired  JitStateResponse1UnavailableReason = "ssl_enforcement_required"
-	TemporarilyUnavailable  JitStateResponse1UnavailableReason = "temporarily_unavailable"
-)
-
-// Valid indicates whether the value is a known member of the JitStateResponse1UnavailableReason enum.
-func (e JitStateResponse1UnavailableReason) Valid() bool {
-	switch e {
-	case PostgresUpgradeRequired:
-		return true
-	case SslEnforcementRequired:
-		return true
-	case TemporarilyUnavailable:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ListActionRunResponseRunStepsName.
 const (
 	ListActionRunResponseRunStepsNameClone     ListActionRunResponseRunStepsName = "clone"
@@ -2242,11 +2200,12 @@ func (e OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan) Valid() b
 
 // Defines values for OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan.
 const (
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPlatform   OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "platform"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise  OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanLessThannil OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "<nil>"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPlatform    OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "platform"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro         OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
 )
 
 // Valid indicates whether the value is a known member of the OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan enum.
@@ -2255,6 +2214,8 @@ func (e OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan) Valid() b
 	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise:
 		return true
 	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree:
+		return true
+	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanLessThannil:
 		return true
 	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPlatform:
 		return true
@@ -2693,18 +2654,30 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors5Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6ObjType.
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6ObjType0.
 const (
-	ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeFunction ProjectUpgradeEligibilityResponseValidationErrors6ObjType = "function"
-	ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeTable    ProjectUpgradeEligibilityResponseValidationErrors6ObjType = "table"
+	ProjectUpgradeEligibilityResponseValidationErrors6ObjType0Table ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 = "table"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors6ObjType enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors6ObjType) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 enum.
+func (e ProjectUpgradeEligibilityResponseValidationErrors6ObjType0) Valid() bool {
 	switch e {
-	case ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeFunction:
+	case ProjectUpgradeEligibilityResponseValidationErrors6ObjType0Table:
 		return true
-	case ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeTable:
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6ObjType1.
+const (
+	Function ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 = "function"
+)
+
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 enum.
+func (e ProjectUpgradeEligibilityResponseValidationErrors6ObjType1) Valid() bool {
+	switch e {
+	case Function:
 		return true
 	default:
 		return false
@@ -3431,6 +3404,7 @@ func (e SupavisorConfigResponsePoolMode) Valid() bool {
 // Defines values for UpdateAuthConfigBodyDbMaxPoolSizeUnit.
 const (
 	UpdateAuthConfigBodyDbMaxPoolSizeUnitConnections UpdateAuthConfigBodyDbMaxPoolSizeUnit = "connections"
+	UpdateAuthConfigBodyDbMaxPoolSizeUnitLessThannil UpdateAuthConfigBodyDbMaxPoolSizeUnit = "<nil>"
 	UpdateAuthConfigBodyDbMaxPoolSizeUnitPercent     UpdateAuthConfigBodyDbMaxPoolSizeUnit = "percent"
 )
 
@@ -3438,6 +3412,8 @@ const (
 func (e UpdateAuthConfigBodyDbMaxPoolSizeUnit) Valid() bool {
 	switch e {
 	case UpdateAuthConfigBodyDbMaxPoolSizeUnitConnections:
+		return true
+	case UpdateAuthConfigBodyDbMaxPoolSizeUnitLessThannil:
 		return true
 	case UpdateAuthConfigBodyDbMaxPoolSizeUnitPercent:
 		return true
@@ -3472,14 +3448,17 @@ func (e UpdateAuthConfigBodyPasswordRequiredCharacters) Valid() bool {
 
 // Defines values for UpdateAuthConfigBodySecurityCaptchaProvider.
 const (
-	UpdateAuthConfigBodySecurityCaptchaProviderHcaptcha  UpdateAuthConfigBodySecurityCaptchaProvider = "hcaptcha"
-	UpdateAuthConfigBodySecurityCaptchaProviderTurnstile UpdateAuthConfigBodySecurityCaptchaProvider = "turnstile"
+	UpdateAuthConfigBodySecurityCaptchaProviderHcaptcha    UpdateAuthConfigBodySecurityCaptchaProvider = "hcaptcha"
+	UpdateAuthConfigBodySecurityCaptchaProviderLessThannil UpdateAuthConfigBodySecurityCaptchaProvider = "<nil>"
+	UpdateAuthConfigBodySecurityCaptchaProviderTurnstile   UpdateAuthConfigBodySecurityCaptchaProvider = "turnstile"
 )
 
 // Valid indicates whether the value is a known member of the UpdateAuthConfigBodySecurityCaptchaProvider enum.
 func (e UpdateAuthConfigBodySecurityCaptchaProvider) Valid() bool {
 	switch e {
 	case UpdateAuthConfigBodySecurityCaptchaProviderHcaptcha:
+		return true
+	case UpdateAuthConfigBodySecurityCaptchaProviderLessThannil:
 		return true
 	case UpdateAuthConfigBodySecurityCaptchaProviderTurnstile:
 		return true
@@ -3490,25 +3469,28 @@ func (e UpdateAuthConfigBodySecurityCaptchaProvider) Valid() bool {
 
 // Defines values for UpdateAuthConfigBodySmsProvider.
 const (
-	UpdateAuthConfigBodySmsProviderMessagebird  UpdateAuthConfigBodySmsProvider = "messagebird"
-	UpdateAuthConfigBodySmsProviderTextlocal    UpdateAuthConfigBodySmsProvider = "textlocal"
-	UpdateAuthConfigBodySmsProviderTwilio       UpdateAuthConfigBodySmsProvider = "twilio"
-	UpdateAuthConfigBodySmsProviderTwilioVerify UpdateAuthConfigBodySmsProvider = "twilio_verify"
-	UpdateAuthConfigBodySmsProviderVonage       UpdateAuthConfigBodySmsProvider = "vonage"
+	LessThannil  UpdateAuthConfigBodySmsProvider = "<nil>"
+	Messagebird  UpdateAuthConfigBodySmsProvider = "messagebird"
+	Textlocal    UpdateAuthConfigBodySmsProvider = "textlocal"
+	Twilio       UpdateAuthConfigBodySmsProvider = "twilio"
+	TwilioVerify UpdateAuthConfigBodySmsProvider = "twilio_verify"
+	Vonage       UpdateAuthConfigBodySmsProvider = "vonage"
 )
 
 // Valid indicates whether the value is a known member of the UpdateAuthConfigBodySmsProvider enum.
 func (e UpdateAuthConfigBodySmsProvider) Valid() bool {
 	switch e {
-	case UpdateAuthConfigBodySmsProviderMessagebird:
+	case LessThannil:
 		return true
-	case UpdateAuthConfigBodySmsProviderTextlocal:
+	case Messagebird:
 		return true
-	case UpdateAuthConfigBodySmsProviderTwilio:
+	case Textlocal:
 		return true
-	case UpdateAuthConfigBodySmsProviderTwilioVerify:
+	case Twilio:
 		return true
-	case UpdateAuthConfigBodySmsProviderVonage:
+	case TwilioVerify:
+		return true
+	case Vonage:
 		return true
 	default:
 		return false
@@ -4526,27 +4508,6 @@ func (e V1OrganizationSlugResponseAllowedReleaseChannels) Valid() bool {
 	}
 }
 
-// Defines values for V1OrganizationSlugResponseOptInTags.
-const (
-	AIDATAGENERATOROPTIN V1OrganizationSlugResponseOptInTags = "AI_DATA_GENERATOR_OPT_IN"
-	AILOGGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_LOG_GENERATOR_OPT_IN"
-	AISQLGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
-)
-
-// Valid indicates whether the value is a known member of the V1OrganizationSlugResponseOptInTags enum.
-func (e V1OrganizationSlugResponseOptInTags) Valid() bool {
-	switch e {
-	case AIDATAGENERATOROPTIN:
-		return true
-	case AILOGGENERATOROPTIN:
-		return true
-	case AISQLGENERATOROPTIN:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for V1OrganizationSlugResponsePlan.
 const (
 	V1OrganizationSlugResponsePlanEnterprise V1OrganizationSlugResponsePlan = "enterprise"
@@ -5444,6 +5405,84 @@ func (e V1GetServicesHealthParamsServices) Valid() bool {
 	}
 }
 
+// Defines values for V1GetJitAccessConfig200JSONResponseBody0State.
+const (
+	V1GetJitAccessConfig200JSONResponseBody0StateDisabled V1GetJitAccessConfig200JSONResponseBody0State = "disabled"
+	V1GetJitAccessConfig200JSONResponseBody0StateEnabled  V1GetJitAccessConfig200JSONResponseBody0State = "enabled"
+)
+
+// Valid indicates whether the value is a known member of the V1GetJitAccessConfig200JSONResponseBody0State enum.
+func (e V1GetJitAccessConfig200JSONResponseBody0State) Valid() bool {
+	switch e {
+	case V1GetJitAccessConfig200JSONResponseBody0StateDisabled:
+		return true
+	case V1GetJitAccessConfig200JSONResponseBody0StateEnabled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for V1GetJitAccessConfig200JSONResponseBody1UnavailableReason.
+const (
+	V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired V1GetJitAccessConfig200JSONResponseBody1UnavailableReason = "postgres_upgrade_required"
+	V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired  V1GetJitAccessConfig200JSONResponseBody1UnavailableReason = "ssl_enforcement_required"
+	V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonTemporarilyUnavailable  V1GetJitAccessConfig200JSONResponseBody1UnavailableReason = "temporarily_unavailable"
+)
+
+// Valid indicates whether the value is a known member of the V1GetJitAccessConfig200JSONResponseBody1UnavailableReason enum.
+func (e V1GetJitAccessConfig200JSONResponseBody1UnavailableReason) Valid() bool {
+	switch e {
+	case V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired:
+		return true
+	case V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired:
+		return true
+	case V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonTemporarilyUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for V1UpdateJitAccessConfig200JSONResponseBody0State.
+const (
+	Disabled V1UpdateJitAccessConfig200JSONResponseBody0State = "disabled"
+	Enabled  V1UpdateJitAccessConfig200JSONResponseBody0State = "enabled"
+)
+
+// Valid indicates whether the value is a known member of the V1UpdateJitAccessConfig200JSONResponseBody0State enum.
+func (e V1UpdateJitAccessConfig200JSONResponseBody0State) Valid() bool {
+	switch e {
+	case Disabled:
+		return true
+	case Enabled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason.
+const (
+	V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason = "postgres_upgrade_required"
+	V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired  V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason = "ssl_enforcement_required"
+	V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonTemporarilyUnavailable  V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason = "temporarily_unavailable"
+)
+
+// Valid indicates whether the value is a known member of the V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason enum.
+func (e V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason) Valid() bool {
+	switch e {
+	case V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired:
+		return true
+	case V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired:
+		return true
+	case V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonTemporarilyUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for V1ListAllSnippetsParamsSortBy.
 const (
 	InsertedAt V1ListAllSnippetsParamsSortBy = "inserted_at"
@@ -5840,8 +5879,19 @@ type AuthConfigResponseSmsProvider string
 
 // AuthorizeJitAccessBody defines model for AuthorizeJitAccessBody.
 type AuthorizeJitAccessBody struct {
-	Rhost string `json:"rhost"`
-	Role  string `json:"role"`
+	Rhost AuthorizeJitAccessBody_Rhost `json:"rhost"`
+	Role  string                       `json:"role"`
+}
+
+// AuthorizeJitAccessBodyRhost0 defines model for .
+type AuthorizeJitAccessBodyRhost0 = string
+
+// AuthorizeJitAccessBodyRhost1 defines model for .
+type AuthorizeJitAccessBodyRhost1 = string
+
+// AuthorizeJitAccessBody_Rhost defines model for AuthorizeJitAccessBody.Rhost.
+type AuthorizeJitAccessBody_Rhost struct {
+	union json.RawMessage
 }
 
 // BranchActionBody defines model for BranchActionBody.
@@ -6399,7 +6449,7 @@ type DiskUtilMetricsResponse struct {
 
 // FunctionDeployBody defines model for FunctionDeployBody.
 type FunctionDeployBody struct {
-	File     *[]openapi_types.File `json:"file,omitempty"`
+	File     []openapi_types.File `json:"file"`
 	Metadata struct {
 		EntrypointPath string    `json:"entrypoint_path"`
 		ImportMapPath  *string   `json:"import_map_path,omitempty"`
@@ -6639,32 +6689,6 @@ type JitListAccessResponse_Items_Item struct {
 	union json.RawMessage
 }
 
-// JitStateResponse defines model for JitStateResponse.
-type JitStateResponse struct {
-	union json.RawMessage
-}
-
-// JitStateResponse0 defines model for .
-type JitStateResponse0 struct {
-	AppliedSuccessfully *bool                  `json:"appliedSuccessfully,omitempty"`
-	State               JitStateResponse0State `json:"state"`
-}
-
-// JitStateResponse0State defines model for JitStateResponse.0.State.
-type JitStateResponse0State string
-
-// JitStateResponse1 defines model for .
-type JitStateResponse1 struct {
-	State             JitStateResponse1State             `json:"state"`
-	UnavailableReason JitStateResponse1UnavailableReason `json:"unavailableReason"`
-}
-
-// JitStateResponse1State defines model for JitStateResponse.1.State.
-type JitStateResponse1State string
-
-// JitStateResponse1UnavailableReason defines model for JitStateResponse.1.UnavailableReason.
-type JitStateResponse1UnavailableReason string
-
 // LegacyApiKeysResponse defines model for LegacyApiKeysResponse.
 type LegacyApiKeysResponse struct {
 	Enabled bool `json:"enabled"`
@@ -6702,8 +6726,8 @@ type ListProjectAddonsResponse struct {
 			Id ListProjectAddonsResponse_AvailableAddons_Variants_Id `json:"id"`
 
 			// Meta Any JSON-serializable value
-			Meta  interface{} `json:"meta,omitempty"`
-			Name  string      `json:"name"`
+			Meta  *ListProjectAddonsResponseJsonValue `json:"meta,omitempty"`
+			Name  string                              `json:"name"`
 			Price struct {
 				Amount      float32                                                       `json:"amount"`
 				Description string                                                        `json:"description"`
@@ -6718,8 +6742,8 @@ type ListProjectAddonsResponse struct {
 			Id ListProjectAddonsResponse_SelectedAddons_Variant_Id `json:"id"`
 
 			// Meta Any JSON-serializable value
-			Meta  interface{} `json:"meta,omitempty"`
-			Name  string      `json:"name"`
+			Meta  *ListProjectAddonsResponseJsonValue `json:"meta,omitempty"`
+			Name  string                              `json:"name"`
 			Price struct {
 				Amount      float32                                                     `json:"amount"`
 				Description string                                                      `json:"description"`
@@ -6805,6 +6829,31 @@ type ListProjectAddonsResponseSelectedAddonsVariantPriceInterval string
 
 // ListProjectAddonsResponseSelectedAddonsVariantPriceType defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Price.Type.
 type ListProjectAddonsResponseSelectedAddonsVariantPriceType string
+
+// ListProjectAddonsResponseJsonValue Any JSON-serializable value
+type ListProjectAddonsResponseJsonValue struct {
+	union json.RawMessage
+}
+
+// ListProjectAddonsResponseJsonValue0 defines model for .
+type ListProjectAddonsResponseJsonValue0 struct {
+	union json.RawMessage
+}
+
+// ListProjectAddonsResponseJsonValue00 defines model for .
+type ListProjectAddonsResponseJsonValue00 = string
+
+// ListProjectAddonsResponseJsonValue01 defines model for .
+type ListProjectAddonsResponseJsonValue01 = float32
+
+// ListProjectAddonsResponseJsonValue02 defines model for .
+type ListProjectAddonsResponseJsonValue02 = bool
+
+// ListProjectAddonsResponseJsonValue1 defines model for .
+type ListProjectAddonsResponseJsonValue1 = []ListProjectAddonsResponseJsonValue
+
+// ListProjectAddonsResponseJsonValue2 defines model for .
+type ListProjectAddonsResponseJsonValue2 map[string]ListProjectAddonsResponseJsonValue
 
 // ListProvidersResponse defines model for ListProvidersResponse.
 type ListProvidersResponse struct {
@@ -7271,14 +7320,22 @@ type ProjectUpgradeEligibilityResponseValidationErrors5Type string
 
 // ProjectUpgradeEligibilityResponseValidationErrors6 defines model for .
 type ProjectUpgradeEligibilityResponseValidationErrors6 struct {
-	ObjName    string                                                    `json:"obj_name"`
-	ObjType    ProjectUpgradeEligibilityResponseValidationErrors6ObjType `json:"obj_type"`
-	SchemaName string                                                    `json:"schema_name"`
-	Type       ProjectUpgradeEligibilityResponseValidationErrors6Type    `json:"type"`
+	ObjName    string                                                       `json:"obj_name"`
+	ObjType    ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType `json:"obj_type"`
+	SchemaName string                                                       `json:"schema_name"`
+	Type       ProjectUpgradeEligibilityResponseValidationErrors6Type       `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseValidationErrors6ObjType defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.
-type ProjectUpgradeEligibilityResponseValidationErrors6ObjType string
+// ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.0.
+type ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 string
+
+// ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.1.
+type ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 string
+
+// ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.
+type ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType struct {
+	union json.RawMessage
+}
 
 // ProjectUpgradeEligibilityResponseValidationErrors6Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.Type.
 type ProjectUpgradeEligibilityResponseValidationErrors6Type string
@@ -7495,7 +7552,7 @@ type SigningKeyResponse struct {
 	Algorithm SigningKeyResponseAlgorithm    `json:"algorithm"`
 	CreatedAt time.Time                      `json:"created_at"`
 	Id        openapi_types.UUID             `json:"id"`
-	PublicJwk nullable.Nullable[interface{}] `json:"public_jwk,omitempty"`
+	PublicJwk nullable.Nullable[interface{}] `json:"public_jwk"`
 	Status    SigningKeyResponseStatus       `json:"status"`
 	UpdatedAt time.Time                      `json:"updated_at"`
 }
@@ -7512,7 +7569,7 @@ type SigningKeysResponse struct {
 		Algorithm SigningKeysResponseKeysAlgorithm `json:"algorithm"`
 		CreatedAt time.Time                        `json:"created_at"`
 		Id        openapi_types.UUID               `json:"id"`
-		PublicJwk nullable.Nullable[interface{}]   `json:"public_jwk,omitempty"`
+		PublicJwk nullable.Nullable[interface{}]   `json:"public_jwk"`
 		Status    SigningKeysResponseKeysStatus    `json:"status"`
 		UpdatedAt time.Time                        `json:"updated_at"`
 	} `json:"keys"`
@@ -7980,8 +8037,8 @@ type UpdateCustomHostnameBody struct {
 type UpdateCustomHostnameResponse struct {
 	CustomHostname string `json:"custom_hostname"`
 	Data           struct {
-		Errors   []interface{} `json:"errors"`
-		Messages []interface{} `json:"messages"`
+		Errors   []UpdateCustomHostnameResponseJsonValue `json:"errors"`
+		Messages []UpdateCustomHostnameResponseJsonValue `json:"messages"`
 		Result   struct {
 			CustomOriginServer    string `json:"custom_origin_server"`
 			Hostname              string `json:"hostname"`
@@ -8011,6 +8068,31 @@ type UpdateCustomHostnameResponse struct {
 
 // UpdateCustomHostnameResponseStatus defines model for UpdateCustomHostnameResponse.Status.
 type UpdateCustomHostnameResponseStatus string
+
+// UpdateCustomHostnameResponseJsonValue Any JSON-serializable value
+type UpdateCustomHostnameResponseJsonValue struct {
+	union json.RawMessage
+}
+
+// UpdateCustomHostnameResponseJsonValue0 defines model for .
+type UpdateCustomHostnameResponseJsonValue0 struct {
+	union json.RawMessage
+}
+
+// UpdateCustomHostnameResponseJsonValue00 defines model for .
+type UpdateCustomHostnameResponseJsonValue00 = string
+
+// UpdateCustomHostnameResponseJsonValue01 defines model for .
+type UpdateCustomHostnameResponseJsonValue01 = float32
+
+// UpdateCustomHostnameResponseJsonValue02 defines model for .
+type UpdateCustomHostnameResponseJsonValue02 = bool
+
+// UpdateCustomHostnameResponseJsonValue1 defines model for .
+type UpdateCustomHostnameResponseJsonValue1 = []UpdateCustomHostnameResponseJsonValue
+
+// UpdateCustomHostnameResponseJsonValue2 defines model for .
+type UpdateCustomHostnameResponseJsonValue2 map[string]UpdateCustomHostnameResponseJsonValue
 
 // UpdateJitAccessBody defines model for UpdateJitAccessBody.
 type UpdateJitAccessBody struct {
@@ -8544,15 +8626,12 @@ type V1OrganizationSlugResponse struct {
 	AllowedReleaseChannels []V1OrganizationSlugResponseAllowedReleaseChannels `json:"allowed_release_channels"`
 	Id                     string                                             `json:"id"`
 	Name                   string                                             `json:"name"`
-	OptInTags              []V1OrganizationSlugResponseOptInTags              `json:"opt_in_tags"`
+	OptInTags              []interface{}                                      `json:"opt_in_tags"`
 	Plan                   *V1OrganizationSlugResponsePlan                    `json:"plan,omitempty"`
 }
 
 // V1OrganizationSlugResponseAllowedReleaseChannels defines model for V1OrganizationSlugResponse.AllowedReleaseChannels.
 type V1OrganizationSlugResponseAllowedReleaseChannels string
-
-// V1OrganizationSlugResponseOptInTags defines model for V1OrganizationSlugResponse.OptInTags.
-type V1OrganizationSlugResponseOptInTags string
 
 // V1OrganizationSlugResponsePlan defines model for V1OrganizationSlugResponse.Plan.
 type V1OrganizationSlugResponsePlan string
@@ -8883,15 +8962,20 @@ type bearerContextKey string
 // V1DeleteABranchParams defines parameters for V1DeleteABranch.
 type V1DeleteABranchParams struct {
 	// Force If set to false, schedule deletion with 1-hour grace period (only when soft deletion is enabled).
-	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+	Force *string `form:"force,omitempty" json:"force,omitempty"`
 }
 
 // V1DiffABranchParams defines parameters for V1DiffABranch.
 type V1DiffABranchParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
 
-	// Pgdelta Use pg-delta instead of Migra for diffing when true
-	Pgdelta *bool `form:"pgdelta,omitempty" json:"pgdelta,omitempty"`
+	// Pgdelta Use pg-delta instead of Migra for diffing when true.
+	// Boolean string.
+	//
+	// Truthy values: `true`, `1`, `yes`, `on`, `y`, `enabled`
+	//
+	// Falsy values: `false`, `0`, `no`, `off`, `n`, `disabled`
+	Pgdelta *string `form:"pgdelta,omitempty" json:"pgdelta,omitempty"`
 }
 
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
@@ -9028,42 +9112,62 @@ type V1GetProjectUsageApiCountParamsInterval string
 
 // V1GetProjectApiKeysParams defines parameters for V1GetProjectApiKeys.
 type V1GetProjectApiKeysParams struct {
-	// Reveal Boolean string, true or false
-	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+	// Reveal Boolean string.
+	//
+	// Truthy values: `true`, `1`, `yes`, `on`, `y`, `enabled`
+	//
+	// Falsy values: `false`, `0`, `no`, `off`, `n`, `disabled`
+	Reveal *string `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // V1CreateProjectApiKeyParams defines parameters for V1CreateProjectApiKey.
 type V1CreateProjectApiKeyParams struct {
-	// Reveal Boolean string, true or false
-	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+	// Reveal Boolean string.
+	//
+	// Truthy values: `true`, `1`, `yes`, `on`, `y`, `enabled`
+	//
+	// Falsy values: `false`, `0`, `no`, `off`, `n`, `disabled`
+	Reveal *string `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // V1UpdateProjectLegacyApiKeysParams defines parameters for V1UpdateProjectLegacyApiKeys.
 type V1UpdateProjectLegacyApiKeysParams struct {
-	// Enabled Boolean string, true or false
-	Enabled bool `form:"enabled" json:"enabled"`
+	// Enabled Boolean string.
+	//
+	// Truthy values: `true`, `1`, `yes`, `on`, `y`, `enabled`
+	//
+	// Falsy values: `false`, `0`, `no`, `off`, `n`, `disabled`
+	Enabled string `form:"enabled" json:"enabled"`
 }
 
 // V1DeleteProjectApiKeyParams defines parameters for V1DeleteProjectApiKey.
 type V1DeleteProjectApiKeyParams struct {
 	// Reveal Boolean string, true or false
-	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+	Reveal *string `form:"reveal,omitempty" json:"reveal,omitempty"`
 
 	// WasCompromised Boolean string, true or false
-	WasCompromised *bool   `form:"was_compromised,omitempty" json:"was_compromised,omitempty"`
+	WasCompromised *string `form:"was_compromised,omitempty" json:"was_compromised,omitempty"`
 	Reason         *string `form:"reason,omitempty" json:"reason,omitempty"`
 }
 
 // V1GetProjectApiKeyParams defines parameters for V1GetProjectApiKey.
 type V1GetProjectApiKeyParams struct {
-	// Reveal Boolean string, true or false
-	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+	// Reveal Boolean string.
+	//
+	// Truthy values: `true`, `1`, `yes`, `on`, `y`, `enabled`
+	//
+	// Falsy values: `false`, `0`, `no`, `off`, `n`, `disabled`
+	Reveal *string `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // V1UpdateProjectApiKeyParams defines parameters for V1UpdateProjectApiKey.
 type V1UpdateProjectApiKeyParams struct {
-	// Reveal Boolean string, true or false
-	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+	// Reveal Boolean string.
+	//
+	// Truthy values: `true`, `1`, `yes`, `on`, `y`, `enabled`
+	//
+	// Falsy values: `false`, `0`, `no`, `off`, `n`, `disabled`
+	Reveal *string `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // V1RemoveProjectAddonParamsAddonVariant0 defines parameters for V1RemoveProjectAddon.
@@ -9081,7 +9185,7 @@ type V1RemoveProjectAddonParamsAddonVariant3 string
 // V1DeleteHostnameConfigParams defines parameters for V1DeleteHostnameConfig.
 type V1DeleteHostnameConfigParams struct {
 	// RemoveAddon If true, also removes the custom domain add-on from the project subscription.
-	RemoveAddon *bool `form:"remove_addon,omitempty" json:"remove_addon,omitempty"`
+	RemoveAddon *string `form:"remove_addon,omitempty" json:"remove_addon,omitempty"`
 }
 
 // V1GetRestorePointParams defines parameters for V1GetRestorePoint.
@@ -9115,14 +9219,10 @@ type V1GetDatabaseOpenapiParams struct {
 
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
-	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name *string `form:"name,omitempty" json:"name,omitempty"`
-
-	// VerifyJwt Boolean string, true or false
-	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-
-	// ImportMap Boolean string, true or false
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name           *string `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt      *string `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap      *string `form:"import_map,omitempty" json:"import_map,omitempty"`
 	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
 	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 	EzbrSha256     *string `form:"ezbr_sha256,omitempty" json:"ezbr_sha256,omitempty"`
@@ -9130,22 +9230,16 @@ type V1CreateAFunctionParams struct {
 
 // V1DeployAFunctionParams defines parameters for V1DeployAFunction.
 type V1DeployAFunctionParams struct {
-	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
-
-	// BundleOnly Boolean string, true or false
-	BundleOnly *bool `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
+	Slug       *string `form:"slug,omitempty" json:"slug,omitempty"`
+	BundleOnly *string `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
 }
 
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
 type V1UpdateAFunctionParams struct {
-	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name *string `form:"name,omitempty" json:"name,omitempty"`
-
-	// VerifyJwt Boolean string, true or false
-	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-
-	// ImportMap Boolean string, true or false
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name           *string `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt      *string `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap      *string `form:"import_map,omitempty" json:"import_map,omitempty"`
 	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
 	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 	EzbrSha256     *string `form:"ezbr_sha256,omitempty" json:"ezbr_sha256,omitempty"`
@@ -9153,12 +9247,59 @@ type V1UpdateAFunctionParams struct {
 
 // V1GetServicesHealthParams defines parameters for V1GetServicesHealth.
 type V1GetServicesHealthParams struct {
+	// Services Comma-separated list of enums or array of enums.
 	Services  []V1GetServicesHealthParamsServices `form:"services" json:"services"`
 	TimeoutMs *int                                `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
 }
 
 // V1GetServicesHealthParamsServices defines parameters for V1GetServicesHealth.
 type V1GetServicesHealthParamsServices string
+
+// V1GetJitAccessConfig200JSONResponseBody0 defines parameters for V1GetJitAccessConfig.
+type V1GetJitAccessConfig200JSONResponseBody0 struct {
+	AppliedSuccessfully *bool                                         `json:"appliedSuccessfully,omitempty"`
+	State               V1GetJitAccessConfig200JSONResponseBody0State `json:"state"`
+}
+
+// V1GetJitAccessConfig200JSONResponseBody0State defines parameters for V1GetJitAccessConfig.
+type V1GetJitAccessConfig200JSONResponseBody0State string
+
+// V1GetJitAccessConfig200JSONResponseBody1 defines parameters for V1GetJitAccessConfig.
+type V1GetJitAccessConfig200JSONResponseBody1 struct {
+	State             string                                                    `json:"state"`
+	UnavailableReason V1GetJitAccessConfig200JSONResponseBody1UnavailableReason `json:"unavailableReason"`
+}
+
+// V1GetJitAccessConfig200JSONResponseBody1UnavailableReason defines parameters for V1GetJitAccessConfig.
+type V1GetJitAccessConfig200JSONResponseBody1UnavailableReason string
+
+// V1GetJitAccessConfig200JSONResponseBody defines parameters for V1GetJitAccessConfig.
+type V1GetJitAccessConfig200JSONResponseBody struct {
+	union json.RawMessage
+}
+
+// V1UpdateJitAccessConfig200JSONResponseBody0 defines parameters for V1UpdateJitAccessConfig.
+type V1UpdateJitAccessConfig200JSONResponseBody0 struct {
+	AppliedSuccessfully *bool                                            `json:"appliedSuccessfully,omitempty"`
+	State               V1UpdateJitAccessConfig200JSONResponseBody0State `json:"state"`
+}
+
+// V1UpdateJitAccessConfig200JSONResponseBody0State defines parameters for V1UpdateJitAccessConfig.
+type V1UpdateJitAccessConfig200JSONResponseBody0State string
+
+// V1UpdateJitAccessConfig200JSONResponseBody1 defines parameters for V1UpdateJitAccessConfig.
+type V1UpdateJitAccessConfig200JSONResponseBody1 struct {
+	State             string                                                       `json:"state"`
+	UnavailableReason V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason `json:"unavailableReason"`
+}
+
+// V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason defines parameters for V1UpdateJitAccessConfig.
+type V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason string
+
+// V1UpdateJitAccessConfig200JSONResponseBody defines parameters for V1UpdateJitAccessConfig.
+type V1UpdateJitAccessConfig200JSONResponseBody struct {
+	union json.RawMessage
+}
 
 // V1GenerateTypescriptTypesParams defines parameters for V1GenerateTypescriptTypes.
 type V1GenerateTypescriptTypesParams struct {
@@ -9689,6 +9830,68 @@ func (t *ApplyProjectAddonBody_AddonVariant) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsAuthorizeJitAccessBodyRhost0 returns the union data inside the AuthorizeJitAccessBody_Rhost as a AuthorizeJitAccessBodyRhost0
+func (t AuthorizeJitAccessBody_Rhost) AsAuthorizeJitAccessBodyRhost0() (AuthorizeJitAccessBodyRhost0, error) {
+	var body AuthorizeJitAccessBodyRhost0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAuthorizeJitAccessBodyRhost0 overwrites any union data inside the AuthorizeJitAccessBody_Rhost as the provided AuthorizeJitAccessBodyRhost0
+func (t *AuthorizeJitAccessBody_Rhost) FromAuthorizeJitAccessBodyRhost0(v AuthorizeJitAccessBodyRhost0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAuthorizeJitAccessBodyRhost0 performs a merge with any union data inside the AuthorizeJitAccessBody_Rhost, using the provided AuthorizeJitAccessBodyRhost0
+func (t *AuthorizeJitAccessBody_Rhost) MergeAuthorizeJitAccessBodyRhost0(v AuthorizeJitAccessBodyRhost0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAuthorizeJitAccessBodyRhost1 returns the union data inside the AuthorizeJitAccessBody_Rhost as a AuthorizeJitAccessBodyRhost1
+func (t AuthorizeJitAccessBody_Rhost) AsAuthorizeJitAccessBodyRhost1() (AuthorizeJitAccessBodyRhost1, error) {
+	var body AuthorizeJitAccessBodyRhost1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAuthorizeJitAccessBodyRhost1 overwrites any union data inside the AuthorizeJitAccessBody_Rhost as the provided AuthorizeJitAccessBodyRhost1
+func (t *AuthorizeJitAccessBody_Rhost) FromAuthorizeJitAccessBodyRhost1(v AuthorizeJitAccessBodyRhost1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAuthorizeJitAccessBodyRhost1 performs a merge with any union data inside the AuthorizeJitAccessBody_Rhost, using the provided AuthorizeJitAccessBodyRhost1
+func (t *AuthorizeJitAccessBody_Rhost) MergeAuthorizeJitAccessBodyRhost1(v AuthorizeJitAccessBodyRhost1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AuthorizeJitAccessBody_Rhost) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AuthorizeJitAccessBody_Rhost) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsCreateSigningKeyBodyPrivateJwk0 returns the union data inside the CreateSigningKeyBody_PrivateJwk as a CreateSigningKeyBodyPrivateJwk0
 func (t CreateSigningKeyBody_PrivateJwk) AsCreateSigningKeyBodyPrivateJwk0() (CreateSigningKeyBodyPrivateJwk0, error) {
 	var body CreateSigningKeyBodyPrivateJwk0
@@ -9985,68 +10188,6 @@ func (t JitListAccessResponse_Items_Item) MarshalJSON() ([]byte, error) {
 }
 
 func (t *JitListAccessResponse_Items_Item) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsJitStateResponse0 returns the union data inside the JitStateResponse as a JitStateResponse0
-func (t JitStateResponse) AsJitStateResponse0() (JitStateResponse0, error) {
-	var body JitStateResponse0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromJitStateResponse0 overwrites any union data inside the JitStateResponse as the provided JitStateResponse0
-func (t *JitStateResponse) FromJitStateResponse0(v JitStateResponse0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeJitStateResponse0 performs a merge with any union data inside the JitStateResponse, using the provided JitStateResponse0
-func (t *JitStateResponse) MergeJitStateResponse0(v JitStateResponse0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsJitStateResponse1 returns the union data inside the JitStateResponse as a JitStateResponse1
-func (t JitStateResponse) AsJitStateResponse1() (JitStateResponse1, error) {
-	var body JitStateResponse1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromJitStateResponse1 overwrites any union data inside the JitStateResponse as the provided JitStateResponse1
-func (t *JitStateResponse) FromJitStateResponse1(v JitStateResponse1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeJitStateResponse1 performs a merge with any union data inside the JitStateResponse, using the provided JitStateResponse1
-func (t *JitStateResponse) MergeJitStateResponse1(v JitStateResponse1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t JitStateResponse) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *JitStateResponse) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -10487,6 +10628,244 @@ func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []
 	return err
 }
 
+// AsListProjectAddonsResponseJsonValue0 returns the union data inside the ListProjectAddonsResponseJsonValue as a ListProjectAddonsResponseJsonValue0
+func (t ListProjectAddonsResponseJsonValue) AsListProjectAddonsResponseJsonValue0() (ListProjectAddonsResponseJsonValue0, error) {
+	var body ListProjectAddonsResponseJsonValue0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseJsonValue0 overwrites any union data inside the ListProjectAddonsResponseJsonValue as the provided ListProjectAddonsResponseJsonValue0
+func (t *ListProjectAddonsResponseJsonValue) FromListProjectAddonsResponseJsonValue0(v ListProjectAddonsResponseJsonValue0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseJsonValue0 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue, using the provided ListProjectAddonsResponseJsonValue0
+func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonValue0(v ListProjectAddonsResponseJsonValue0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseJsonValue1 returns the union data inside the ListProjectAddonsResponseJsonValue as a ListProjectAddonsResponseJsonValue1
+func (t ListProjectAddonsResponseJsonValue) AsListProjectAddonsResponseJsonValue1() (ListProjectAddonsResponseJsonValue1, error) {
+	var body ListProjectAddonsResponseJsonValue1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseJsonValue1 overwrites any union data inside the ListProjectAddonsResponseJsonValue as the provided ListProjectAddonsResponseJsonValue1
+func (t *ListProjectAddonsResponseJsonValue) FromListProjectAddonsResponseJsonValue1(v ListProjectAddonsResponseJsonValue1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseJsonValue1 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue, using the provided ListProjectAddonsResponseJsonValue1
+func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonValue1(v ListProjectAddonsResponseJsonValue1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseJsonValue2 returns the union data inside the ListProjectAddonsResponseJsonValue as a ListProjectAddonsResponseJsonValue2
+func (t ListProjectAddonsResponseJsonValue) AsListProjectAddonsResponseJsonValue2() (ListProjectAddonsResponseJsonValue2, error) {
+	var body ListProjectAddonsResponseJsonValue2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseJsonValue2 overwrites any union data inside the ListProjectAddonsResponseJsonValue as the provided ListProjectAddonsResponseJsonValue2
+func (t *ListProjectAddonsResponseJsonValue) FromListProjectAddonsResponseJsonValue2(v ListProjectAddonsResponseJsonValue2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseJsonValue2 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue, using the provided ListProjectAddonsResponseJsonValue2
+func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonValue2(v ListProjectAddonsResponseJsonValue2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListProjectAddonsResponseJsonValue) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ListProjectAddonsResponseJsonValue) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsListProjectAddonsResponseJsonValue00 returns the union data inside the ListProjectAddonsResponseJsonValue0 as a ListProjectAddonsResponseJsonValue00
+func (t ListProjectAddonsResponseJsonValue0) AsListProjectAddonsResponseJsonValue00() (ListProjectAddonsResponseJsonValue00, error) {
+	var body ListProjectAddonsResponseJsonValue00
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseJsonValue00 overwrites any union data inside the ListProjectAddonsResponseJsonValue0 as the provided ListProjectAddonsResponseJsonValue00
+func (t *ListProjectAddonsResponseJsonValue0) FromListProjectAddonsResponseJsonValue00(v ListProjectAddonsResponseJsonValue00) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseJsonValue00 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue0, using the provided ListProjectAddonsResponseJsonValue00
+func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJsonValue00(v ListProjectAddonsResponseJsonValue00) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseJsonValue01 returns the union data inside the ListProjectAddonsResponseJsonValue0 as a ListProjectAddonsResponseJsonValue01
+func (t ListProjectAddonsResponseJsonValue0) AsListProjectAddonsResponseJsonValue01() (ListProjectAddonsResponseJsonValue01, error) {
+	var body ListProjectAddonsResponseJsonValue01
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseJsonValue01 overwrites any union data inside the ListProjectAddonsResponseJsonValue0 as the provided ListProjectAddonsResponseJsonValue01
+func (t *ListProjectAddonsResponseJsonValue0) FromListProjectAddonsResponseJsonValue01(v ListProjectAddonsResponseJsonValue01) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseJsonValue01 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue0, using the provided ListProjectAddonsResponseJsonValue01
+func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJsonValue01(v ListProjectAddonsResponseJsonValue01) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseJsonValue02 returns the union data inside the ListProjectAddonsResponseJsonValue0 as a ListProjectAddonsResponseJsonValue02
+func (t ListProjectAddonsResponseJsonValue0) AsListProjectAddonsResponseJsonValue02() (ListProjectAddonsResponseJsonValue02, error) {
+	var body ListProjectAddonsResponseJsonValue02
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseJsonValue02 overwrites any union data inside the ListProjectAddonsResponseJsonValue0 as the provided ListProjectAddonsResponseJsonValue02
+func (t *ListProjectAddonsResponseJsonValue0) FromListProjectAddonsResponseJsonValue02(v ListProjectAddonsResponseJsonValue02) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseJsonValue02 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue0, using the provided ListProjectAddonsResponseJsonValue02
+func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJsonValue02(v ListProjectAddonsResponseJsonValue02) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListProjectAddonsResponseJsonValue0) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ListProjectAddonsResponseJsonValue0) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors6ObjType0 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as a ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) AsProjectUpgradeEligibilityResponseValidationErrors6ObjType0() (ProjectUpgradeEligibilityResponseValidationErrors6ObjType0, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors6ObjType0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) FromProjectUpgradeEligibilityResponseValidationErrors6ObjType0(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType, using the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType0(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors6ObjType1 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as a ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) AsProjectUpgradeEligibilityResponseValidationErrors6ObjType1() (ProjectUpgradeEligibilityResponseValidationErrors6ObjType1, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors6ObjType1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) FromProjectUpgradeEligibilityResponseValidationErrors6ObjType1(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType, using the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType1(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsProjectUpgradeEligibilityResponseValidationErrors0 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors0
 func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors0() (ProjectUpgradeEligibilityResponseValidationErrors0, error) {
 	var body ProjectUpgradeEligibilityResponseValidationErrors0
@@ -10841,6 +11220,182 @@ func (t ProjectUpgradeEligibilityResponse_Warnings_Item) MarshalJSON() ([]byte, 
 }
 
 func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsUpdateCustomHostnameResponseJsonValue0 returns the union data inside the UpdateCustomHostnameResponseJsonValue as a UpdateCustomHostnameResponseJsonValue0
+func (t UpdateCustomHostnameResponseJsonValue) AsUpdateCustomHostnameResponseJsonValue0() (UpdateCustomHostnameResponseJsonValue0, error) {
+	var body UpdateCustomHostnameResponseJsonValue0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateCustomHostnameResponseJsonValue0 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue as the provided UpdateCustomHostnameResponseJsonValue0
+func (t *UpdateCustomHostnameResponseJsonValue) FromUpdateCustomHostnameResponseJsonValue0(v UpdateCustomHostnameResponseJsonValue0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateCustomHostnameResponseJsonValue0 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue, using the provided UpdateCustomHostnameResponseJsonValue0
+func (t *UpdateCustomHostnameResponseJsonValue) MergeUpdateCustomHostnameResponseJsonValue0(v UpdateCustomHostnameResponseJsonValue0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateCustomHostnameResponseJsonValue1 returns the union data inside the UpdateCustomHostnameResponseJsonValue as a UpdateCustomHostnameResponseJsonValue1
+func (t UpdateCustomHostnameResponseJsonValue) AsUpdateCustomHostnameResponseJsonValue1() (UpdateCustomHostnameResponseJsonValue1, error) {
+	var body UpdateCustomHostnameResponseJsonValue1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateCustomHostnameResponseJsonValue1 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue as the provided UpdateCustomHostnameResponseJsonValue1
+func (t *UpdateCustomHostnameResponseJsonValue) FromUpdateCustomHostnameResponseJsonValue1(v UpdateCustomHostnameResponseJsonValue1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateCustomHostnameResponseJsonValue1 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue, using the provided UpdateCustomHostnameResponseJsonValue1
+func (t *UpdateCustomHostnameResponseJsonValue) MergeUpdateCustomHostnameResponseJsonValue1(v UpdateCustomHostnameResponseJsonValue1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateCustomHostnameResponseJsonValue2 returns the union data inside the UpdateCustomHostnameResponseJsonValue as a UpdateCustomHostnameResponseJsonValue2
+func (t UpdateCustomHostnameResponseJsonValue) AsUpdateCustomHostnameResponseJsonValue2() (UpdateCustomHostnameResponseJsonValue2, error) {
+	var body UpdateCustomHostnameResponseJsonValue2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateCustomHostnameResponseJsonValue2 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue as the provided UpdateCustomHostnameResponseJsonValue2
+func (t *UpdateCustomHostnameResponseJsonValue) FromUpdateCustomHostnameResponseJsonValue2(v UpdateCustomHostnameResponseJsonValue2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateCustomHostnameResponseJsonValue2 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue, using the provided UpdateCustomHostnameResponseJsonValue2
+func (t *UpdateCustomHostnameResponseJsonValue) MergeUpdateCustomHostnameResponseJsonValue2(v UpdateCustomHostnameResponseJsonValue2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t UpdateCustomHostnameResponseJsonValue) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *UpdateCustomHostnameResponseJsonValue) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsUpdateCustomHostnameResponseJsonValue00 returns the union data inside the UpdateCustomHostnameResponseJsonValue0 as a UpdateCustomHostnameResponseJsonValue00
+func (t UpdateCustomHostnameResponseJsonValue0) AsUpdateCustomHostnameResponseJsonValue00() (UpdateCustomHostnameResponseJsonValue00, error) {
+	var body UpdateCustomHostnameResponseJsonValue00
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateCustomHostnameResponseJsonValue00 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue0 as the provided UpdateCustomHostnameResponseJsonValue00
+func (t *UpdateCustomHostnameResponseJsonValue0) FromUpdateCustomHostnameResponseJsonValue00(v UpdateCustomHostnameResponseJsonValue00) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateCustomHostnameResponseJsonValue00 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue0, using the provided UpdateCustomHostnameResponseJsonValue00
+func (t *UpdateCustomHostnameResponseJsonValue0) MergeUpdateCustomHostnameResponseJsonValue00(v UpdateCustomHostnameResponseJsonValue00) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateCustomHostnameResponseJsonValue01 returns the union data inside the UpdateCustomHostnameResponseJsonValue0 as a UpdateCustomHostnameResponseJsonValue01
+func (t UpdateCustomHostnameResponseJsonValue0) AsUpdateCustomHostnameResponseJsonValue01() (UpdateCustomHostnameResponseJsonValue01, error) {
+	var body UpdateCustomHostnameResponseJsonValue01
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateCustomHostnameResponseJsonValue01 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue0 as the provided UpdateCustomHostnameResponseJsonValue01
+func (t *UpdateCustomHostnameResponseJsonValue0) FromUpdateCustomHostnameResponseJsonValue01(v UpdateCustomHostnameResponseJsonValue01) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateCustomHostnameResponseJsonValue01 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue0, using the provided UpdateCustomHostnameResponseJsonValue01
+func (t *UpdateCustomHostnameResponseJsonValue0) MergeUpdateCustomHostnameResponseJsonValue01(v UpdateCustomHostnameResponseJsonValue01) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateCustomHostnameResponseJsonValue02 returns the union data inside the UpdateCustomHostnameResponseJsonValue0 as a UpdateCustomHostnameResponseJsonValue02
+func (t UpdateCustomHostnameResponseJsonValue0) AsUpdateCustomHostnameResponseJsonValue02() (UpdateCustomHostnameResponseJsonValue02, error) {
+	var body UpdateCustomHostnameResponseJsonValue02
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateCustomHostnameResponseJsonValue02 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue0 as the provided UpdateCustomHostnameResponseJsonValue02
+func (t *UpdateCustomHostnameResponseJsonValue0) FromUpdateCustomHostnameResponseJsonValue02(v UpdateCustomHostnameResponseJsonValue02) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateCustomHostnameResponseJsonValue02 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue0, using the provided UpdateCustomHostnameResponseJsonValue02
+func (t *UpdateCustomHostnameResponseJsonValue0) MergeUpdateCustomHostnameResponseJsonValue02(v UpdateCustomHostnameResponseJsonValue02) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t UpdateCustomHostnameResponseJsonValue0) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *UpdateCustomHostnameResponseJsonValue0) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -11203,6 +11758,130 @@ func (t V1ServiceHealthResponse_Info) MarshalJSON() ([]byte, error) {
 }
 
 func (t *V1ServiceHealthResponse_Info) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsV1GetJitAccessConfig200JSONResponseBody0 returns the union data inside the V1GetJitAccessConfig200JSONResponseBody as a V1GetJitAccessConfig200JSONResponseBody0
+func (t V1GetJitAccessConfig200JSONResponseBody) AsV1GetJitAccessConfig200JSONResponseBody0() (V1GetJitAccessConfig200JSONResponseBody0, error) {
+	var body V1GetJitAccessConfig200JSONResponseBody0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1GetJitAccessConfig200JSONResponseBody0 overwrites any union data inside the V1GetJitAccessConfig200JSONResponseBody as the provided V1GetJitAccessConfig200JSONResponseBody0
+func (t *V1GetJitAccessConfig200JSONResponseBody) FromV1GetJitAccessConfig200JSONResponseBody0(v V1GetJitAccessConfig200JSONResponseBody0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1GetJitAccessConfig200JSONResponseBody0 performs a merge with any union data inside the V1GetJitAccessConfig200JSONResponseBody, using the provided V1GetJitAccessConfig200JSONResponseBody0
+func (t *V1GetJitAccessConfig200JSONResponseBody) MergeV1GetJitAccessConfig200JSONResponseBody0(v V1GetJitAccessConfig200JSONResponseBody0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1GetJitAccessConfig200JSONResponseBody1 returns the union data inside the V1GetJitAccessConfig200JSONResponseBody as a V1GetJitAccessConfig200JSONResponseBody1
+func (t V1GetJitAccessConfig200JSONResponseBody) AsV1GetJitAccessConfig200JSONResponseBody1() (V1GetJitAccessConfig200JSONResponseBody1, error) {
+	var body V1GetJitAccessConfig200JSONResponseBody1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1GetJitAccessConfig200JSONResponseBody1 overwrites any union data inside the V1GetJitAccessConfig200JSONResponseBody as the provided V1GetJitAccessConfig200JSONResponseBody1
+func (t *V1GetJitAccessConfig200JSONResponseBody) FromV1GetJitAccessConfig200JSONResponseBody1(v V1GetJitAccessConfig200JSONResponseBody1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1GetJitAccessConfig200JSONResponseBody1 performs a merge with any union data inside the V1GetJitAccessConfig200JSONResponseBody, using the provided V1GetJitAccessConfig200JSONResponseBody1
+func (t *V1GetJitAccessConfig200JSONResponseBody) MergeV1GetJitAccessConfig200JSONResponseBody1(v V1GetJitAccessConfig200JSONResponseBody1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t V1GetJitAccessConfig200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *V1GetJitAccessConfig200JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsV1UpdateJitAccessConfig200JSONResponseBody0 returns the union data inside the V1UpdateJitAccessConfig200JSONResponseBody as a V1UpdateJitAccessConfig200JSONResponseBody0
+func (t V1UpdateJitAccessConfig200JSONResponseBody) AsV1UpdateJitAccessConfig200JSONResponseBody0() (V1UpdateJitAccessConfig200JSONResponseBody0, error) {
+	var body V1UpdateJitAccessConfig200JSONResponseBody0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1UpdateJitAccessConfig200JSONResponseBody0 overwrites any union data inside the V1UpdateJitAccessConfig200JSONResponseBody as the provided V1UpdateJitAccessConfig200JSONResponseBody0
+func (t *V1UpdateJitAccessConfig200JSONResponseBody) FromV1UpdateJitAccessConfig200JSONResponseBody0(v V1UpdateJitAccessConfig200JSONResponseBody0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1UpdateJitAccessConfig200JSONResponseBody0 performs a merge with any union data inside the V1UpdateJitAccessConfig200JSONResponseBody, using the provided V1UpdateJitAccessConfig200JSONResponseBody0
+func (t *V1UpdateJitAccessConfig200JSONResponseBody) MergeV1UpdateJitAccessConfig200JSONResponseBody0(v V1UpdateJitAccessConfig200JSONResponseBody0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1UpdateJitAccessConfig200JSONResponseBody1 returns the union data inside the V1UpdateJitAccessConfig200JSONResponseBody as a V1UpdateJitAccessConfig200JSONResponseBody1
+func (t V1UpdateJitAccessConfig200JSONResponseBody) AsV1UpdateJitAccessConfig200JSONResponseBody1() (V1UpdateJitAccessConfig200JSONResponseBody1, error) {
+	var body V1UpdateJitAccessConfig200JSONResponseBody1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1UpdateJitAccessConfig200JSONResponseBody1 overwrites any union data inside the V1UpdateJitAccessConfig200JSONResponseBody as the provided V1UpdateJitAccessConfig200JSONResponseBody1
+func (t *V1UpdateJitAccessConfig200JSONResponseBody) FromV1UpdateJitAccessConfig200JSONResponseBody1(v V1UpdateJitAccessConfig200JSONResponseBody1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1UpdateJitAccessConfig200JSONResponseBody1 performs a merge with any union data inside the V1UpdateJitAccessConfig200JSONResponseBody, using the provided V1UpdateJitAccessConfig200JSONResponseBody1
+func (t *V1UpdateJitAccessConfig200JSONResponseBody) MergeV1UpdateJitAccessConfig200JSONResponseBody1(v V1UpdateJitAccessConfig200JSONResponseBody1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t V1UpdateJitAccessConfig200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *V1UpdateJitAccessConfig200JSONResponseBody) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

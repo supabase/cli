@@ -3,6 +3,7 @@ import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -18,7 +19,7 @@ import {
   legacyApplyMigrations,
   legacySeedGlobals,
 } from "../../../shared/legacy-migration-apply.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -36,7 +37,6 @@ import {
   legacyFindPendingMigrations,
   legacyIncludeAllPending,
   legacySuggestIgnoreFlag,
-  legacySuggestRevertHistory,
 } from "../shared/legacy-migration-pending.ts";
 import {
   type LegacySeedFile,
@@ -46,7 +46,10 @@ import {
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
 // Listing the remote `schema_migrations` history (with the 42P01 → empty rule)
 // lives in the shared migration-history module (Go's `migration.ListRemoteMigrations`).
-import { legacyListRemoteMigrations } from "../../../shared/legacy-migration-history.ts";
+import {
+  legacyListRemoteMigrations,
+  legacySuggestRevertHistory,
+} from "../../../shared/legacy-migration-history.ts";
 import type { LegacyDbPushFlags } from "./push.command.ts";
 import {
   LegacyDbPushApplyError,
@@ -178,7 +181,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             return yield* Effect.fail(
               new LegacyDbPushMissingLocalError({
                 message: LEGACY_ERR_MISSING_LOCAL,
-                suggestion: legacySuggestRevertHistory(result.versions),
+                suggestion: legacySuggestRevertHistory(result.versions, connType === "local"),
               }),
             );
           }
@@ -268,7 +271,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             );
             if (!ok) {
               return yield* Effect.fail(
-                new LegacyDbPushCancelledError({ message: "context canceled" }),
+                new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
               );
             }
             yield* legacySeedGlobals(
@@ -290,7 +293,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             );
             if (!ok) {
               return yield* Effect.fail(
-                new LegacyDbPushCancelledError({ message: "context canceled" }),
+                new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
               );
             }
             yield* legacyUpsertVaultSecrets(session, vaultSecrets);
@@ -333,7 +336,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             );
             if (!ok) {
               return yield* Effect.fail(
-                new LegacyDbPushCancelledError({ message: "context canceled" }),
+                new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
               );
             }
             yield* legacySeedData(session, fs, workdir, path, seeds, applyError);

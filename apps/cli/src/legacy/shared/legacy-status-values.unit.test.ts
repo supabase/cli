@@ -7,7 +7,7 @@ import {
   legacyStatusContainerIds,
   legacyStatusValues,
   type LegacyStatusContainerIds,
-} from "./status.values.ts";
+} from "./legacy-status-values.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 

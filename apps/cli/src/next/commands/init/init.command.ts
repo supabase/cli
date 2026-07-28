@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Command, Flag } from "effect/unstable/cli";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { init } from "./init.handler.ts";
 
@@ -38,5 +39,8 @@ export const initCommand = Command.make("init", config).pipe(
     init(flags).pipe(withCommandInstrumentation({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["init"])),
+  // `stdinLayer` satisfies the shared IDE prompts' `Stdin` requirement; they are
+  // gated on a TTY stdin, so init never reads a piped line at runtime.
+  Command.provide(stdinLayer),
   Command.provide(BunServices.layer),
 );

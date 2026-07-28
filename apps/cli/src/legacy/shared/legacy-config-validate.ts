@@ -10,7 +10,7 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  *   Effect-based, fails with `LegacyDbConfigLoadError`. Feeds ~15 db/migration commands via
  *   `legacy-db-config.layer.ts`.
  * - **L** = `legacy-local-config-values.ts` — decoded `@supabase/config` `ProjectConfig`,
- *   synchronous `node:fs`, throws plain `Error`. Feeds `status/status.values.ts` and
+ *   synchronous `node:fs`, throws plain `Error`. Feeds `legacy-status-values.ts` and
  *   `stop/stop.handler.ts`.
  *
  * **This file is the SINGLE home for `Config.Validate` parity going forward.

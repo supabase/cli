@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
@@ -304,8 +305,6 @@ const flags = (over: Partial<LegacyDbPullFlags> = {}): LegacyDbPullFlags => ({
   password: over.password ?? Option.none(),
 });
 
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 const streamText = (out: ReturnType<typeof mockOutput>, stream: "stdout" | "stderr") =>
   stripAnsi(
     out.rawChunks
@@ -1236,6 +1235,16 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ local: Option.some(true) }));
       expect(s.provisionCalls[0]?.targetLocal).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("db pull --local keeps migration repair suggestions local", () => {
+    seedMigration(tmp.current, "20240102000000");
+    const s = setup(tmp.current, { remoteVersions: ["20240101000000"] });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      expect(JSON.stringify(exit)).toContain("migration repair --local --status reverted");
+      expect(JSON.stringify(exit)).toContain("migration repair --local --status applied");
     }).pipe(Effect.provide(s.layer));
   });
 

@@ -1,4 +1,8 @@
 import { Option } from "effect";
+import {
+  legacyBindMountSpecSource,
+  legacyIsBindMountSource,
+} from "./legacy-docker-bind-classify.ts";
 import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 
 /**
@@ -40,13 +44,6 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
   ];
 }
 
-// Go's `loader.ParseVolume` bind-vs-named classification (docker/cli `volumespec`
-// `isFilePath`): a bind's source is a bind mount when it looks like a file path
-// (starts with `.`, `/`, `~`, or a Windows drive/UNC); otherwise it is a named volume.
-function isBindMountSource(source: string): boolean {
-  return /^[.~/]/.test(source) || /^[A-Za-z]:[\\/]/.test(source) || source.startsWith("\\\\");
-}
-
 /**
  * Mirror Go's `DockerStart` Bitbucket Pipelines handling
  * (`apps/cli-go/internal/utils/docker.go:275-304`): when `BITBUCKET_CLONE_DIR` is set,
@@ -62,7 +59,7 @@ export function legacyApplyBitbucketDockerFilter(
   if (!isBitbucket) return opts;
   return {
     ...opts,
-    binds: opts.binds.filter((bind) => isBindMountSource(bind.split(":")[0] ?? "")),
+    binds: opts.binds.filter((bind) => legacyIsBindMountSource(legacyBindMountSpecSource(bind))),
     securityOpt: [],
   };
 }

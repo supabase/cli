@@ -1,9 +1,10 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
-  LegacyYesFlag,
   legacyResolveExperimentalWithProjectEnv,
+  legacyResolveYesWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
@@ -53,7 +54,10 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
     const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
-    const yes = yield* LegacyYesFlag;
+    // `--yes` OR `SUPABASE_YES` (shell env or project `.env`): Go's prompts here
+    // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
+    // auto-confirm too, not just the flag (CLI-1974).
+    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
     // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
     // linked-project cache finalizer can read it after the body resolves it.
@@ -168,17 +172,18 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           );
         }
         if ((yield* hasDeclarativeFiles(fs, declarativeDir)) && !flags.overwrite) {
-          // Go asks via Console.PromptYesNo (db_schema_declarative.go:208, default
-          // false), which auto-returns true under the global --yes flag, so --yes
-          // regenerates without prompting instead of blocking in non-interactive mode.
-          const ok = yes
-            ? true
-            : yield* output.promptConfirm(
-                `Declarative schema already exists at ${legacyBold(
-                  declarativeDir,
-                )}. Regenerate from database? This will overwrite existing files.`,
-                { defaultValue: false },
-              );
+          // Go asks via Console.PromptYesNo (db_schema_declarative.go:268-270,
+          // default false): --yes/SUPABASE_YES auto-confirms WITH the
+          // `<label> [y/N] y` stderr echo (console.go:70-72) — routed through
+          // `legacyPromptYesNo` so the echo is not skipped (CLI-1974).
+          const ok = yield* legacyPromptYesNo(
+            output,
+            yes,
+            `Declarative schema already exists at ${legacyBold(
+              declarativeDir,
+            )}. Regenerate from database? This will overwrite existing files.`,
+            false,
+          );
           if (!ok) {
             yield* output.raw("Skipped generating declarative schema.\n", "stderr");
             return;
@@ -227,16 +232,17 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       const result = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
 
       if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
-        // Go's confirmOverwrite goes through Console.PromptYesNo, which returns true
-        // immediately when the global YES flag is set (`apps/cli-go/internal/utils/
-        // console.go:70-73`). Honor --yes here too, or non-interactive/JSON runs
-        // would error on the prompt and a TTY would block despite --yes.
-        const ok = yes
-          ? true
-          : yield* output.promptConfirm(
-              "Overwrite declarative schema? Existing files may be deleted.",
-              { defaultValue: false },
-            );
+        // Go's confirmOverwrite goes through Console.PromptYesNo (`internal/db/
+        // declarative/declarative.go:234`, default false): --yes/SUPABASE_YES
+        // auto-confirms WITH the `<label> [y/N] y` stderr echo (console.go:70-72)
+        // — routed through `legacyPromptYesNo` so the echo is not skipped
+        // (CLI-1974).
+        const ok = yield* legacyPromptYesNo(
+          output,
+          yes,
+          "Overwrite declarative schema? Existing files may be deleted.",
+          false,
+        );
         if (!ok) {
           yield* output.raw("Skipped writing declarative schema.\n", "stderr");
           return;

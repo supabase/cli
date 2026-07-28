@@ -3508,7 +3508,7 @@ func NewV1DeleteABranchRequest(server string, branchIdOrRef string, params *V1De
 
 		if params.Force != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -3662,7 +3662,7 @@ func NewV1DiffABranchRequest(server string, branchIdOrRef string, params *V1Diff
 
 		if params.Pgdelta != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "pgdelta", *params.Pgdelta, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "pgdelta", *params.Pgdelta, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5607,7 +5607,7 @@ func NewV1GetProjectApiKeysRequest(server string, ref string, params *V1GetProje
 
 		if params.Reveal != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5679,7 +5679,7 @@ func NewV1CreateProjectApiKeyRequestWithBody(server string, ref string, params *
 
 		if params.Reveal != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5774,7 +5774,7 @@ func NewV1UpdateProjectLegacyApiKeysRequest(server string, ref string, params *V
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "enabled", params.Enabled, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "enabled", params.Enabled, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -5840,7 +5840,7 @@ func NewV1DeleteProjectApiKeyRequest(server string, ref string, id openapi_types
 
 		if params.Reveal != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5852,7 +5852,7 @@ func NewV1DeleteProjectApiKeyRequest(server string, ref string, id openapi_types
 
 		if params.WasCompromised != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "was_compromised", *params.WasCompromised, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "was_compromised", *params.WasCompromised, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5932,7 +5932,7 @@ func NewV1GetProjectApiKeyRequest(server string, ref string, id openapi_types.UU
 
 		if params.Reveal != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -6011,7 +6011,7 @@ func NewV1UpdateProjectApiKeyRequestWithBody(server string, ref string, id opena
 
 		if params.Reveal != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "reveal", *params.Reveal, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -7824,7 +7824,7 @@ func NewV1DeleteHostnameConfigRequest(server string, ref string, params *V1Delet
 
 		if params.RemoveAddon != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "remove_addon", *params.RemoveAddon, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "remove_addon", *params.RemoveAddon, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -9385,7 +9385,7 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 
 		if params.VerifyJwt != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "verify_jwt", *params.VerifyJwt, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "verify_jwt", *params.VerifyJwt, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -9397,7 +9397,7 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 
 		if params.ImportMap != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "import_map", *params.ImportMap, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "import_map", *params.ImportMap, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -9555,7 +9555,7 @@ func NewV1DeployAFunctionRequestWithBody(server string, ref string, params *V1De
 
 		if params.BundleOnly != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "bundleOnly", *params.BundleOnly, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "bundleOnly", *params.BundleOnly, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -9742,7 +9742,7 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 
 		if params.VerifyJwt != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "verify_jwt", *params.VerifyJwt, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "verify_jwt", *params.VerifyJwt, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -9754,7 +9754,7 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 
 		if params.ImportMap != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "import_map", *params.ImportMap, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "import_map", *params.ImportMap, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -16131,7 +16131,7 @@ func (r V1GetServicesHealthResponse) ContentType() string {
 type V1GetJitAccessConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitStateResponse
+	JSON200      *V1GetJitAccessConfig200JSONResponseBody
 }
 
 // Status returns HTTPResponse.Status
@@ -16161,7 +16161,7 @@ func (r V1GetJitAccessConfigResponse) ContentType() string {
 type V1UpdateJitAccessConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitStateResponse
+	JSON200      *V1UpdateJitAccessConfig200JSONResponseBody
 }
 
 // Status returns HTTPResponse.Status
@@ -22422,7 +22422,7 @@ func ParseV1GetJitAccessConfigResponse(rsp *http.Response) (*V1GetJitAccessConfi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitStateResponse
+		var dest V1GetJitAccessConfig200JSONResponseBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22448,7 +22448,7 @@ func ParseV1UpdateJitAccessConfigResponse(rsp *http.Response) (*V1UpdateJitAcces
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitStateResponse
+		var dest V1UpdateJitAccessConfig200JSONResponseBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

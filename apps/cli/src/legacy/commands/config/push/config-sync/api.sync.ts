@@ -2,6 +2,7 @@ import type { ProjectConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.ts";
+import { legacyStrToArr } from "../../../../shared/legacy-local-config-values.ts";
 import { intToUint } from "../../../../shared/legacy-size-units.ts";
 
 /**
@@ -56,11 +57,6 @@ export interface RemoteApiConfig {
   readonly max_rows: number;
 }
 
-/** Go `strToArr`: empty string → `[]`, else comma-split (no trimming here). */
-function strToArr(v: string): Array<string> {
-  return v.length === 0 ? [] : v.split(",");
-}
-
 /** Projects the loaded `config.api` into the push subset. */
 export function apiSubsetFromConfig(config: ProjectConfig): ApiSubset {
   const api = config.api;
@@ -94,8 +90,8 @@ function applyRemoteApiConfig(local: ApiSubset, remote: RemoteApiConfig): ApiSub
   return {
     ...local,
     enabled: true,
-    schemas: strToArr(remote.db_schema).map((s) => s.trim()),
-    extra_search_path: strToArr(remote.db_extra_search_path).map((s) => s.trim()),
+    schemas: legacyStrToArr(remote.db_schema).map((s) => s.trim()),
+    extra_search_path: legacyStrToArr(remote.db_extra_search_path).map((s) => s.trim()),
     max_rows: intToUint(remote.max_rows),
   };
 }
