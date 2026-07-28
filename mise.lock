@@ -49,52 +49,52 @@ checksum = "sha256:c68c7903c1190101590cc1b2129835f47211b3b37ae87759f2b97d6534aa3
 url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-windows-x64-baseline.zip"
 
 [[tools.go]]
-version = "1.25.11"
+version = "1.26.5"
 backend = "core:go"
 
 [tools.go."platforms.linux-arm64"]
-checksum = "sha256:c30bf9e156a54ea4e31fbbbf31a712b32734b58cc9a22426fa5ee632d0885124"
-url = "https://dl.google.com/go/go1.25.11.linux-arm64.tar.gz"
+checksum = "sha256:fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49"
+url = "https://dl.google.com/go/go1.26.5.linux-arm64.tar.gz"
 
 [tools.go."platforms.linux-arm64-musl"]
-checksum = "sha256:c30bf9e156a54ea4e31fbbbf31a712b32734b58cc9a22426fa5ee632d0885124"
-url = "https://dl.google.com/go/go1.25.11.linux-arm64.tar.gz"
+checksum = "sha256:fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49"
+url = "https://dl.google.com/go/go1.26.5.linux-arm64.tar.gz"
 
 [tools.go."platforms.linux-x64"]
-checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
-url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
+checksum = "sha256:5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+url = "https://dl.google.com/go/go1.26.5.linux-amd64.tar.gz"
 
 [tools.go."platforms.linux-x64-baseline"]
-checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
-url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
+checksum = "sha256:5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+url = "https://dl.google.com/go/go1.26.5.linux-amd64.tar.gz"
 
 [tools.go."platforms.linux-x64-musl"]
-checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
-url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
+checksum = "sha256:5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+url = "https://dl.google.com/go/go1.26.5.linux-amd64.tar.gz"
 
 [tools.go."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
-url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
+checksum = "sha256:5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+url = "https://dl.google.com/go/go1.26.5.linux-amd64.tar.gz"
 
 [tools.go."platforms.macos-arm64"]
-checksum = "sha256:cd8d4920e7930d55da1a5a57ba43a64b1305f71cdf2ca3c76cd8c549272b1680"
-url = "https://dl.google.com/go/go1.25.11.darwin-arm64.tar.gz"
+checksum = "sha256:efb87ff28af9a188d0536ef5d42e63dd52ba8263cd7344a993cc48dd11dedb6a"
+url = "https://dl.google.com/go/go1.26.5.darwin-arm64.tar.gz"
 
 [tools.go."platforms.macos-x64"]
-checksum = "sha256:26d0ee4071de42b5c332337db9fdd234072877697c547e46e85efb0f59507c66"
-url = "https://dl.google.com/go/go1.25.11.darwin-amd64.tar.gz"
+checksum = "sha256:6231d8d3b8f5552ec6cbf6d685bdd5482e1e703214b120e89b3bf0d7bf1ef725"
+url = "https://dl.google.com/go/go1.26.5.darwin-amd64.tar.gz"
 
 [tools.go."platforms.macos-x64-baseline"]
-checksum = "sha256:26d0ee4071de42b5c332337db9fdd234072877697c547e46e85efb0f59507c66"
-url = "https://dl.google.com/go/go1.25.11.darwin-amd64.tar.gz"
+checksum = "sha256:6231d8d3b8f5552ec6cbf6d685bdd5482e1e703214b120e89b3bf0d7bf1ef725"
+url = "https://dl.google.com/go/go1.26.5.darwin-amd64.tar.gz"
 
 [tools.go."platforms.windows-x64"]
-checksum = "sha256:b7401f1b41517428e537493316256fb7cf03c66a130a0103ab07f3a2152e2112"
-url = "https://dl.google.com/go/go1.25.11.windows-amd64.zip"
+checksum = "sha256:97e6b2a833b6d89f9ff17d25419ac0a7e3b482a044e9ab18cdef834bd834fd38"
+url = "https://dl.google.com/go/go1.26.5.windows-amd64.zip"
 
 [tools.go."platforms.windows-x64-baseline"]
-checksum = "sha256:b7401f1b41517428e537493316256fb7cf03c66a130a0103ab07f3a2152e2112"
-url = "https://dl.google.com/go/go1.25.11.windows-amd64.zip"
+checksum = "sha256:97e6b2a833b6d89f9ff17d25419ac0a7e3b482a044e9ab18cdef834bd834fd38"
+url = "https://dl.google.com/go/go1.26.5.windows-amd64.zip"
 
 [[tools.golangci-lint]]
 version = "2.12.2"

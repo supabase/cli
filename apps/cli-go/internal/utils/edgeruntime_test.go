@@ -1,13 +1,96 @@
 package utils
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/h2non/gock"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 )
+
+// mockEdgeRuntimeLogs registers the docker responses RunEdgeRuntimeScript needs:
+// a one-shot log read multiplexing stdout+stderr, an inspect reporting the exit
+// code, and the container delete. Mirrors apitest.MockDockerErrorLogs but also
+// carries stdout so we can assert the success path preserves the script output.
+func mockEdgeRuntimeLogs(t *testing.T, containerID, stdout, stderr string, exitCode int) {
+	t.Helper()
+	var body bytes.Buffer
+	if len(stdout) > 0 {
+		_, err := io.Copy(stdcopy.NewStdWriter(&body, stdcopy.Stdout), strings.NewReader(stdout))
+		require.NoError(t, err)
+	}
+	if len(stderr) > 0 {
+		_, err := io.Copy(stdcopy.NewStdWriter(&body, stdcopy.Stderr), strings.NewReader(stderr))
+		require.NoError(t, err)
+	}
+	gock.New(Docker.DaemonHost()).
+		Get("/v"+Docker.ClientVersion()+"/containers/"+containerID+"/logs").
+		Reply(http.StatusOK).
+		SetHeader("Content-Type", "application/vnd.docker.raw-stream").
+		Body(&body)
+	gock.New(Docker.DaemonHost()).
+		Get("/v" + Docker.ClientVersion() + "/containers/" + containerID + "/json").
+		Reply(http.StatusOK).
+		JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			State: &container.State{ExitCode: exitCode},
+		}})
+	gock.New(Docker.DaemonHost()).
+		Delete("/v" + Docker.ClientVersion() + "/containers/" + containerID).
+		Reply(http.StatusOK)
+}
+
+func TestRunEdgeRuntimeScript(t *testing.T) {
+	const containerID = "test-edge-runtime"
+	imageUrl := GetRegistryImageUrl(Config.EdgeRuntime.Image)
+
+	t.Run("surfaces the real error when the script crashes behind the worker-destroyed message", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+		t.Cleanup(func() { viper.Set("INTERNAL_IMAGE_REGISTRY", "") })
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStart(Docker, imageUrl, containerID)
+		// The pg-delta template throws to force the worker to exit (surfacing as a
+		// non-zero exit + "main worker has been destroyed"), and its catch block
+		// prints the real error and the sentinel. This must NOT look like an empty diff.
+		stderr := "error: permission denied for table pg_user_mapping\n" +
+			EdgeRuntimeScriptErrorSentinel + "\n" +
+			"worker boot error\nmain worker has been destroyed\n"
+		mockEdgeRuntimeLogs(t, containerID, "", stderr, 1)
+
+		var stdout, stderrBuf bytes.Buffer
+		err := RunEdgeRuntimeScript(context.Background(), nil, "console.log('x')", nil, "error diffing schema", &stdout, &stderrBuf)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "error diffing schema: error running script:")
+		// The real, actionable error must reach the user, not "No schema changes found".
+		assert.Contains(t, err.Error(), "permission denied for table pg_user_mapping")
+	})
+
+	t.Run("still ignores a worker-destroyed exit when no sentinel is present", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+		t.Cleanup(func() { viper.Set("INTERNAL_IMAGE_REGISTRY", "") })
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStart(Docker, imageUrl, containerID)
+		// Success path: the template forces the worker to exit after writing output,
+		// so the exit is non-zero with "main worker has been destroyed" but no sentinel.
+		mockEdgeRuntimeLogs(t, containerID, "ALTER TABLE x;\n", "main worker has been destroyed\n", 1)
+
+		var stdout, stderrBuf bytes.Buffer
+		err := RunEdgeRuntimeScript(context.Background(), nil, "console.log('x')", nil, "error diffing schema", &stdout, &stderrBuf)
+		require.NoError(t, err)
+		assert.Equal(t, "ALTER TABLE x;\n", stdout.String())
+	})
+}
 
 func TestBuildEdgeRuntimeEntrypoint(t *testing.T) {
 	t.Run("emits a single heredoc when only the script is provided", func(t *testing.T) {

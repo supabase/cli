@@ -10,6 +10,8 @@ By default, all schemas in the target database are diffed. Use the `--schema pub
 
 Projects created by a recent `supabase init` default to the pg-delta diff engine (`[experimental.pgdelta] enabled = true` in `config.toml`). Existing projects are unaffected and keep using migra unless they opt in. To fall back to the legacy migra engine, set `enabled = false` under `[experimental.pgdelta]`, or pass `--use-migra` for a single run.
 
+With the pg-delta engine the diff SQL is formatted by default with the same settings the declarative export uses (uppercase keywords, wrapped at a max width of 180, indented and column-aligned); execution-aware transaction boundaries are preserved as per-unit header comments in the output. Configure overrides with `[experimental.pgdelta] format_options`, or set `format_options = "null"` to emit raw, unformatted statements.
+
 While the diff command is able to capture most schema changes, there are cases where it is known to fail. Currently, this could happen if you schema contains:
 
 - Changes to publication

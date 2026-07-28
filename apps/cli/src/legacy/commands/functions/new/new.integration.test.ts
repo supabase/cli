@@ -11,7 +11,8 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyFunctionsNew } from "./new.handler.ts";
 import { LEGACY_FUNCTIONS_NEW_DENO_JSON, LEGACY_FUNCTIONS_NEW_NPMRC } from "./new.templates.ts";
@@ -24,6 +25,8 @@ interface SetupOptions {
   readonly stdoutIsTty?: boolean;
   readonly yes?: boolean;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
+  /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
+  readonly stdinInput?: string;
 }
 
 function setup(options: SetupOptions = {}) {
@@ -42,7 +45,9 @@ function setup(options: SetupOptions = {}) {
       stdinIsTty: options.stdinIsTty ?? false,
       stdoutIsTty: options.stdoutIsTty ?? false,
     }),
+    mockStdin(options.stdinIsTty ?? false, options.stdinInput),
     Layer.succeed(LegacyYesFlag, options.yes ?? false),
+    Layer.succeed(CliArgs, { args: [] }),
   );
   return { layer, out, telemetry, workdir: tempRoot.current };
 }
@@ -218,6 +223,41 @@ describe("legacy functions new integration", () => {
       yield* legacyFunctionsNew({ functionName: "with-yes", auth: "apikey" });
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
       expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("SUPABASE_YES=1 in the environment echoes the VS Code prompt and writes settings", () => {
+    const prev = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    const { layer, out, workdir } = setup({ yes: false });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsNew({ functionName: "with-env-yes", auth: "apikey" });
+      // Same bytes as Go's `viper.GetBool("YES")` branch (`console.go:70-72`),
+      // reached through the env var — not just the --yes flag (CLI-1974).
+      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
+      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
+  it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
+    // Go's non-TTY `PromptYesNo` scans one piped line per question
+    // (`console.go:38-61`), so `printf 'n\ny\n'` answers VS Code=no,
+    // IntelliJ=yes instead of hardcoding the VS Code default.
+    const { layer, out, workdir } = setup({ stdinIsTty: false, stdinInput: "n\ny\n" });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsNew({ functionName: "piped-idea", auth: "apikey" });
+      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] n");
+      expect(out.stderrText).toContain("Generate IntelliJ IDEA settings for Deno? [y/N] y");
+      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(false);
+      expect(existsSync(join(workdir, ".idea", "deno.xml"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

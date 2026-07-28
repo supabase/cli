@@ -5,15 +5,38 @@ import { join } from "node:path";
 import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
 import { Schema } from "effect";
 import { importJWK, jwtVerify } from "jose";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "./legacy-go-jwt.ts";
 import {
+  LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
   LegacyInvalidAnalyticsBackendEnvOverrideError,
   LegacyInvalidBoolEnvOverrideError,
+  LegacyInvalidEdgeRuntimePolicyEnvOverrideError,
   LegacyInvalidJwtSecretError,
+  LegacyInvalidPoolModeEnvOverrideError,
   LegacyInvalidPortEnvOverrideError,
+  LegacyInvalidRealtimeIpVersionEnvOverrideError,
+  LegacyInvalidSessionReplicationRoleEnvOverrideError,
+  legacyEnvOverrideApiMaxRows,
+  legacyEnvOverrideDefaultPoolSize,
+  legacyEnvOverrideEdgeRuntimePolicy,
+  legacyEnvOverrideMajorVersion,
+  legacyEnvOverrideMaxClientConn,
+  legacyEnvOverridePoolMode,
+  legacyEnvOverrideRealtimeIpVersion,
+  legacyEnvOverrideRealtimeMaxHeaderLength,
+  legacyRawUnmodeledBool,
+  legacyResolveAuthCaptcha,
+  legacyResolveAuthEmail,
+  legacyResolveAuthEmailSmtp,
+  legacyResolveAuthExternalProviders,
+  legacyResolveAuthHooks,
+  legacyResolveAuthSms,
+  legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
+  legacyResolveLocalJwks,
 } from "./legacy-local-config-values.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
@@ -170,6 +193,20 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
         "failed to parse config: missing private key",
       );
+    });
+
+    it("decrypts an encrypted: auth.email.smtp.pass, matching Go's Secret-typed Smtp.Pass field", () => {
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const document = { auth: { email: { smtp: { enabled: true, pass: VAULT_ENCRYPTED } } } };
+      const resolved = legacyResolveAuthEmailSmtp(document.auth, undefined);
+      expect(resolved?.pass).toBe("value");
+    });
+
+    it("decrypts an encrypted: studio.openai_api_key, matching Go's Secret-typed OpenaiApiKey field", () => {
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const config = baseConfig({ studio: { openai_api_key: VAULT_ENCRYPTED } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.openaiApiKey).toBe("value");
     });
 
     it("decrypts an encrypted: SUPABASE_AUTH_* env override, not just the config.toml value", () => {
@@ -414,11 +451,12 @@ describe("legacyResolveLocalConfigValues", () => {
       for (const key of ENV_KEYS) delete process.env[key];
     });
 
-    it("overrides db.port for the derived DB URL", () => {
+    it("overrides db.port for the derived DB URL and the exposed dbPort", () => {
       process.env["SUPABASE_DB_PORT"] = "54329";
       const config = baseConfig({ db: { port: 54322 } });
       const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54329/postgres");
+      expect(values.dbPort).toBe(54329);
     });
 
     it("overrides studio.port for the derived Studio URL", () => {
@@ -476,6 +514,41 @@ describe("legacyResolveLocalConfigValues", () => {
 
     it("rejects a SUPABASE_DB_PORT override above the uint16 range", () => {
       process.env["SUPABASE_DB_PORT"] = "99999";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidPortEnvOverrideError,
+      );
+    });
+
+    // Go's `strconv.ParseUint(str, 0, 16)` (base 0) auto-detects octal/hex/binary literals for
+    // `SUPABASE_*_PORT` overrides too — same base-0 grammar as `legacyEnvOverrideUint`
+    // (`parseGoBaseZeroUint`), just capped at `uint16` instead of `uint64`. The old
+    // `/^\d+$/`-plus-`Number()` parsing silently misread a bare-leading-zero override as decimal
+    // instead of octal, and rejected a `0x`-prefixed override outright even though Go accepts it.
+    it("resolves an octal leading-zero SUPABASE_DB_PORT override to its octal value, not decimal", () => {
+      process.env["SUPABASE_DB_PORT"] = "010";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbPort).toBe(8);
+      expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:8/postgres");
+    });
+
+    it("resolves a 0x-prefixed SUPABASE_DB_PORT override as hex", () => {
+      process.env["SUPABASE_DB_PORT"] = "0x1F90";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbPort).toBe(8080);
+    });
+
+    it("still resolves a plain decimal SUPABASE_DB_PORT override with no leading zero", () => {
+      process.env["SUPABASE_DB_PORT"] = "5432";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbPort).toBe(5432);
+    });
+
+    it("rejects a 0x-prefixed SUPABASE_DB_PORT override exceeding the uint16 range", () => {
+      process.env["SUPABASE_DB_PORT"] = "0x1FFFF";
       const config = baseConfig();
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
         LegacyInvalidPortEnvOverrideError,
@@ -633,6 +706,68 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED env override", () => {
+    // `[db.network_restrictions]` ships uncommented in Go's default template and
+    // `NetworkRestrictions` is a plain, non-pointer `db` struct field, so Viper always registers a
+    // default and decodes this override unconditionally during `Config.Load` — same bucket as
+    // `db.port`/`db.major_version` above, validated eagerly rather than skipped.
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED"];
+    });
+
+    it("does not throw for a valid SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED override", () => {
+      process.env["SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects a malformed SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED override", () => {
+      process.env["SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED"] = "notabool";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        'Invalid config for db.network_restrictions.enabled: cannot parse "notabool" as a bool',
+      );
+    });
+  });
+
+  describe("db.root_key (unmodeled raw-document field)", () => {
+    it("falls back to the default root key when absent", () => {
+      const config = baseConfig();
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.rootKey).toBe(LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
+    });
+
+    it("uses a configured string root_key verbatim", () => {
+      const config = baseConfig();
+      const document = { db: { root_key: "custom-root-key" } };
+      const values = legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        document,
+      );
+      expect(values.rootKey).toBe("custom-root-key");
+    });
+
+    it("rejects a non-string root_key (e.g. a bare TOML integer), matching Go's Secret decode failure", () => {
+      // `db.root_key` isn't modeled in `@supabase/config`'s schema, so Go's own
+      // decode failure (mapstructure rejecting a scalar into the `Secret` struct,
+      // `config.go:748-751`) must be reproduced here rather than letting the raw
+      // number flow unguarded into `envOverride`/`legacyDecryptAuthSecret`.
+      const config = baseConfig();
+      const document = { db: { root_key: 12345 } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(
+        "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
+      );
+    });
+  });
+
   // Go's Config.Validate runs ValidateBucketName over every [storage.buckets.*]
   // key right after db.major_version, unconditionally — there is no
   // storage.enabled-style gate (pkg/config/config.go:1063-1068).
@@ -760,6 +895,53 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig({ experimental: { webhooks: {} } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
+
+    // `experimental.webhooks.enabled`/`experimental.pgdelta.format_options` are Viper-bound like
+    // any other leaf field once `[experimental]` is present (`ExperimentalBindStruct`/
+    // `AutomaticEnv`, `config.go:581-586`) — same SUPABASE_*-env-override MECHANICS split as
+    // `auth.captcha`/`auth.passkey` above: the required-field/JSON-shape checks themselves live in
+    // `legacy-config-validate.unit.test.ts`, only the env-override wiring is exercised here.
+    afterEach(() => {
+      delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS"];
+    });
+
+    it("enables webhooks purely via SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when the section omits enabled", () => {
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "true";
+      const config = baseConfig({ experimental: { webhooks: {} } });
+      const document = { experimental: { webhooks: {} } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("rejects a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED override on an already-enabled section", () => {
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "notabool";
+      const config = baseConfig({ experimental: { webhooks: { enabled: true } } });
+      const document = { experimental: { webhooks: { enabled: true } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(LegacyInvalidBoolEnvOverrideError);
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(
+        'Invalid config for experimental.webhooks.enabled: cannot parse "notabool" as a bool',
+      );
+    });
+
+    it("rejects an invalid JSON SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS override", () => {
+      process.env["SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS"] = "{not valid json";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
+      );
+    });
+
+    it("accepts a valid JSON SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS override", () => {
+      process.env["SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS"] = '{"keywordCase":"upper"}';
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
   });
 
   describe("SUPABASE_API_TLS_ENABLED env override", () => {
@@ -805,6 +987,638 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
       const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.apiUrl).toBe("https://127.0.0.1:54321");
+    });
+  });
+
+  describe("legacyEnvOverrideRealtimeIpVersion", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_REALTIME_IP_VERSION"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toBe("IPv4");
+    });
+
+    it("overrides IPv4 to IPv6 via the env var", () => {
+      process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv6";
+      expect(legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toBe("IPv6");
+    });
+
+    // Go's `AddressFamily.UnmarshalText` (`pkg/config/config.go:74-81`) hard-rejects
+    // any value outside `{IPv4, IPv6}` during the same `UnmarshalExact` decode every
+    // `SUPABASE_*` override goes through, same mechanism as the analytics backend override.
+    it("rejects an invalid override instead of falling back to the configured value", () => {
+      process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv5";
+      expect(() => legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toThrow(
+        LegacyInvalidRealtimeIpVersionEnvOverrideError,
+      );
+      expect(() => legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toThrow(
+        'Invalid config for realtime.ip_version: cannot parse "IPv5" as one of "IPv4", "IPv6"',
+      );
+    });
+  });
+
+  describe("legacyEnvOverrideRealtimeMaxHeaderLength", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toBe(4096);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "8192";
+      expect(legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toBe(8192);
+    });
+
+    it("also honors a projectEnvValues (dotenv) value", () => {
+      expect(
+        legacyEnvOverrideRealtimeMaxHeaderLength(4096, {
+          SUPABASE_REALTIME_MAX_HEADER_LENGTH: "16384",
+        }),
+      ).toBe(16384);
+    });
+
+    // Go's `uint` is 64 bits wide on every platform this CLI ships for, decoded via
+    // mapstructure's `decodeUint` (`strconv.ParseUint(str, 0, 64)`) under Viper's
+    // `WeaklyTypedInput: true`. A value one past `2^64-1` genuinely fails that parse in Go, so
+    // it must be rejected here too instead of silently losing precision through `Number(value)`.
+    it("rejects an override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "18446744073709551616";
+      expect(() => legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
+        "Failed reading config: Invalid realtime.max_header_length: 18446744073709551616.",
+      );
+    });
+
+    // Guards against an overcorrected fix that used an imprecise `Number`-based bound and
+    // rejected values Go itself still accepts.
+    it("accepts an override of exactly the uint64 max (2^64-1)", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "18446744073709551615";
+      expect(() => legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).not.toThrow();
+    });
+
+    // Guards against the base-0 grammar rewrite (`parseGoBaseZeroUint`) silently
+    // reintroducing precision loss or an unbounded parse for a non-decimal literal —
+    // `0x10000000000000000` is exactly 2^64, one past `LEGACY_UINT_MAX`, same as the
+    // decimal literal above, just routed through the hex branch instead of the plain
+    // decimal branch.
+    it("rejects a hex override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "0x10000000000000000";
+      expect(() => legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
+        "Failed reading config: Invalid realtime.max_header_length: 0x10000000000000000.",
+      );
+    });
+  });
+
+  describe("legacyEnvOverrideApiMaxRows", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_API_MAX_ROWS"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideApiMaxRows(1000, undefined)).toBe(1000);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_API_MAX_ROWS"] = "500";
+      expect(legacyEnvOverrideApiMaxRows(1000, undefined)).toBe(500);
+    });
+  });
+
+  // `legacyEnvOverrideMajorVersion` is exercised directly (rather than through the
+  // full `legacyResolveLocalConfigValues` pipeline, as the "db.major_version (required
+  // field in config)" describe block above does) so these assertions cover only
+  // `legacyEnvOverrideUint`'s base-0 grammar parsing, not `legacyValidateResolvedConfig`'s
+  // separate "is this a supported Postgres major version" switch — most of the octal/hex/
+  // binary literals below don't correspond to a supported major version and would fail
+  // that unrelated downstream check even once correctly parsed.
+  describe("legacyEnvOverrideMajorVersion", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_MAJOR_VERSION"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(17);
+    });
+
+    // Go's `strconv.ParseUint(str, 0, 64)` treats a bare leading zero followed by more
+    // digits as octal, not decimal — `"010"` is `8`, not `10` — a silent value
+    // divergence the old `/^\d+$/`-plus-`Number()` parsing didn't reproduce.
+    it("resolves an octal leading-zero override to its octal value, not decimal", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "010";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(8);
+    });
+
+    it("resolves a 0x-prefixed override as hex", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "0x10";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(16);
+    });
+
+    it("resolves a 0b-prefixed override as binary", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "0b101";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(5);
+    });
+
+    it("still resolves a plain decimal override with no leading zero", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "15";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(15);
+    });
+
+    // Underscore digit separators are only legal in Go's base-0 mode (Go 1.13+).
+    it("permits an underscore digit separator between decimal digits", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "1_000";
+      expect(legacyEnvOverrideMajorVersion(17, undefined)).toBe(1000);
+    });
+
+    // Go does NOT fall back to decimal when a bare-leading-zero literal contains an
+    // invalid octal digit — `"08"`/`"09"` are rejected outright, never read as 8/9.
+    it("rejects an invalid octal digit instead of silently falling back to decimal", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "08";
+      expect(() => legacyEnvOverrideMajorVersion(17, undefined)).toThrow(
+        "Failed reading config: Invalid db.major_version: 08.",
+      );
+    });
+
+    // `strconv.ParseUint` never accepts a leading sign, unlike `ParseInt`.
+    it("rejects a signed override", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "+5";
+      expect(() => legacyEnvOverrideMajorVersion(17, undefined)).toThrow(
+        "Failed reading config: Invalid db.major_version: +5.",
+      );
+    });
+  });
+
+  describe("legacyEnvOverridePoolMode", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_POOLER_POOL_MODE"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverridePoolMode("transaction", undefined)).toBe("transaction");
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "session";
+      expect(legacyEnvOverridePoolMode("transaction", undefined)).toBe("session");
+    });
+
+    // Go's `PoolMode.UnmarshalText` (`pkg/config/db.go:14-26`) hard-rejects any
+    // value outside `{transaction, session}`.
+    it("rejects an invalid override instead of falling back to the configured value", () => {
+      process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "invalid";
+      expect(() => legacyEnvOverridePoolMode("transaction", undefined)).toThrow(
+        LegacyInvalidPoolModeEnvOverrideError,
+      );
+      expect(() => legacyEnvOverridePoolMode("transaction", undefined)).toThrow(
+        'Invalid config for db.pooler.pool_mode: cannot parse "invalid" as one of "transaction", "session"',
+      );
+    });
+  });
+
+  describe("legacyEnvOverrideEdgeRuntimePolicy", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toBe("oneshot");
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "per_worker";
+      expect(legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toBe("per_worker");
+    });
+
+    // Go's `RequestPolicy.UnmarshalText` (`pkg/config/config.go:83-96`) hard-rejects
+    // any value outside `{per_worker, oneshot}`.
+    it("rejects an invalid override instead of falling back to the configured value", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "invalid";
+      expect(() => legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toThrow(
+        LegacyInvalidEdgeRuntimePolicyEnvOverrideError,
+      );
+      expect(() => legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toThrow(
+        'Invalid config for edge_runtime.policy: cannot parse "invalid" as one of "per_worker", "oneshot"',
+      );
+    });
+  });
+
+  describe("legacyEnvOverrideDefaultPoolSize", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideDefaultPoolSize(20, undefined)).toBe(20);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE"] = "40";
+      expect(legacyEnvOverrideDefaultPoolSize(20, undefined)).toBe(40);
+    });
+  });
+
+  describe("legacyEnvOverrideMaxClientConn", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_POOLER_MAX_CLIENT_CONN"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideMaxClientConn(100, undefined)).toBe(100);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_DB_POOLER_MAX_CLIENT_CONN"] = "200";
+      expect(legacyEnvOverrideMaxClientConn(100, undefined)).toBe(200);
+    });
+  });
+
+  describe("legacyResolveAuthCaptcha", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
+      delete process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
+      delete process.env["SUPABASE_AUTH_CAPTCHA_SECRET"];
+    });
+
+    it("returns undefined when captcha is not configured", () => {
+      expect(legacyResolveAuthCaptcha(undefined, undefined, undefined)).toBeUndefined();
+    });
+
+    it("overrides enabled/provider when the section is present in the document", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = "turnstile";
+      const authDocument = { captcha: { enabled: false, provider: "hcaptcha" } };
+      const resolved = legacyResolveAuthCaptcha(
+        authDocument,
+        { enabled: false, provider: "hcaptcha", secret: "shh" },
+        undefined,
+      );
+      expect(resolved?.enabled).toBe(true);
+      expect(resolved?.provider).toBe("turnstile");
+    });
+
+    it("does not apply an env override when [auth.captcha] is absent from the document", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
+      const resolved = legacyResolveAuthCaptcha(
+        {},
+        { enabled: false, provider: "hcaptcha", secret: "shh" },
+        undefined,
+      );
+      expect(resolved?.enabled).toBe(false);
+    });
+
+    it("decrypts an encrypted: captcha secret", () => {
+      process.env["DOTENV_PRIVATE_KEY"] =
+        "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+      const authDocument = { captcha: { enabled: true } };
+      const resolved = legacyResolveAuthCaptcha(
+        authDocument,
+        {
+          enabled: true,
+          provider: "hcaptcha",
+          secret:
+            "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/",
+        },
+        undefined,
+      );
+      expect(resolved?.secret).toBe("value");
+      delete process.env["DOTENV_PRIVATE_KEY"];
+    });
+  });
+
+  describe("legacyResolveAuthEmail", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"];
+    });
+
+    // Go's `emailTemplate.Subject` is `*string` (`pkg/config/auth.go:266`) — an explicit
+    // `subject = ""` in config.toml is a real, non-nil state, distinct from an absent key, that
+    // Go's mailer-env block honors by still emitting `GOTRUE_MAILER_SUBJECTS_*=` (empty).
+    it("keeps an explicit empty subject present in the raw document, not omitted", () => {
+      const config = baseConfig({
+        auth: { email: { template: { confirmation: { subject: "", content_path: "x" } } } },
+      });
+      const authDocument = { email: { template: { confirmation: { subject: "" } } } };
+      const resolved = legacyResolveAuthEmail(config.auth.email, authDocument, undefined);
+      expect(resolved.template["confirmation"]?.subject).toBe("");
+    });
+
+    it("omits the subject when the key is absent from the raw document", () => {
+      const config = baseConfig({
+        auth: { email: { template: { confirmation: { content_path: "x" } } } },
+      });
+      const authDocument = { email: { template: { confirmation: { content_path: "x" } } } };
+      const resolved = legacyResolveAuthEmail(config.auth.email, authDocument, undefined);
+      expect(resolved.template["confirmation"]?.subject).toBeUndefined();
+    });
+
+    it("prefers an env-overridden subject over the raw document's presence, even when absent", () => {
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"] = "Overridden subject";
+      const config = baseConfig({
+        auth: { email: { template: { confirmation: { content_path: "x" } } } },
+      });
+      const authDocument = { email: { template: { confirmation: { content_path: "x" } } } };
+      const resolved = legacyResolveAuthEmail(config.auth.email, authDocument, undefined);
+      expect(resolved.template["confirmation"]?.subject).toBe("Overridden subject");
+    });
+  });
+
+  describe("legacyResolveAuthHooks", () => {
+    const baseHook = { enabled: false, uri: "", secrets: "" };
+    const allHooks = {
+      mfa_verification_attempt: baseHook,
+      password_verification_attempt: baseHook,
+      custom_access_token: baseHook,
+      send_sms: baseHook,
+      send_email: baseHook,
+      before_user_created: baseHook,
+    };
+
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"];
+      delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
+    });
+
+    it("leaves every hook disabled when nothing is configured or overridden", () => {
+      const resolved = legacyResolveAuthHooks(undefined, allHooks, undefined);
+      expect(resolved.customAccessToken.enabled).toBe(false);
+      expect(resolved.mfaVerificationAttempt.enabled).toBe(false);
+    });
+
+    it("overrides enabled/uri when the hook's section is present in the document", () => {
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = "https://example.com/hook";
+      const authDocument = { hook: { custom_access_token: { enabled: false } } };
+      const resolved = legacyResolveAuthHooks(authDocument, allHooks, undefined);
+      expect(resolved.customAccessToken.enabled).toBe(true);
+      expect(resolved.customAccessToken.uri).toBe("https://example.com/hook");
+      // Unrelated hooks stay untouched.
+      expect(resolved.mfaVerificationAttempt.enabled).toBe(false);
+    });
+
+    it("does not apply an env override when the hook's section is absent from the document", () => {
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
+      const resolved = legacyResolveAuthHooks({}, allHooks, undefined);
+      expect(resolved.customAccessToken.enabled).toBe(false);
+    });
+  });
+
+  describe("legacyResolveAuthExternalProviders", () => {
+    it("coerces an env(...)-resolved boolean string for an unmodeled/custom provider", () => {
+      const authDocument = {
+        external: {
+          my_custom: {
+            enabled: "true",
+            client_id: "custom-client-id",
+            skip_nonce_check: "false",
+            email_optional: "TRUE",
+          },
+        },
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        undefined,
+      );
+      expect(resolved["my_custom"]?.enabled).toBe(true);
+      expect(resolved["my_custom"]?.skipNonceCheck).toBe(false);
+      expect(resolved["my_custom"]?.emailOptional).toBe(true);
+    });
+
+    it("throws on an unparsable custom-provider boolean string instead of silently disabling it", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: "not-a-bool", client_id: "custom-client-id" } },
+      };
+      expect(() =>
+        legacyResolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
+      ).toThrow('cannot parse "not-a-bool" as a bool');
+    });
+
+    it("leaves an absent custom-provider boolean field at its schema default without throwing", () => {
+      const authDocument = {
+        external: { my_custom: { client_id: "custom-client-id" } },
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        undefined,
+      );
+      expect(resolved["my_custom"]?.enabled).toBe(false);
+    });
+
+    it("weakly coerces a raw numeric custom-provider boolean by truthiness, matching Go's WeaklyTypedInput decode", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: 1, client_id: "custom-client-id" } },
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        undefined,
+      );
+      expect(resolved["my_custom"]?.enabled).toBe(true);
+    });
+
+    it("throws on a raw array/table custom-provider boolean instead of silently disabling it", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: [1, 2], client_id: "custom-client-id" } },
+      };
+      expect(() =>
+        legacyResolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
+      ).toThrow('cannot parse "1,2" as a bool');
+    });
+
+    it("resolves apple purely from env overrides even with no config.toml [auth.external] section at all, matching Go's ejected default template", () => {
+      const projectEnvValues = {
+        SUPABASE_AUTH_EXTERNAL_APPLE_ENABLED: "true",
+        SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID: "apple-client-id",
+        SUPABASE_AUTH_EXTERNAL_APPLE_SECRET: "apple-secret",
+        SUPABASE_AUTH_EXTERNAL_APPLE_URL: "https://appleid.apple.com",
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        undefined,
+        baseConfig().auth.external,
+        projectEnvValues,
+      );
+      expect(resolved["apple"]).toEqual({
+        enabled: true,
+        clientId: "apple-client-id",
+        secret: "apple-secret",
+        url: "https://appleid.apple.com",
+        redirectUri: "",
+        skipNonceCheck: false,
+        emailOptional: false,
+      });
+    });
+
+    it("does not synthesize any other provider purely from an env override with no TOML table, only apple gets Go's default-template exception", () => {
+      const projectEnvValues = {
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_ENABLED: "true",
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: "google-client-id",
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        undefined,
+        baseConfig().auth.external,
+        projectEnvValues,
+      );
+      expect(resolved["google"]).toBeUndefined();
+      // apple is still unconditionally present (Go's default template), but unaffected by
+      // the unrelated google env vars above.
+      expect(resolved["apple"]?.enabled).toBe(false);
+    });
+  });
+
+  describe("legacyRawUnmodeledBool", () => {
+    it("returns false for an absent value, matching Go's zero-value bool default", () => {
+      expect(legacyRawUnmodeledBool(undefined, "auth.passkey.enabled")).toBe(false);
+    });
+
+    it("passes a real boolean through unchanged", () => {
+      expect(legacyRawUnmodeledBool(true, "auth.passkey.enabled")).toBe(true);
+      expect(legacyRawUnmodeledBool(false, "auth.passkey.enabled")).toBe(false);
+    });
+
+    it("weakly coerces a raw number by truthiness, matching mapstructure's WeaklyTypedInput decodeBool", () => {
+      expect(legacyRawUnmodeledBool(123, "auth.passkey.enabled")).toBe(true);
+      expect(legacyRawUnmodeledBool(0, "auth.passkey.enabled")).toBe(false);
+      expect(legacyRawUnmodeledBool(1.5, "auth.passkey.enabled")).toBe(true);
+    });
+
+    it("parses a valid boolean-ish string the way Go's strconv.ParseBool does", () => {
+      expect(legacyRawUnmodeledBool("true", "auth.passkey.enabled")).toBe(true);
+      expect(legacyRawUnmodeledBool("False", "auth.passkey.enabled")).toBe(false);
+      expect(legacyRawUnmodeledBool("", "auth.passkey.enabled")).toBe(false);
+    });
+
+    it("throws on an unparsable string instead of silently disabling it", () => {
+      expect(() => legacyRawUnmodeledBool("not-a-bool", "auth.passkey.enabled")).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
+    });
+
+    it("throws on an array or table value — mapstructure's decodeBool errors on these unconditionally, never weakly coerced", () => {
+      expect(() => legacyRawUnmodeledBool([1, 2], "auth.passkey.enabled")).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+      expect(() => legacyRawUnmodeledBool({ nested: true }, "auth.passkey.enabled")).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+    });
+  });
+
+  describe("legacyResolveDbSettingsEnvOverrides", () => {
+    const ALL_OVERRIDE_NAMES = [
+      "SUPABASE_DB_SETTINGS_EFFECTIVE_CACHE_SIZE",
+      "SUPABASE_DB_SETTINGS_LOGICAL_DECODING_WORK_MEM",
+      "SUPABASE_DB_SETTINGS_MAINTENANCE_WORK_MEM",
+      "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
+      "SUPABASE_DB_SETTINGS_MAX_LOCKS_PER_TRANSACTION",
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_MAINTENANCE_WORKERS",
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS",
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS_PER_GATHER",
+      "SUPABASE_DB_SETTINGS_MAX_REPLICATION_SLOTS",
+      "SUPABASE_DB_SETTINGS_MAX_SLOT_WAL_KEEP_SIZE",
+      "SUPABASE_DB_SETTINGS_MAX_STANDBY_ARCHIVE_DELAY",
+      "SUPABASE_DB_SETTINGS_MAX_STANDBY_STREAMING_DELAY",
+      "SUPABASE_DB_SETTINGS_MAX_WAL_SIZE",
+      "SUPABASE_DB_SETTINGS_MAX_WAL_SENDERS",
+      "SUPABASE_DB_SETTINGS_MAX_WORKER_PROCESSES",
+      "SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE",
+      "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
+      "SUPABASE_DB_SETTINGS_STATEMENT_TIMEOUT",
+      "SUPABASE_DB_SETTINGS_TRACK_ACTIVITY_QUERY_SIZE",
+      "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP",
+      "SUPABASE_DB_SETTINGS_WAL_KEEP_SIZE",
+      "SUPABASE_DB_SETTINGS_WAL_SENDER_TIMEOUT",
+      "SUPABASE_DB_SETTINGS_WORK_MEM",
+    ];
+
+    afterEach(() => {
+      for (const name of ALL_OVERRIDE_NAMES) delete process.env[name];
+    });
+
+    it("returns the configured settings unchanged when nothing is overridden", () => {
+      const settings = { shared_buffers: "128MB", max_connections: 100 };
+      expect(legacyResolveDbSettingsEnvOverrides(settings, undefined)).toEqual(settings);
+    });
+
+    it("leaves an unconfigured field undefined when nothing is overridden", () => {
+      expect(
+        legacyResolveDbSettingsEnvOverrides({}, undefined).effective_cache_size,
+      ).toBeUndefined();
+    });
+
+    it("overrides a string field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"] = "256MB";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ shared_buffers: "128MB" }, undefined).shared_buffers,
+      ).toBe("256MB");
+    });
+
+    it("sets a string field via the env var even when not configured at all", () => {
+      process.env["SUPABASE_DB_SETTINGS_WORK_MEM"] = "8MB";
+      expect(legacyResolveDbSettingsEnvOverrides({}, undefined).work_mem).toBe("8MB");
+    });
+
+    it("overrides a uint field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "200";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ max_connections: 100 }, undefined).max_connections,
+      ).toBe(200);
+    });
+
+    it("rejects a non-numeric uint override", () => {
+      process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "not-a-number";
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        "Invalid db.settings.max_connections",
+      );
+    });
+
+    it("overrides the boolean field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP"] = "true";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ track_commit_timestamp: false }, undefined)
+          .track_commit_timestamp,
+      ).toBe(true);
+    });
+
+    it("rejects a malformed boolean override", () => {
+      process.env["SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP"] = "not-a-bool";
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+    });
+
+    it("overrides the session_replication_role enum field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE"] = "replica";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ session_replication_role: "origin" }, undefined)
+          .session_replication_role,
+      ).toBe("replica");
+    });
+
+    it("leaves session_replication_role undefined when neither configured nor overridden", () => {
+      expect(
+        legacyResolveDbSettingsEnvOverrides({}, undefined).session_replication_role,
+      ).toBeUndefined();
+    });
+
+    // Go's `SessionReplicationRole.UnmarshalText` (`pkg/config/db.go:37-43`)
+    // hard-rejects anything outside `{origin, replica, local}`.
+    it("rejects an invalid session_replication_role override", () => {
+      process.env["SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE"] = "invalid";
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        LegacyInvalidSessionReplicationRoleEnvOverrideError,
+      );
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        'Invalid config for db.settings.session_replication_role: cannot parse "invalid" as one of "origin", "replica", "local"',
+      );
+    });
+
+    it("also honors a projectEnvValues (dotenv) value", () => {
+      expect(
+        legacyResolveDbSettingsEnvOverrides({}, { SUPABASE_DB_SETTINGS_SHARED_BUFFERS: "512MB" })
+          .shared_buffers,
+      ).toBe("512MB");
     });
   });
 
@@ -905,7 +1719,7 @@ describe("legacyResolveLocalConfigValues", () => {
       ).not.toThrow();
     });
 
-    it("skips reading a malformed signing_keys_path when auth is disabled", () => {
+    it("skips reading a malformed signing_keys_path when auth is disabled, but still signs asymmetrically with the default key", async () => {
       const supabaseDir = join(tempRoot.current, "supabase");
       mkdirSync(supabaseDir, { recursive: true });
       writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
@@ -913,11 +1727,17 @@ describe("legacyResolveLocalConfigValues", () => {
         auth: { enabled: false, signing_keys_path: "signing_keys.json" },
       });
       const values = legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
-      // Falls back to HMAC signing, matching an absent signing key.
-      const [, payload] = values.anonKey.split(".");
-      expect(JSON.parse(Buffer.from(payload ?? "", "base64url").toString())).toMatchObject({
-        iss: "supabase-demo",
-      });
+      // Go's `generateJWT` (`apikeys.go:77`) checks `len(a.SigningKeysPath) > 0 &&
+      // len(a.SigningKeys) > 0`, NOT `auth.enabled` — `a.SigningKeys` is never empty (it keeps
+      // its `NewConfig()`-seeded default when the file read is skipped), so a disabled-auth
+      // config with a configured path still signs with the default ES256 key, not HMAC.
+      const publicKey = await importJWK(
+        { ...LEGACY_DEFAULT_SIGNING_KEY, d: undefined, key_ops: undefined },
+        "ES256",
+      );
+      const { payload, protectedHeader } = await jwtVerify(values.anonKey, publicKey);
+      expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+      expect(protectedHeader).toMatchObject({ alg: "ES256", kid: LEGACY_DEFAULT_SIGNING_KEY.kid });
     });
 
     describe("SUPABASE_AUTH_ENABLED env override", () => {
@@ -993,6 +1813,82 @@ describe("legacyResolveLocalConfigValues", () => {
         const config = baseConfig({ auth: { enabled: true, site_url: "" } });
         expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
       });
+
+      it("exposes the overridden site_url on the returned values, not just for validation", () => {
+        process.env["SUPABASE_AUTH_SITE_URL"] = "http://localhost:4000";
+        const config = baseConfig({ auth: { enabled: true, site_url: "http://127.0.0.1:3000" } });
+        const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+        expect(values.authSiteUrl).toBe("http://localhost:4000");
+      });
+    });
+  });
+
+  describe("auth.* flat scalar env overrides (GoTrue container env, not just validation)", () => {
+    const AUTH_SCALAR_ENV_KEYS = [
+      "SUPABASE_AUTH_JWT_ISSUER",
+      "SUPABASE_AUTH_JWT_EXPIRY",
+      "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
+      "SUPABASE_AUTH_ENABLE_SIGNUP",
+      "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
+      "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
+      "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
+      "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
+      "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
+      "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
+    ];
+    afterEach(() => {
+      for (const key of AUTH_SCALAR_ENV_KEYS) delete process.env[key];
+    });
+
+    it("overrides every flat auth.* scalar GoTrue needs, not just the ones Validate checks", () => {
+      process.env["SUPABASE_AUTH_JWT_ISSUER"] = "https://issuer.example.com";
+      process.env["SUPABASE_AUTH_JWT_EXPIRY"] = "7200";
+      process.env["SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS"] =
+        "https://a.example.com,https://b.example.com";
+      process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "false";
+      process.env["SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS"] = "true";
+      process.env["SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION"] = "false";
+      process.env["SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL"] = "20";
+      process.env["SUPABASE_AUTH_ENABLE_MANUAL_LINKING"] = "true";
+      process.env["SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH"] = "12";
+      process.env["SUPABASE_AUTH_PASSWORD_REQUIREMENTS"] = "lower_upper_letters_digits";
+
+      const config = baseConfig({
+        auth: {
+          jwt_expiry: 3600,
+          additional_redirect_urls: [],
+          enable_signup: true,
+          enable_anonymous_sign_ins: false,
+          enable_refresh_token_rotation: true,
+          refresh_token_reuse_interval: 10,
+          enable_manual_linking: false,
+          minimum_password_length: 6,
+          password_requirements: "",
+        },
+      });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+
+      expect(values.authJwtIssuer).toBe("https://issuer.example.com");
+      expect(values.authJwtExpiry).toBe(7200);
+      expect(values.authAdditionalRedirectUrls).toEqual([
+        "https://a.example.com",
+        "https://b.example.com",
+      ]);
+      expect(values.authEnableSignup).toBe(false);
+      expect(values.authEnableAnonymousSignIns).toBe(true);
+      expect(values.authEnableRefreshTokenRotation).toBe(false);
+      expect(values.authRefreshTokenReuseInterval).toBe(20);
+      expect(values.authEnableManualLinking).toBe(true);
+      expect(values.authMinimumPasswordLength).toBe(12);
+      expect(values.authPasswordRequirements).toBe("lower_upper_letters_digits");
+    });
+
+    it("rejects an unrecognized SUPABASE_AUTH_PASSWORD_REQUIREMENTS override, matching Go's UnmarshalText", () => {
+      process.env["SUPABASE_AUTH_PASSWORD_REQUIREMENTS"] = "bogus";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid auth.password_requirements: bogus",
+      );
     });
   });
 
@@ -1086,6 +1982,17 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = "true";
       const config = baseConfig();
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("throws on an unparsable raw auth.passkey.enabled string instead of silently disabling it", () => {
+      // e.g. a still-literal `env(VAR)` placeholder when the referenced var was never set, or a
+      // typo — Go's `strconv.ParseBool` hard-rejects this during `Config.Load`, it never silently
+      // treats it as `false`.
+      const config = baseConfig();
+      const document = { auth: { passkey: { enabled: "not-a-bool" } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow('cannot parse "not-a-bool" as a bool');
     });
   });
 
@@ -1379,8 +2286,10 @@ describe("legacyResolveLocalConfigValues", () => {
 
     afterEach(() => {
       delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"];
+      delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT"];
       delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_ENABLED"];
       delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT_PATH"];
+      delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT"];
     });
 
     it("lets an env-provided template content_path override a missing TOML content_path", () => {
@@ -1444,6 +2353,69 @@ describe("legacyResolveLocalConfigValues", () => {
           enabled: true,
           site_url: "http://localhost:3000",
           email: { notification: { password_changed: { enabled: true } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    // Go's Viper `AutomaticEnv` folds a `SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT`/
+    // `_NOTIFICATION_<NAME>_CONTENT` override into `Content *string` before `Config.Validate`
+    // runs (`config.go:749,882`), so it's "present" for the content-vs-content_path exclusivity
+    // check exactly like a raw TOML `content` key — a bare env override with no content_path
+    // configured anywhere must be rejected, not silently accepted.
+    it("rejects a template _CONTENT env override with no content_path configured", () => {
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT"] = "<html>Hi</html>";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: {} } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.template.invite.content: please use content_path instead",
+      );
+    });
+
+    it("rejects an enabled notification's _CONTENT env override with no content_path configured", () => {
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT"] = "<html>Hi</html>";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { notification: { password_changed: { enabled: true } } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.notification.password_changed.content: please use content_path instead",
+      );
+    });
+
+    it("does not validate a disabled notification's _CONTENT env override", () => {
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT"] = "<html>Hi</html>";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { notification: { password_changed: { enabled: false } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("lets a simultaneous template _CONTENT_PATH env override win over a _CONTENT env override", () => {
+      writeFileSync(join(tempRoot.current, "invite.html"), "<html></html>");
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT"] = "<html>Hi</html>";
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"] = "invite.html";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: {} } },
         },
       });
       expect(() =>
@@ -1595,10 +2567,113 @@ describe("legacyResolveLocalConfigValues", () => {
       ).toThrow("Missing required field in config: auth.sms.messagebird.originator");
     });
 
-    it("does not synthesize a provider purely from an env override when the section is absent from the document", () => {
+    it("throws for a provider enabled only via env with missing required fields even when the document has no auth.sms section at all", () => {
+      // Unlike the other 4 providers, twilio's presence is NOT gated on the document: Go's
+      // ejected default config.toml (`pkg/config/templates/config.toml:288-293`) always emits an
+      // uncommented `[auth.sms.twilio]` table, so `mergeDefaultValues` registers
+      // `auth.sms.twilio.*` with Viper even when the user's own config.toml has no `[auth.sms]`
+      // section at all — `SUPABASE_AUTH_SMS_TWILIO_ENABLED` applies with nothing left to supply
+      // the required credentials, so this now fails validation instead of silently doing nothing.
       process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
       const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: auth.sms.twilio.account_sid",
+      );
+    });
+
+    it("resolves a fully env-only twilio configuration with no auth.sms.twilio document section", () => {
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"] = "AC123";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID"] = "MG123";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN"] = "tok";
+      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      expect(resolved.twilio.enabled).toBe(true);
+      expect(resolved.twilio.account_sid).toBe("AC123");
+      expect(resolved.twilio.message_service_sid).toBe("MG123");
+      expect(resolved.twilio.auth_token).toBe("tok");
+    });
+
+    it("still does not synthesize messagebird purely from an env override when the section is absent from the document", () => {
+      // messagebird (like twilio_verify/textlocal/vonage) has no entry at all in Go's default
+      // template, so an absent `[auth.sms.messagebird]` table genuinely means Viper never
+      // registers it — the presence gate is still correct parity for these 4 providers.
+      process.env["SUPABASE_AUTH_SMS_MESSAGEBIRD_ENABLED"] = "true";
+      const config = baseConfig();
+      const resolved = legacyResolveAuthSms(undefined, config.auth.sms, undefined);
+      expect(resolved.messagebird.enabled).toBe(false);
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("legacyResolveAuthSms (top-level scalars)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+      delete process.env["SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS"];
+      delete process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
+      delete process.env["SUPABASE_AUTH_SMS_TEMPLATE"];
+    });
+
+    it("overrides enable_signup/enable_confirmations/max_frequency/template with no presence gate", () => {
+      process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
+      process.env["SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS"] = "true";
+      process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "10s";
+      process.env["SUPABASE_AUTH_SMS_TEMPLATE"] = "Your OTP is {{ .Code }}";
+      // A provider must be enabled, or `enable_signup` gets downgraded to `false` regardless of
+      // the override — see the "disables phone login" tests below for that behavior itself.
+      const configured = {
+        ...baseConfig().auth.sms,
+        twilio: { ...baseConfig().auth.sms.twilio, enabled: true },
+      };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.enable_signup).toBe(true);
+      expect(resolved.enable_confirmations).toBe(true);
+      expect(resolved.max_frequency).toBe("10s");
+      expect(resolved.template).toBe("Your OTP is {{ .Code }}");
+    });
+
+    it("leaves the scalars at their configured values when nothing is overridden", () => {
+      const configured = {
+        ...baseConfig().auth.sms,
+        enable_signup: true,
+        max_frequency: "5s",
+        twilio: { ...baseConfig().auth.sms.twilio, enabled: true },
+      };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.enable_signup).toBe(true);
+      expect(resolved.max_frequency).toBe("5s");
+    });
+  });
+
+  describe("legacyResolveAuthSms (disables phone login with no provider enabled)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+    });
+
+    it("downgrades enable_signup to false when configured true with no provider enabled", () => {
+      const configured = { ...baseConfig().auth.sms, enable_signup: true };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.enable_signup).toBe(false);
+    });
+
+    it("downgrades an env-overridden enable_signup to false with no provider enabled", () => {
+      process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
+      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      expect(resolved.enable_signup).toBe(false);
+    });
+
+    it("leaves enable_signup alone when a provider is enabled", () => {
+      const configured = {
+        ...baseConfig().auth.sms,
+        enable_signup: true,
+        vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
+      };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.enable_signup).toBe(true);
+    });
+
+    it("leaves enable_signup at false when already false with no provider enabled", () => {
+      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      expect(resolved.enable_signup).toBe(false);
     });
   });
 
@@ -1711,6 +2786,252 @@ describe("legacyResolveLocalConfigValues", () => {
           "Missing required field in config: api.tls.key_path",
         );
       });
+    });
+  });
+});
+
+describe("legacyResolveLocalJwks", () => {
+  const tempRoot = useLegacyTempWorkdir("supabase-local-jwks-test-");
+
+  it("includes the default ES256 signing key and the oct JWT-secret fallback when no signing_keys_path is configured", async () => {
+    // Go's `a.SigningKeys` defaults to this single ES256 key at `NewConfig()` time
+    // (`pkg/config/config.go:504-515`), unconditionally — `ResolveJWKS` always publishes it
+    // (in public form) unless a configured `signing_keys_path` file overrides it.
+    const config = baseConfig();
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    expect(JSON.parse(jwks)).toEqual({
+      keys: [
+        {
+          kty: "EC",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          use: "sig",
+          key_ops: ["verify"],
+          alg: "ES256",
+          ext: true,
+          crv: "P-256",
+          x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+          y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+        },
+        { kty: "oct", k: Buffer.from("a".repeat(32)).toString("base64url") },
+      ],
+    });
+  });
+
+  it("publishes the public form of every signing key and omits the oct fallback", async () => {
+    const jwk = generateRsaJwk();
+    writeSigningKeys(tempRoot.current, [jwk]);
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+
+    expect(parsed.keys).toHaveLength(1);
+    expect(parsed.keys[0]).toMatchObject({
+      kty: "RSA",
+      kid: "test-rsa-kid",
+      n: jwk["n"],
+      e: jwk["e"],
+    });
+    expect(parsed.keys[0]).not.toHaveProperty("d");
+    expect(parsed.keys[0]).not.toHaveProperty("p");
+    expect(parsed.keys.some((key) => key["kty"] === "oct")).toBe(false);
+  });
+
+  // Go decodes `auth.signing_keys_path` directly into `[]JWK` (`pkg/config/config.go:1113`),
+  // so a configured key's `use`/`key_ops`/`ext` metadata must round-trip into the published JWKS
+  // via `ToPublicJWK` (`pkg/config/auth.go:111-145`), which keeps `use`/`ext` verbatim and
+  // filters `key_ops` down to `"verify"` entries only (never dropping the other two fields).
+  it("preserves a configured signing key's use/ext and filters key_ops to verify-only", async () => {
+    const jwk = { ...generateRsaJwk(), use: "sig", ext: true, key_ops: ["sign", "verify"] };
+    writeSigningKeys(tempRoot.current, [jwk]);
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+
+    expect(parsed.keys[0]).toMatchObject({ use: "sig", ext: true, key_ops: ["verify"] });
+  });
+
+  // Go quirk this reproduces: `a.SigningKeysPath` is resolved to an absolute path
+  // unconditionally (`pkg/config/config.go:928-929`), but the FILE is only read into
+  // `a.SigningKeys` when auth is enabled (`Config.Validate`'s file read is nested inside
+  // `if c.Auth.Enabled`, `config.go:1087,1110-1116`) — so a disabled-auth config with a
+  // configured `signing_keys_path` never reads the file, and `a.SigningKeys` stays at its
+  // unconditional `NewConfig()` default (the single ES256 key) rather than becoming empty.
+  // The oct fallback is still skipped (`len(a.SigningKeysPath) == 0` is false), so the
+  // default ES256 key is the ONLY entry — neither the file's keys nor the oct key appear.
+  it("falls back to the default ES256 signing key (not the configured file, not the oct fallback) when auth is disabled but signing_keys_path is set", async () => {
+    writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
+    const config = baseConfig({
+      auth: { enabled: false, signing_keys_path: "signing_keys.json" },
+    });
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    expect(JSON.parse(jwks)).toEqual({
+      keys: [
+        {
+          kty: "EC",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          use: "sig",
+          key_ops: ["verify"],
+          alg: "ES256",
+          ext: true,
+          crv: "P-256",
+          x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+          y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+        },
+      ],
+    });
+  });
+
+  it("throws a Go-worded error when the signing keys file does not exist", async () => {
+    const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
+    await expect(legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
+      "failed to read signing keys: ",
+    );
+  });
+
+  it("throws a Go-worded error when the signing keys file is malformed JSON", async () => {
+    const supabaseDir = join(tempRoot.current, "supabase");
+    mkdirSync(supabaseDir, { recursive: true });
+    writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    await expect(legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
+      "failed to decode signing keys: ",
+    );
+  });
+
+  describe("auth.third_party", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("rejects an enabled third-party provider missing its required field", async () => {
+      const config = baseConfig({ auth: { third_party: { firebase: { enabled: true } } } });
+      await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
+      );
+    });
+
+    it("rejects more than one enabled third-party provider", async () => {
+      const config = baseConfig({
+        auth: {
+          third_party: {
+            firebase: { enabled: true, project_id: "my-project" },
+            workos: { enabled: true, issuer_url: "https://issuer.example" },
+          },
+        },
+      });
+      await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        "Invalid config: Only one third_party provider allowed to be enabled at a time.",
+      );
+    });
+
+    it("does not validate third-party providers when auth is disabled, matching Go's ResolveJWKS/IssuerURL", async () => {
+      // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" check above) only runs
+      // inside `Config.Validate`'s `if Auth.Enabled` block — `ResolveJWKS`/`IssuerURL()` is called
+      // unconditionally and never validates, it just picks the first enabled provider by fixed
+      // priority (firebase, auth0, aws_cognito, clerk, workos) and resolves its remote JWKS.
+      const remoteKeys = [{ kty: "RSA", kid: "firebase-key", n: "abc", e: "AQAB" }];
+      const issuerUrl = "https://securetoken.google.com/my-project";
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === `${issuerUrl}/.well-known/openid-configuration`) {
+          return new Response(JSON.stringify({ jwks_uri: `${issuerUrl}/jwks.json` }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === `${issuerUrl}/jwks.json`) {
+          return new Response(JSON.stringify({ keys: remoteKeys }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+      const config = baseConfig({
+        auth: {
+          enabled: false,
+          third_party: {
+            firebase: { enabled: true, project_id: "my-project" },
+            workos: { enabled: true, issuer_url: "https://issuer.example" },
+          },
+        },
+      });
+      const jwksJson = await legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const jwks = JSON.parse(jwksJson) as { keys: ReadonlyArray<{ kid?: string }> };
+      expect(jwks.keys.some((key) => key.kid === "firebase-key")).toBe(true);
+      fetchMock.mockRestore();
+    });
+
+    // Go's `ResolveJWKS` only attempts the remote fetch when `issuerURL != ""`
+    // (`apps/cli-go/pkg/config/config.go:1732`); workos's own `issuerURL()` is a raw field read
+    // with no validation (`config.go:1631-1632`), so an enabled-but-unconfigured workos provider
+    // with `auth.enabled = false` resolves an empty issuer URL that Go tolerates by skipping the
+    // fetch entirely, rather than attempting (and failing) a fetch against an empty URL.
+    it('does not attempt a remote JWKS fetch for an enabled third-party provider with an empty issuer_url, matching Go\'s issuerURL != "" check', async () => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const config = baseConfig({
+        auth: {
+          enabled: false,
+          third_party: { workos: { enabled: true, issuer_url: "" } },
+        },
+      });
+
+      const jwksJson = await legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const jwks = JSON.parse(jwksJson) as { keys: ReadonlyArray<unknown> };
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(jwks.keys.length).toBeGreaterThan(0);
+      fetchMock.mockRestore();
+    });
+
+    it("fetches and includes the remote JWKS for an enabled third-party provider", async () => {
+      const remoteKeys = [{ kty: "RSA", kid: "remote-key", n: "abc", e: "AQAB" }];
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://issuer.example/.well-known/openid-configuration") {
+          return new Response(JSON.stringify({ jwks_uri: "https://issuer.example/jwks.json" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "https://issuer.example/jwks.json") {
+          return new Response(JSON.stringify({ keys: remoteKeys }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
+
+      const config = baseConfig({
+        auth: { third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } } },
+      });
+      const jwks = await legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+
+      expect(parsed.keys).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kid: "remote-key" })]),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    // The key divergence from `shared/functions/serve.ts`'s own (unrelated)
+    // `resolveAuthArtifacts`: Go's `start` treats a remote-JWKS fetch failure as a hard,
+    // command-failing error (`internal/start/start.go:274-277`) — `legacyResolveLocalJwks`
+    // must propagate it too, not swallow it and continue with zero remote keys.
+    it("fails the whole resolution when the remote JWKS fetch fails, unlike functions serve's leniency", async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        throw new Error("oidc discovery failed");
+      });
+
+      const config = baseConfig({
+        auth: { third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } } },
+      });
+      await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        "oidc discovery failed",
+      );
     });
   });
 });

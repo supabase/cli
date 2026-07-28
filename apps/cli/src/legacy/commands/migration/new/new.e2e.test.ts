@@ -3,16 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { runSupabase } from "../../../../../tests/helpers/cli.ts";
+import { runSupabase, stripAnsi } from "../../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
-
-// Strip ANSI so the assertion is colour-independent: the handler prints the path
-// via `legacyBold`, which emits bold escapes under CI's `FORCE_COLOR` even on a
-// piped stdout. The text content is the parity contract, not the colour. Mirrors
-// `new.integration.test.ts`.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("supabase migration new (legacy)", () => {
   let workdir: string;

@@ -16,6 +16,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -114,7 +115,7 @@ OUTER:
 
 func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
 	resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
-		VerifyJwt:      meta.VerifyJwt,
+		VerifyJwt:      cast.BoolToStringPtr(meta.VerifyJwt),
 		ImportMapPath:  meta.ImportMapPath,
 		EntrypointPath: &meta.EntrypointPath,
 		EzbrSha256:     &meta.SHA256,
@@ -143,7 +144,7 @@ func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta F
 	resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
 		Slug:           &slug,
 		Name:           &slug,
-		VerifyJwt:      meta.VerifyJwt,
+		VerifyJwt:      cast.BoolToStringPtr(meta.VerifyJwt),
 		ImportMapPath:  meta.ImportMapPath,
 		EntrypointPath: &meta.EntrypointPath,
 		EzbrSha256:     &meta.SHA256,

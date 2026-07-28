@@ -224,12 +224,23 @@ func TestRun(t *testing.T) {
 			Reply("CREATE FUNCTION").
 			Query(tableSQL).
 			Reply("CREATE TABLE")
+		// pg-delta bypasses the injected DiffFunc and runs the real edge-runtime
+		// pipeline, so stub the seam DiffDatabase uses (mirrors exportCatalogPgDelta).
+		// The migra differ must never be reached on this path.
+		originalDiffPgDelta := diffPgDeltaRefDetailed
+		t.Cleanup(func() { diffPgDeltaRefDetailed = originalDiffPgDelta })
 		diffCalled := false
-		differ := func(_ context.Context, _, target pgconn.Config, schema []string, _ ...func(*pgx.ConnConfig)) (string, error) {
+		diffPgDeltaRefDetailed = func(_ context.Context, _, targetRef string, schema []string, _ string, _ ...func(*pgx.ConnConfig)) (PgDeltaDiffResult, error) {
 			diffCalled = true
-			assert.Equal(t, "contrib_regression", target.Database)
+			assert.Contains(t, targetRef, "contrib_regression")
 			assert.Equal(t, []string{"public"}, schema)
-			return generated, nil
+			return PgDeltaDiffResult{
+				Files: []PgDeltaPlanFile{{Order: 1, Name: "schema_changes", TransactionMode: "transactional", SQL: generated}},
+			}, nil
+		}
+		differ := func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error) {
+			t.Fatal("migra differ must not be called on the pg-delta path")
+			return "", nil
 		}
 		localConfig := pgconn.Config{
 			Host:     utils.Config.Hostname,

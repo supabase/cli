@@ -1,4 +1,3 @@
-import { PostHog } from "posthog-node";
 import { Effect, Layer, Option } from "effect";
 import type { ProjectLinkStateValue } from "../../next/config/project-link-state.service.ts";
 import { ProjectLinkState } from "../../next/config/project-link-state.service.ts";
@@ -7,6 +6,7 @@ import { aiToolLayer } from "./ai-tool.layer.ts";
 import { CurrentAnalyticsContext, type AnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
 import { AiTool } from "./ai-tool.service.ts";
+import { scopedPosthogClient } from "./posthog-client.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 
@@ -59,13 +59,9 @@ export const analyticsLayer = Layer.effect(
       });
     }
 
-    const client = new PostHog(cliConfig.telemetryPosthogKey.value, {
-      host: cliConfig.telemetryPosthogHost,
-      flushAt: 1,
-      flushInterval: 0,
-    });
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(() => client._shutdown(5_000)).pipe(Effect.ignore),
+    const client = yield* scopedPosthogClient(
+      cliConfig.telemetryPosthogKey.value,
+      cliConfig.telemetryPosthogHost,
     );
 
     const baseProperties = stripUndefined({

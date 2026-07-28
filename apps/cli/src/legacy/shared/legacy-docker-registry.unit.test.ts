@@ -86,4 +86,40 @@ describe("legacyGetRegistryImageUrl", () => {
       ),
     ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
   });
+
+  // Go's `Config.Load` runs `loadNestedEnv`/`godotenv.Load` (`pkg/config/config.go:789,1220-1258`)
+  // before any image resolution, so a project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY`
+  // (never set in the ambient shell) still reaches `GetRegistry()`.
+  it("honors a projectEnvValues (dotenv)-only registry override, matching Go's post-Load os.Getenv", () => {
+    expect(
+      withRegistry(undefined, () =>
+        legacyGetRegistryImageUrl("supabase/pg_prove:3.36", {
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
+        }),
+      ),
+    ).toBe("my.mirror.example/supabase/pg_prove:3.36");
+    expect(
+      withRegistry(undefined, () =>
+        legacyGetRegistryImageUrlCandidates("supabase/postgres:17.6.1.138", {
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
+        }),
+      ),
+    ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
+  });
+
+  // `projectEnvValues` is the caller's own dotenv+ambient MERGED view (ambient
+  // wins ties during that merge, matching `godotenv.Load`'s "don't override
+  // already-set" semantics — see `legacyEnvOrDefault`'s doc comment for the
+  // same precedent), so checking it first is equivalent to checking the
+  // already-correctly-merged value first; falling back to bare `process.env`
+  // only covers a caller with no project-env context at all.
+  it("prefers projectEnvValues over a bare process.env read when both are set", () => {
+    expect(
+      withRegistry("ambient.example", () =>
+        legacyGetRegistryImageUrl("supabase/pg_prove:3.36", {
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "merged.example",
+        }),
+      ),
+    ).toBe("merged.example/supabase/pg_prove:3.36");
+  });
 });

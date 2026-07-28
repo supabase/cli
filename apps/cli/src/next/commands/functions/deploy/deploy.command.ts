@@ -7,6 +7,7 @@ import { platformApiLayer } from "../../../auth/platform-api.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
 
@@ -65,6 +66,8 @@ const functionsDeployRuntimeLayer = Layer.mergeAll(
   functionsDeployPlatformApiLayer,
   projectLinkStateLayer,
   functionsDeployCommandRuntimeLayer,
+  // `stdinLayer`: the `--prune` confirmation reads piped stdin on a non-TTY stdin.
+  stdinLayer,
 );
 
 export const functionsDeployCommand = Command.make("deploy", config).pipe(

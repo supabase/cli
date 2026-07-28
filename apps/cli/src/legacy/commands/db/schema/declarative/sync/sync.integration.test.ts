@@ -4,7 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
@@ -96,15 +96,33 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     removeShadowContainer: () => Effect.void,
   });
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) =>
-      Effect.succeed({
-        stdout:
-          opts.exportJson !== undefined &&
-          runOpts.errPrefix === "error exporting declarative schema"
-            ? opts.exportJson
-            : (opts.diffSql ?? ""),
-        stderr: "",
-      }),
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      if (
+        opts.exportJson !== undefined &&
+        runOpts.errPrefix === "error exporting declarative schema"
+      ) {
+        return Effect.succeed({ stdout: opts.exportJson, stderr: "" });
+      }
+      const diffSql = opts.diffSql ?? "";
+      // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
+      // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
+      // single-unit envelope so `legacyDiffPgDelta` parses it.
+      const stdout =
+        runOpts.script.includes("renderPlanFiles") && diffSql.length > 0
+          ? JSON.stringify({
+              version: 1,
+              files: [
+                {
+                  order: 1,
+                  name: "schema_changes",
+                  transactionMode: "transactional",
+                  sql: diffSql,
+                },
+              ],
+            })
+          : diffSql;
+      return Effect.succeed({ stdout, stderr: "" });
+    },
   });
   const dbExec: string[] = [];
   const dbConn = Layer.succeed(LegacyDbConnection, {
@@ -152,6 +170,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+    mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "schema", "declarative", "sync"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),

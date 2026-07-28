@@ -204,7 +204,7 @@ func SyncToMigrations(ctx context.Context, schema []string, file string, noCache
 	if len(strings.TrimSpace(file)) == 0 {
 		file = "declarative_sync"
 	}
-	if err := diff.SaveDiff(result.DiffSQL, file, fsys); err != nil {
+	if err := diff.SaveDiff(diff.DatabaseDiff{SQL: result.DiffSQL}, file, fsys); err != nil {
 		return err
 	}
 	if len(result.DropWarnings) > 0 {

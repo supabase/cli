@@ -270,7 +270,7 @@ Test a real end-to-end publish and install of the CLI against a local npm regist
 pnpm local-registry
 ```
 
-This starts Verdaccio on `http://localhost:4873`, creates a publish user, and redirects the global `npm` and `pnpm` registry config to `localhost`. Press **Ctrl+C** when done — the original registry settings are restored automatically.
+This starts Verdaccio on `http://localhost:4873` and creates a publish user. Your global `npm` and `pnpm` registry config is never modified — every command that talks to the local registry passes `--registry` explicitly. Press **Ctrl+C** when done.
 
 **Terminal 2 — build and publish:**
 
@@ -310,7 +310,7 @@ supabase --version
 | `Error: Something is already running on port 4873` | Kill the leftover Verdaccio process (`lsof -ti:4873 \| xargs kill`) and retry |
 | `go not found in PATH` (legacy only) | Install Go from https://go.dev/dl/ |
 | `Error: Go CLI source not found` (legacy only) | Run `pnpm repos:install` to clone `apps/cli-go` |
-| Registry not restored after crash | Run `npm config set registry https://registry.npmjs.org/` and `pnpm config set registry https://registry.npmjs.org/` |
+| `npm` / `pnpm` tries to fetch from `localhost:4873` when no registry is running | Stale global registry override left behind by an older version of `local-registry.ts` (the current script never modifies global config). Run `npm config delete registry` and `pnpm config delete registry`. Note that pnpm stores the override in its own global config (`~/Library/Preferences/pnpm/auth.ini` on macOS, `~/.config/pnpm/` on Linux), not `~/.npmrc` — check there if the delete command fails |
 | `npx` resolves from npm instead of local | Pass `--registry http://localhost:4873` explicitly to `npx` / `npm install` |
 
 ## Using Nx

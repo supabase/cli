@@ -6,6 +6,8 @@ import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyWorkdirFlag, legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -128,14 +130,20 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         ),
       );
     if (entries.length > 0) {
-      const overwrite = yesFlag
-        ? true
-        : yield* output.promptConfirm(
-            `Do you want to overwrite existing files in ${legacyBold(workdir)} directory?`,
-            { defaultValue: true },
-          );
+      // Go's `PromptYesNo(title, true)` (`bootstrap.go:47-48`, `console.go:64-82`):
+      // `--yes`/`SUPABASE_YES` auto-confirms with the `<title> [Y/n] y` stderr echo
+      // instead of silently skipping the prompt, and a non-TTY stdin scans one
+      // piped line (100ms) before falling back to the Yes default (CLI-1974).
+      const overwrite = yield* legacyPromptYesNo(
+        output,
+        yesFlag,
+        `Do you want to overwrite existing files in ${legacyBold(workdir)} directory?`,
+        true,
+      );
       if (!overwrite) {
-        return yield* new LegacyBootstrapOverwriteDeclinedError({ message: "context canceled" });
+        return yield* new LegacyBootstrapOverwriteDeclinedError({
+          message: CONTEXT_CANCELED_MESSAGE,
+        });
       }
     }
 
@@ -156,6 +164,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         cwd: workdir,
         force: true,
         interactive: false,
+        yes: yesFlag,
         useOrioledb: false,
         withVscodeSettings: false,
         withIntellijSettings: false,

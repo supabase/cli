@@ -186,4 +186,34 @@ describe("functions manifest", () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  test("search: false does not climb to an ancestor project's functions", async () => {
+    const projectRoot = makeTempProject();
+    const nestedCwd = join(projectRoot, "nested", "workdir");
+
+    try {
+      const functionDir = join(projectRoot, "supabase", "functions", "hello-world");
+      await mkdir(functionDir, { recursive: true });
+      await writeFile(join(functionDir, "index.ts"), "Deno.serve(() => new Response())\n");
+      await writeFile(join(projectRoot, "supabase", "config.json"), "{}\n");
+      await mkdir(nestedCwd, { recursive: true });
+
+      await expect(runConfigEffect(inferFunctionsManifest({ cwd: nestedCwd }))).resolves.toEqual({
+        "hello-world": {
+          enabled: true,
+          verify_jwt: true,
+          import_map: "",
+          entrypoint: "./functions/hello-world/index.ts",
+          static_files: [],
+          env: {},
+        },
+      });
+
+      await expect(
+        runConfigEffect(inferFunctionsManifest({ cwd: nestedCwd, search: false })),
+      ).resolves.toEqual({});
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
 });

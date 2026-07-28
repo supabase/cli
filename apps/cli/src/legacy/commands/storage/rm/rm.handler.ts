@@ -8,7 +8,7 @@ import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   LEGACY_DELETE_OBJECTS_LIMIT,
   type LegacyStorageGateway,

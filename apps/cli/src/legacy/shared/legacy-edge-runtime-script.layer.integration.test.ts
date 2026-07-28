@@ -1,0 +1,123 @@
+import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Exit, Layer, Option } from "effect";
+
+import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
+import { legacyEdgeRuntimeScriptLayer } from "./legacy-edge-runtime-script.layer.ts";
+import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts";
+
+// Fakes a `docker run --rm` capture: the pg-delta scripts throw to force the
+// worker to exit, so a real diff always comes back with a non-zero exit and
+// "main worker has been destroyed" in stderr — the crash path only differs by
+// the sentinel line the templates' catch blocks add.
+function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string }) {
+  return Layer.succeed(LegacyDockerRun, {
+    runCapture: () =>
+      Effect.succeed({
+        exitCode: result.exitCode,
+        stdout: new TextEncoder().encode(result.stdout ?? ""),
+        stderr: result.stderr ?? "",
+      }),
+    run: () => Effect.die("unused"),
+    runStream: () => Effect.die("unused"),
+  });
+}
+
+// `workdir` points at a directory without `supabase/.temp/edge-runtime-version`,
+// so the image resolver falls back to the default tag (the read is orElseSucceed).
+const cliConfig = Layer.succeed(LegacyCliConfig, {
+  profile: "supabase",
+  apiUrl: "https://api.supabase.com",
+  projectHost: "supabase.co",
+  poolerHost: "supabase.co",
+  dashboardUrl: "https://supabase.com/dashboard",
+  accessToken: Option.none(),
+  projectId: Option.none(),
+  workdir: "/nonexistent-workdir",
+  userAgent: "test",
+});
+
+function setup(result: { exitCode: number; stdout?: string; stderr?: string }) {
+  return legacyEdgeRuntimeScriptLayer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        fakeDocker(result),
+        cliConfig,
+        Layer.succeed(RuntimeInfo, {
+          cwd: "/nonexistent-workdir",
+          platform: "darwin",
+          arch: "arm64",
+          homeDir: "/home/test",
+          execPath: "/usr/bin/bun",
+          pid: 1,
+        }),
+        Layer.succeed(LegacyDebugFlag, false),
+        Layer.succeed(LegacyNetworkIdFlag, Option.none<string>()),
+        BunServices.layer,
+      ),
+    ),
+  );
+}
+
+const runScript = Effect.fnUntraced(function* () {
+  const edge = yield* LegacyEdgeRuntimeScript;
+  return yield* edge.run({
+    script: "console.log('x')",
+    env: {},
+    binds: [],
+    errPrefix: "error diffing schema",
+    denoVersion: 2,
+  });
+});
+
+describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
+  it.effect(
+    "fails with the real error when the script crashes behind the worker-destroyed message",
+    () => {
+      // The catch block emits the real error, the sentinel, and the worker is torn
+      // down — all with a non-zero exit. This must surface, not read as an empty diff.
+      const stderr =
+        "error: permission denied for table pg_user_mapping\n" +
+        "PGDELTA_SCRIPT_ERROR\n" +
+        "worker boot error\nmain worker has been destroyed\n";
+      return runScript().pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            const error = Exit.isFailure(exit)
+              ? exit.cause.reasons.find((r) => r._tag === "Fail")?.error
+              : undefined;
+            const message = (error as { message: string } | undefined)?.message ?? "";
+            expect(message).toContain("error diffing schema: error running script:");
+            // The actionable permission error must reach the user.
+            expect(message).toContain("permission denied for table pg_user_mapping");
+          }),
+        ),
+        Effect.provide(setup({ exitCode: 1, stdout: "", stderr })),
+      );
+    },
+  );
+
+  it.effect("still succeeds on a worker-destroyed exit when no sentinel is present", () => {
+    // Success path: the template forces the worker to exit after writing output, so
+    // the exit is non-zero with "main worker has been destroyed" but no sentinel.
+    return runScript().pipe(
+      Effect.tap((res) =>
+        Effect.sync(() => {
+          expect(res.stdout).toBe("ALTER TABLE x;\n");
+        }),
+      ),
+      Effect.provide(
+        setup({
+          exitCode: 1,
+          stdout: "ALTER TABLE x;\n",
+          stderr: "main worker has been destroyed\n",
+        }),
+      ),
+    );
+  });
+});

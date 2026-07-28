@@ -262,3 +262,24 @@ export const legacySeedGlobals = <E>(
       yield* execMigrationBatch(session, fs, path, globalPath, mapError, true);
     }
   });
+
+/**
+ * Runs one SQL file's statements transactionally, WITHOUT `legacySeedGlobals`'s
+ * per-file `Seeding globals from <name>...` stderr message, WITHOUT inserting a
+ * migration history row, WITHOUT creating the history table, and WITHOUT `RESET
+ * ALL` (same batching semantics as `legacySeedGlobals`, `forceNoVersion: true`,
+ * just silent). Go's `initSchema`/`InitSchema14`/`ApplyApiPrivileges`
+ * (`apps/cli-go/internal/db/start/start.go`) each call
+ * `(*MigrationFile).ExecBatch` DIRECTLY on an in-memory SQL constant — bypassing
+ * `migration.SeedGlobals`'s message — so reusing `legacySeedGlobals` for those
+ * would print an extra line Go never prints. Callers write the in-memory SQL
+ * constant to a temp file first (this module only reads files, like
+ * `execMigrationBatch`'s other callers).
+ */
+export const legacyExecSqlFile = <E>(
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  filePath: string,
+  mapError: (message: string) => E,
+): Effect.Effect<void, E> => execMigrationBatch(session, fs, path, filePath, mapError, true);

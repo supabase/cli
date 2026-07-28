@@ -8,7 +8,6 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
@@ -27,6 +26,7 @@ import {
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
@@ -43,23 +43,6 @@ import {
 // `--file` migration is written.
 const warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
 Run ${legacyAqua("supabase db reset")} to verify that the new migration does not generate errors.`;
-
-/** Builds a plain Postgres URL from a resolved connection (Go's `ToPostgresURL`). */
-const connToUrl = (conn: LegacyPgConnInput): string =>
-  legacyToPostgresURL({
-    host: conn.host,
-    port: conn.port,
-    user: conn.user,
-    password: conn.password,
-    database: conn.database,
-    ...(conn.options !== undefined ? { options: conn.options } : {}),
-    ...(conn.runtimeParams !== undefined ? { runtimeParams: conn.runtimeParams } : {}),
-    // Preserve a `--db-url` connect_timeout; Go's ToPostgresURL serializes the
-    // parsed ConnectTimeout (`connect.go`), defaulting to 10 only when unset.
-    ...(conn.connectTimeoutSeconds !== undefined
-      ? { connectTimeoutSeconds: conn.connectTimeoutSeconds }
-      : {}),
-  });
 
 /**
  * Rebuilds the `db diff` argv for the pgAdmin / pg-schema delegate path. Flags
@@ -234,7 +217,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 mergedLinkedRef = ref2;
                 cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref2);
               }
-              return connToUrl(resolved.conn);
+              return legacyToPostgresURL(resolved.conn);
             }
             case "migrations":
               return yield* seam.exportCatalog({
@@ -361,7 +344,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     });
     const linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
-    const targetUrl = connToUrl(resolved.conn);
+    const targetUrl = legacyToPostgresURL(resolved.conn);
 
     // Read config with the resolved linked ref so a matching `[remotes.<ref>]`
     // block merges before the engine/format/runtime are read — Go loads config
@@ -406,7 +389,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       projectRef: connType === "linked" ? linkedRef : undefined,
     });
 
-    const out = yield* Effect.gen(function* () {
+    const diffResult = yield* Effect.gen(function* () {
       const target = shadow.targetUrlOverride ?? targetUrl;
       yield* output.raw(
         flags.schema.length > 0
@@ -421,15 +404,22 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           schema: flags.schema,
           formatOptions,
         });
-        return result.sql;
+        // Keep the per-unit plan files so a multi-unit plan can be written as one
+        // migration file each (Go's `DatabaseDiff.Files`); `sql` stays the flattened
+        // join for stdout review + machine payloads.
+        return { sql: result.sql, files: result.files };
       }
-      return yield* legacyDiffMigra(ctx, {
+      const sql = yield* legacyDiffMigra(ctx, {
         source: shadow.sourceUrl,
         target,
         schema: flags.schema,
         connectOptions: { isLocal: resolved.isLocal, dnsResolver },
       });
+      // The migra engine has no execution-aware plan units, so it always writes a
+      // single migration file (Go's `SaveDiff` single-file path).
+      return { sql, files: undefined };
     }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+    const out = diffResult.sql;
 
     // Detect the branch from the resolved workdir, not the caller's CWD: Go
     // chdirs into --workdir in PersistentPreRunE before GetGitBranch
@@ -444,27 +434,46 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // Go's `SaveDiff` (`pgadmin.go:20`) + the drop-statement warning (`diff.go:44`).
     const engine = useDelta ? "pg-delta" : "migra";
     const drops = legacyFindDropStatements(out);
-    let writtenFile: string | null = null;
+    const writtenFiles: Array<string> = [];
     if (out.length < 2) {
       yield* output.raw("No schema changes found\n", "stderr");
       // Go's `SaveDiff` gates the file write on `len(file) > 0` (`pgadmin.go`), so
       // an empty `--file=""` (e.g. an unset shell var) falls through to stdout
       // rather than writing a `<timestamp>_.sql` migration with no name.
     } else if (Option.isSome(flags.file) && flags.file.value.length > 0) {
-      const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
-      const migrationPath = legacyGetMigrationPath(
-        path,
-        cliConfig.workdir,
-        timestamp,
-        flags.file.value,
-      );
-      yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
-        Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
-      );
-      yield* fs
-        .writeFileString(migrationPath, out)
-        .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
-      writtenFile = migrationPath;
+      const fileName = flags.file.value;
+      // A pg-delta plan that crosses a transaction boundary yields more than one
+      // ordered unit; writing them into a single migration file would later fail
+      // when `db push`/`reset` applies it as one transaction. Write one migration
+      // file per unit in that case via the shared writer (Go's
+      // `WritePgDeltaMigrations`, `internal/db/diff/pgdelta_migrations.go`): each
+      // file appends the unit name and gets a strictly increasing timestamp, the
+      // full set is collision-checked against existing migrations, and every file is
+      // written exclusively so a pre-existing migration is never overwritten. A
+      // single-unit plan (and the migra engine) keeps the exact `<ts>_<name>.sql`
+      // file (Go's `utils.WriteFile`), byte-identical to before.
+      const planFiles = diffResult.files ?? [];
+      if (planFiles.length > 1) {
+        const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
+          workdir: cliConfig.workdir,
+          baseMillis: yield* Clock.currentTimeMillis,
+          name: fileName,
+          files: planFiles.map((file) => ({ name: file.name, sql: file.sql })),
+        }).pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+        for (const unit of writtenUnits) writtenFiles.push(unit.path);
+      } else {
+        const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
+        const migrationPath = legacyGetMigrationPath(path, cliConfig.workdir, timestamp, fileName);
+        // Create parent dirs per written path (mirroring Go's `utils.WriteFile`), so a
+        // nested `--file snapshots/remote` name creates `<ts>_snapshots/` first.
+        yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
+          Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
+        );
+        yield* fs
+          .writeFileString(migrationPath, out)
+          .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+        writtenFiles.push(migrationPath);
+      }
       yield* output.raw(`${warnDiff}\n`, "stderr");
     } else if (output.format === "text") {
       yield* output.raw(`${out}\n`);
@@ -479,7 +488,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (output.format !== "text") {
       yield* output.success("Diff complete.", {
         diff: out,
-        file: writtenFile,
+        // `file` keeps the first written path for released consumers that read the
+        // string field (null when nothing was written); `files` lists EVERY written
+        // migration path in write order (a pg-delta plan writes one file per unit),
+        // mirroring pull's `schemaFiles` so machine callers see all of them.
+        file: writtenFiles[0] ?? null,
+        files: writtenFiles,
         schemas: flags.schema,
         engine,
         dropStatements: drops,

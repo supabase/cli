@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
@@ -17,13 +18,26 @@ import (
 var warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
 Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`
 
-func SaveDiff(out, file string, fsys afero.Fs) error {
+func SaveDiff(result DatabaseDiff, file string, fsys afero.Fs) error {
+	out := result.SQL
 	if len(out) < 2 {
 		fmt.Fprintln(os.Stderr, "No schema changes found")
 	} else if len(file) > 0 {
-		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
-		if err := utils.WriteFile(path, []byte(out), fsys); err != nil {
-			return err
+		// A pg-delta plan that crosses a transaction boundary yields more than one
+		// ordered unit; writing them into a single migration file would later fail
+		// when `db push`/`reset` applies it as one transaction. Write one migration
+		// file per unit in that case (Go's `WritePgDeltaMigrations`). The migra /
+		// pgadmin engines and single-unit pg-delta plans keep the exact single-file
+		// path, byte-identical to before.
+		if len(result.Files) > 1 {
+			if _, err := WritePgDeltaMigrations(result.Files, time.Now(), file, fsys); err != nil {
+				return err
+			}
+		} else {
+			path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
+			if err := utils.WriteFile(path, []byte(out), fsys); err != nil {
+				return err
+			}
 		}
 		fmt.Fprintln(os.Stderr, warnDiff)
 	} else {
@@ -44,7 +58,7 @@ func RunPgAdmin(ctx context.Context, schema []string, file string, config pgconn
 		return err
 	}
 
-	return SaveDiff(output, file, fsys)
+	return SaveDiff(DatabaseDiff{SQL: output}, file, fsys)
 }
 
 var output string

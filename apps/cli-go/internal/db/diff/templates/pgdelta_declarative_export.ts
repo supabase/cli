@@ -68,6 +68,10 @@ try {
   }
 } catch (e) {
   console.error(e);
+  // Emit a sentinel so the CLI runner can distinguish a real script crash from a
+  // successful empty export, even though the forced-exit non-zero code below is
+  // suppressed by the "main worker has been destroyed" handling.
+  console.error("PGDELTA_SCRIPT_ERROR");
   // Force close event loop
   throw new Error("");
 }

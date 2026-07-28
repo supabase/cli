@@ -54,23 +54,45 @@ export function legacySanitizeProjectId(src: string) {
   return truncateText(sanitized, MAX_PROJECT_ID_LENGTH);
 }
 
-function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${legacySanitizeProjectId(projectId)}`;
+/**
+ * `supabase_<suffix>_<sanitizedProjectId>` — the naming scheme shared by every
+ * local Docker resource (`utils.GetId`, `apps/cli-go/internal/utils/config.go`).
+ * Exported so callers building a single service's container name (e.g. a
+ * future `legacy-service-catalog.ts` consumer) don't need to go through
+ * {@link legacyServiceContainerIds}'s fixed 13-element array.
+ */
+export function legacyServiceContainerName(suffix: string, projectId: string): string {
+  return `supabase_${suffix}_${legacySanitizeProjectId(projectId)}`;
 }
 
 /** `utils.DbId` — the local Postgres container name. */
 export function localDbContainerId(projectId: string) {
-  return localDockerId("db", projectId);
+  return legacyServiceContainerName("db", projectId);
 }
 
 /** `utils.NetId` fallback — the default generated docker network name. */
 export function localNetworkId(projectId: string) {
-  return localDockerId("network", projectId);
+  return legacyServiceContainerName("network", projectId);
 }
 
 /** Go's `utils.CliProjectLabel` (`apps/cli-go/internal/utils/docker.go:59`) — the
  * Docker label every container/volume/network created by `supabase start` carries. */
 export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
+
+/**
+ * TS-port-only Docker label (no Go equivalent — Go never stages secrets on host disk in
+ * the first place, see `legacy-start-secrets-cleanup.ts`'s doc comment) recording the
+ * absolute `LegacyCliConfig.workdir` a container was created under, set on every
+ * container `start` creates (`container-lifecycle.ts`'s `legacyStartContainer`).
+ *
+ * Read back by `legacyListContainerIdsAndNames` (`legacy-docker-lifecycle.ts`) so a later
+ * `stop`/`legacyRollbackStart` can reclaim `legacyCleanupStartSecrets`'s staged-secret
+ * directory using the CONTAINER's OWN workdir, rather than the caller's own cwd/
+ * `--workdir` — those can differ when tearing down another project's containers (e.g.
+ * `stop --all`/`stop --project-id <other>`), which would otherwise look in the wrong
+ * directory and orphan that project's staged secret files on disk forever.
+ */
+export const LEGACY_CLI_WORKDIR_LABEL = "com.supabase.cli.workdir";
 
 /**
  * Go's `utils.GetDockerIds()` (`apps/cli-go/internal/utils/config.go:82-98`) — the
@@ -80,19 +102,19 @@ export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
  */
 export function legacyServiceContainerIds(projectId: string): ReadonlyArray<string> {
   return [
-    localDockerId("kong", projectId),
-    localDockerId("auth", projectId),
-    localDockerId("inbucket", projectId),
-    localDockerId("realtime", projectId),
-    localDockerId("rest", projectId),
-    localDockerId("storage", projectId),
-    localDockerId("imgproxy", projectId),
-    localDockerId("pg_meta", projectId),
-    localDockerId("studio", projectId),
-    localDockerId("edge_runtime", projectId),
-    localDockerId("analytics", projectId),
-    localDockerId("vector", projectId),
-    localDockerId("pooler", projectId),
+    legacyServiceContainerName("kong", projectId),
+    legacyServiceContainerName("auth", projectId),
+    legacyServiceContainerName("inbucket", projectId),
+    legacyServiceContainerName("realtime", projectId),
+    legacyServiceContainerName("rest", projectId),
+    legacyServiceContainerName("storage", projectId),
+    legacyServiceContainerName("imgproxy", projectId),
+    legacyServiceContainerName("pg_meta", projectId),
+    legacyServiceContainerName("studio", projectId),
+    legacyServiceContainerName("edge_runtime", projectId),
+    legacyServiceContainerName("analytics", projectId),
+    legacyServiceContainerName("vector", projectId),
+    legacyServiceContainerName("pooler", projectId),
   ];
 }
 

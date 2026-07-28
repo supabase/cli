@@ -1129,33 +1129,33 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	// Api only overrides configs of enabled providers
 	switch {
 	case s.Twilio.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTwilio)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.Twilio)
 		if len(s.Twilio.AuthToken.SHA256) > 0 {
 			body.SmsTwilioAuthToken = nullable.NewNullableWithValue(s.Twilio.AuthToken.Value)
 		}
 		body.SmsTwilioAccountSid = nullable.NewNullableWithValue(s.Twilio.AccountSid)
 		body.SmsTwilioMessageServiceSid = nullable.NewNullableWithValue(s.Twilio.MessageServiceSid)
 	case s.TwilioVerify.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTwilioVerify)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.TwilioVerify)
 		if len(s.TwilioVerify.AuthToken.SHA256) > 0 {
 			body.SmsTwilioVerifyAuthToken = nullable.NewNullableWithValue(s.TwilioVerify.AuthToken.Value)
 		}
 		body.SmsTwilioVerifyAccountSid = nullable.NewNullableWithValue(s.TwilioVerify.AccountSid)
 		body.SmsTwilioVerifyMessageServiceSid = nullable.NewNullableWithValue(s.TwilioVerify.MessageServiceSid)
 	case s.Messagebird.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderMessagebird)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.Messagebird)
 		if len(s.Messagebird.AccessKey.SHA256) > 0 {
 			body.SmsMessagebirdAccessKey = nullable.NewNullableWithValue(s.Messagebird.AccessKey.Value)
 		}
 		body.SmsMessagebirdOriginator = nullable.NewNullableWithValue(s.Messagebird.Originator)
 	case s.Textlocal.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTextlocal)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.Textlocal)
 		if len(s.Textlocal.ApiKey.SHA256) > 0 {
 			body.SmsTextlocalApiKey = nullable.NewNullableWithValue(s.Textlocal.ApiKey.Value)
 		}
 		body.SmsTextlocalSender = nullable.NewNullableWithValue(s.Textlocal.Sender)
 	case s.Vonage.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderVonage)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.Vonage)
 		if len(s.Vonage.ApiSecret.SHA256) > 0 {
 			body.SmsVonageApiSecret = nullable.NewNullableWithValue(s.Vonage.ApiSecret.Value)
 		}

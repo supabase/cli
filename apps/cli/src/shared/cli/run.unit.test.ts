@@ -47,7 +47,6 @@ describe("extractCommandPath", () => {
 describe("shouldUseGlobalSignalInterrupt", () => {
   it("opts out for self-managed signal commands, even behind global flags", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "serve"])).toBe(false);
-    expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(false);
     expect(shouldUseGlobalSignalInterrupt(["db", "start"])).toBe(false);
     // `db reset` drives the bootstrap seam (holds signals for the Go child), so it must not
     // be wrapped in the global handler either.
@@ -57,11 +56,24 @@ describe("shouldUseGlobalSignalInterrupt", () => {
     ).toBe(false);
   });
 
-  it("opts in for ordinary commands", () => {
+  it("opts in for ordinary commands, including native start (it installs no signal handling of its own, so the global wrapper's rollback-on-interrupt is the only thing that runs legacyRollbackStart on Ctrl-C)", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "list"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["db", "push"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["projects", "list"])).toBe(true);
+    expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt([])).toBe(true);
+  });
+
+  it("opts out for a shell's own additional self-managed commands, without affecting other shells sharing the same argv path", () => {
+    // `next start` already races its own flows against `interruptOnSignal` (see
+    // `next/cli/main.ts`'s call site) — matched purely against argv, `run.ts` itself can't tell
+    // this apart from legacy's native `start`, so the exemption is additive per shell instead of
+    // baked into the shared `selfManagedSignalCommands` list.
+    expect(shouldUseGlobalSignalInterrupt(["start"], [["start"]])).toBe(false);
+    // Without the override, the same argv still opts in (this is what legacy's own call site
+    // relies on for native start's rollback-on-interrupt).
+    expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(true);
+    expect(shouldUseGlobalSignalInterrupt(["start"], [])).toBe(true);
   });
 });
 

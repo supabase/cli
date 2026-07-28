@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -58,6 +58,16 @@ type RouteResult = {
  * `volume ls`) whose relative order/count varies per scenario (N `stop` calls for
  * N listed containers), so a routing table is a better fit than the sequential
  * step-array mock `gen types` uses for its single linear pipeline.
+ *
+ * `stop`'s single `ps` listing uses the combined `--format "{{.ID}}\t{{.Names}}\t{{.Label
+ * \"com.supabase.cli.workdir\"}}"` (via `legacyDockerRemoveAll`'s `onContainersRemoved`
+ * hook, see that function's doc comment) so `legacyCleanupStartSecrets` gets container
+ * names/workdirs from the same request that lists ids to stop, rather than a second,
+ * separately-formatted `docker ps` call — which would cost an extra real Docker Engine
+ * API request Go never makes. `stdout` for a `ps` route response is one `<id>\t<name>`
+ * line per container (no third, workdir column — every test here exercises the
+ * `cliConfig.workdir` fallback path); `defaultRoute` below tab-joins each configured id
+ * with itself.
  */
 function mockRoutedContainerCliSpawner(
   route: (args: ReadonlyArray<string>) => RouteResult,
@@ -158,7 +168,7 @@ function defaultRoute(
   const volumeNames = opts.volumeNames ?? [];
   const dockerApiVersion = opts.dockerApiVersion ?? "1.45";
   return (args: ReadonlyArray<string>): RouteResult => {
-    if (args[0] === "ps") return { stdout: containerIds };
+    if (args[0] === "ps") return { stdout: containerIds.map((id) => `${id}\t${id}`) };
     if (args[0] === "volume" && args[1] === "ls") return { stdout: volumeNames };
     if (args[0] === "version") return { stdout: [dockerApiVersion] };
     return { exitCode: 0 };
@@ -220,7 +230,7 @@ describe("legacy stop integration", () => {
           "label=com.supabase.cli.project=demo",
           "--all",
           "--format",
-          "{{.ID}}",
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
         const stopCalls = child.spawned.filter((s) => s.args[0] === "stop");
         expect(stopCalls.map((s) => s.args)).toEqual([
@@ -236,6 +246,81 @@ describe("legacy stop integration", () => {
         expect(out.stderrText).toContain(
           "docker volume ls --filter label=com.supabase.cli.project=demo",
         );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "reclaims staged-secret directories for containers it tears down, leaving unrelated ones alone",
+    () => {
+      // legacyCleanupStartSecrets (legacy/shared/legacy-start-secrets-cleanup.ts)
+      // reclaims start's staged plaintext-secret directories
+      // (<workdir>/supabase/.temp/start-secrets/<container-name>) for exactly
+      // the containers this stop run tore down — captured via
+      // `legacyDockerRemoveAll`'s `onContainersRemoved` hook, never a blanket
+      // delete of the whole start-secrets/ parent (see that function's doc
+      // comment for why). `defaultRoute`'s `ps` stdout carries no third
+      // (workdir-label) column, so this also exercises the backward-compatible
+      // fallback to `cliConfig.workdir` for a container with no
+      // `com.supabase.cli.workdir` label (created before that label existed).
+      const { layer, workdir } = setup({
+        configuredProjectId: "demo",
+        route: defaultRoute({ containerIds: ["supabase_kong_demo"] }),
+      });
+      const startSecretsDir = join(workdir, "supabase", ".temp", "start-secrets");
+      const matchedDir = join(startSecretsDir, "supabase_kong_demo");
+      const unmatchedDir = join(startSecretsDir, "supabase_kong_other-project");
+      mkdirSync(matchedDir, { recursive: true });
+      writeFileSync(join(matchedDir, "secret-0"), "kong.yml contents");
+      mkdirSync(unmatchedDir, { recursive: true });
+      writeFileSync(join(unmatchedDir, "secret-0"), "unrelated project's secret");
+      return Effect.gen(function* () {
+        yield* legacyStop(flags());
+        expect(existsSync(matchedDir)).toBe(false);
+        expect(existsSync(unmatchedDir)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "reclaims a container's staged-secret directory at its OWN labeled workdir, not this invocation's cwd",
+    () => {
+      // `stop --all`/`stop --project-id <other>` can tear down a DIFFERENT project's containers
+      // than the one this invocation's own cwd/`--workdir` points at. Each container's own
+      // `com.supabase.cli.workdir` label (read back via the widened `docker ps --format`, see
+      // `legacyListContainerIdsAndNames`) must be used to locate its staged-secret directory —
+      // never this invocation's `cliConfig.workdir` unconditionally, which would look in the
+      // wrong place and silently orphan the other project's secrets forever.
+      const workdir = tempRoot.current;
+      const otherProjectWorkdir = join(workdir, "other-project-root");
+      const { layer } = setup({
+        workdir,
+        skipConfig: true,
+        route: (args) => {
+          if (args[0] === "ps") {
+            return { stdout: [`c1\tsupabase_kong_other\t${otherProjectWorkdir}`] };
+          }
+          return defaultRoute()(args);
+        },
+      });
+      const correctDir = join(
+        otherProjectWorkdir,
+        "supabase",
+        ".temp",
+        "start-secrets",
+        "supabase_kong_other",
+      );
+      // Same container name, but rooted at THIS invocation's own workdir — must survive, proving
+      // cleanup never falls back to `cliConfig.workdir` while a real label is present.
+      const wrongDir = join(workdir, "supabase", ".temp", "start-secrets", "supabase_kong_other");
+      mkdirSync(correctDir, { recursive: true });
+      writeFileSync(join(correctDir, "secret-0"), "kong.yml contents");
+      mkdirSync(wrongDir, { recursive: true });
+      writeFileSync(join(wrongDir, "secret-0"), "must not be touched");
+      return Effect.gen(function* () {
+        yield* legacyStop(flags({ all: Option.some(true) }));
+        expect(existsSync(correctDir)).toBe(false);
+        expect(existsSync(wrongDir)).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -261,7 +346,7 @@ describe("legacy stop integration", () => {
           "label=com.supabase.cli.project=My_App_",
           "--all",
           "--format",
-          "{{.ID}}",
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
       }).pipe(Effect.provide(layer));
     },
@@ -281,7 +366,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=Raw Value!!",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -297,7 +382,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
       const pruneCalls = child.spawned.filter(
         (s) => s.args[0] === "container" && s.args[1] === "prune",
@@ -338,7 +423,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=other-project",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -357,7 +442,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=demo",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -378,7 +463,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=env-file-project",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -396,7 +481,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=ambient-project",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
     }).pipe(
       Effect.provide(layer),
@@ -431,7 +516,7 @@ describe("legacy stop integration", () => {
           `label=com.supabase.cli.project=${projectId}`,
           "--all",
           "--format",
-          "{{.ID}}",
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
       }).pipe(Effect.provide(layer));
     },
@@ -453,7 +538,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=no-config-project",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -473,7 +558,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=root-env-project",
         "--all",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -752,7 +837,7 @@ additional_redirect_urls = "http://a,http://b"
           "label=com.supabase.cli.project=demo",
           "--all",
           "--format",
-          "{{.ID}}",
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
       }).pipe(Effect.provide(layer));
     },
@@ -866,6 +951,35 @@ enabled = true
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "preserves a container's staged-secret directory when the stop stage itself fails",
+    () => {
+      // The stop stage failing means `container prune` never even runs, so none of the listed
+      // containers were actually removed — some may still be live. `onContainersRemoved` only
+      // fires once `container prune` confirms removal, so it never fires here, and
+      // `legacyCleanupStartSecrets` must not delete anything.
+      const { layer, workdir } = setup({
+        configuredProjectId: "demo",
+        route: (args) => {
+          if (args[0] === "ps") return { stdout: ["c1\tsupabase_kong_demo"] };
+          if (args[0] === "stop") return { exitCode: 1, stderr: ["boom"] };
+          return { exitCode: 0 };
+        },
+      });
+      const stagedDir = join(workdir, "supabase", ".temp", "start-secrets", "supabase_kong_demo");
+      mkdirSync(stagedDir, { recursive: true });
+      writeFileSync(join(stagedDir, "secret-0"), "kong.yml contents");
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStop(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+        }
+        expect(existsSync(stagedDir)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("fails when a container cannot be spawned to stop it at all", () => {
     // Distinct from a spawned `docker stop` exiting non-zero (covered above) —
     // this exercises the branch where docker AND podman both fail to spawn for
@@ -957,6 +1071,28 @@ enabled = true
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LegacyStopNetworkPruneError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  // By the time volume/network prune fails, the container-prune stage before it has already
+  // `docker rm`'d the matching containers — a subsequent `stop` can no longer rediscover their
+  // names via `docker ps` to reclaim their staged-secret directories, so this cleanup must run
+  // even though the command itself still fails (see the `Effect.ensuring` finalizer above).
+  it.live("still reclaims staged-secret directories when a later prune stage fails", () => {
+    const { layer, workdir } = setup({
+      configuredProjectId: "demo",
+      route: (args) => {
+        if (args[0] === "network" && args[1] === "prune") return { exitCode: 1 };
+        return defaultRoute({ containerIds: ["supabase_kong_demo"] })(args);
+      },
+    });
+    const matchedDir = join(workdir, "supabase", ".temp", "start-secrets", "supabase_kong_demo");
+    mkdirSync(matchedDir, { recursive: true });
+    writeFileSync(join(matchedDir, "secret-0"), "kong.yml contents");
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStop(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(existsSync(matchedDir)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

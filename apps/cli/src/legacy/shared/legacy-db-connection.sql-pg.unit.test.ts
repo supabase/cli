@@ -1,7 +1,14 @@
+import { EventEmitter } from "node:events";
+import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
+  legacyAcquireProbedPool,
   legacyBuildConnectionUrl,
+  legacyBuildPoolConfig,
+  legacyBuildRawPgConfig,
+  legacyInstallPoolErrorSwallow,
+  legacyPoolStepDownVerify,
   legacyIsTerminalConnectError,
   legacyIsUnixSocketHost,
   legacyMergedConnectionOptions,
@@ -268,6 +275,185 @@ describe("legacySslConfigsFor (pgconn fallback list)", () => {
     expect(legacySslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([
       { rejectUnauthorized: false },
     ]);
+  });
+});
+
+describe("legacyBuildRawPgConfig", () => {
+  const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
+
+  it("uses discrete fields (no connection string) when no options/runtimeParams", () => {
+    const c = legacyBuildRawPgConfig(
+      { ...base },
+      "db.example.com",
+      5432,
+      { rejectUnauthorized: false },
+      10,
+    );
+    expect(c).toMatchObject({
+      host: "db.example.com",
+      port: 5432,
+      user: "postgres",
+      password: "pw",
+      database: "postgres",
+      connectionTimeoutMillis: 10_000,
+      ssl: { rejectUnauthorized: false },
+    });
+    expect(c.connectionString).toBeUndefined();
+  });
+
+  it("routes through a connection string when a libpq options payload is present", () => {
+    const c = legacyBuildRawPgConfig(
+      { ...base, options: "reference=abc" },
+      "db.example.com",
+      6543,
+      false,
+      2,
+    );
+    expect(c.connectionString).toContain("@db.example.com:6543/");
+    expect(c.connectionString).toContain("options=reference%3Dabc");
+    expect(c.host).toBeUndefined();
+    expect(c.connectionTimeoutMillis).toBe(2000);
+    expect(c.ssl).toBe(false);
+  });
+
+  it("omits the ssl field entirely when the ssl option is undefined", () => {
+    const c = legacyBuildRawPgConfig({ ...base }, "h", 5432, undefined, 5);
+    expect("ssl" in c).toBe(false);
+  });
+});
+
+describe("legacyBuildPoolConfig", () => {
+  const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
+
+  it("disables idle reaping (idleTimeoutMillis 0) and pins one connection (max 1) for a remote config", () => {
+    // The `db pull` bug: `PgClient.make` left idleTimeoutMillis unset (node-postgres
+    // default 10s), reaping the stepped-down connection during a long idle.
+    const c = legacyBuildPoolConfig(
+      { ...base },
+      "db.example.com",
+      5432,
+      { rejectUnauthorized: false },
+      10,
+      true,
+    );
+    expect(c.idleTimeoutMillis).toBe(0);
+    expect(c.max).toBe(1);
+    expect(c.application_name).toBe("@effect/sql-pg");
+    // carries the raw client config fields through
+    expect(c).toMatchObject({ host: "db.example.com", connectionTimeoutMillis: 10_000 });
+  });
+
+  it("disables idle reaping and pins one connection for a local (plaintext) config too", () => {
+    const c = legacyBuildPoolConfig({ ...base }, "127.0.0.1", 54322, false, 2, false);
+    expect(c.idleTimeoutMillis).toBe(0);
+    expect(c.max).toBe(1);
+    expect(c.ssl).toBe(false);
+  });
+
+  it("installs the step-down verify hook only when required", () => {
+    // Every NEW physical connection (initial + silent redials) runs the step-down
+    // before pg-pool hands it to a checkout, mirroring Go's per-connection
+    // AfterConnect.
+    const remote = legacyBuildPoolConfig({ ...base }, "db.example.com", 5432, false, 10, true);
+    expect(remote.verify).toBe(legacyPoolStepDownVerify);
+    const local = legacyBuildPoolConfig({ ...base }, "127.0.0.1", 54322, false, 2, false);
+    expect("verify" in local).toBe(false);
+  });
+});
+
+describe("legacyPoolStepDownVerify", () => {
+  it("runs SET SESSION ROLE postgres and reports success to the pool", async () => {
+    const queries: Array<string> = [];
+    const client = { query: (sql: string) => (queries.push(sql), Promise.resolve()) };
+    const done = await new Promise<Error | undefined>((resolve) => {
+      legacyPoolStepDownVerify(client, resolve);
+    });
+    expect(queries).toEqual(["SET SESSION ROLE postgres"]);
+    expect(done).toBeUndefined();
+  });
+
+  it("propagates a failing step-down to the pool callback so the checkout fails (Go AfterConnect parity)", async () => {
+    const failure = new Error("permission denied to set role");
+    const client = { query: () => Promise.reject(failure) };
+    const done = await new Promise<Error | undefined>((resolve) => {
+      legacyPoolStepDownVerify(client, resolve);
+    });
+    expect(done).toBe(failure);
+  });
+
+  it("wraps a non-Error rejection into an Error for the pool callback", async () => {
+    const client = { query: () => Promise.reject("boom") };
+    const done = await new Promise<Error | undefined>((resolve) => {
+      legacyPoolStepDownVerify(client, resolve);
+    });
+    expect(done).toBeInstanceOf(Error);
+    expect(String(done)).toContain("boom");
+  });
+});
+
+describe("legacyInstallPoolErrorSwallow", () => {
+  it("swallows pool background errors so a dropped idle client never crashes the process", () => {
+    const pool = new EventEmitter();
+    legacyInstallPoolErrorSwallow(pool);
+    expect(pool.listenerCount("error")).toBe(1);
+    expect(() => pool.emit("error", new Error("idle client boom"))).not.toThrow();
+  });
+});
+
+describe("legacyAcquireProbedPool", () => {
+  // Tiny fake at the driver boundary: records query/end calls. Standing in for a
+  // real `pg.Pool` proves the pool is always `.end()`ed — the leak this fixes.
+  function makeFakePool(query: () => Promise<unknown>) {
+    const calls = { query: 0, end: 0 };
+    const pool = {
+      query: (_sql: string) => {
+        calls.query += 1;
+        return query();
+      },
+      end: () => {
+        calls.end += 1;
+        return Promise.resolve();
+      },
+      on: (_event: "error", _listener: (error: Error) => void) => undefined,
+    };
+    return { pool, calls };
+  }
+
+  it("ends the pool when the connect probe rejects", async () => {
+    const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
+    const exit = await Effect.runPromiseExit(
+      legacyAcquireProbedPool(() => fake.pool, 2).pipe(Effect.scoped),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(fake.calls.query).toBe(1);
+    // The finalizer, installed the moment the pool exists, closes it on failure.
+    expect(fake.calls.end).toBe(1);
+  });
+
+  it("ends the pool when the connect probe times out (black-holed host)", async () => {
+    // A never-resolving probe models a black-holed host: `timeoutOrElse` fires and
+    // the already-installed finalizer still closes the pool + its in-flight dial.
+    const fake = makeFakePool(() => new Promise<unknown>(() => {}));
+    const exit = await Effect.runPromiseExit(
+      legacyAcquireProbedPool(() => fake.pool, 0.05).pipe(Effect.scoped),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(fake.calls.end).toBe(1);
+  });
+
+  it("keeps the pool open until the scope closes on a successful probe", async () => {
+    const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const pool = yield* legacyAcquireProbedPool(() => fake.pool, 2);
+        // While the scope is open the pool is live and not yet ended.
+        return { isSamePool: pool === fake.pool, endWhileOpen: fake.calls.end };
+      }).pipe(Effect.scoped),
+    );
+    expect(observed.isSamePool).toBe(true);
+    expect(observed.endWhileOpen).toBe(0);
+    // Closing the scope ends the pool exactly once.
+    expect(fake.calls.end).toBe(1);
   });
 });
 

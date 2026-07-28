@@ -1,12 +1,12 @@
 import type { ProjectConfig } from "@supabase/config";
 
-import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { legacyServiceContainerIds } from "../../shared/legacy-docker-ids.ts";
+import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import { legacyServiceContainerIds } from "./legacy-docker-ids.ts";
 import {
   legacyEnvOverrideBool,
   legacyResolveLocalConfigValues,
   type LegacyLocalConfigValues,
-} from "../../shared/legacy-local-config-values.ts";
+} from "./legacy-local-config-values.ts";
 
 /**
  * Port of Go's `status.CustomName` + `toValues()` (`internal/status/status.go:29-97`).
@@ -289,14 +289,26 @@ export function legacyResolveStatusLocalState(
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
   /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
   document: Readonly<Record<string, unknown>> | undefined = undefined,
+  /**
+   * An already-resolved {@link legacyResolveLocalConfigValues} result to reuse
+   * instead of re-deriving one. Callers that resolved `local` earlier in the
+   * SAME process (e.g. `start`'s success-path status print, after the values
+   * it already resolved were used to build every container spec) must pass it
+   * here rather than let this function call
+   * {@link legacyResolveLocalConfigValues} again — a second call re-mints a
+   * time-dependent asymmetric JWT (`auth.signing_keys_path` +
+   * {@link legacyGenerateAsymmetricGoJwt}'s `exp` claim) with a DIFFERENT
+   * signature than the one baked into the already-running containers. Go
+   * never has this problem: `c.Auth.generateAPIKeys()` runs exactly once per
+   * process (`Config.Validate()`, `pkg/config/config.go:1155`), mutating the
+   * config in place, so every later read — including its own status print —
+   * sees the same value.
+   */
+  precomputedLocal?: LegacyLocalConfigValues,
 ): LegacyStatusLocalState {
-  const local = legacyResolveLocalConfigValues(
-    config,
-    hostname,
-    workdir,
-    projectEnvValues,
-    document,
-  );
+  const local =
+    precomputedLocal ??
+    legacyResolveLocalConfigValues(config, hostname, workdir, projectEnvValues, document);
 
   const apiEnabled = legacyEnvOverrideBool(
     "SUPABASE_API_ENABLED",

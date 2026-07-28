@@ -6,6 +6,7 @@ import {
   LegacyDockerLifecycleInspectError,
   LegacyDockerLifecycleListError,
   legacyInspectContainerState,
+  legacyListContainerIdsAndNames,
   legacyListContainersByLabel,
   legacyListVolumesByLabel,
 } from "./legacy-docker-lifecycle.ts";
@@ -162,6 +163,58 @@ describe("legacyListContainersByLabel", () => {
       }),
     );
   });
+});
+
+describe("legacyListContainerIdsAndNames", () => {
+  it.live("parses id, name, and the com.supabase.cli.workdir label from a single ps call", () => {
+    const mock = mockSpawner({
+      stdout:
+        "abc123\tsupabase_kong_demo\t/home/user/demo\ndef456\tsupabase_db_demo\t/home/user/demo\n",
+    });
+    return legacyListContainerIdsAndNames(mock.spawner, {
+      projectIdFilter: "com.supabase.cli.project=demo",
+      all: true,
+    }).pipe(
+      Effect.map((containers) => {
+        expect(containers).toEqual([
+          { id: "abc123", name: "supabase_kong_demo", workdir: "/home/user/demo" },
+          { id: "def456", name: "supabase_db_demo", workdir: "/home/user/demo" },
+        ]);
+        expect(mock.spawned).toEqual([
+          {
+            command: "docker",
+            args: [
+              "ps",
+              "--filter",
+              "label=com.supabase.cli.project=demo",
+              "--all",
+              "--format",
+              '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+            ],
+          },
+        ]);
+      }),
+    );
+  });
+
+  it.live(
+    "resolves an empty workdir for a container carrying no com.supabase.cli.workdir label",
+    () => {
+      // Docker's `{{.Label "key"}}` resolves to an empty string when the container has no such
+      // label — a container `start` created before this label existed, or one a Go binary
+      // created. `legacyCleanupStartSecrets` treats this empty string as "fall back to the
+      // caller's own workdir" (see that function's doc comment).
+      const mock = mockSpawner({ stdout: "abc123\tsupabase_kong_demo\t\n" });
+      return legacyListContainerIdsAndNames(mock.spawner, {
+        projectIdFilter: "com.supabase.cli.project=demo",
+        all: true,
+      }).pipe(
+        Effect.map((containers) => {
+          expect(containers).toEqual([{ id: "abc123", name: "supabase_kong_demo", workdir: "" }]);
+        }),
+      );
+    },
+  );
 });
 
 describe("legacyInspectContainerState", () => {
