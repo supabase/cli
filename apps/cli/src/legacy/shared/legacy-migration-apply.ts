@@ -1,6 +1,7 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -85,6 +86,41 @@ const errMessage = (e: unknown): string =>
     ? e.message
     : String(e);
 
+const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
+
+/**
+ * Port of Go's `markError` (`pkg/migration/file.go:117-132`): renders a `^` caret
+ * line under the error position of the failing statement. `pos` is the server's
+ * 1-based error cursor (`pgErr.Position`); Go consumes it against **byte**
+ * lengths (`len(line)` on a Go string counts UTF-8 bytes) and pads the caret with
+ * `pos-1` space bytes, so multibyte statements shift the caret exactly as Go does
+ * (verified empirically against the Go implementation). The caret line REPLACES
+ * every line after the error line (Go's `append(lines[:j+1], caret)` truncates
+ * the tail). Position 0 (absent), a position past the end of the statement, or
+ * one landing exactly on a line break leave the statement untouched.
+ */
+export const legacyMarkError = (stat: string, pos: number): string => {
+  const lines = stat.split("\n");
+  for (const [j, line] of lines.entries()) {
+    const c = utf8ByteLength(line);
+    if (pos > c) {
+      pos -= c + 1;
+      continue;
+    }
+    // Show a caret below the error position
+    if (pos > 0) {
+      return [...lines.slice(0, j + 1), `${" ".repeat(pos - 1)}^`].join("\n");
+    }
+    break;
+  }
+  return stat;
+};
+
+// Go's `typeNamePattern` (`pkg/migration/file.go:31`): extracts the type name from
+// PostgreSQL error messages like `type "ltree" does not exist`. Unanchored, so it
+// matches identically inside the rendered `ERROR: … (SQLSTATE …)` head line.
+const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
+
 /**
  * Runs a single migration/seed file's statements (plus the optional history insert).
  * Mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`): statements run
@@ -117,10 +153,30 @@ const execMigrationBatch = <E>(
     const version = forceNoVersion ? "" : (matches?.[1] ?? "");
     const name = matches?.[2] ?? "";
 
-    // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go`):
-    // on a failed statement, append `At statement: <index>` and the statement text.
-    const atStatement = (e: unknown, index: number, stat: string) =>
-      new Error(`${errMessage(e)}\nAt statement: ${index}\n${stat}`);
+    // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
+    // on a failed statement, render the `^` caret under the server-reported error
+    // position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
+    // then `At statement: <index>` and the (caret-marked) statement text. The
+    // structured `detail`/`position` fields are only set by the driver for server
+    // ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
+    const atStatement = (e: LegacyDbExecError, index: number, stat: string) => {
+      const marked = legacyMarkError(stat, e.position ?? 0);
+      const msg: Array<string> = [];
+      if (e.detail !== undefined && e.detail.length > 0) {
+        msg.push(e.detail);
+      }
+      // Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
+      const typeName = TYPE_NAME_PATTERN.exec(e.message)?.[1];
+      if (typeName !== undefined && e.code === "42704" && !typeName.includes(".")) {
+        msg.push("");
+        msg.push("Hint: This type may be defined in a schema that's not in your search_path.");
+        msg.push("      Use schema-qualified type references to avoid this error:");
+        msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
+        msg.push("      Learn more: supabase migration new --help");
+      }
+      msg.push(`At statement: ${index}`, marked);
+      return new Error(`${errMessage(e)}\n${msg.join("\n")}`);
+    };
 
     // `executed` is the global statement index of the next statement to run, so the
     // error context stays accurate across flushed batches and standalone statements
