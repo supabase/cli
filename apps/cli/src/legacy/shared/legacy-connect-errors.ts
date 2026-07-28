@@ -70,8 +70,6 @@ export interface LegacyConnectSuggestionContext {
   readonly dashboardUrl: string;
   /** Active profile name (Go's `CurrentProfile.Name`). */
   readonly profileName: string;
-  /** Whether `--debug` is set (Go's `viper.GetBool("DEBUG")`). */
-  readonly debug: boolean;
 }
 
 /**
@@ -365,10 +363,6 @@ export function legacyConnectSuggestion(
     text.includes("Address not in tenant allow_list")
   ) {
     return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${ctx.dashboardUrl}/project/_/database/settings`;
-  }
-  // SSL connection is required (only under --debug, which disables TLS).
-  if (text.includes("SSL connection is required") && ctx.debug) {
-    return "SSL connection is not supported with --debug flag";
   }
   // Wrong password (Go: "SCRAM exchange: Wrong password" / "failed SASL auth";
   // node-postgres surfaces the server's `28P01` "password authentication failed").

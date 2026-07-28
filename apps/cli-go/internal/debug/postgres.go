@@ -2,6 +2,8 @@ package debug
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,7 +18,10 @@ import (
 
 type Proxy struct {
 	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
-	errChan     chan error
+	// tlsConfig is what pgx resolved from sslmode. DialFunc completes the
+	// handshake itself, so logged frames are plaintext in memory but not on the wire.
+	tlsConfig *tls.Config
+	errChan   chan error
 }
 
 func NewProxy() Proxy {
@@ -30,16 +35,30 @@ func NewProxy() Proxy {
 func SetupPGX(config *pgx.ConnConfig) {
 	proxy := Proxy{
 		dialContext: config.DialFunc,
+		tlsConfig:   config.TLSConfig,
 		errChan:     make(chan error, 1),
 	}
 	config.DialFunc = proxy.DialFunc
+	// pgx must not negotiate TLS again over the in-memory pipe; clearing these
+	// *without* DialFunc's handshake is what downgraded sslmode=require (#5872).
+	// Every attempt then reuses the primary's config, which pgconn only leaves
+	// plaintext for sslmode=disable and =allow (config.go:772-780), so a required
+	// connection stays encrypted; =allow loses its opportunistic TLS retry.
 	config.TLSConfig = nil
+	for _, fallback := range config.Fallbacks {
+		fallback.TLSConfig = nil
+	}
 }
 
 func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, error) {
 	serverConn, err := p.dialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
+	}
+	if p.tlsConfig != nil {
+		if serverConn, err = startTLS(ctx, serverConn, p.tlsConfig); err != nil {
+			return nil, err
+		}
 	}
 
 	const bufSize = 1024 * 1024
@@ -71,6 +90,34 @@ func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, e
 	}()
 
 	return ln.DialContext(ctx)
+}
+
+// libpq's SSLRequest message code, PG_PROTOCOL(1234,5679).
+const sslRequestCode = 80877103
+
+// startTLS mirrors pgconn's own startTLS (pgconn@v1.14.3/pgconn.go:406-419), but
+// handshakes eagerly so a refusal or bad certificate fails the dial rather than
+// surfacing as a parse error inside the forwarding goroutines.
+func startTLS(ctx context.Context, conn net.Conn, tlsConfig *tls.Config) (net.Conn, error) {
+	if err := binary.Write(conn, binary.BigEndian, []int32{8, sslRequestCode}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	response := make([]byte, 1)
+	if _, err := io.ReadFull(conn, response); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if response[0] != 'S' {
+		conn.Close()
+		return nil, errors.New("server refused TLS connection")
+	}
+	tlsConn := tls.Client(conn, tlsConfig)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
 }
 
 type Backend struct {

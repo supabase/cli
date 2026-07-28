@@ -276,7 +276,6 @@ describe("legacyConnectSuggestion", () => {
   const ctx = {
     dashboardUrl: "https://supabase.com/dashboard",
     profileName: "supabase",
-    debug: false,
   } as const;
 
   // The @effect/sql SqlError wraps the node driver error on `.cause`; a multi-address
@@ -318,12 +317,10 @@ describe("legacyConnectSuggestion", () => {
     expect(legacyConnectSuggestion(err, ctx)).toBe(LEGACY_SUGGEST_ENV_VAR);
   });
 
-  it("suggests the --debug SSL note only under --debug", () => {
+  // `ssl` comes from the DSN alone, so a server demanding it blames the DSN, not the flag.
+  it("does not blame --debug when the server demands SSL", () => {
     const err = sqlError(new Error("SSL connection is required"));
     expect(legacyConnectSuggestion(err, ctx)).toBeUndefined();
-    expect(legacyConnectSuggestion(err, { ...ctx, debug: true })).toBe(
-      "SSL connection is not supported with --debug flag",
-    );
   });
 
   it("maps an IPv6-only connectivity failure to the IPv6 pooler suggestion", () => {

@@ -208,10 +208,12 @@ func TestSetConnectSuggestion(t *testing.T) {
 			suggestion: "",
 		},
 		{
+			// The debug proxy negotiates TLS itself, so --debug is no longer the
+			// reason a server rejects an unencrypted connection (#5872).
 			name:       "ssl required with debug flag",
 			err:        errors.New("SSL connection is required"),
 			debug:      true,
-			suggestion: "SSL connection is not supported with --debug flag",
+			suggestion: "",
 		},
 		{
 			name:       "wrong password via SCRAM",

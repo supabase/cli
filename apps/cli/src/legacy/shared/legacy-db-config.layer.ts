@@ -108,13 +108,12 @@ export const legacyDbConfigLayer = Layer.effect(
     const path = yield* Path.Path;
 
     // Profile context for the connect-failure suggestion (Go's `SetConnectSuggestion`
-    // reads the ambient `CurrentProfile` + `viper.GetBool("DEBUG")`). Snapshot it once
+    // reads the ambient `CurrentProfile`). Snapshot it once
     // and attach it to every resolved connection so the driver layer can render Go's
     // hint on a refused/auth/IPv6 connect error.
     const suggestionContext: LegacyConnectSuggestionContext = {
       dashboardUrl: cliConfig.dashboardUrl,
       profileName: cliConfig.profile,
-      debug: yield* LegacyDebugFlag,
     };
 
     // Capture the ambient services the Management API stack needs, so the
