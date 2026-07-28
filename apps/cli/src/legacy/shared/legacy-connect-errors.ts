@@ -73,6 +73,17 @@ export const LEGACY_SUGGEST_ENV_VAR =
  */
 export const LEGACY_SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
 
+/**
+ * Go's `SetConnectSuggestion` remote-only "Network Restrictions" hint
+ * (`internal/utils/connect.go:319-321`), shown for a connection refused/blocked
+ * by IP allow-listing. Shared by both the always-remote `Address not in tenant
+ * allow_list` branch and the non-local `ECONNREFUSED`/`connection refused`
+ * branch in `legacyConnectSuggestion`.
+ */
+function legacySuggestNetworkRestrictions(dashboardUrl: string): string {
+  return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${dashboardUrl}/project/_/database/settings`;
+}
+
 /** Context the connect-suggestion needs but cannot derive from the error alone. */
 export interface LegacyConnectSuggestionContext {
   /** Active profile's dashboard URL (Go's `CurrentProfile.DashboardURL`). */
@@ -370,14 +381,14 @@ export function legacyConnectSuggestion(
   // connect: connection refused - "Address not in tenant allow_list" only ever comes from the remote pooler
   // rejecting the caller's IP, so it always means network restrictions.
   if (text.includes("Address not in tenant allow_list")) {
-    return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${ctx.dashboardUrl}/project/_/database/settings`;
+    return legacySuggestNetworkRestrictions(ctx.dashboardUrl);
   }
   // connect: connection refused — don't send the user to the
   // dashboard's Network Restrictions page for a --local connection.
   if (text.includes("ECONNREFUSED") || text.includes("connection refused")) {
     return ctx.isLocal
       ? LEGACY_SUGGEST_LOCAL_STACK
-      : `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${ctx.dashboardUrl}/project/_/database/settings`;
+      : legacySuggestNetworkRestrictions(ctx.dashboardUrl);
   }
   // SSL connection is required (only under --debug, which disables TLS).
   if (text.includes("SSL connection is required") && ctx.debug) {
