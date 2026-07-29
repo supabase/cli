@@ -37,6 +37,7 @@ function setup(
     yes?: boolean;
     /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
     stdinInput?: string;
+    platform?: NodeJS.Platform;
   } = {},
 ) {
   const out = mockOutput({ format: "text", interactive: opts.interactive ?? false });
@@ -45,7 +46,7 @@ function setup(
     layer: Layer.mergeAll(
       BunServices.layer,
       out.layer,
-      mockRuntimeInfo({ cwd }),
+      mockRuntimeInfo({ cwd, platform: opts.platform }),
       mockTty({
         stdinIsTty: opts.stdinIsTty ?? false,
         stdoutIsTty: opts.interactive ?? false,
@@ -198,6 +199,48 @@ describe("legacy init", () => {
       // Composed stderr byte-matches Go's `recoverAndExit` output (Linux/macOS).
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase/config.toml: file exists\n",
+        "Run supabase init --force to overwrite existing config file.\n",
+      ]);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("renders the Windows form of the already-exists error on win32", () => {
+    const tempDir = makeTempDir();
+
+    const initFlags = {
+      interactive: false,
+      useOrioledb: false,
+      force: false,
+      withVscodeWorkspace: false,
+      withVscodeSettings: false,
+      withIntellijSettings: false,
+    };
+
+    return Effect.gen(function* () {
+      const { layer } = setup(tempDir, { platform: "win32" });
+
+      yield* legacyInit(initFlags).pipe(Effect.provide(layer));
+      const exit = yield* legacyInit(initFlags).pipe(Effect.provide(layer), Effect.exit);
+
+      // On Windows, Go builds `utils.ConfigPath` with `filepath.Join`
+      // (`utils/misc.go:82`) — backslash separator — and the `O_EXCL` open
+      // fails with `ERROR_FILE_EXISTS`, rendered by `syscall.Errno.Error()` as
+      // `The file exists.`. The suggestion is unchanged because
+      // `errors.Is(err, os.ErrExist)` matches on Windows too (`init.go:38-42`).
+      const error = findFailure(exit);
+      expect(error["_tag"]).toBe("LegacyInitConfigExistsError");
+      expect(error["message"]).toBe(
+        "failed to create config file: open supabase\\config.toml: The file exists.",
+      );
+      expect(error["suggestion"]).toBe(
+        "Run supabase init --force to overwrite existing config file.",
+      );
+
+      // Composed stderr byte-matches Go's `recoverAndExit` output (Windows).
+      expect(yield* renderFailureToStderr(exit)).toEqual([
+        "failed to create config file: open supabase\\config.toml: The file exists.\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
     }).pipe(

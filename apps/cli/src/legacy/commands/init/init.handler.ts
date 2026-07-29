@@ -43,13 +43,21 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
   if (!result.created) {
     // Go's message embeds the `*os.PathError` from the `O_EXCL` open of
     // `utils.ConfigPath`, which is *relative* — so the path in the message is
-    // always `supabase/config.toml` regardless of cwd or `--workdir`. The full
-    // literal is the byte-exact Go output on Linux/macOS (POSIX EEXIST text);
-    // Windows Go prints its own separator and OS errno text and is deliberately
-    // out of scope for this parity fix.
+    // always `supabase/config.toml` regardless of cwd or `--workdir`. The
+    // rendering is platform-specific: `ConfigPath` is built with
+    // `filepath.Join` (`utils/misc.go:82`), so Windows Go prints a backslash,
+    // and the `O_EXCL` open fails there with `ERROR_FILE_EXISTS`, which Go's
+    // `syscall.Errno.Error()` renders as `The file exists.` — vs the POSIX
+    // `EEXIST` text (`file exists`) on Linux/macOS. The POSIX literal is the
+    // byte-exact output of the built Go binary; the Windows literal follows
+    // from the same code path via documented Go/Win32 semantics.
+    const message =
+      runtimeInfo.platform === "win32"
+        ? "failed to create config file: open supabase\\config.toml: The file exists."
+        : "failed to create config file: open supabase/config.toml: file exists";
     return yield* Effect.fail(
       new LegacyInitConfigExistsError({
-        message: "failed to create config file: open supabase/config.toml: file exists",
+        message,
         suggestion: "Run supabase init --force to overwrite existing config file.",
       }),
     );
