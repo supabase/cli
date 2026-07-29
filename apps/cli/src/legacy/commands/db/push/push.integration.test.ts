@@ -79,6 +79,7 @@ function mockConnection(opts: {
   vaultRows?: ReadonlyArray<{ id: string; name: string }>;
   noSeedTable?: boolean;
   failExec?: string;
+  failExecWith?: { message: string; code?: string; detail?: string; position?: number };
 }) {
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
@@ -93,7 +94,9 @@ function mockConnection(opts: {
             execs.push(sql);
             if (opts.failExec !== undefined && sql === opts.failExec) {
               return Effect.fail(
-                new LegacyDbExecError({ message: "ERROR: boom (SQLSTATE 42601)" }),
+                new LegacyDbExecError(
+                  opts.failExecWith ?? { message: "ERROR: boom (SQLSTATE 42601)" },
+                ),
               );
             }
             return Effect.void;
@@ -159,6 +162,7 @@ function setup(
     vaultRows?: ReadonlyArray<{ id: string; name: string }>;
     noSeedTable?: boolean;
     failExec?: string;
+    failExecWith?: { message: string; code?: string; detail?: string; position?: number };
     catalogStdout?: string;
     catalogExportFailWith?: string;
     noProjectId?: boolean;
@@ -813,11 +817,45 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("At statement: 0");
-      }
+      const error = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      // A server error without position/detail keeps Go's plain ExecBatch layout.
+      expect(error._tag).toBe("LegacyDbPushApplyError");
+      expect(error.message).toBe("ERROR: boom (SQLSTATE 42601)\nAt statement: 0\nBOOM");
+    });
+  });
+
+  it.live("renders Go's caret, Detail line, and 42704 extension hint on a failed migration", () => {
+    // Byte-match of Go's `(*MigrationFile).ExecBatch` failure rendering
+    // (`pkg/migration/file.go:88-113`): the `^` caret under the server-reported
+    // error position, the `Detail` line, and the undefined-object extension hint.
+    const stat = "CREATE TABLE test (path ltree NOT NULL)";
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000", `${stat};`),
+      failExec: stat,
+      failExecWith: {
+        message: 'ERROR: type "ltree" does not exist (SQLSTATE 42704)',
+        code: "42704",
+        detail: "Detail from the server.",
+        position: 25,
+      },
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      const error = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      expect(error._tag).toBe("LegacyDbPushApplyError");
+      expect(error.message).toBe(
+        'ERROR: type "ltree" does not exist (SQLSTATE 42704)\n' +
+          "Detail from the server.\n" +
+          "\n" +
+          "Hint: This type may be defined in a schema that's not in your search_path.\n" +
+          "      Use schema-qualified type references to avoid this error:\n" +
+          "        CREATE TABLE example (col extensions.ltree);\n" +
+          "      Learn more: supabase migration new --help\n" +
+          "At statement: 0\n" +
+          "CREATE TABLE test (path ltree NOT NULL)\n" +
+          "                        ^",
+      );
     });
   });
 

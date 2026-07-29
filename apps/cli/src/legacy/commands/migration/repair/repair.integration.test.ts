@@ -217,6 +217,11 @@ describe("legacy migration repair", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe(
           "LegacyMigrationInvalidVersionError",
         );
+        // Guard: unlike `db reset` (bare `invalid version number`, reset.go:35-36),
+        // `migration repair` keeps Go's `failed to parse <v>:` wrapper (repair.go:29).
+        expect(Option.isSome(failure) && failure.value.message).toBe(
+          "failed to parse not-a-number: invalid version number",
+        );
       }
     }).pipe(Effect.provide(layer));
   });

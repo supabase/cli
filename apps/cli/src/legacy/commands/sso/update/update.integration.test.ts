@@ -573,12 +573,84 @@ describe("legacy sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("no domain flag set → body.domains omitted", () => {
+  it.live("no domain flag set → PUT still sends the recomputed existing domain set", () => {
+    // Go's `--add-domains`/`--remove-domains` default to a non-nil `[]string{}`
+    // (`cmd/sso.go:171-172`), so `update.go:84`'s `!= nil` gate is always true
+    // from the CLI — every `sso update` enters the merge and sends `domains`,
+    // even when no domain flag was passed (CLI-1981). Live-captured Go PUT:
+    // `{"domains":["old1.com","old2.com"]}`.
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* legacySsoUpdate(defaultFlags);
       const putReq = api.requests.find((r) => r.method === "PUT");
-      expect((putReq?.body as { domains?: string[] })?.domains).toBeUndefined();
+      const domains = (putReq?.body as { domains: string[] })?.domains;
+      // Go map iteration is unordered — sort before asserting.
+      expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "no domain flags + provider with no domains → PUT sends domains: [] (not omitted)",
+    () => {
+      // Go sets `body.Domains` to a non-nil pointer to `make([]string, 0)`, and
+      // `json:"domains,omitempty"` never omits a non-nil pointer — live-captured
+      // Go PUT body is exactly `{"domains":[]}`.
+      const { layer, api } = setup({ getBody: { ...EXISTING_PROVIDER, domains: [] } });
+      return Effect.gen(function* () {
+        yield* legacySsoUpdate(defaultFlags);
+        const putReq = api.requests.find((r) => r.method === "PUT");
+        const body = putReq?.body as Record<string, unknown>;
+        expect(Object.keys(body)).toContain("domains");
+        expect(body["domains"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("no domain flags + GET response missing domains entirely → PUT sends domains: []", () => {
+    // Go's seed loop is skipped when `getResp.JSON200.Domains == nil`, leaving
+    // the merged set empty — same `{"domains":[]}` bytes as the empty-list case.
+    const { domains: _omitted, ...providerWithoutDomains } = EXISTING_PROVIDER;
+    const { layer, api } = setup({ getBody: providerWithoutDomains });
+    return Effect.gen(function* () {
+      yield* legacySsoUpdate(defaultFlags);
+      const putReq = api.requests.find((r) => r.method === "PUT");
+      const body = putReq?.body as Record<string, unknown>;
+      expect(Object.keys(body)).toContain("domains");
+      expect(body["domains"]).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("explicit empty --domains= falls into the merge and resends the existing set", () => {
+    // `--domains=` parses to an empty slice, so Go's `len(params.Domains) != 0`
+    // replace gate is false and the merge branch runs with no add/remove —
+    // live-captured Go PUT resends the existing domains, it does NOT replace
+    // them with an empty list.
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains="],
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoUpdate({ ...defaultFlags, domains: [] });
+      const putReq = api.requests.find((r) => r.method === "PUT");
+      const domains = (putReq?.body as { domains: string[] })?.domains;
+      expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("merge keeps empty-string domains and skips entries without a domain field", () => {
+    // Go's seed check is nil-ness only (`domain.Domain != nil`,
+    // `update.go:89`): an empty-string domain from the GET response stays in
+    // the merged set, while an entry missing the field entirely is skipped.
+    const { layer, api } = setup({
+      getBody: {
+        ...EXISTING_PROVIDER,
+        domains: [{ id: "d1", domain: "" }, { id: "d2", domain: "old1.com" }, { id: "d3" }],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoUpdate(defaultFlags);
+      const putReq = api.requests.find((r) => r.method === "PUT");
+      const domains = (putReq?.body as { domains: string[] })?.domains;
+      expect([...domains].sort()).toEqual(["", "old1.com"]);
     }).pipe(Effect.provide(layer));
   });
 
