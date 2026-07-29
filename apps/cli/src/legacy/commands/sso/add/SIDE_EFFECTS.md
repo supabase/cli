@@ -40,17 +40,18 @@ same shape via an inline anonymous struct with `Default *any`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                    |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                                                      |
-| `1`  | `LegacySsoFlagNeedsArgumentError` — a bare value-taking flag is the final argv token (pflag `ValueRequiredError`, fails before every validation; no request) |
-| `1`  | `LegacySsoAddRequiredFlagError` — pflag consumed the `--type`/`-t` token as another flag's value (cobra `ValidateRequiredFlags`)                             |
-| `1`  | `LegacySsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                                                                  |
-| `1`  | `LegacySsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                         |
-| `1`  | `LegacySsoAddAttributeMappingFileError` — JSON file unreadable or malformed                                                                                  |
-| `1`  | `LegacySsoAddSamlDisabledError` — 404 from POST                                                                                                              |
-| `1`  | `LegacySsoAddUnexpectedStatusError` — other non-2xx                                                                                                          |
-| `1`  | `LegacySsoAddNetworkError` — transport-level failure                                                                                                         |
+| Code | Condition                                                                                                                                                                                                               |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                 |
+| `1`  | `LegacySsoInvalidFlagValueError` — a `--type`/`--skip-url-validation`/`--name-id-format` occurrence pflag's `Value.Set` would reject (enum membership / `strconv.ParseBool`; fails before every validation; no request) |
+| `1`  | `LegacySsoFlagNeedsArgumentError` — a bare value-taking flag is the final argv token (pflag `ValueRequiredError`, fails before every validation; no request)                                                            |
+| `1`  | `LegacySsoAddRequiredFlagError` — pflag consumed the `--type`/`-t` token as another flag's value (cobra `ValidateRequiredFlags`)                                                                                        |
+| `1`  | `LegacySsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                                                                                                                             |
+| `1`  | `LegacySsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                                                                    |
+| `1`  | `LegacySsoAddAttributeMappingFileError` — JSON file unreadable or malformed                                                                                                                                             |
+| `1`  | `LegacySsoAddSamlDisabledError` — 404 from POST                                                                                                                                                                         |
+| `1`  | `LegacySsoAddUnexpectedStatusError` — other non-2xx                                                                                                                                                                     |
+| `1`  | `LegacySsoAddNetworkError` — transport-level failure                                                                                                                                                                    |
 
 ## Telemetry Events Fired
 
@@ -81,7 +82,7 @@ Single `success` event with the parsed response as data.
 
 - `--type saml` is **required** (Go's `MarkFlagRequired("type")`).
 - `--metadata-file` and `--metadata-url` are mutually exclusive (Go's `MarkFlagsMutuallyExclusive`, `cmd/sso.go:164`). Violations emit cobra's exact template: `if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set`. "Set" follows `pflag.Changed` semantics — an explicit empty value (`--metadata-file=`) still counts.
-- Flag values follow pflag's consumption rules, not the TS parser's: every value the handler acts on (`--project-ref`, `--metadata-file`, `--metadata-url`, `--attribute-mapping-file`, `--domains`, plus set-ness of `--name-id-format`/`--skip-url-validation`) is reconciled against a pflag-faithful raw-argv scan. E.g. `--project-ref --metadata-file x.xml --metadata-url u` hands `--metadata-file` to `--project-ref` as its value and fails ref validation — the metadata file is never read (CLI-1982).
+- Flag values follow pflag's consumption rules, not the TS parser's: every value the handler acts on (`--project-ref`, `--metadata-file`, `--metadata-url`, `--attribute-mapping-file`, `--domains`, `--name-id-format`, `--skip-url-validation`) is reconciled against a pflag-faithful raw-argv scan. E.g. `--project-ref --metadata-file x.xml --metadata-url u` hands `--metadata-file` to `--project-ref` as its value and fails ref validation — the metadata file is never read (CLI-1982). Repeated flags resolve last-wins (pflag Sets every occurrence; the TS parser is first-wins), and an occurrence pflag's `Value.Set` would reject — `--type` outside `[ saml ]`, a boolean outside Go's `strconv.ParseBool` set (`--skip-url-validation=yes`), or a `--name-id-format` outside the enum — fails with pflag's exact `invalid argument …` message before every validation and request.
 - Required-ness follows pflag too: when the `--type` token is itself consumed as another flag's value (`--domains --type saml`), the command fails with cobra's exact `required flag(s) "type" not set` before any request (cobra `ValidateRequiredFlags` runs before `ValidateFlagGroups`). `-t` shorthand occurrences are recognised by the scan and never trip this.
 - `--skip-url-validation` skips the HTTPS-only + 10s GET + UTF-8 body validation against the metadata URL.
 - Metadata URL validation error message: `only HTTPS Metadata URLs are supported Use --skip-url-validation to suppress this error` (no trailing period — matches Go's `create.go:47`; differs from `sso update`'s variant).

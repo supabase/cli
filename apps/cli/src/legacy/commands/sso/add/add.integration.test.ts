@@ -491,6 +491,95 @@ describe("legacy sso add integration", () => {
     },
   );
 
+  it.live(
+    "invalid-value emulation: a later invalid --type occurrence fails with pflag's shorthand-labelled error, no POST",
+    () => {
+      // `--type saml --type bogus`: the Effect parser resolves repeats
+      // first-wins and never validates the rest, so it parses; pflag Sets
+      // every occurrence in order and rejects `bogus` at ParseFlags —
+      // before every hook, the required-flag check, and the POST
+      // (binary-verified, PR #5974 review round 4). pflag names the flag
+      // with its shorthand (`-t, --type`, errors.go:39-41).
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--type", "bogus"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain(
+            'invalid argument \\"bogus\\" for \\"-t, --type\\" flag: must be one of [ saml ]',
+          );
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag and skips validation",
+    () => {
+      // `--skip-url-validation=false --skip-url-validation` ends true for
+      // pflag (Sets every occurrence) but false for the Effect parser
+      // (first-wins) — Go skips URL validation and POSTs the non-HTTPS URL
+      // (binary-verified, PR #5974 review round 4).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--type",
+          "saml",
+          "--skip-url-validation=false",
+          "--skip-url-validation",
+          "--metadata-url",
+          "http://insecure.example.com/md",
+        ],
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoAdd({
+          ...defaultFlags,
+          skipUrlValidation: false, // Effect's first-wins parse
+          metadataUrl: Option.some("http://insecure.example.com/md"),
+        });
+        const req = api.requests.find((r) => r.method === "POST");
+        expect((req?.body as { metadata_url?: string })?.metadata_url).toBe(
+          "http://insecure.example.com/md",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "value reconciliation: repeated --name-id-format resolves last-wins like pflag in the POST body",
+    () => {
+      // pflag's Set runs per occurrence, so the last one wins; the Effect
+      // parser resolved first-wins (binary-verified, PR #5974 review
+      // round 4).
+      const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
+      const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--type",
+          "saml",
+          `--name-id-format=${transient}`,
+          `--name-id-format=${persistent}`,
+        ],
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoAdd({
+          ...defaultFlags,
+          nameIdFormat: Option.some(transient), // Effect's first-wins parse
+        });
+        const req = api.requests.find((r) => r.method === "POST");
+        expect((req?.body as { name_id_format?: string })?.name_id_format).toBe(persistent);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("missing-value emulation: a trailing bare --domains fails pflag parse, no POST", () => {
     // Binary-verified: `sso add --type saml --domains` errors
     // `flag needs an argument: --domains` — pflag fails `ParseFlags` (cobra

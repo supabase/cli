@@ -821,6 +821,216 @@ describe("legacy sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag (=false then bare ends true, skips validation, PUTs)",
+    () => {
+      // `--skip-url-validation=false --skip-url-validation --metadata-url
+      // http://…`: pflag Sets every occurrence in order, ending true, so Go
+      // skips URL validation and PUTs. The Effect parser resolves repeats
+      // first-wins (false) and would have validated — and rejected — the
+      // non-HTTPS URL (PR #5974 review round 4, binary-verified).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--skip-url-validation=false",
+          "--skip-url-validation",
+          "--metadata-url",
+          "http://insecure.example.com/md",
+        ],
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoUpdate({
+          ...defaultFlags,
+          skipUrlValidation: false, // Effect's first-wins parse
+          metadataUrl: Option.some("http://insecure.example.com/md"),
+        });
+        const putReq = api.requests.find((r) => r.method === "PUT");
+        expect((putReq?.body as { metadata_url?: string })?.metadata_url).toBe(
+          "http://insecure.example.com/md",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "value reconciliation: bare then =false ends false like pflag — URL validation runs and rejects, no PUT",
+    () => {
+      // The mirror case: `--skip-url-validation --skip-url-validation=false`
+      // is false to pflag (last-wins) but true to the Effect parser
+      // (first-wins), so without reconciliation the handler would skip the
+      // validation Go performs and PUT an unvalidated URL.
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--skip-url-validation",
+          "--skip-url-validation=false",
+          "--metadata-url",
+          "http://insecure.example.com/md",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({
+            ...defaultFlags,
+            skipUrlValidation: true, // Effect's first-wins parse
+            metadataUrl: Option.some("http://insecure.example.com/md"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateMetadataFileError");
+          expect(dump).toContain("only HTTPS Metadata URLs are supported");
+        }
+        // Go GETs first (`update.go:42`), then fails validation before the PUT.
+        expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "value reconciliation: --domains consuming one --name-id-format leaves the other as pflag's effective value in the PUT",
+    () => {
+      // `--domains --name-id-format=T --name-id-format P`: pflag hands the
+      // first name-id-format token to `--domains` as its value, so the only
+      // occurrence it Sets is P. The Effect parser read both and resolved
+      // first-wins to T — the PUT body must carry P, exactly what the Go
+      // binary sends (PR #5974 review round 4).
+      const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
+      const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--skip-url-validation",
+          "--domains",
+          `--name-id-format=${transient}`,
+          "--name-id-format",
+          persistent,
+          "--metadata-url",
+          "http://insecure.example.com/md",
+        ],
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoUpdate({
+          ...defaultFlags,
+          skipUrlValidation: true,
+          nameIdFormat: Option.some(transient), // Effect's first-wins parse
+          metadataUrl: Option.some("http://insecure.example.com/md"),
+        });
+        const putReq = api.requests.find((r) => r.method === "PUT");
+        const body = putReq?.body as { name_id_format?: string; domains?: string[] };
+        expect(body?.name_id_format).toBe(persistent);
+        // The consumed token is pflag's literal domains value.
+        expect(body?.domains).toEqual([`--name-id-format=${transient}`]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "invalid-value emulation: --skip-url-validation=yes fails with pflag's strconv.ParseBool error, no API calls",
+    () => {
+      // The Effect parser accepts `yes`; Go's strconv.ParseBool does not —
+      // pflag fails ParseFlags (cobra `command.go:919`) before every hook
+      // and request (binary-verified, PR #5974 review round 4).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--skip-url-validation=yes",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({
+            ...defaultFlags,
+            skipUrlValidation: true, // the Effect parser reads yes as true
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain(
+            'invalid argument \\"yes\\" for \\"--skip-url-validation\\" flag: strconv.ParseBool: parsing \\"yes\\": invalid syntax',
+          );
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "invalid-value emulation: a later invalid --name-id-format occurrence fails like pflag, no API calls",
+    () => {
+      // The Effect parser resolves repeats first-wins and never validates
+      // the rest, so `--name-id-format=<valid> --name-id-format=bogus`
+      // parses; pflag Sets every occurrence and aborts on `bogus`
+      // (binary-verified, PR #5974 review round 4).
+      const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" as const;
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          `--name-id-format=${persistent}`,
+          "--name-id-format=bogus",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({
+            ...defaultFlags,
+            nameIdFormat: Option.some(persistent), // Effect's first-wins parse
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain(
+            'invalid argument \\"bogus\\" for \\"--name-id-format\\" flag: must be one of [ urn:oasis',
+          );
+          expect(dump).toContain("nameid-format:transient ]");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "invalid-value emulation: an invalid occurrence beats a trailing missing value, matching pflag's sequential walk",
+    () => {
+      // `--skip-url-validation=yes --domains`: pflag walks argv in order and
+      // rejects `yes` before ever reaching the bare trailing `--domains`
+      // (binary-verified: Go names the invalid argument, not the missing one).
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--skip-url-validation=yes", "--domains"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({ ...defaultFlags, skipUrlValidation: true }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).not.toContain("LegacySsoFlagNeedsArgumentError");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("--domains replaces domains verbatim", () => {
     const flags = { ...defaultFlags, domains: ["new.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });

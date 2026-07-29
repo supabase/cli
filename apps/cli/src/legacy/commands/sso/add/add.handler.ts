@@ -1,4 +1,4 @@
-import { Effect, Option, Stdio } from "effect";
+import { Effect, Option, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -31,12 +31,22 @@ import {
   LegacySsoAddSamlDisabledError,
   LegacySsoAddUnexpectedStatusError,
   LegacySsoFlagNeedsArgumentError,
+  LegacySsoInvalidFlagValueError,
   LegacySsoMutexFlagError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import { legacySsoPflagSliceValue, legacySsoPflagStringValue } from "../sso.pflag-reconcile.ts";
-import { readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
+import {
+  legacySsoPflagBoolValue,
+  legacySsoPflagEnumValue,
+  legacySsoPflagSliceValue,
+  legacySsoPflagStringValue,
+} from "../sso.pflag-reconcile.ts";
+import {
+  LEGACY_SSO_NAME_ID_FORMATS,
+  readAttributeMappingFile,
+  readMetadataFile,
+} from "../sso.saml.ts";
 import type { LegacySsoAddFlags } from "./add.command.ts";
 
 const SAML_DISABLED_MESSAGE =
@@ -112,6 +122,44 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     const scan = pflagArgvScan(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
+    // pflag calls `Value.Set` for every occurrence in argv order, and an
+    // invalid value fails `ParseFlags` (cobra `command.go:919`) before
+    // `ValidateArgs`, every hook, `ValidateRequiredFlags`, and `RunE` —
+    // reachable here because the Effect parser resolves repeated flags
+    // first-wins without validating later occurrences (`--type saml --type
+    // bogus` parses, then Go rejects `bogus` and never POSTs) and accepts
+    // `yes`/`no`, which `strconv.ParseBool` rejects (binary-verified, PR
+    // #5974 review round 4). These checks precede the missing-value check
+    // because a missing value can only arise at the final argv token, so
+    // every recorded occurrence pflag would reject sits earlier in its
+    // sequential walk. Flags are checked in Go registration order
+    // (`cmd/sso.go:157-163`); pflag itself errors in argv order when several
+    // flags carry invalid occurrences at once — accepted micro-divergence.
+    // The enum helpers also yield the pflag-effective (last-occurrence)
+    // values; `--type`'s stays unused because every valid occurrence is the
+    // enum's single member, so the parsed `flags.type` is already
+    // pflag-effective whenever this validation passes.
+    yield* Result.match(legacySsoPflagEnumValue(occurrences, "type", ["saml"], "-t, --type"), {
+      onFailure: (message: string) => Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+      onSuccess: Effect.succeed,
+    });
+    const skipUrlValidation = yield* Result.match(
+      legacySsoPflagBoolValue(occurrences, "skip-url-validation"),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+    const nameIdFormat = yield* Result.match(
+      legacySsoPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+
     // pflag fails `ParseFlags` (cobra `command.go:919`) when a bare
     // value-taking flag is the final token (`sso add --type saml --domains`)
     // — before every validation, hook, and `RunE`, so no POST is ever made.
@@ -155,22 +203,17 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // `--project-ref --metadata-file x.xml --metadata-url u`, where Go hands
     // `--metadata-file` to `--project-ref` and fails ref validation without
     // ever touching metadata). `--type` keeps its parsed value: the enum has
-    // a single member the parser already validated, so whenever the handler
-    // runs at all the parsed value equals the pflag-effective one (the
-    // consumed-token case is rejected by the required-flag check above).
-    // `--name-id-format` and `--skip-url-validation` keep their parsed
-    // values gated on the scan agreeing they were passed at all.
+    // a single member every occurrence was validated against above, so
+    // whenever the handler runs at all the parsed value equals the
+    // pflag-effective one (the consumed-token case is rejected by the
+    // required-flag check above). `--name-id-format` and
+    // `--skip-url-validation` were reconciled above, alongside their pflag
+    // value validation.
     const projectRef = legacySsoPflagStringValue(occurrences, "project-ref");
     const metadataFile = legacySsoPflagStringValue(occurrences, "metadata-file");
     const metadataUrl = legacySsoPflagStringValue(occurrences, "metadata-url");
     const attributeMappingFile = legacySsoPflagStringValue(occurrences, "attribute-mapping-file");
     const domains = legacySsoPflagSliceValue(occurrences, "domains", flags.domains);
-    const nameIdFormat = occurrences.has("name-id-format")
-      ? flags.nameIdFormat
-      : Option.none<never>();
-    const skipUrlValidation = occurrences.has("skip-url-validation")
-      ? flags.skipUrlValidation
-      : false;
 
     const ref = yield* resolver.resolve(projectRef);
 

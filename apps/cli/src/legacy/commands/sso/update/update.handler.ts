@@ -30,6 +30,7 @@ import {
 } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoFlagNeedsArgumentError,
+  LegacySsoInvalidFlagValueError,
   LegacySsoMutexFlagError,
   LegacySsoUpdateArityError,
   LegacySsoUpdateAttributeMappingFileError,
@@ -40,8 +41,17 @@ import {
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import { legacySsoPflagSliceValue, legacySsoPflagStringValue } from "../sso.pflag-reconcile.ts";
-import { readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
+import {
+  legacySsoPflagBoolValue,
+  legacySsoPflagEnumValue,
+  legacySsoPflagSliceValue,
+  legacySsoPflagStringValue,
+} from "../sso.pflag-reconcile.ts";
+import {
+  LEGACY_SSO_NAME_ID_FORMATS,
+  readAttributeMappingFile,
+  readMetadataFile,
+} from "../sso.saml.ts";
 import type { LegacySsoUpdateFlags } from "./update.command.ts";
 
 const readMetadata = readMetadataFile({
@@ -184,6 +194,40 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     const scan = pflagArgvScan(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
+    // pflag calls `Value.Set` for every occurrence in argv order, and an
+    // invalid value fails `ParseFlags` (cobra `command.go:919`) before
+    // `ValidateArgs`, every hook, and `RunE` — reachable here because the
+    // Effect parser resolves repeated flags first-wins without validating
+    // later occurrences (`--name-id-format=<valid> --name-id-format=bogus`
+    // parses) and accepts `yes`/`no`, which `strconv.ParseBool` rejects
+    // (binary-verified, PR #5974 review round 4). These checks precede the
+    // missing-value check because a missing value can only arise at the
+    // final argv token, so every recorded occurrence pflag would reject sits
+    // earlier in its sequential walk (binary-verified:
+    // `--skip-url-validation=yes --domains` names the invalid argument, not
+    // the missing one). Flags are checked in Go registration order
+    // (`cmd/sso.go:170-176`); when a single argv holds invalid occurrences
+    // of BOTH flags, pflag names whichever comes first in argv — a
+    // divergence this fixed order cannot see, accepted as unreachable
+    // through sane usage. The same helpers yield the pflag-effective
+    // (last-occurrence) values the handler acts on below.
+    const skipUrlValidation = yield* Result.match(
+      legacySsoPflagBoolValue(occurrences, "skip-url-validation"),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+    const nameIdFormat = yield* Result.match(
+      legacySsoPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+
     // pflag fails `ParseFlags` (cobra `command.go:919`) when a bare
     // value-taking flag is the final token (`sso update <id> --domains`) —
     // before `ValidateArgs`, every hook, and `RunE`, so Go reports the
@@ -226,11 +270,12 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
 
     // Reconcile everything the handler acts on to the pflag-effective values
     // from the same scan — the Effect parser refuses to consume flag-shaped
-    // tokens as values while pflag consumes them unconditionally, so the two
-    // can disagree on which flags are set and what they hold. See
+    // tokens as values while pflag consumes them unconditionally, and
+    // resolves repeated flags first-wins while pflag is last-wins, so the
+    // two can disagree on which flags are set and what they hold. See
     // `add.handler.ts` and `sso.pflag-reconcile.ts` for the full rationale
-    // (CLI-1982). `--name-id-format` and `--skip-url-validation` keep their
-    // parsed values gated on the scan agreeing they were passed at all.
+    // (CLI-1982). `--name-id-format` and `--skip-url-validation` were
+    // reconciled above, alongside their pflag value validation.
     const projectRefFlag = legacySsoPflagStringValue(occurrences, "project-ref");
     const metadataFile = legacySsoPflagStringValue(occurrences, "metadata-file");
     const metadataUrl = legacySsoPflagStringValue(occurrences, "metadata-url");
@@ -242,12 +287,6 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       "remove-domains",
       flags.removeDomains,
     );
-    const nameIdFormat = occurrences.has("name-id-format")
-      ? flags.nameIdFormat
-      : Option.none<never>();
-    const skipUrlValidation = occurrences.has("skip-url-validation")
-      ? flags.skipUrlValidation
-      : false;
 
     const providerId = yield* validateUuid(flags.providerId).pipe(
       Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),

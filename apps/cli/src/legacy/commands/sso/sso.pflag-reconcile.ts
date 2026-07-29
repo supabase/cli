@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Option, Result } from "effect";
 
 import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 
@@ -51,4 +51,98 @@ export function legacySsoPflagSliceValue(
   } catch {
     return parsedFallback;
   }
+}
+
+/** Go's `strconv.ParseBool` accepted literals (`strconv/atob.go:10-19`). */
+const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
+  ["1", true],
+  ["t", true],
+  ["T", true],
+  ["TRUE", true],
+  ["true", true],
+  ["True", true],
+  ["0", false],
+  ["f", false],
+  ["F", false],
+  ["FALSE", false],
+  ["false", false],
+  ["False", false],
+]);
+
+/**
+ * Like `legacySsoPflagStringValue`, but for pflag `BoolVar` flags. pflag
+ * calls `Value.Set` for every occurrence in argv order: a bare occurrence
+ * sets `NoOptDefVal` (`"true"`), an inline `=value` goes through
+ * `strconv.ParseBool`, an invalid literal aborts `ParseFlags` with
+ * `invalid argument …` (pflag `errors.go:32-48`) before `ValidateArgs`,
+ * every hook, and `RunE` — the failure branch here must therefore win over
+ * every later handler check. The last occurrence wins; an absent flag is
+ * `false` (the Go default).
+ *
+ * This cannot be read off the Effect-parsed boolean for two reasons
+ * (binary-verified against `apps/cli-go`, PR #5974 review round 4):
+ * - the Effect parser resolves repeated flags first-wins while pflag is
+ *   last-wins (`--skip-url-validation=false --skip-url-validation` is `true`
+ *   to Go, `false` to the parser), and
+ * - the Effect parser accepts `yes`/`no`, which `strconv.ParseBool` rejects.
+ *
+ * A recorded empty value is a *bare* occurrence, not `--flag=`: the Effect
+ * parser rejects an explicit empty boolean at parse time, so argv carrying
+ * one never reaches a handler.
+ */
+export function legacySsoPflagBoolValue(
+  occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
+  flagName: string,
+): Result.Result<boolean, string> {
+  const values = occurrences.get(flagName);
+  if (values === undefined) {
+    return Result.succeed(false);
+  }
+  let effective = false;
+  for (const raw of values) {
+    if (raw === "") {
+      effective = true;
+      continue;
+    }
+    const parsed = GO_PARSE_BOOL.get(raw);
+    if (parsed === undefined) {
+      return Result.fail(
+        `invalid argument ${JSON.stringify(raw)} for "--${flagName}" flag: strconv.ParseBool: parsing ${JSON.stringify(raw)}: invalid syntax`,
+      );
+    }
+    effective = parsed;
+  }
+  return Result.succeed(effective);
+}
+
+/**
+ * Like `legacySsoPflagStringValue`, but for Go enum-valued flags
+ * (`ssoProviderType`, `ssoNameIDFormat` — `cmd/sso.go:157-158,176`), whose
+ * `Value.Set` rejects anything outside the allowed set. pflag Sets every
+ * occurrence in argv order and aborts `ParseFlags` on the first invalid one
+ * — reachable here because the Effect parser resolves repeats first-wins and
+ * never validates later occurrences (`--type saml --type bogus` parses).
+ * The last occurrence wins; an absent flag is `Option.none`.
+ *
+ * `flagLabel` is how pflag names the flag in the error: `--name` without a
+ * shorthand, `-s, --name` with one (pflag `errors.go:39-41`).
+ */
+export function legacySsoPflagEnumValue(
+  occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
+  flagName: string,
+  allowed: ReadonlyArray<string>,
+  flagLabel: string = `--${flagName}`,
+): Result.Result<Option.Option<string>, string> {
+  const values = occurrences.get(flagName);
+  if (values === undefined) {
+    return Result.succeed(Option.none());
+  }
+  for (const raw of values) {
+    if (!allowed.includes(raw)) {
+      return Result.fail(
+        `invalid argument ${JSON.stringify(raw)} for "${flagLabel}" flag: must be one of [ ${allowed.join(" | ")} ]`,
+      );
+    }
+  }
+  return Result.succeed(Option.some(values[values.length - 1] ?? ""));
 }

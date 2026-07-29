@@ -41,18 +41,19 @@ GET still uses the typed client.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                     |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                       |
-| `1`  | `LegacySsoFlagNeedsArgumentError` — a bare value-taking flag is the final argv token (pflag `ValueRequiredError`, fails before `ValidateArgs`; no request)                    |
-| `1`  | `LegacySsoUpdateArityError` — pflag-effective positional count ≠ 1 (cobra `ValidateArgs`/`ExactArgs(1)`; a consumed flag token orphans its parser-value into the positionals) |
-| `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                             |
-| `1`  | `LegacySsoMutexFlagError` — flag combinations: `--domains` with `--add/--remove-domains`, or `--metadata-file` with `--metadata-url`                                          |
-| `1`  | `LegacySsoUpdateMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                       |
-| `1`  | `LegacySsoUpdateAttributeMappingFileError` — JSON file unreadable or malformed                                                                                                |
-| `1`  | `LegacySsoUpdateNotFoundError` — 404 from GET                                                                                                                                 |
-| `1`  | `LegacySsoUpdateUnexpectedStatusError` — non-2xx from GET or PUT                                                                                                              |
-| `1`  | `LegacySsoUpdateNetworkError` — transport-level failure                                                                                                                       |
+| Code | Condition                                                                                                                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                        |
+| `1`  | `LegacySsoInvalidFlagValueError` — a `--skip-url-validation`/`--name-id-format` occurrence pflag's `Value.Set` would reject (`strconv.ParseBool` / enum membership; fails before every validation; no request) |
+| `1`  | `LegacySsoFlagNeedsArgumentError` — a bare value-taking flag is the final argv token (pflag `ValueRequiredError`, fails before `ValidateArgs`; no request)                                                     |
+| `1`  | `LegacySsoUpdateArityError` — pflag-effective positional count ≠ 1 (cobra `ValidateArgs`/`ExactArgs(1)`; a consumed flag token orphans its parser-value into the positionals)                                  |
+| `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                                                              |
+| `1`  | `LegacySsoMutexFlagError` — flag combinations: `--domains` with `--add/--remove-domains`, or `--metadata-file` with `--metadata-url`                                                                           |
+| `1`  | `LegacySsoUpdateMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                                                        |
+| `1`  | `LegacySsoUpdateAttributeMappingFileError` — JSON file unreadable or malformed                                                                                                                                 |
+| `1`  | `LegacySsoUpdateNotFoundError` — 404 from GET                                                                                                                                                                  |
+| `1`  | `LegacySsoUpdateUnexpectedStatusError` — non-2xx from GET or PUT                                                                                                                                               |
+| `1`  | `LegacySsoUpdateNetworkError` — transport-level failure                                                                                                                                                        |
 
 ## Telemetry Events Fired
 
@@ -83,7 +84,7 @@ Single `success` event with the parsed response as data.
 
 - `--domains` is mutually exclusive with `--add-domains` and `--remove-domains`.
 - `--metadata-file` and `--metadata-url` are mutually exclusive.
-- Flag values follow pflag's consumption rules, not the TS parser's: every value the handler acts on (`--project-ref`, `--metadata-file`, `--metadata-url`, `--attribute-mapping-file`, the three domain slices, plus set-ness of `--name-id-format`/`--skip-url-validation`) is reconciled against a pflag-faithful raw-argv scan — same mechanism as `sso add` (CLI-1982).
+- Flag values follow pflag's consumption rules, not the TS parser's: every value the handler acts on (`--project-ref`, `--metadata-file`, `--metadata-url`, `--attribute-mapping-file`, the three domain slices, `--name-id-format`, `--skip-url-validation`) is reconciled against a pflag-faithful raw-argv scan — same mechanism as `sso add` (CLI-1982). Repeated flags resolve last-wins (pflag Sets every occurrence; the TS parser is first-wins), and an occurrence pflag's `Value.Set` would reject — a boolean outside Go's `strconv.ParseBool` set (`--skip-url-validation=yes`), or a `--name-id-format` outside the enum — fails with pflag's exact `invalid argument …` message before any validation or request.
 - Positional arity follows pflag too: cobra's `ExactArgs(1)` is re-counted over pflag-effective positionals (`ValidateArgs` runs before every hook and flag validation), so a consumed flag token that orphans its parser-value (`--domains --metadata-url u <id>`) fails with cobra's exact `accepts 1 arg(s), received 2` before the GET — and wins over both the mutex and invalid-UUID errors.
 - Always performs the GET pre-check (matches Go's `update.go:42`), regardless of whether `--add-domains` / `--remove-domains` are used.
 - Domain merge: removals are applied first, then additions. Go uses a `map[string]bool` so the resulting order is **unordered**; consumers must sort if comparing.
