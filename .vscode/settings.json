@@ -4,4 +4,10 @@
   "editor.formatOnSaveMode": "file",
   "typescript.experimental.useTsgo": true,
   "oxc.useExecPath": true,
+  "search.exclude": {
+    // "**/node_modules": true,
+    // "**/bower_components": true,
+    // "**/*.code-search": true,
+    ".repos/**": true,
+  },
 }
