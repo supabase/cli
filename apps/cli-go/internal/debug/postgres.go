@@ -34,6 +34,11 @@ func SetupPGX(config *pgx.ConnConfig) {
 	}
 	config.DialFunc = proxy.DialFunc
 	config.TLSConfig = nil
+	// pgconn reads Fallbacks independently of TLSConfig, so a restored sslmode=allow
+	// would still retry TLS through this plaintext proxy.
+	for _, fallback := range config.Fallbacks {
+		fallback.TLSConfig = nil
+	}
 }
 
 func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, error) {
