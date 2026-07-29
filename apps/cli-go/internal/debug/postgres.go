@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgx/v4"
@@ -99,6 +100,15 @@ const sslRequestCode = 80877103
 // handshakes eagerly so a refusal or bad certificate fails the dial rather than
 // surfacing as a parse error inside the forwarding goroutines.
 func startTLS(ctx context.Context, conn net.Conn, tlsConfig *tls.Config) (net.Conn, error) {
+	// pgconn only watches ctx once DialFunc returns, so bound the negotiation here
+	// or an endpoint that accepts TCP and never replies hangs the read forever.
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		defer func() { _ = conn.SetDeadline(time.Time{}) }()
+	}
 	if err := binary.Write(conn, binary.BigEndian, []int32{8, sslRequestCode}); err != nil {
 		conn.Close()
 		return nil, err
