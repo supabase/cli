@@ -11,9 +11,9 @@
     "fumadocs-core": "^16.11.5",
     "fumadocs-mdx": "^15.2.0",
     "fumadocs-ui": "^16.11.5",
-    "next": "16.3.0-preview.6",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "next": "16.3.0-preview.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/mdx": "^2.0.14",
