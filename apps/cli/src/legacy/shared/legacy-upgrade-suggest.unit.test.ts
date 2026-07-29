@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -218,6 +220,147 @@ describe("legacySuggestUpgrade", () => {
         projectRef: LEGACY_VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
+        trackAnalytics: false,
+      });
+      expect(analytics.captured).toHaveLength(0);
+      expect(out.stderrText).toContain("Upgrade your plan:");
+    }).pipe(Effect.provide(layer));
+  });
+
+  const ENVELOPE_BODY = {
+    message: "Branching is supported only on the Pro plan or above",
+    error: {
+      code: "entitlement_required",
+      feature: "branching_persistent",
+      upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+    },
+  };
+
+  function gateResponse(status: number, body: unknown) {
+    const request = HttpClientRequest.get("https://api.supabase.com/v1/projects/x/branches");
+    return legacyJsonResponse(request, status, body);
+  }
+
+  it.live("envelope path suggests with zero API calls and envelope-derived telemetry", () => {
+    const { layer, out, analytics, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        featureKey: "branching_limit",
+        statusCode: 402,
+        response: gateResponse(402, ENVELOPE_BODY),
+      });
+      expect(api.requests).toHaveLength(0);
+      expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(analytics.captured).toEqual([
+        {
+          event: "cli_upgrade_suggested",
+          properties: { feature_key: "branching_persistent", org_slug: "env-org" },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("envelope path works without a featureKey (envelope-only sites)", () => {
+    const { layer, out, analytics, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        statusCode: 400,
+        response: gateResponse(400, {
+          message: "add-on required",
+          error: {
+            code: "entitlement_required",
+            feature: "custom_domain",
+            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+          },
+        }),
+      });
+      expect(api.requests).toHaveLength(0);
+      expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(analytics.captured).toEqual([
+        {
+          event: "cli_upgrade_suggested",
+          properties: { feature_key: "custom_domain", org_slug: "env-org" },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("no envelope and no featureKey is a no-op with zero API calls", () => {
+    const { layer, out, analytics, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        statusCode: 404,
+        response: gateResponse(404, { message: "not found" }),
+      });
+      expect(api.requests).toHaveLength(0);
+      expect(analytics.captured).toHaveLength(0);
+      expect(out.stderrText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("envelope without upgrade_url falls back to the entitlements round-trip", () => {
+    const { layer, out, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        featureKey: "branching_limit",
+        statusCode: 402,
+        response: gateResponse(402, {
+          message: "x",
+          error: { code: "entitlement_required", feature: "branching_limit" },
+        }),
+      });
+      expect(api.requests).toHaveLength(2);
+      expect(out.stderrText).toContain("/org/test-org/billing");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("unparseable body falls back to the entitlements round-trip", () => {
+    const { layer, out, api } = setup();
+    return Effect.gen(function* () {
+      const request = HttpClientRequest.get("https://api.supabase.com/v1/projects/x/branches");
+      const malformed = HttpClientResponse.fromWeb(
+        request,
+        new Response("not json", {
+          status: 402,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        featureKey: "branching_limit",
+        statusCode: 402,
+        response: malformed,
+      });
+      expect(api.requests).toHaveLength(2);
+      expect(out.stderrText).toContain("/org/test-org/billing");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("envelope path respects json output mode (no stderr, telemetry fires)", () => {
+    const { layer, out, analytics } = setup({ format: "json" });
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        statusCode: 402,
+        response: gateResponse(402, ENVELOPE_BODY),
+      });
+      expect(out.stderrText).toBe("");
+      expect(analytics.captured).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("envelope path respects trackAnalytics=false", () => {
+    const { layer, out, analytics } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        statusCode: 402,
+        response: gateResponse(402, ENVELOPE_BODY),
         trackAnalytics: false,
       });
       expect(analytics.captured).toHaveLength(0);

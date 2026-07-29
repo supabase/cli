@@ -5,7 +5,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
-import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
+import { LegacyDockerRun, type LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 import { legacyEdgeRuntimeScriptLayer } from "./legacy-edge-runtime-script.layer.ts";
 import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts";
 
@@ -14,16 +14,25 @@ import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts
 // "main worker has been destroyed" in stderr — the crash path only differs by
 // the sentinel line the templates' catch blocks add.
 function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string }) {
-  return Layer.succeed(LegacyDockerRun, {
-    runCapture: () =>
-      Effect.succeed({
-        exitCode: result.exitCode,
-        stdout: new TextEncoder().encode(result.stdout ?? ""),
-        stderr: result.stderr ?? "",
-      }),
-    run: () => Effect.die("unused"),
-    runStream: () => Effect.die("unused"),
-  });
+  let lastOpts: LegacyDockerRunOpts | undefined;
+  return {
+    layer: Layer.succeed(LegacyDockerRun, {
+      runCapture: (opts) =>
+        Effect.sync(() => {
+          lastOpts = opts;
+          return {
+            exitCode: result.exitCode,
+            stdout: new TextEncoder().encode(result.stdout ?? ""),
+            stderr: result.stderr ?? "",
+          };
+        }),
+      run: () => Effect.die("unused"),
+      runStream: () => Effect.die("unused"),
+    }),
+    get lastOpts() {
+      return lastOpts;
+    },
+  };
 }
 
 // `workdir` points at a directory without `supabase/.temp/edge-runtime-version`,
@@ -41,10 +50,11 @@ const cliConfig = Layer.succeed(LegacyCliConfig, {
 });
 
 function setup(result: { exitCode: number; stdout?: string; stderr?: string }) {
-  return legacyEdgeRuntimeScriptLayer.pipe(
+  const docker = fakeDocker(result);
+  const layer = legacyEdgeRuntimeScriptLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        fakeDocker(result),
+        docker.layer,
         cliConfig,
         Layer.succeed(RuntimeInfo, {
           cwd: "/nonexistent-workdir",
@@ -60,6 +70,7 @@ function setup(result: { exitCode: number; stdout?: string; stderr?: string }) {
       ),
     ),
   );
+  return { layer, docker };
 }
 
 const runScript = Effect.fnUntraced(function* () {
@@ -97,7 +108,7 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
             expect(message).toContain("permission denied for table pg_user_mapping");
           }),
         ),
-        Effect.provide(setup({ exitCode: 1, stdout: "", stderr })),
+        Effect.provide(setup({ exitCode: 1, stdout: "", stderr }).layer),
       );
     },
   );
@@ -116,8 +127,29 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
           exitCode: 1,
           stdout: "ALTER TABLE x;\n",
           stderr: "main worker has been destroyed\n",
-        }),
+        }).layer,
       ),
     );
   });
+
+  it.effect(
+    "disables SELinux label separation so the container can read CLI-written workspace files",
+    () => {
+      // Without this the pg-delta CA bundle written under `supabase/.temp/pgdelta/`
+      // is unreadable through the `/workspace` bind on SELinux hosts (supabase/cli#5989).
+      const { layer, docker } = setup({
+        exitCode: 1,
+        stdout: "{}",
+        stderr: "main worker has been destroyed\n",
+      });
+      return runScript().pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(docker.lastOpts?.securityOpt).toEqual(["label:disable"]);
+          }),
+        ),
+        Effect.provide(layer),
+      );
+    },
+  );
 });

@@ -3,8 +3,9 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
-  LegacyYesFlag,
+  legacyResolveYesWithProjectEnv,
 } from "../../../../../shared/legacy/global-flags.ts";
+import { legacyPromptYesNo } from "../../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { PROJECT_REF_PATTERN } from "../../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../../shared/legacy-db-config.service.ts";
@@ -96,7 +97,11 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   }
 
   const output = yield* Output;
-  const yes = yield* LegacyYesFlag;
+  // Go's prompts below read `viper.GetBool("YES")` after `loadNestedEnv`
+  // (`pkg/config/config.go:789`), so `SUPABASE_YES` — from the shell env or the
+  // project `.env` — must auto-confirm too, not just the flag (CLI-1974).
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   const networkId = yield* LegacyNetworkIdFlag;
   // Insert "Linked project" between local and custom (Go's choice order) when the
   // workdir is linked with a valid ref. Go gates this on `LoadProjectRef`, which
@@ -132,10 +137,9 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
     }
     // Go parses the entry with pgconn.ParseConfig then feeds pg-delta a normalized
     // ToPostgresURL (`apps/cli-go/cmd/db_schema_declarative.go:283-287`). Layer the
-    // project env under the shell env like the --db-url path so libpq PG* fallbacks
-    // resolve, and reject malformed input with Go's "failed to parse connection
-    // string" error (password redacted, CWE-209).
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+    // project env (loaded once above) under the shell env like the --db-url path so
+    // libpq PG* fallbacks resolve, and reject malformed input with Go's "failed to
+    // parse connection string" error (password redacted, CWE-209).
     const conn = parseLegacyConnectionString(
       dbURL,
       (name) => process.env[name] ?? projectEnv[name],
@@ -157,15 +161,16 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
 
   let shouldReset = flags.reset;
   if (!shouldReset) {
-    // Go asks via Console.PromptYesNo (db_schema_declarative.go:257, default false),
-    // which auto-returns true under the global --yes flag (console.go:74-77), so
-    // `--yes` auto-resets here instead of prompting.
-    shouldReset = yes
-      ? true
-      : yield* output.promptConfirm(
-          "Reset local database to match migrations first? (local data will be lost)",
-          { defaultValue: false },
-        );
+    // Go asks via Console.PromptYesNo (db_schema_declarative.go:320-322, default
+    // false): --yes/SUPABASE_YES auto-resets WITH the `<label> [y/N] y` stderr
+    // echo (console.go:70-72) — routed through `legacyPromptYesNo` so the echo
+    // is not skipped (CLI-1974).
+    shouldReset = yield* legacyPromptYesNo(
+      output,
+      yes,
+      "Reset local database to match migrations first? (local data will be lost)",
+      false,
+    );
   }
   if (shouldReset) {
     // Go runs reset in-process and returns the error (`cmd/db_schema_declarative.go:262-267`).

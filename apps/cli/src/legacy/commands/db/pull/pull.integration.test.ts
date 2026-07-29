@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
@@ -304,8 +305,6 @@ const flags = (over: Partial<LegacyDbPullFlags> = {}): LegacyDbPullFlags => ({
   password: over.password ?? Option.none(),
 });
 
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 const streamText = (out: ReturnType<typeof mockOutput>, stream: "stdout" | "stderr") =>
   stripAnsi(
     out.rawChunks
@@ -345,7 +344,11 @@ describe("legacy db pull", () => {
       expect(readFileSync(join(dir, written[0] ?? ""), "utf8")).toContain(
         "create table remote ();",
       );
-      expect(streamText(s.out, "stderr")).toContain("Schema written to");
+      // Go prints the workdir-relative path (`pull.go:76`), never the absolute one.
+      expect(streamText(s.out, "stderr")).toContain(
+        `Schema written to ${join("supabase", "migrations", written[0] ?? "")}\n`,
+      );
+      expect(streamText(s.out, "stderr")).not.toContain(tmp.current);
       expect(s.historyUpserts.length).toBe(1);
       expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
     }).pipe(Effect.provide(s.layer));
@@ -389,8 +392,13 @@ describe("legacy db pull", () => {
         expect(readFileSync(join(dir, written[2] ?? ""), "utf8")).toContain(
           "create index concurrently i on t (c);",
         );
-        // One "Schema written to" line and one history upsert per unit.
-        expect(streamText(s.out, "stderr").match(/Schema written to/gu)).toHaveLength(3);
+        // One "Schema written to" line per unit, each printing the workdir-relative
+        // path (Go's `pull.go:76`), and one history upsert per unit.
+        const err = streamText(s.out, "stderr");
+        expect(err.match(/Schema written to/gu)).toHaveLength(3);
+        for (const file of written) {
+          expect(err).toContain(`Schema written to ${join("supabase", "migrations", file)}\n`);
+        }
         expect(s.historyUpserts.length).toBe(3);
         // Go's UpdateMigrationTable prints all versions space-separated.
         expect(streamText(s.out, "stderr")).toContain(
@@ -489,7 +497,17 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
       expect(s.provisionCalls[0]?.usePgDelta).toBe(false);
-      expect(streamText(s.out, "stderr")).toContain("Schema written to");
+      const err = streamText(s.out, "stderr");
+      // Go's `ConnectByConfig` prints the Connecting line to stderr before dialing
+      // (`internal/utils/connect.go:348`), ahead of any other pull output.
+      expect(err).toContain("Connecting to remote database...\n");
+      expect(err.indexOf("Connecting to remote database...")).toBeLessThan(
+        err.indexOf("Creating shadow database..."),
+      );
+      const dir = join(tmp.current, "supabase", "migrations");
+      const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+      expect(err).toContain(`Schema written to ${join("supabase", "migrations", file ?? "")}\n`);
+      expect(err).not.toContain(tmp.current);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -497,8 +515,17 @@ describe("legacy db pull", () => {
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ declarative: Option.some(true) }));
-      expect(streamText(s.out, "stderr")).toContain("Preparing declarative schema export");
-      expect(streamText(s.out, "stderr")).toContain("Declarative schema written to");
+      const err = streamText(s.out, "stderr");
+      // Go's order: `ConnectByConfig` prints Connecting (`pull.go:40`), then
+      // `pullDeclarativePgDelta` prints Preparing (`pull.go:93`).
+      expect(err).toContain("Connecting to remote database...\n");
+      expect(err.indexOf("Connecting to remote database...")).toBeLessThan(
+        err.indexOf("Preparing declarative schema export"),
+      );
+      // Go prints `utils.GetDeclarativeDir()` — the relative default, not the
+      // resolved absolute directory (`pull.go:119`).
+      expect(err).toContain(`Declarative schema written to ${join("supabase", "database")}\n`);
+      expect(err).not.toContain(tmp.current);
       expect(
         existsSync(join(tmp.current, "supabase", "database", "schemas", "public", "t.sql")),
       ).toBe(true);
@@ -562,7 +589,9 @@ describe("legacy db pull", () => {
       return Effect.gen(function* () {
         yield* legacyDbPull(flags({ usePgDelta: Option.some(true) }));
         expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
-        expect(streamText(s.out, "stderr")).toContain("Declarative schema written to");
+        expect(streamText(s.out, "stderr")).toContain(
+          `Declarative schema written to ${join("supabase", "database")}\n`,
+        );
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -659,11 +688,16 @@ describe("legacy db pull", () => {
         expect(content).toContain("create table dumped ();");
         expect(content).toContain("create table diffed ();");
         expect(content.indexOf("dumped")).toBeLessThan(content.indexOf("diffed"));
-        // stderr order: dump → shadow → diff → written.
+        // stderr order: connect → dump → shadow → diff → written. The Connecting
+        // line comes first (Go's `ConnectByConfig` at the top of `pull.Run`).
         const err = streamText(s.out, "stderr");
+        expect(err).toContain("Connecting to remote database...\n");
         expect(err).toContain("Dumping schema from remote database...");
         expect(err).toContain("Creating shadow database...");
-        expect(err).toContain("Schema written to");
+        expect(err).toContain(`Schema written to ${join("supabase", "migrations", file ?? "")}\n`);
+        expect(err.indexOf("Connecting to remote database")).toBeLessThan(
+          err.indexOf("Dumping schema"),
+        );
         expect(err.indexOf("Dumping schema")).toBeLessThan(err.indexOf("Creating shadow"));
         expect(s.historyUpserts.length).toBe(1);
       }).pipe(Effect.provide(s.layer));
@@ -716,7 +750,9 @@ describe("legacy db pull", () => {
       const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
       expect(file).toBeDefined();
       expect(readFileSync(join(dir, file ?? ""), "utf8")).toContain("create table dumped ();");
-      expect(streamText(s.out, "stderr")).toContain("Schema written to");
+      expect(streamText(s.out, "stderr")).toContain(
+        `Schema written to ${join("supabase", "migrations", file ?? "")}\n`,
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -955,6 +991,9 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      // Diagnostics still go to stderr in machine mode (Go writes the Connecting
+      // line to os.Stderr regardless of output format); stdout stays payload-only.
+      expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ declarative: false, remoteHistoryUpdated: true });
     }).pipe(Effect.provide(s.layer));
@@ -1116,6 +1155,9 @@ describe("legacy db pull", () => {
       }
       expect(s.proxyCalls).toHaveLength(1);
       expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
+      // The Go child's own `ConnectByConfig` prints the Connecting line; the
+      // parent must not print it too (it would appear twice in the stream).
+      expect(streamText(s.out, "stderr")).not.toContain("Connecting to");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1176,6 +1218,9 @@ describe("legacy db pull", () => {
       yield* legacyDbPull(flags());
       expect(s.proxyCalls).toHaveLength(1);
       expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
+      // The Go child's own `ConnectByConfig` prints the Connecting line; the
+      // parent must not print it too (it would appear twice in the stream).
+      expect(streamText(s.out, "stderr")).not.toContain("Connecting to");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1236,6 +1281,19 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ local: Option.some(true) }));
       expect(s.provisionCalls[0]?.targetLocal).toBe(true);
+      // A local target prints the local wording (Go's `IsLocalDatabase` branch in
+      // `ConnectByConfigStream`, `internal/utils/connect.go:344-346`).
+      expect(streamText(s.out, "stderr")).toContain("Connecting to local database...\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("db pull --local keeps migration repair suggestions local", () => {
+    seedMigration(tmp.current, "20240102000000");
+    const s = setup(tmp.current, { remoteVersions: ["20240101000000"] });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      expect(JSON.stringify(exit)).toContain("migration repair --local --status reverted");
+      expect(JSON.stringify(exit)).toContain("migration repair --local --status applied");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1359,7 +1417,9 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain("does not support IPv6");
       expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
       expect(s.edgeRunCount).toBe(2);
-      expect(streamText(s.out, "stderr")).toContain("Schema written to");
+      expect(streamText(s.out, "stderr")).toMatch(
+        /Schema written to supabase[/\\]migrations[/\\]\d{14}_remote_schema\.sql\n/u,
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1375,7 +1435,9 @@ describe("legacy db pull", () => {
       yield* legacyDbPull(flags({ linked: Option.some(true), declarative: Option.some(true) }));
       expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
       expect(s.edgeRunCount).toBe(2);
-      expect(streamText(s.out, "stderr")).toContain("Declarative schema written to");
+      expect(streamText(s.out, "stderr")).toContain(
+        `Declarative schema written to ${join("supabase", "database")}\n`,
+      );
     }).pipe(Effect.provide(s.layer));
   });
 

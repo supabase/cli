@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-import { makeTempHome, runSupabase } from "../../../../tests/helpers/cli.ts";
+import { makeTempHome, runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
@@ -34,6 +34,29 @@ describe("supabase logout (legacy)", () => {
       expect(exitCode).toBe(0);
       expect(stderr).toContain("You were not logged in, nothing to do.");
       expect(existsSync(tokenPath)).toBe(false);
+    },
+  );
+
+  // Declining the confirmation must byte-match Go: a single `context canceled`
+  // line on stderr and exit 1, with NO `--debug` troubleshooting hint —
+  // `recoverAndExit` skips `SuggestDebugFlag` for `context.Canceled`
+  // (apps/cli-go/cmd/root.go:287-303). CLI-1973.
+  test(
+    "declining the logout prompt prints only context canceled, no --debug hint",
+    { timeout: E2E_TIMEOUT_MS },
+    async () => {
+      using home = makeTempHome();
+      seedTokenFile(home.dir);
+      const { exitCode, stderr } = await runSupabase(["logout"], {
+        entrypoint: "legacy",
+        home: home.dir,
+        env: { HOME: home.dir },
+        stdin: "n\n",
+      });
+      expect(exitCode).toBe(1);
+      const lines = stripAnsi(stderr).trimEnd().split("\n");
+      expect(lines.at(-1)).toBe("context canceled");
+      expect(stderr).not.toContain("Try rerunning the command with --debug");
     },
   );
 

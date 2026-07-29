@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
@@ -133,8 +134,6 @@ const input = (over: Partial<LegacyMigrationRepairInput> = {}): LegacyMigrationR
   password: over.password ?? Option.none(),
 });
 
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 const seedMigration = (workdir: string, name: string, body: string) => {
   const dir = join(workdir, "supabase", "migrations");
   mkdirSync(dir, { recursive: true });
@@ -217,6 +216,11 @@ describe("legacy migration repair", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe(
           "LegacyMigrationInvalidVersionError",
+        );
+        // Guard: unlike `db reset` (bare `invalid version number`, reset.go:35-36),
+        // `migration repair` keeps Go's `failed to parse <v>:` wrapper (repair.go:29).
+        expect(Option.isSome(failure) && failure.value.message).toBe(
+          "failed to parse not-a-number: invalid version number",
         );
       }
     }).pipe(Effect.provide(layer));

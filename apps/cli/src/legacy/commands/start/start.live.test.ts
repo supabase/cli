@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -9,13 +9,17 @@ import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts
 import {
   legacySanitizeProjectId,
   legacyServiceContainerName,
+  localDbContainerId,
 } from "../../shared/legacy-docker-ids.ts";
+import { legacyGetRegistryImageUrl } from "../../shared/legacy-docker-registry.ts";
 import { LEGACY_SERVICE_CATALOG } from "../../shared/legacy-service-catalog.ts";
+import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 
 const execFileAsync = promisify(execFile);
 
 const START_TIMEOUT_MS = 280_000;
 const SHORT_LIVE_TIMEOUT_MS = 30_000;
+const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
  * `--exclude` values for the 3 heaviest/least-relevant services — same intent
@@ -74,8 +78,8 @@ describeLive("supabase start (live)", () => {
   });
 
   test(
-    "starts a reduced real local stack, running only the non-excluded containers",
-    { timeout: START_TIMEOUT_MS },
+    "recreates a stopped real stack and preserves database data",
+    { timeout: START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-"));
       // No `project_id` override, so the cli resolves it from the workdir
@@ -84,6 +88,17 @@ describeLive("supabase start (live)", () => {
       // alphanumeric/`-`), but mirrors the port's actual resolution rather
       // than assuming that stays true.
       const projectId = legacySanitizeProjectId(path.basename(projectDir));
+      const projectFilter = `label=com.supabase.cli.project=${projectId}`;
+      const dbContainerId = localDbContainerId(projectId);
+      const startArgs = [
+        "start",
+        "--exclude",
+        "studio",
+        "--exclude",
+        "logflare",
+        "--exclude",
+        "vector",
+      ];
 
       const init = await runSupabaseLive(["init"], {
         cwd: projectDir,
@@ -91,11 +106,72 @@ describeLive("supabase start (live)", () => {
       });
       expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
 
-      const start = await runSupabaseLive(
-        ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
-      );
+      const start = await runSupabaseLive(startArgs, {
+        cwd: projectDir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
       expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+
+      const persistedValue = "survived-stopped-container-recovery";
+      await execFileAsync("docker", [
+        "exec",
+        dbContainerId,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        `CREATE TABLE start_restart_regression (value text NOT NULL); INSERT INTO start_restart_regression VALUES ('${persistedValue}');`,
+      ]);
+
+      const { stdout: containerIdOutput } = await execFileAsync("docker", [
+        "ps",
+        "--filter",
+        projectFilter,
+        "--format",
+        "{{.ID}}",
+      ]);
+      const containerIds = splitNonEmptyLines(containerIdOutput);
+      expect(containerIds.length).toBeGreaterThan(0);
+      await execFileAsync("docker", ["stop", "--time", "0", ...containerIds], {
+        timeout: SHORT_LIVE_TIMEOUT_MS,
+      });
+
+      const { stdout: stoppedState } = await execFileAsync("docker", [
+        "container",
+        "inspect",
+        dbContainerId,
+        "--format",
+        "{{json .State}}",
+      ]);
+      expect(JSON.parse(stoppedState.trim())).toMatchObject({
+        Running: false,
+        Status: "exited",
+      });
+
+      const restart = await runSupabaseLive(startArgs, {
+        cwd: projectDir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
+      expect(restart.exitCode, `stdout:\n${restart.stdout}\nstderr:\n${restart.stderr}`).toBe(0);
+      expect(restart.stderr).not.toContain("is already running");
+      expect(restart.stderr).not.toContain("container is not running");
+
+      const { stdout: persistedData } = await execFileAsync("docker", [
+        "exec",
+        dbContainerId,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-Atc",
+        "SELECT value FROM start_restart_regression;",
+      ]);
+      expect(persistedData.trim()).toBe(persistedValue);
 
       // The real Docker daemon must agree with the CLI's own exit code: every
       // non-excluded service is actually running under this project's label,
@@ -104,7 +180,7 @@ describeLive("supabase start (live)", () => {
       const { stdout: psOutput } = await execFileAsync("docker", [
         "ps",
         "--filter",
-        `label=com.supabase.cli.project=${projectId}`,
+        projectFilter,
         "--format",
         "{{.Names}}",
       ]);
@@ -126,6 +202,65 @@ describeLive("supabase start (live)", () => {
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
       expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
+    },
+  );
+
+  // The health watch inspects and dumps logs by container NAME against a real
+  // daemon, and derives recovery advice from a real container's real log bytes.
+  // Neither is observable through the in-process mocks, so this reproduces
+  // supabase/cli#5952 for real: a locally cached image that cannot be executed.
+  test(
+    "names the container and its image when a cached image cannot be executed",
+    { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
+    async () => {
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-exec-"));
+      const projectId = legacySanitizeProjectId(path.basename(projectDir));
+      const mailpitContainer = legacyServiceContainerName("inbucket", projectId);
+      // The exact tag `start` resolves for Mailpit, so its already-cached check
+      // finds this deliberately broken build and never reaches a registry.
+      const mailpitImage = legacyGetRegistryImageUrl(dockerfileServiceImage("mailpit"));
+
+      const init = await runSupabaseLive(["init"], {
+        cwd: projectDir,
+        exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
+      });
+      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+
+      // A `scratch` image whose entrypoint is not an executable binary — the
+      // kernel refuses it with exactly the "exec format error" this diagnoses.
+      const buildDir = path.join(projectDir, "broken-image");
+      await mkdir(buildDir, { recursive: true });
+      await writeFile(path.join(buildDir, "mailpit"), "not an executable\n", { mode: 0o755 });
+      await writeFile(
+        path.join(buildDir, "Dockerfile"),
+        'FROM scratch\nCOPY mailpit /mailpit\nENTRYPOINT ["/mailpit"]\n',
+      );
+      await execFileAsync("docker", ["build", "-q", "-t", mailpitImage, buildDir]);
+
+      try {
+        // Everything except Postgres and Mailpit is excluded: this scenario only
+        // needs one container that cannot start.
+        const excludeArgs = LEGACY_SERVICE_CATALOG.flatMap((entry) =>
+          entry.excludeKey === undefined || entry.excludeKey === "mailpit"
+            ? []
+            : ["--exclude", entry.excludeKey],
+        );
+        const start = await runSupabaseLive(["start", ...excludeArgs], {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+        });
+
+        expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).not.toBe(0);
+        // Go reports `utils.InbucketId`, not the id `docker create` returns.
+        expect(start.stderr).toContain(`${mailpitContainer} container logs:`);
+        expect(start.stderr).toContain(`${mailpitContainer}: container is not ready`);
+        // ...and the advice names that container's actual resolved image.
+        expect(start.stderr).toContain(`${mailpitContainer}'s image ${mailpitImage}`);
+        expect(start.stderr).toContain(`image rm -f ${mailpitImage}`);
+      } finally {
+        // Never leave a poisoned tag behind for later jobs on this runner.
+        await execFileAsync("docker", ["image", "rm", "-f", mailpitImage]).catch(() => undefined);
+      }
     },
   );
 });

@@ -21,8 +21,10 @@ export class LegacyDbResetVersionFlagsError extends Data.TaggedError(
 }> {}
 
 /**
- * `--version` is not a valid integer. Byte-matches Go's
- * `failed to parse <v>: invalid version number` (`repair.go:24-29`).
+ * `--version` is not a valid integer. Byte-matches Go's bare
+ * `repair.ErrInvalidVersion` = `invalid version number`, returned unwrapped by
+ * `reset.Run` (`reset.go:35-36`) — the `failed to parse <v>:` wrapper is the
+ * `migration repair` path only (`repair.go:29`).
  */
 export class LegacyDbResetInvalidVersionError extends Data.TaggedError(
   "LegacyDbResetInvalidVersionError",

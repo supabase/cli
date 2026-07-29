@@ -1,7 +1,9 @@
+import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyFunctionsDeploy } from "./deploy.handler.ts";
@@ -69,5 +71,9 @@ export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["functions", "deploy"])),
+  // `stdinLayer`: the `--prune` confirmation reads piped stdin via `legacyPromptYesNo`
+  // (Go's `Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
+  Command.provide(
+    Layer.mergeAll(legacyManagementApiRuntimeLayer(["functions", "deploy"]), stdinLayer),
+  ),
 );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   legacyFormatByteSize,
   legacyFormatCatalogSummary,
@@ -8,10 +9,6 @@ import {
   legacyRedactPostgresURL,
   legacySummarizeCatalogJson,
 } from "./pull.debug.ts";
-
-// ANSI may wrap the bold debugDir; strip for assertions.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("legacyRedactPostgresURL", () => {
   it("replaces the password but keeps the username", () => {

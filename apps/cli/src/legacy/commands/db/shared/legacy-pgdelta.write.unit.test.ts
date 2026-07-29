@@ -6,9 +6,13 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 
+import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
 import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
-import { legacyWriteDeclarativeSchemas } from "./legacy-pgdelta.write.ts";
+import {
+  legacyDeclarativeSchemaWrittenLine,
+  legacyWriteDeclarativeSchemas,
+} from "./legacy-pgdelta.write.ts";
 
 const write = (declarativeDir: string, output: LegacyDeclarativeOutput) =>
   Effect.gen(function* () {
@@ -82,6 +86,14 @@ describe("legacyWriteDeclarativeSchemas", () => {
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
+    );
+  });
+});
+
+describe("legacyDeclarativeSchemaWrittenLine", () => {
+  it("formats the shared written-to line for the given dir", () => {
+    expect(legacyDeclarativeSchemaWrittenLine("supabase/database")).toBe(
+      `Declarative schema written to ${legacyBold("supabase/database")}\n`,
     );
   });
 });

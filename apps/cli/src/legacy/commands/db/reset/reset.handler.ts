@@ -8,6 +8,7 @@ import {
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -20,7 +21,8 @@ import {
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyParseMigrationVersion } from "../../../shared/legacy-migration-timestamp.format.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   type LegacyDbConnType,
   resolveLegacyDbTargetFlags,
@@ -47,7 +49,6 @@ import {
   LegacyDbResetVersionFlagsError,
 } from "./reset.errors.ts";
 
-const INTEGER_PATTERN = /^[+-]?\d+$/u;
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
 
 const applyError = (message: string) => new LegacyDbResetApplyError({ message });
@@ -186,12 +187,19 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
 
     // Version / last resolution (Go's reset.Run lines 34-52), filesystem only.
     let resolvedVersion = "";
-    if (Option.isSome(flags.version)) {
+    // Go's `len(version) > 0` guard (reset.go:34) skips validation entirely for an
+    // empty --version, falling through as if no version were given at all.
+    if (Option.isSome(flags.version) && flags.version.value.length > 0) {
       const v = flags.version.value;
-      if (!INTEGER_PATTERN.test(v)) {
+      // Go's `strconv.Atoi` (== `ParseInt(s, 10, 0)`) rejects non-numeric text AND
+      // values outside the int64 range; `legacyParseMigrationVersion` mirrors that
+      // exactly (`migration repair` uses the same helper for its own version parse).
+      if (legacyParseMigrationVersion(v) === undefined) {
+        // Go's reset.Run returns the bare repair.ErrInvalidVersion (reset.go:35-36);
+        // the `failed to parse <v>:` wrapper belongs to `migration repair` only.
         return yield* Effect.fail(
           new LegacyDbResetInvalidVersionError({
-            message: `failed to parse ${v}: invalid version number`,
+            message: "invalid version number",
           }),
         );
       }
@@ -415,7 +423,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       false,
     );
     if (!shouldReset) {
-      return yield* Effect.fail(new LegacyDbResetCancelledError({ message: "context canceled" }));
+      return yield* Effect.fail(
+        new LegacyDbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
+      );
     }
     yield* output.raw(`Resetting remote database${toLogMessage(resolvedVersion)}\n`, "stderr");
 

@@ -2,7 +2,7 @@ import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   mockLegacyCliConfig,
@@ -38,14 +38,16 @@ interface SetupOpts {
   readonly goOutput?: GoOutput;
   readonly status?: number;
   readonly network?: "fail";
+  readonly response?: unknown;
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-domains-reverify-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
+  const analytics = mockAnalytics();
   const api = mockLegacyPlatformApi({
-    response: { status: opts.status ?? 201, body: HOSTNAME_RESPONSE },
+    response: { status: opts.status ?? 201, body: opts.response ?? HOSTNAME_RESPONSE },
     network: opts.network,
   });
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
@@ -55,16 +57,45 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliConfig,
+    analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
-  return { layer, out, api, telemetry, linkedProjectCache };
+  return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
 
 describe("legacy domains reverify integration", () => {
+  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+    const { layer, out, analytics, api } = setup({
+      status: 400,
+      response: {
+        message:
+          "Custom domains require the Custom Domain add-on, available on the Pro plan and above.",
+        error: {
+          code: "entitlement_required",
+          feature: "custom_domain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDomainsReverify(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(api.requests).toHaveLength(1);
+      expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(analytics.captured).toEqual([
+        {
+          event: "cli_upgrade_suggested",
+          properties: { feature_key: "custom_domain", org_slug: "env-org" },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("prints the initializing status to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {

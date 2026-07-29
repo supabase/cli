@@ -2,7 +2,7 @@ import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
@@ -45,6 +45,7 @@ interface SetupOpts {
   readonly cname?: "ok" | "transport-fail" | "no-cname" | "mismatch" | "status-error";
   readonly apiStatus?: number;
   readonly apiNetwork?: "fail";
+  readonly apiResponse?: unknown;
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-domains-create-int-");
@@ -70,21 +71,25 @@ function setup(opts: SetupOpts = {}) {
       if (opts.apiNetwork === "fail") {
         return Effect.fail(legacyTransportFailure(request));
       }
-      return Effect.succeed(legacyJsonResponse(request, opts.apiStatus ?? 201, HOSTNAME_RESPONSE));
+      return Effect.succeed(
+        legacyJsonResponse(request, opts.apiStatus ?? 201, opts.apiResponse ?? HOSTNAME_RESPONSE),
+      );
     },
   });
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const analytics = mockAnalytics();
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
     cliConfig,
+    analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
-  return { layer, out, api, telemetry, linkedProjectCache };
+  return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
 function flags(over: Partial<{ includeRawOutput: boolean }> = {}) {
@@ -109,6 +114,49 @@ describe("legacy domains create integration", () => {
       expect(postedToInitialize(api)).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+    const { layer, out, analytics, api } = setup({
+      apiStatus: 400,
+      apiResponse: {
+        message:
+          "Custom domains require the Custom Domain add-on, available on the Pro plan and above.",
+        error: {
+          code: "entitlement_required",
+          feature: "custom_domain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(api.requests).toHaveLength(2);
+      expect(postedToInitialize(api)).toBe(true);
+      expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(analytics.captured).toEqual([
+        {
+          event: "cli_upgrade_suggested",
+          properties: { feature_key: "custom_domain", org_slug: "env-org" },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("plain 400 without envelope produces no upgrade hint", () => {
+    const { layer, out, analytics, api } = setup({
+      apiStatus: 400,
+      apiResponse: { message: "invalid hostname" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(api.requests).toHaveLength(2);
+      expect(analytics.captured).toHaveLength(0);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
     }).pipe(Effect.provide(layer));
   });
 

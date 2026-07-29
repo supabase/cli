@@ -2,7 +2,6 @@ import { loadProjectConfig } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import {
-  LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
@@ -192,7 +191,6 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const stdio = yield* Stdio.Stdio;
   const networkId = yield* LegacyNetworkIdFlag;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const debug = yield* LegacyDebugFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const rawArgs = yield* stdio.args;
   const platformApi = yield* LegacyPlatformApiFactory;
@@ -426,7 +424,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             }
 
             const useTls = yield* sslProbe.requireSslForHost(target.probeHost, target.probePort);
-            if (useTls && !debug) {
+            if (useTls) {
               env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
             }
 

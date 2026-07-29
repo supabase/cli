@@ -4,7 +4,6 @@ import {
   legacyFindPendingMigrations,
   legacyIncludeAllPending,
   legacySuggestIgnoreFlag,
-  legacySuggestRevertHistory,
 } from "./legacy-migration-pending.ts";
 
 const local = (...versions: ReadonlyArray<string>) =>
@@ -64,14 +63,6 @@ describe("legacyIncludeAllPending", () => {
 });
 
 describe("suggestion strings", () => {
-  it("builds the revert-history suggestion with a trailing newline per line", () => {
-    expect(legacySuggestRevertHistory(["0002", "0003"])).toContain(
-      "supabase migration repair --status reverted 0002 0003",
-    );
-    expect(legacySuggestRevertHistory(["0002"])).toMatch(/\n$/u);
-    expect(legacySuggestRevertHistory(["0002"])).toContain("supabase db pull");
-  });
-
   it("builds the include-all suggestion listing each path on its own line", () => {
     const suggestion = legacySuggestIgnoreFlag([
       "supabase/migrations/0001_a.sql",

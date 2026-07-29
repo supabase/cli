@@ -5,7 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
@@ -148,6 +148,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     proxy,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+    mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "schema", "declarative", "generate"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
@@ -644,10 +645,41 @@ describe("legacy db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
       expect(s.seamCalls).toEqual(["baseline", "declarative"]);
+      // Go's PromptYesNo echoes the auto-accepted question to stderr under the
+      // global YES flag (`console.go:70-72`) — the echo must not be skipped.
+      expect(s.out.stderrText).toContain(
+        ". Regenerate from database? This will overwrite existing files. [y/N] y\n",
+      );
       expect(
         s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
       ).toBe(false);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: SUPABASE_YES=1 regenerates over existing files like --yes", () => {
+    // Go reads `viper.GetBool("YES")`, which `AutomaticEnv` also binds to the
+    // SUPABASE_YES env var — the flag alone is not the whole surface (CLI-1974).
+    const declDir = join(tmp.current, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "existing.sql"), "-- existing");
+    const prev = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: false });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags());
+      expect(s.seamCalls).toEqual(["baseline", "declarative"]);
+      expect(s.out.stderrText).toContain(
+        ". Regenerate from database? This will overwrite existing files. [y/N] y\n",
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(s.layer),
+    );
   });
 
   it.effect("warms the declarative catalog cache after writing (skipped with --no-cache)", () => {

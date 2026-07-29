@@ -1,6 +1,9 @@
 package cast
 
-import "math"
+import (
+	"math"
+	"strconv"
+)
 
 // UintToInt converts a uint to an int, handling potential overflow
 func UintToInt(value uint) int {
@@ -38,6 +41,13 @@ func IntToUintPtr(value *int) *uint {
 		return nil
 	}
 	return Ptr(IntToUint(*value))
+}
+
+func BoolToStringPtr(value *bool) *string {
+	if value == nil {
+		return nil
+	}
+	return Ptr(strconv.FormatBool(*value))
 }
 
 func Ptr[T any](v T) *T {

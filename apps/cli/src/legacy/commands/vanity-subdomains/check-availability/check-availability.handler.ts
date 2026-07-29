@@ -2,7 +2,10 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -15,6 +18,7 @@ import {
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
+  LegacyDesiredSubdomainRequiredError,
   LegacyVanitySubdomainsCheckNetworkError,
   LegacyVanitySubdomainsCheckUnexpectedStatusError,
 } from "../vanity-subdomains.errors.ts";
@@ -41,6 +45,21 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
+      // Go validates the required `--desired-subdomain` only after
+      // `PersistentPreRunE` completes (gate → login → ref resolution,
+      // `cmd/root.go:93-117`; `cobra@v1.10.2/command.go:985,1005`), and
+      // `PersistentPostRun` still fires telemetry + the linked-project cache
+      // on that failure — hence this check sits inside both `Effect.ensuring`
+      // wrappers, after ref resolution. Cobra checks the flag was *changed*,
+      // not non-empty, so `--desired-subdomain ""` passes and reaches the API.
+      if (Option.isNone(flags.desiredSubdomain)) {
+        return yield* Effect.fail(
+          new LegacyDesiredSubdomainRequiredError({
+            message: `required flag(s) "desired-subdomain" not set`,
+          }),
+        );
+      }
+      const desiredSubdomain = flags.desiredSubdomain.value;
       const checking =
         output.format === "text"
           ? yield* output.task("Checking vanity subdomain availability...")
@@ -48,7 +67,7 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
       const response = yield* api.v1
         .checkVanitySubdomainAvailability({
           ref,
-          vanity_subdomain: flags.desiredSubdomain,
+          vanity_subdomain: desiredSubdomain,
         })
         .pipe(
           Effect.tapError(() => checking?.fail() ?? Effect.void),
@@ -64,6 +83,7 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
                   projectRef: ref,
                   featureKey: "vanity_subdomain",
                   statusCode: mapped.status,
+                  response: legacyGateResponse(cause),
                   trackAnalytics: false,
                 });
               }
@@ -97,7 +117,7 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
         return;
       }
 
-      yield* output.raw(`Subdomain ${flags.desiredSubdomain} available: ${response.available}\n`);
+      yield* output.raw(`Subdomain ${desiredSubdomain} available: ${response.available}\n`);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

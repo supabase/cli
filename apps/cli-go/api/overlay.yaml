@@ -14,13 +14,13 @@ actions:
       - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
       - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~
       - ''
-- target: $.components.schemas.*.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.oneOf
+- target: $.components.schemas.*.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.anyOf
   description: Replaces request union type with interface for easier casting
   remove: true
-- target: $.components.schemas.*.properties.saml.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.oneOf
+- target: $.components.schemas.*.properties.saml.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.anyOf
   description: Replaces response union type with interface for easier casting
   remove: true
-- target: $.components.schemas.*.properties.items.items.properties.saml.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.oneOf
+- target: $.components.schemas.*.properties.items.items.properties.saml.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.anyOf
   description: Replaces list union type with interface for easier casting
   remove: true
 - target: $.components.schemas.*.properties.saml.properties.name_id_format.enum
@@ -32,39 +32,48 @@ actions:
 - target: $.components.schemas.*.properties.connectionString
   description: Removes deprecated field that conflicts with naming convention
   remove: true
-- target: $.components.schemas.*.properties.region_selection.discriminator
-  description: Replaces discriminated union with concrete type
+- target: $.components.schemas.V1CreateProjectBody.properties.release_channel
+  description: Removes deprecated null-only field that oapi-codegen cannot map
   remove: true
-- target: $.components.schemas.*.properties.private_jwk.discriminator
-  description: Replaces discriminated union with concrete type
+- target: $.components.schemas.V1CreateProjectBody.properties.postgres_engine
+  description: Removes deprecated null-only field that oapi-codegen cannot map
   remove: true
-- target: $.components.schemas.DiskRequestBody.properties.attributes.discriminator
-  description: Replaces discriminated union with concrete type
-  remove: true
-- target: $.components.schemas.JitStateResponse.discriminator
-  description: Replaces discriminated union with concrete type
-  remove: true
-- target: $.components.schemas.JitListAccessResponse.properties.items.items.oneOf[0].properties.invite_id
+- target: $.components.schemas.JitListAccessResponse.properties.items.items.anyOf[0].properties.invite_id
   description: Replaces null-only project user invite id with nullable UUID for oapi-codegen
   update:
     type: string
     format: uuid
     nullable: true
-- target: $.components.schemas.JitListAccessResponse.properties.items.items.oneOf[0].properties.expires_at
+- target: $.components.schemas.JitListAccessResponse.properties.items.items.anyOf[0].properties.expires_at
   description: Replaces null-only project user invite expiry with nullable string for oapi-codegen
   update:
     type: string
     nullable: true
-- target: $.components.schemas.JitListAccessResponse.properties.items.items.oneOf[1].properties.user_id
+- target: $.components.schemas.JitListAccessResponse.properties.items.items.anyOf[1].properties.user_id
   description: Replaces null-only invited user id with nullable UUID for oapi-codegen
   update:
     type: string
     format: uuid
     nullable: true
-- target: $.components.schemas.ProjectUpgradeEligibilityResponse.properties.warnings.items.discriminator
-  description: Removes inline warning discriminator that oapi-codegen cannot map
-  remove: true
 - target: $.paths.*.*.parameters[?(@.name=='branch_id_or_ref')]
   update:
     schema:
       type: string
+- target: $.paths.*.*.parameters[?(@.name=='services')].schema.anyOf
+  description: Removes comma-string-or-array union so the array-of-enum shape can be set directly
+  remove: true
+- target: $.paths.*.*.parameters[?(@.name=='services')].schema
+  description: Replaces comma-string-or-array union with a plain array of enums for oapi-codegen
+  update:
+    type: array
+    items:
+      type: string
+      enum:
+        - auth
+        - db
+        - db_postgres_user
+        - pooler
+        - realtime
+        - rest
+        - storage
+        - pg_bouncer

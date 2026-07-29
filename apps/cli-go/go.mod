@@ -1,6 +1,6 @@
 module github.com/supabase/cli
 
-go 1.25.11
+go 1.26
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -42,7 +42,7 @@ require (
 	github.com/multigres/multigres v0.0.0-20260126223308-f5a52171bbc4
 	github.com/oapi-codegen/nullable v1.2.0
 	github.com/olekukonko/tablewriter v1.1.4
-	github.com/posthog/posthog-go v1.19.0
+	github.com/posthog/posthog-go v1.21.0
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -189,7 +189,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
-	github.com/getkin/kin-openapi v0.135.0 // indirect
+	github.com/getkin/kin-openapi v0.136.0 // indirect
 	github.com/ghostiam/protogetter v0.3.20 // indirect
 	github.com/go-critic/go-critic v0.14.3 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
@@ -353,7 +353,7 @@ require (
 	github.com/oapi-codegen/oapi-codegen/v2 v2.7.1 // indirect
 	github.com/oapi-codegen/runtime v1.6.0 // indirect
 	github.com/oasdiff/yaml v0.0.9 // indirect
-	github.com/oasdiff/yaml3 v0.0.9 // indirect
+	github.com/oasdiff/yaml3 v0.0.12 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
 	github.com/olekukonko/errors v1.2.0 // indirect
 	github.com/olekukonko/ll v0.1.6 // indirect

@@ -4,7 +4,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
+import { stripAnsi } from "../../../../../../../tests/helpers/ansi.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
@@ -70,8 +71,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const cache = mockLegacyLinkedProjectCacheTracked();
   const execInheritCalls: ReadonlyArray<string>[] = [];
   const localPostgresImageChecks: Array<true> = [];
+  // Each catalog export records how many raw chunks had been emitted when it fired,
+  // so tests can assert output ordering relative to the exports (e.g. the bootstrap's
+  // written-to line lands after the declarative warm, before the diff's exports).
+  const exportCatalogCalls: Array<{ mode: string; rawChunksAt: number }> = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
-    exportCatalog: ({ mode }) => Effect.succeed(`supabase/.temp/pgdelta/${mode}.json`),
+    exportCatalog: ({ mode }) =>
+      Effect.sync(() => {
+        exportCatalogCalls.push({ mode, rawChunksAt: out.rawChunks.length });
+        return `supabase/.temp/pgdelta/${mode}.json`;
+      }),
     execInherit: (args) =>
       Effect.sync(() => {
         execInheritCalls.push(args);
@@ -170,6 +179,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+    mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "schema", "declarative", "sync"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
@@ -185,7 +195,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     BunServices.layer,
   );
-  return { layer, out, execInheritCalls, dbExec, cache, localPostgresImageChecks };
+  return {
+    layer,
+    out,
+    execInheritCalls,
+    dbExec,
+    cache,
+    localPostgresImageChecks,
+    exportCatalogCalls,
+  };
 }
 
 const flags = (
@@ -444,6 +462,92 @@ describe("legacy db schema declarative sync integration", () => {
         legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
       expect(JSON.stringify(exit)).not.toContain("no declarative schema found");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap prints the declarative-schema-written line after the catalog warm", () => {
+    // Go's bootstrap delegates to `declarative.Generate`, which prints
+    // `Declarative schema written to <dir>` to stderr AFTER WriteDeclarativeSchemas
+    // and the catalog warm (`declarative.go:133→138-155→156`), before sync's own
+    // diff (step 2). It prints `utils.GetDeclarativeDir()` — the relative
+    // `supabase/database` default — never the absolute resolved dir (CLI-1980).
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      exportJson: EXPORT_JSON,
+      promptConfirmResponses: [true], // generate a new one? yes (no migrations → no reset prompt)
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const line = `Declarative schema written to ${join("supabase", "database")}\n`;
+      const written = s.out.rawChunks
+        .map((c, index) => ({ text: stripAnsi(c.text), stream: c.stream, index }))
+        .filter((c) => c.text === line);
+      expect(written).toHaveLength(1);
+      expect(written[0]?.stream).toBe("stderr");
+      const lineAt = written[0]?.index ?? -1;
+      // The warm (first declarative-mode export) fires before the line is printed…
+      const warm = s.exportCatalogCalls.find((c) => c.mode === "declarative");
+      expect(warm?.rawChunksAt).toBeLessThanOrEqual(lineAt);
+      // …and the diff's first export (migrations catalog) fires after it, so the
+      // line sits at the end of the bootstrap, matching Go's ordering.
+      const diffStart = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+      expect(diffStart?.rawChunksAt).toBeGreaterThan(lineAt);
+      // The generated files actually landed in the printed (resolved) dir.
+      expect(
+        existsSync(
+          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--yes bootstrap prints the declarative-schema-written line too", () => {
+    // Go reaches the same delegated `declarative.Generate` print on the
+    // auto-confirmed (--yes / SUPABASE_YES) bootstrap as on the interactive accept.
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: false,
+      yes: true,
+      diffSql: "",
+      exportJson: EXPORT_JSON,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(
+        s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
+      ).toContainEqual({
+        text: `Declarative schema written to ${join("supabase", "database")}\n`,
+        stream: "stderr",
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--no-cache bootstrap still prints the declarative-schema-written line", () => {
+    // Go's print sits OUTSIDE the `if !noCache` warm gate (`declarative.go:138-156`):
+    // skipping the catalog warm must not skip the line.
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: false,
+      yes: true,
+      diffSql: "",
+      exportJson: EXPORT_JSON,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) }));
+      const line = `Declarative schema written to ${join("supabase", "database")}\n`;
+      const written = s.out.rawChunks
+        .map((c, index) => ({ text: stripAnsi(c.text), stream: c.stream, index }))
+        .filter((c) => c.text === line);
+      expect(written).toHaveLength(1);
+      expect(written[0]?.stream).toBe("stderr");
+      // The warm really was skipped: the only declarative-mode export is the diff's,
+      // which fires after the line — yet the line still printed.
+      const lineAt = written[0]?.index ?? -1;
+      const declarativeExports = s.exportCatalogCalls.filter((c) => c.mode === "declarative");
+      expect(declarativeExports).toHaveLength(1);
+      expect(declarativeExports[0]?.rawChunksAt).toBeGreaterThan(lineAt);
     }).pipe(Effect.provide(s.layer));
   });
 

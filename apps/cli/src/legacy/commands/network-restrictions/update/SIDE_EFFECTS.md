@@ -9,10 +9,10 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                                            |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (after ref resolution), via `Effect.ensuring` — success and HTTP failure |
-| `~/.supabase/telemetry.json`                     | JSON   | always, via outermost `Effect.ensuring` — including CIDR validation failures    |
+| Path                                             | Format | When                                                                                                                                 |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | once the `--experimental` gate is open, after ref resolution, via `Effect.ensuring` — success and HTTP failure                       |
+| `~/.supabase/telemetry.json`                     | JSON   | once the `--experimental` gate is open, via outermost `Effect.ensuring` — including CIDR validation failures. Not written if closed. |
 
 ## API Routes
 
@@ -28,28 +28,30 @@ when no `--db-allow-cidr` was supplied), matching Go's `&[]string{}` initializat
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                |
-| ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)   |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` → prompt) |
+| Variable                | Purpose                                                  | Required?                                                      |
+| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)        |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)         |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` → prompt)       |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
 
 ## Exit Codes
 
-| Code | Condition                                                                                         |
-| ---- | ------------------------------------------------------------------------------------------------- |
-| `0`  | success — network restrictions updated and status printed to stdout                               |
-| `1`  | CIDR parse failure — `LegacyNetworkRestrictionsInvalidCidrError` (`failed to parse IP: <input>`)  |
-| `1`  | private-IP rejection — `LegacyNetworkRestrictionsPrivateIpError` (`private IP provided: <input>`) |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)           |
-| `1`  | API non-201 (POST) / non-200 (PATCH) — `LegacyNetworkRestrictionsUpdateUnexpectedStatusError`     |
-| `1`  | transport failure — `LegacyNetworkRestrictionsUpdateNetworkError`                                 |
+| Code | Condition                                                                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success — network restrictions updated and status printed to stdout                                                                        |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before CIDR validation/ref/API |
+| `1`  | CIDR parse failure — `LegacyNetworkRestrictionsInvalidCidrError` (`failed to parse IP: <input>`)                                           |
+| `1`  | private-IP rejection — `LegacyNetworkRestrictionsPrivateIpError` (`private IP provided: <input>`)                                          |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                    |
+| `1`  | API non-201 (POST) / non-200 (PATCH) — `LegacyNetworkRestrictionsUpdateUnexpectedStatusError`                                              |
+| `1`  | transport failure — `LegacyNetworkRestrictionsUpdateNetworkError`                                                                          |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                          |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
+| Event                  | When                                                                                           | Notable properties / groups                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
 Matches `apps/cli-go/internal/restrictions/update/`. Go does not fire any custom telemetry event for this command.
 
@@ -109,7 +111,8 @@ One `result` event whose `data` is the full response object.
   envelope (`{ dbAllowedCidrs, dbAllowedCidrsV6 }` → `{ add: { dbAllowedCidrs, dbAllowedCidrsV6 } }`).
 - `linked-project.json` writes after a successful project-ref resolution, regardless of
   whether the subsequent API call succeeds.
-- `telemetry.json` writes on every invocation, including CIDR validation failures, ref
-  resolution failures, and API failures.
+- `telemetry.json` writes on every invocation past the `--experimental` gate, including
+  CIDR validation failures, ref resolution failures, and API failures. A closed gate
+  writes nothing (Go's `PersistentPreRunE` fails before `PersistentPostRun` runs).
 - Go's `restrictions/update` itself does not honor `--output`. The legacy TS port honors
   both `--output` and `--output-format` per the legacy CLAUDE.md output-parity rules.

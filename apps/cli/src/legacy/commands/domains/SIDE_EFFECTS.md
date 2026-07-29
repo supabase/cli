@@ -49,11 +49,10 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                    |
-| ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (all redacted — Go marks no `domains` flag telemetry-safe) |
-
-No custom events: the Go `internal/hostnames` package emits no `phtelemetry.*` calls.
+| Event                   | When                                                                                  | Notable properties / groups                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — Go marks no `domains` flag telemetry-safe)                     |
+| `cli_upgrade_suggested` | `create`/`get`/`activate`/`reverify` 4xx carrying the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback |
 
 ## Output
 

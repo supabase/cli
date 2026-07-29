@@ -21,16 +21,51 @@ function readGoTemplate(...segments: ReadonlyArray<string>): string {
   return normalizeNewlines(readFileSync(join(goCliRoot, ...segments), "utf8"));
 }
 
-describe("project init templates", () => {
-  it("renders config.toml with the same content as the Go scaffold", () => {
-    const expected = readGoTemplate("pkg", "config", "templates", "config.toml")
+// Go renders its config.toml scaffold through text/template (config.Eject), so an action
+// containing a backtick raw string — {{ (backtick){{ .Code }}(backtick) }} in the template
+// source — is rendered to the literal string it quotes: {{ .Code }} in the ejected file.
+// This is the only text/template construct emulated here beyond the substituted fields;
+// the "models every template action" test below fails loudly if the Go scaffold ever
+// gains a construct this suite does not resolve.
+function resolveGoTemplateEscapes(template: string): string {
+  return template.replace(/\{\{\s*`([^`]*)`\s*\}\}/g, "$1");
+}
+
+// Emulates what Go's config.Eject writes to disk for a fresh `supabase init` project.
+function renderExpectedGoEject(): string {
+  return (
+    resolveGoTemplateEscapes(readGoTemplate("pkg", "config", "templates", "config.toml"))
       .replace("{{ .ProjectId }}", "demo-project")
       .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
       // supabase init always opts new projects into pg-delta; the Go template renders
       // this from a flag set only on the init path (false when deriving defaults).
-      .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true");
+      .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true")
+  );
+}
 
-    expect(normalizeNewlines(renderProjectConfigTemplate("demo-project", true))).toBe(expected);
+describe("project init templates", () => {
+  it("renders config.toml with the same content as the Go CLI ejects", () => {
+    expect(normalizeNewlines(renderProjectConfigTemplate("demo-project", true))).toBe(
+      renderExpectedGoEject(),
+    );
+  });
+
+  it("models every template action in the Go scaffold, so parity cannot silently drift", () => {
+    // After escape resolution and field substitution, the only {{ ... }} occurrences left
+    // must be the GoTrue OTP placeholders quoted by the backtick escapes. Anything else
+    // means the Go template gained a construct this suite does not emulate yet — update
+    // resolveGoTemplateEscapes/renderExpectedGoEject to match config.Eject before shipping.
+    const unresolvedActions = renderExpectedGoEject().match(/\{\{[^}]*\}\}/g) ?? [];
+    expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
+  });
+
+  it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw Go escapes", () => {
+    const rendered = renderProjectConfigTemplate("demo-project", false);
+    const otpTemplateLines = rendered.split("\n").filter((line) => line.startsWith("template = "));
+    expect(otpTemplateLines).toEqual([
+      'template = "Your code is {{ .Code }}"',
+      'template = "Your code is {{ .Code }}"',
+    ]);
   });
 
   it("enables pg-delta by default in the generated config", () => {

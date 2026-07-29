@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { Effect, Exit } from "effect";
+import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -14,6 +15,7 @@ import {
   legacyMergedConnectionOptions,
   legacySslConfigsFor,
   legacySslOptionFor,
+  legacyToExecError,
 } from "./legacy-db-connection.sql-pg.layer.ts";
 
 describe("legacyBuildConnectionUrl", () => {
@@ -491,5 +493,71 @@ describe("legacyIsTerminalConnectError (pgconn fallback termination)", () => {
     expect(legacyIsTerminalConnectError(new Error("connection refused"), true)).toBe(false);
     expect(legacyIsTerminalConnectError("boom", true)).toBe(false);
     expect(legacyIsTerminalConnectError(undefined, false)).toBe(false);
+  });
+});
+
+describe("legacyToExecError (pg server-error extraction)", () => {
+  /**
+   * The real failure chain for a statement error: `@effect/sql`'s `SqlError`
+   * exposes its reason as `cause`, and the reason exposes the node-postgres
+   * `DatabaseError` (an `Error` carrying `severity`/`code`/`detail`/`position`
+   * string fields) as `cause` again.
+   */
+  const sqlErrorChain = (
+    server: Partial<Record<"severity" | "code" | "detail" | "position", string>> & {
+      message: string;
+    },
+  ) =>
+    new SqlError({
+      reason: new SqlSyntaxError({
+        cause: Object.assign(new Error(server.message), server),
+        message: "Failed to execute statement",
+        operation: "execute",
+      }),
+    });
+
+  it("renders pgconn's PgError message and carries code, detail, and position", () => {
+    const error = legacyToExecError(
+      sqlErrorChain({
+        message: 'type "ltree" does not exist',
+        severity: "ERROR",
+        code: "42704",
+        detail: "Some detail line.",
+        position: "25",
+      }),
+    );
+    expect(error.message).toBe('ERROR: type "ltree" does not exist (SQLSTATE 42704)');
+    expect(error.code).toBe("42704");
+    expect(error.detail).toBe("Some detail line.");
+    expect(error.position).toBe(25);
+  });
+
+  it("omits detail and position when the server sent none (Go's non-empty gates)", () => {
+    const error = legacyToExecError(
+      sqlErrorChain({
+        message: 'syntax error at or near "BOOM"',
+        severity: "ERROR",
+        code: "42601",
+        detail: "",
+        position: "0",
+      }),
+    );
+    expect(error.message).toBe('ERROR: syntax error at or near "BOOM" (SQLSTATE 42601)');
+    expect(error.code).toBe("42601");
+    expect(error.detail).toBeUndefined();
+    expect(error.position).toBeUndefined();
+  });
+
+  it("keeps the driver text verbatim for non-server failures", () => {
+    const cause = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const error = legacyToExecError(
+      new SqlError({
+        reason: new UnknownError({ cause, message: "Failed to execute statement" }),
+      }),
+    );
+    expect(error.message).toBe("effect/sql/SqlError: Failed to execute statement");
+    expect(error.code).toBe("ECONNRESET");
+    expect(error.detail).toBeUndefined();
+    expect(error.position).toBeUndefined();
   });
 });

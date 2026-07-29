@@ -11,8 +11,11 @@ import {
 import { Duration, Effect, Option, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
+import { legacyBold } from "../../legacy/shared/legacy-colors.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
@@ -2078,13 +2081,20 @@ const pruneFunctions = Effect.fnUntraced(function* (
     return;
   }
 
-  const prompt = [
+  // Go's `confirmPruneAll` + `fmt.Sprintln` (`deploy.go:189,206-212`): header, one
+  // ` • <bold slug>` line per function, and a trailing blank line before the
+  // `[y/N]` choices. Routed through `legacyPromptYesNo` (Go `PromptYesNo(msg,
+  // false)`, `console.go:64-82`) so `--yes`/`SUPABASE_YES` auto-confirms with the
+  // stderr echo and a non-TTY stdin honors a piped `y`/`n` answer (CLI-1974).
+  const prompt = `${[
     "Do you want to delete the following Functions from your project?",
-    ...toDelete.map((slug) => ` - ${slug}`),
-  ].join("\n");
-  const confirmed = yes || (yield* output.promptConfirm(`${prompt}\n`, { defaultValue: false }));
+    ...toDelete.map((slug) => ` • ${legacyBold(slug)}`),
+  ].join("\n")}\n\n`;
+  const confirmed = yield* legacyPromptYesNo(output, yes, prompt, false);
   if (!confirmed) {
-    return yield* Effect.fail(new FunctionDeployCancelledError({ message: "context canceled" }));
+    return yield* Effect.fail(
+      new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
+    );
   }
 
   for (const slug of toDelete) {

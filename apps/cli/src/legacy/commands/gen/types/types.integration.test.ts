@@ -2883,7 +2883,10 @@ describe("legacy gen types", () => {
     }),
   );
 
-  it.live("omits the CA bundle env var in --debug mode even when TLS is supported", () =>
+  // Go's `GetRootCA` no longer special-cases `--debug`: `isRequireSSL` returns true
+  // on any successful probe (`types.go:194-195`), so the bundle is passed to pgmeta
+  // regardless of the flag.
+  it.live("passes the CA bundle env var in --debug mode when TLS is supported", () =>
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
@@ -2903,7 +2906,7 @@ describe("legacy gen types", () => {
             ).pipe(Effect.provide(layer)),
           );
 
-          expect(docker.env.startsWith("PG_META_DB_SSL_ROOT_CERT=")).toBe(false);
+          expect(docker.env.startsWith("PG_META_DB_SSL_ROOT_CERT=")).toBe(true);
         }, "S"),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),

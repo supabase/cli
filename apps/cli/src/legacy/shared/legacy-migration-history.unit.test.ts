@@ -1,6 +1,7 @@
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
@@ -8,6 +9,7 @@ import {
   legacyListRemoteMigrations,
   legacyReconcileMigrations,
   legacySuggestMigrationRepair,
+  legacySuggestRevertHistory,
 } from "./legacy-migration-history.ts";
 
 const mig = (version: string) => `supabase/migrations/${version}_test.sql`;
@@ -20,10 +22,6 @@ const failingSession = (error: LegacyDbExecError): LegacyDbSession => ({
   copyToCsv: () => Effect.die("unused"),
   queryRaw: () => Effect.die("unused"),
 });
-
-// Strip ANSI so the bold repair suggestions compare regardless of TTY colour.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("legacyReconcileMigrations", () => {
   it("reports in-sync when remote and local match", () => {
@@ -169,5 +167,15 @@ describe("legacySuggestMigrationRepair", () => {
     expect(out).toContain("try repairing the migration history table:");
     expect(out).toContain("supabase migration repair --status reverted 111");
     expect(out).toContain("supabase migration repair --status applied 222");
+  });
+});
+
+describe("legacySuggestRevertHistory", () => {
+  it("builds the revert-history suggestion with a trailing newline per line", () => {
+    expect(legacySuggestRevertHistory(["0002", "0003"])).toContain(
+      "supabase migration repair --status reverted 0002 0003",
+    );
+    expect(legacySuggestRevertHistory(["0002"])).toMatch(/\n$/u);
+    expect(legacySuggestRevertHistory(["0002"])).toContain("supabase db pull");
   });
 });

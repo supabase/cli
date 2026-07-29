@@ -62,6 +62,11 @@ describe("legacy logout integration", () => {
     return Effect.gen(function* () {
       yield* legacyLogout();
       expect(credentials.deletedAll).toBe(true);
+      // Go's `viper.GetBool("YES")` branch still echoes the accepted prompt to
+      // stderr (`console.go:70-72`) — `--yes` runs must not be silent (CLI-1974).
+      expect(out.stderrText).toContain(
+        "Do you want to log out? This will remove the access token from your system. [y/N] y\n",
+      );
       expect(out.stdoutText).toContain(
         "Access token deleted successfully. You are now logged out.",
       );

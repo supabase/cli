@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
@@ -26,6 +26,8 @@ interface SetupOpts {
   goOutput?: "pretty" | "json" | "yaml" | "toml" | "env";
   yes?: boolean;
   stdinIsTty?: boolean;
+  /** Piped stdin lines consumed by the non-TTY confirm read. */
+  stdinInput?: string;
   confirm?: boolean;
   list?: SecretsList;
   listStatus?: number;
@@ -64,6 +66,7 @@ function setup(opts: SetupOpts = {}) {
       api,
       cliConfig,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+      stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
@@ -154,14 +157,65 @@ describe("legacy secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("non-TTY without --yes auto-confirms silently (Go parity)", () => {
+  it.live("non-TTY with empty stdin prints the label and takes the Yes default (Go parity)", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // Go's PromptYesNo defaults to true after 100ms non-TTY read timeout — no stderr echo.
-      expect(out.stderrText).not.toContain("[Y/n]");
+      // Go's PromptText prints the label to stderr, the 100ms non-TTY read scans
+      // nothing, and the empty input is echoed back before the true default wins
+      // (`console.go:64-102`).
+      expect(out.stderrText).toContain(
+        "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] \n",
+      );
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("non-TTY with piped `n` declines like Go (echoed answer, no DELETE)", () => {
+    const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "n\n" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacySecretsUnsetCancelledError");
+      }
+      // The piped answer is echoed to stderr like Go's non-TTY PromptText.
+      expect(out.stderrText).toContain("[Y/n] n\n");
+      expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("non-TTY with piped `y` confirms like Go", () => {
+    const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "y\n" });
+    return Effect.gen(function* () {
+      yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
+      expect(out.stderrText).toContain("[Y/n] y\n");
+      expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("SUPABASE_YES=1 in the environment auto-confirms with the [Y/n] y echo", () => {
+    const prev = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    const { layer, out, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
+      // Same bytes as Go's `viper.GetBool("YES")` branch (`console.go:70-72`).
+      expect(out.stderrText).toContain(
+        "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] y\n",
+      );
+      expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(layer),
+    );
   });
 
   it.live("TTY without --yes prompts via output.promptConfirm and proceeds on accept", () => {
@@ -248,6 +302,21 @@ describe("legacy secrets unset integration", () => {
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toEqual({ project_ref: LEGACY_VALID_REF, count: 2 });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--output-format=json without --yes takes the Yes default silently", () => {
+    // TS-only machine mode has no Go equivalent; `legacyPromptYesNo` documents
+    // that json/stream-json never prompts and takes the call site's default —
+    // for unset that is Yes (Go's `unset.go:34`), mirroring Go's non-TTY
+    // default-through behavior for scripts. Deliberate (CLI-1974 review);
+    // pass --yes explicitly in automation for clarity.
+    const { layer, out, api } = setup({ yes: false, format: "json" });
+    return Effect.gen(function* () {
+      yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success).toBeDefined();
+      expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 

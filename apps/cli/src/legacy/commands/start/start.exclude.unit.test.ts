@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS, legacyPartitionStartExcludeFlags } from "./start.exclude.ts";
-
-// The warning applies Go-parity ANSI styling via `legacy-colors.ts`, which
-// no-ops on a real non-TTY stream but the vitest process presents its stderr
-// as color-capable. Strip escapes so these assertions target the plain text
-// content — matching `status.pretty.unit.test.ts`'s convention.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 // Go's `ExcludableContainers()` order (`apps/cli-go/internal/start/start.go:
 // 1297-1303` walking `config.Images.Services()`,

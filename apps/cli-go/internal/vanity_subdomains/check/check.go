@@ -18,7 +18,7 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 	if err != nil {
 		return errors.Errorf("failed to check vanity subdomain: %w", err)
 	} else if resp.JSON201 == nil {
-		utils.SuggestUpgradeOnError(ctx, projectRef, "vanity_subdomain", resp.StatusCode())
+		utils.SuggestUpgradeOnError(ctx, projectRef, "vanity_subdomain", resp.StatusCode(), resp.Body)
 		return errors.Errorf("unexpected check vanity subdomain status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	if utils.OutputFormat.Value != utils.OutputPretty {

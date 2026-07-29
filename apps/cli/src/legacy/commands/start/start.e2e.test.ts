@@ -3,15 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { runSupabase } from "../../../../tests/helpers/cli.ts";
+import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
-
-// Strip ANSI so the assertion is colour-independent — `legacyPartitionStartExcludeFlags`
-// styles the warning via `legacy-colors.ts`, matching `start.exclude.unit.test.ts`'s
-// own convention for the same text.
-// eslint-disable-next-line no-control-regex
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("supabase start (legacy)", () => {
   let projectDir: string;

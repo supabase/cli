@@ -27,6 +27,8 @@ import { legacyResolveStudioApiUrl } from "../../shared/legacy-api-url.ts";
 import { legacyIsBitbucketPipeline } from "../../shared/legacy-bitbucket-pipeline.ts";
 import { legacyAqua, legacyYellow } from "../../shared/legacy-colors.ts";
 import {
+  legacyApiTlsCertReadErrorMessage,
+  legacyApiTlsKeyReadErrorMessage,
   legacyResolveApiTlsPath,
   legacyResolveEmailTemplateContentPath,
 } from "../../shared/legacy-config-validate.ts";
@@ -58,7 +60,9 @@ import {
 import {
   legacyInspectContainerState,
   legacyListContainersByLabel,
+  type LegacyContainerIdName,
 } from "../../shared/legacy-docker-lifecycle.ts";
+import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
 import {
   legacyEnvOverride,
   legacyEnvOverrideApiMaxRows,
@@ -94,6 +98,7 @@ import {
   type LegacyLocalProjectContext,
 } from "../../shared/legacy-local-project-context.ts";
 import { legacySeedBucketsRun } from "../../shared/legacy-seed-buckets.ts";
+import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
 import {
   LegacyStatusDbInspectError,
   LegacyStatusDbNotReadyError,
@@ -148,6 +153,7 @@ import { legacyEnsureImagesCached } from "./lib/image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckPostgrestGateway,
+  type LegacyHealthCheckTimeoutError,
 } from "./lib/health-check.ts";
 import {
   legacyStartInternalDbPassword,
@@ -682,6 +688,17 @@ function buildKongEmailTemplateMounts(
   ];
 }
 
+/**
+ * What `--ignore-health-check` prints when it downgrades a health-check timeout
+ * to a warning. That decision belongs to this caller, not `lib/health-check.ts`
+ * (which only implements the polling contract), and it writes straight to
+ * stderr — bypassing the `Output.fail` renderer that would otherwise append the
+ * error's `suggestion` for it.
+ */
+function legacyHealthWarningText(error: LegacyHealthCheckTimeoutError): string {
+  return error.suggestion === undefined ? error.message : `${error.message}\n${error.suggestion}`;
+}
+
 export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacyStartFlags) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
@@ -928,20 +945,25 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       return legacyStatusValuesFromState(state, new Map());
     });
 
-    // 3. Go's `AssertSupabaseDbIsRunning` (`internal/utils/misc.go:144-146`) —
-    // a bare `ContainerInspect` EXISTENCE check, true even for a merely
-    // present-but-stopped container. "Not found" is the ONE outcome that means
-    // "proceed to bring up the stack"; any OTHER inspect failure (e.g. the
-    // Docker daemon itself being unreachable) must propagate and fail `start`
-    // outright, matching Go's `!errors.Is(err, utils.ErrNotRunning)` branch.
-    const alreadyRunning = yield* legacyInspectContainerState(spawner, dbContainerId).pipe(
-      Effect.map(() => true),
+    const isBitbucketPipeline = legacyIsBitbucketPipeline();
+
+    // 3. Missing proceeds to startup; other inspect failures propagate.
+    // Unlike Go, verified stopped stacks are recovered unless Bitbucket's lack of named volumes
+    // makes removing the Postgres container destructive.
+    const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.succeed(false) : Effect.fail(error),
+        isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
       ),
     );
+    const dbState = yield* inspectDbState;
+    const isRecoverableStoppedState = (
+      state: { readonly running: boolean; readonly status: string } | undefined,
+    ) =>
+      // `created` may own a just-provisioned volume that Postgres never initialized.
+      state?.running === false && state.status.length > 0 && state.status !== "created";
+    const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !isBitbucketPipeline;
 
-    if (alreadyRunning) {
+    const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
       // `start.go:55`: printed unconditionally in Go (which has no JSON output
       // mode to protect); gated here on text mode for internal consistency
       // with every other supplementary stderr line this handler prints (see
@@ -1006,7 +1028,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         const { values: statusValues } = yield* buildStatusValues(excluded);
         yield* output.success("", statusValues);
       }
-      return;
+    });
+
+    if (dbState !== undefined && !shouldRecoverStoppedStack) {
+      return yield* reportAlreadyRunningStatus();
     }
 
     // 4. Go's `flags.LoadProjectRef`/`services.CheckVersions` best-effort
@@ -1211,6 +1236,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       search: false,
     });
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
+    // Resolve once during preflight so a missing function source cannot fail only after stopped
+    // containers have been removed. Studio consumes the cached binds later during bring-up.
+    const studioFunctionBinds = gates.studio
+      ? yield* resolveFunctionBindMounts(
+          projectId,
+          cliConfig.workdir,
+          `${cliConfig.workdir}/supabase`,
+          { configDeclaredFunctions, configFunctions, rawConfigFunctions },
+          Option.none(),
+          Option.none(),
+          cliConfig.workdir,
+        )
+      : new Set<string>();
 
     // Go's `config.Load` reads `supabase/.temp/storage-migration` (written by
     // `supabase link`) into `Config.Storage.TargetMigration` whenever present
@@ -1233,7 +1271,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const networkId = Option.isSome(networkIdFlag)
       ? networkIdFlag.value
       : localNetworkId(projectId);
-    const isBitbucketPipeline = legacyIsBitbucketPipeline();
     // Go's `DockerStart` unconditionally appends the Linux-only
     // `host.docker.internal:host-gateway` extra host for every container it
     // starts (`docker_linux.go`; empty on darwin/windows, where Docker
@@ -1312,6 +1349,39 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       config.api.tls.key_path,
       projectEnvValues,
     );
+    // Go's `NewConfig` seeds these from the embedded defaults, then `Validate`
+    // replaces them from disk before `start.Run` can mutate Docker.
+    let tlsCertContent = LEGACY_KONG_LOCAL_TLS_CERT;
+    let tlsKeyContent = LEGACY_KONG_LOCAL_TLS_KEY;
+    if (
+      apiEnabled &&
+      apiTlsEnabled &&
+      apiTlsCertPath !== undefined &&
+      apiTlsCertPath.length > 0 &&
+      apiTlsKeyPath !== undefined &&
+      apiTlsKeyPath.length > 0
+    ) {
+      tlsCertContent = yield* fs
+        .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyStartInvalidConfigError({
+                message: legacyApiTlsCertReadErrorMessage(cause),
+              }),
+          ),
+        );
+      tlsKeyContent = yield* fs
+        .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsKeyPath))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyStartInvalidConfigError({
+                message: legacyApiTlsKeyReadErrorMessage(cause),
+              }),
+          ),
+        );
+    }
 
     // Same generic-Viper-override gap as `apiTlsEnabled` above, for Realtime's
     // two `SUPABASE_REALTIME_*` fields — both the Realtime container spec
@@ -1658,47 +1728,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
 
         case "kong": {
-          // Go's `NewConfig` seeds `Api.Tls.{CertContent,KeyContent}`
-          // unconditionally from the embedded default cert/key
-          // (`pkg/config/config.go:452-455`); `Validate` only overwrites them
-          // from disk when API itself is enabled, TLS is enabled, AND both
-          // `cert_path`/`key_path` are set (`config.go:1006-1027` — the whole
-          // disk-read branch is nested inside `if c.Api.Enabled`). So a
-          // `[api.tls] enabled = true` project with no custom paths still
-          // gets a real cert/key here — never empty strings — matching
-          // Kong's own unconditional write of these fields to
-          // `/home/kong/localhost.{crt,key}` (`start.go:585-601`).
-          let tlsCertContent: string = LEGACY_KONG_LOCAL_TLS_CERT;
-          let tlsKeyContent: string = LEGACY_KONG_LOCAL_TLS_KEY;
-          if (
-            apiEnabled &&
-            apiTlsEnabled &&
-            apiTlsCertPath !== undefined &&
-            apiTlsCertPath.length > 0 &&
-            apiTlsKeyPath !== undefined &&
-            apiTlsKeyPath.length > 0
-          ) {
-            tlsCertContent = yield* fs
-              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyStartInvalidConfigError({
-                      message: `failed to read api tls cert: ${String(cause)}`,
-                    }),
-                ),
-              );
-            tlsKeyContent = yield* fs
-              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsKeyPath))
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyStartInvalidConfigError({
-                      message: `failed to read api tls key: ${String(cause)}`,
-                    }),
-                ),
-              );
-          }
           return {
             spec: legacyBuildKongContainerSpec({
               image,
@@ -1830,28 +1859,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           };
 
         case "studio": {
-          // Go's `start.go:1149-1159` computes Studio's function bind mounts
-          // via `serve.PopulatePerFunctionConfigs` unconditionally whenever
-          // Studio is enabled — NOT gated on `Config.EdgeRuntime.Enabled` —
-          // so function sources/import maps/static assets stay mounted for
-          // Studio's local function management even when Edge Runtime itself
-          // is disabled or excluded.
-          const functionBinds = yield* resolveFunctionBindMounts(
-            projectId,
-            cliConfig.workdir,
-            `${cliConfig.workdir}/supabase`,
-            { configDeclaredFunctions, configFunctions, rawConfigFunctions },
-            Option.none(),
-            Option.none(),
-            cliConfig.workdir,
-          );
           return {
             spec: legacyBuildStudioContainerSpec({
               image,
               containerName: studioContainerName,
               networkId,
               port: values.studioPort,
-              functionBinds: [...functionBinds],
+              // Go computes these whenever Studio is enabled, independently of Edge Runtime.
+              // They are resolved during preflight above so recovery teardown remains reversible.
+              functionBinds: [...studioFunctionBinds],
               env: {
                 dbPassword,
                 workdir: cliConfig.workdir,
@@ -2003,13 +2019,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         configImage: postgresImage,
         rootKey: values.rootKey,
       });
-      const postgresContainerId = yield* legacyStartContainer(spawner, postgresSpec, startOpts);
+      yield* legacyStartContainer(spawner, postgresSpec, startOpts);
       // `dbHealthTimeoutSeconds` is resolved eagerly, before any Docker work — see its
       // definition above, alongside the other eagerly-validated config-override fields.
+      // Watched by container name, matching Go's `utils.DbId`.
       const postgresHealthResult = yield* legacyWaitForHealthyServices(
         spawner,
-        [postgresContainerId],
-        { timeoutSeconds: dbHealthTimeoutSeconds },
+        [postgresSpec.containerName],
+        {
+          timeoutSeconds: dbHealthTimeoutSeconds,
+          images: new Map([[postgresSpec.containerName, postgresSpec.image]]),
+        },
       ).pipe(Effect.result);
       if (Result.isFailure(postgresHealthResult)) {
         const error = postgresHealthResult.failure;
@@ -2026,7 +2046,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // falls through to the SAME unconditional tail every other path
           // reaches (`start.go:84-87`), not an early return from the whole
           // command.
-          yield* output.raw(`${error.message}\n`, "stderr");
+          yield* output.raw(`${legacyHealthWarningText(error)}\n`, "stderr");
           return { kind: "postgresUnhealthyIgnored" as const };
         }
         return yield* Effect.fail(error);
@@ -2158,7 +2178,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         yield* output.raw(LEGACY_START_STARTING_CONTAINERS_MESSAGE, "stderr");
       }
 
-      const started: Array<string> = [];
+      // Go's `started` slice, as an insertion-ordered container NAME -> resolved
+      // image map. Go watches container names (`started = append(started,
+      // utils.XxxId)`, `start.go:393-1267`), not the ids `docker create`
+      // returns, so an unhealthy container reports as `supabase_auth_demo`
+      // rather than 64 hex characters. Keying the images by that same name
+      // keeps the watch list and its images from drifting apart.
+      const started = new Map<string, string>();
       let postgrestGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let edgeRuntimeGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let storageContainerId: string | undefined;
@@ -2255,7 +2281,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // EdgeRuntimeContainer` already runs `cleanup` on a failed or
           // interrupted bring-up internally, so only the success path must
           // leave it alone.
-          started.push(runtime.containerId);
+          started.set(runtime.containerId, edgeRuntimeInput.image);
           edgeRuntimeGateway = {
             containerId: runtime.containerId,
             apiExternalUrl: values.apiUrl,
@@ -2291,19 +2317,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             ),
           ),
         );
-        const containerId = yield* legacyStartContainer(spawner, spec, startOpts);
+        yield* legacyStartContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
-          started.push(containerId);
+          started.set(spec.containerName, spec.image);
         }
         if (entry.service === "postgrest") {
           postgrestGateway = {
-            containerId,
+            containerId: spec.containerName,
             apiExternalUrl: values.apiUrl,
             secretKey: values.secretKey,
           };
         }
         if (entry.service === "storage") {
-          storageContainerId = containerId;
+          storageContainerId = spec.containerName;
         }
       }
 
@@ -2332,6 +2358,33 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
       ),
     );
+
+    if (shouldRecoverStoppedStack) {
+      // Recheck after preflight in case Docker or another process restarted the stack.
+      const recheckedState = yield* inspectDbState;
+      if (recheckedState !== undefined && !isRecoverableStoppedState(recheckedState)) {
+        return yield* reportAlreadyRunningStatus();
+      }
+      // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.
+      if (projectId.length === 0) {
+        return yield* Effect.fail(
+          new LegacyStartInvalidConfigError({
+            message: "Invalid config: project_id must contain at least one alphanumeric character.",
+          }),
+        );
+      }
+      let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
+      yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
+        // Recovery only trusts its own workdir; empty labels use the existing fallback.
+        removedContainers = containers.filter(
+          (container) => container.workdir.length === 0 || container.workdir === cliConfig.workdir,
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
+        ),
+      );
+    }
 
     const bringUpResult = yield* bringUp;
 
@@ -2442,9 +2495,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           projectRef: "",
           config: effectiveLocalStorageConfig,
         });
-        const healthResult = yield* legacyWaitForHealthyServices(spawner, started, {
+        const healthResult = yield* legacyWaitForHealthyServices(spawner, [...started.keys()], {
           postgrest: postgrestGateway,
           edgeRuntime: edgeRuntimeGateway,
+          images: started,
         }).pipe(
           Effect.result,
           localKongCa !== undefined
@@ -2468,9 +2522,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             // the same downgrade-to-warning as every other ignored-unhealthy
             // failure.
             if (isFreshVolume && storageContainerId !== undefined) {
-              const storageHealthResult = yield* legacyWaitForHealthyServices(spawner, [
-                storageContainerId,
-              ]).pipe(Effect.result);
+              // `images` is intentionally the whole run's registry, not scoped to
+              // this one-container watch list — the hint can only ever key off
+              // containers that actually appear in this call's own failures.
+              const storageHealthResult = yield* legacyWaitForHealthyServices(
+                spawner,
+                [storageContainerId],
+                { images: started },
+              ).pipe(Effect.result);
               if (Result.isSuccess(storageHealthResult)) {
                 const seedResult = yield* legacySeedBucketsRun({
                   projectRef: "",
@@ -2490,7 +2549,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               }
             }
             // Downgrade to a warning and fall through to the success path, no rollback.
-            yield* output.raw(`${error.message}\n`, "stderr");
+            yield* output.raw(`${legacyHealthWarningText(error)}\n`, "stderr");
           } else {
             // No manual `legacyRollbackStart` here — the outer `Effect.onError`
             // below rolls back on this failure too.

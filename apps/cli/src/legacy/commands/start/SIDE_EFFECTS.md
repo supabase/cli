@@ -175,7 +175,9 @@ not implemented.
 | `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                                                                                                                                           |
 | `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                              |
 | `1`  | malformed `config.toml` / `Config.Validate` failure                                                                                                                                                                                                                                                            |
+| `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                  |
+| `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                 |
 | `1`  | image pull exhausted across every registry candidate                                                                                                                                                                                                                                                           |
 | `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                               |
 | `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                          |
@@ -224,6 +226,23 @@ output modes.
   volume) → Postgres create+start+health-wait → `Starting containers...` → (image
   pre-pull) → per-container create+start → `Waiting for health checks...` → `Started
 supabase local development setup.`
+- stderr (conditional, health-check timeout): per unhealthy container, a
+  `<container> container logs:` header and that container's `docker logs` output, then one
+  `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`
+  throughout, matching Go's `started = append(started, utils.InbucketId)` rather than the
+  id `docker create` returns.
+- stderr (conditional, `exec format error` in those logs) — **TS-port-only, beyond Go
+  parity**: a recovery `suggestion` printed after the reasons, naming each affected
+  container **with** its image (they can be named after different things —
+  `supabase_inbucket_*` runs `mailpit`), then a `supabase stop` / `<runtime> image rm -f` /
+  `supabase start` sequence, then a closing line for the case re-pulling cannot fix. The
+  runtime named is whichever of `docker`/`podman` actually answered. `supabase stop` leads
+  because `--ignore-health-check` leaves the stack up, so a bare restart would hit the
+  already-running short-circuit and never recreate the broken container. The sequence tells
+  the reader to run it from the project directory or with the same `--workdir`, rather than
+  embedding the resolved path, which would need shell quoting that differs per platform. Being a
+  `suggestion` also replaces the usual "rerun with --debug" line, which cannot help here.
+  Nothing is ever removed automatically, and Go prints no such guidance.
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
@@ -232,7 +251,10 @@ supabase local development setup.`
 
 A single JSON object (or a `result` NDJSON event) carrying the same value shape
 `supabase status --output json` produces. All the progress/warning/banner/security-notice
-text above is suppressed in these modes — stdout stays payload-only.
+text above is suppressed in these modes — stdout stays payload-only. On a health-check
+timeout the error payload carries the advice above as a discrete `error.suggestion` string
+alongside `error.message`, so a caller can surface it without re-parsing the message. It is
+prose, not structured data.
 
 ## Notes
 
@@ -254,6 +276,15 @@ text above is suppressed in these modes — stdout stays payload-only.
   table).
 - `--preview` is a hidden, parsed-but-inert flag, matching Go exactly (never read by
   Go's own `start.Run`).
-- The already-running check is a plain container-existence check (`docker container
-inspect` on the Postgres container), not a health check — matching Go's
-  `AssertSupabaseDbIsRunning` naming despite what it actually verifies.
+- The already-running check uses `docker container inspect` on the Postgres container,
+  not a health check — matching Go's `AssertSupabaseDbIsRunning` check. For a verified
+  stopped container outside Bitbucket Pipelines, `start` removes all current-project
+  containers — including running siblings — and unused networks, preserves named volumes,
+  and continues normal startup. After container removal succeeds, it deletes
+  `<invoking-workdir>/supabase/.temp/start-secrets/<containerName>` only for containers
+  whose workdir label matches the invoking workdir, or whose missing label uses that
+  workdir as a fallback. Removed containers labeled with another workdir keep their
+  `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory.
+- Docker status `created` is not considered a recoverable stopped stack: the container and
+  named volume are preserved because the volume may not have completed its first database
+  initialization, and `start` reports the existing not-running status instead.
