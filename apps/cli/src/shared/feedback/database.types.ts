@@ -337,7 +337,6 @@ export type Database = {
           source?: string | null
           title_tokens?: unknown
           type?: string | null
-
           version?: string | null
         }
         Relationships: []
