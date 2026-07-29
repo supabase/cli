@@ -731,6 +731,47 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("rejects an out-of-int64-range --version", () => {
+    // Go's `strconv.Atoi` == `ParseInt(s, 10, 0)`, which rejects magnitudes outside the
+    // int64 range even though the text is all digits. `INTEGER_PATTERN` alone would have
+    // accepted this and fallen through to the glob check instead.
+    const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        version: Option.some("99999999999999999999"),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe(
+          "LegacyDbResetInvalidVersionError",
+        );
+        expect(Option.isSome(failure) && failure.value.message).toBe("invalid version number");
+      }
+    });
+  });
+
+  it.live("treats an empty --version like no version at all", () => {
+    // Go's `len(version) > 0` guard (reset.go:34) skips validation entirely for an empty
+    // --version, so it must fall through to a full reset rather than glob-checking "" or
+    // rejecting it as an invalid version.
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        version: Option.some(""),
+      }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Resetting remote database...");
+      expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+    });
+  });
+
   it.live("returns context canceled when the reset prompt is declined", () => {
     const { layer, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
