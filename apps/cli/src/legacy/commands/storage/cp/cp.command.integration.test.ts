@@ -5,6 +5,7 @@ import { CliOutput, Command } from "effect/unstable/cli";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { normalizeCause } from "../../../../shared/output/normalize-error.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../../../../shared/legacy/global-flags.ts";
 import {
   mockAnalytics,
@@ -16,17 +17,17 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
-import { LegacyStorageMutuallyExclusiveFlagsError } from "../storage.errors.ts";
 import { legacyStorageCommand } from "../storage.command.ts";
-import { LegacyStorageInvalidJobsError } from "../storage.errors.ts";
 
 // Go's `--jobs` is a pflag uint (`UintVarP`, `cmd/storage.go:107`): a negative
-// value fails `strconv.ParseUint` at cobra flag-parse time, before cobra's
-// mutual-exclusivity check and RunE. `cp.command.ts` reproduces that ordering
-// explicitly in its own `Command.withHandler` (Effect CLI's `Flag.integer`
-// accepts negatives, unlike a Go `uint` flag), checking it BEFORE the
-// `--linked`/`--local` mutex check. This suite proves the rejection is wired
-// into the real command tree — not just reachable by calling
+// value fails `strconv.ParseUint` at cobra flag-parse time — before the
+// `--experimental` gate in `PersistentPreRunE` (`cmd/root.go:93-96`), before
+// cobra's mutual-exclusivity check, and before RunE. `cp.command.ts`
+// reproduces that ordering by rejecting inside the flag's own
+// `Flag.mapTryCatch`, which Effect CLI runs while parsing the command tree —
+// strictly ahead of the handler (where the experimental gate and the
+// `--linked`/`--local` mutex check live). This suite proves the rejection is
+// wired into the real command tree — not just reachable by calling
 // `legacyStorageCp` directly with a handcrafted `Option.some(-1)` flags
 // object, which `cp.integration.test.ts` cannot exercise since it calls the
 // handler directly.
@@ -74,11 +75,14 @@ function setup(args: ReadonlyArray<string>) {
 
 describe("legacy storage cp --jobs negative rejection (command-tree wiring)", () => {
   it.live(
-    "rejects --jobs=-1 with pflag's exact ParseUint message, ahead of a --linked/--local mutex conflict",
+    "rejects --jobs=-1 with pflag's exact ParseUint message, ahead of the experimental gate and the --linked/--local mutex conflict",
     () => {
-      // `--linked` and `--local` are BOTH set here on purpose: if the jobs
-      // check were not wired ahead of the mutex check, this would instead
-      // fail with `LegacyStorageMutuallyExclusiveFlagsError`.
+      // `--experimental` is deliberately ABSENT and `--linked`/`--local` are
+      // BOTH set: in Go, pflag's ParseUint failure preempts the experimental
+      // gate (`PersistentPreRunE`) and the mutex validation, so this must
+      // fail with the flag-parse error — not
+      // `LegacyExperimentalRequiredError`, and not
+      // `LegacyStorageMutuallyExclusiveFlagsError`.
       const args = [
         "storage",
         "cp",
@@ -87,7 +91,6 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
         "--jobs=-1",
         "--linked",
         "--local",
-        "--experimental",
       ];
       const { layer } = setup(args);
       return Effect.gen(function* () {
@@ -96,18 +99,18 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure)).toBe(true);
-          expect(
-            Option.isSome(failure) && failure.value instanceof LegacyStorageInvalidJobsError,
-          ).toBe(true);
-          expect(
-            Option.isSome(failure) &&
-              failure.value instanceof LegacyStorageMutuallyExclusiveFlagsError,
-          ).toBe(false);
-          if (Option.isSome(failure) && failure.value instanceof LegacyStorageInvalidJobsError) {
-            expect(failure.value.message).toBe(
-              'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
-            );
-          }
+          // The parse failure must never reach the handler: neither the
+          // experimental gate nor the mutex check may fire.
+          expect(JSON.stringify(exit.cause)).not.toContain(
+            "must set the --experimental flag to run this command",
+          );
+          expect(JSON.stringify(exit.cause)).not.toContain("LegacyStorageMutuallyExclusiveFlags");
+          // `normalizeCause` is the exact rendering path `runCli` uses for
+          // parse failures — the user-visible line must be pflag's message,
+          // byte-identical, with no `Invalid value for flag --jobs:` wrapper.
+          expect(normalizeCause(exit.cause).message).toBe(
+            'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+          );
         }
       }).pipe(Effect.provide(layer));
     },

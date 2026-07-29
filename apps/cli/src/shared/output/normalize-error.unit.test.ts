@@ -129,6 +129,27 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("InvalidValue surfaces a complete pflag-style 'expected' message verbatim (Go flag-parse parity)", () => {
+    // Legacy flags that reproduce Go's flag-parse rejections (e.g.
+    // `storage cp --jobs=-1` via `Flag.mapTryCatch`) put pflag's entire
+    // `invalid argument %q for %q flag: %v` string in `expected`. Wrapping it
+    // in Effect's `Invalid value for flag --jobs: …` template would break
+    // byte-parity with the Go CLI's stderr.
+    const error = new CliError.InvalidValue({
+      option: "jobs",
+      value: "-1",
+      expected:
+        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+    });
+  });
+
   test("ShowHelp envelope unwraps a single InvalidValue with the same doubled-prefix fix", () => {
     const error = {
       _tag: "ShowHelp",

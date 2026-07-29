@@ -55,18 +55,13 @@ export class LegacyStorageUnsupportedOperationError extends Data.TaggedError(
  * `cp`'s `--jobs` is a pflag uint (`UintVarP`, `cmd/storage.go:107`): a
  * negative value fails `strconv.ParseUint` at flag-parse time. Byte-matches
  * pflag's `invalid argument %q for %q flag: %v` template with the
- * shorthand-prefixed flag name (`pflag/errors.go:108-116`).
+ * shorthand-prefixed flag name (`pflag/errors.go:108-116`). Thrown from the
+ * flag's own `Flag.mapTryCatch` in `cp.command.ts` so the rejection happens
+ * during command parsing, like Go's — `formatInvalidValueMessage` surfaces
+ * the resulting `CliError.InvalidValue`'s message verbatim.
  */
-export class LegacyStorageInvalidJobsError extends Data.TaggedError(
-  "LegacyStorageInvalidJobsError",
-)<{
-  readonly message: string;
-}> {
-  constructor(jobs: number) {
-    super({
-      message: `invalid argument "${jobs}" for "-j, --jobs" flag: strconv.ParseUint: parsing "${jobs}": invalid syntax`,
-    });
-  }
+export function legacyStorageInvalidJobsMessage(jobs: number): string {
+  return `invalid argument "${jobs}" for "-j, --jobs" flag: strconv.ParseUint: parsing "${jobs}": invalid syntax`;
 }
 
 /** `cp`'s remote→remote branch (`internal/storage/cp/cp.go:57`). */

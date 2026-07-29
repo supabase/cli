@@ -36,6 +36,13 @@
 //   instead.
 const EXPECTED_PREFIX = "Expected ";
 
+// Complete pflag-style messages: legacy flags that reproduce Go's flag-parse
+// rejections (e.g. `storage cp --jobs`, via `Flag.mapTryCatch`) place pflag's
+// entire `invalid argument %q for %q flag: %v` string in `expected`. Those
+// must surface verbatim — wrapping them in Effect's `Invalid value for flag
+// --x: …` template would break byte-parity with the Go CLI's stderr.
+const PFLAG_MESSAGE_PREFIX = 'invalid argument "';
+
 export interface InvalidValueMessageFields {
   readonly option: string;
   readonly value: string;
@@ -45,11 +52,13 @@ export interface InvalidValueMessageFields {
 
 /**
  * Rebuilds a `CliError.InvalidValue` message from its own template when
- * `expected` carries the doubled "Expected" prefix. Returns `undefined` when
- * `expected` is unaffected, so callers can fall back to the error's own
- * untouched `message`.
+ * `expected` carries the doubled "Expected" prefix, or surfaces `expected`
+ * verbatim when it is already a complete pflag-style message (Go flag-parse
+ * parity). Returns `undefined` when `expected` is unaffected, so callers can
+ * fall back to the error's own untouched `message`.
  */
 export function formatInvalidValueMessage(error: InvalidValueMessageFields): string | undefined {
+  if (error.expected.startsWith(PFLAG_MESSAGE_PREFIX)) return error.expected;
   if (!error.expected.startsWith(EXPECTED_PREFIX)) return undefined;
   return error.kind === "argument"
     ? `Invalid value for argument <${error.option}>: "${error.value}". ${error.expected}`
