@@ -102,7 +102,7 @@ describe("legacyParseStringSliceFlag (pflag StringSlice CSV parity)", () => {
     );
   });
 
-  it("carries the offending occurrence and column on the error for pflag framing", () => {
+  it("carries the offending occurrence and Go's exact message on the error for pflag framing", () => {
     try {
       legacyParseStringSliceFlag(["public", '"broken']);
       expect.unreachable("expected legacyParseStringSliceFlag to throw");
@@ -111,7 +111,9 @@ describe("legacyParseStringSliceFlag (pflag StringSlice CSV parity)", () => {
       // pflag wraps the csv error PER OCCURRENCE (`flag.go` `Set`), quoting
       // only the malformed value — not the accumulated list.
       expect(err.value).toBe('"broken');
-      expect(err.column).toBe(8);
+      expect(err.message).toBe(
+        'parse error on line 1, column 8: extraneous or missing " in quoted-field',
+      );
     }
   });
 
@@ -119,6 +121,98 @@ describe("legacyParseStringSliceFlag (pflag StringSlice CSV parity)", () => {
     // The valid "public" comes before the malformed one; the error is still thrown
     expect(() => legacyParseStringSliceFlag(["public", '"broken'])).toThrow(
       LegacyStringSliceFlagParseError,
+    );
+  });
+
+  // --- multiline values: Go tracks PHYSICAL lines (encoding/csv readLine) ---
+  //
+  // pflag calls `csv.Reader.Read()` exactly once, so only the FIRST CSV
+  // record survives, blank lines before it are skipped, `\r\n` is normalized
+  // to `\n`, and parse errors report per-line byte columns with a
+  // `record on line N; ` prefix when the record starts before the error line
+  // (`csv.ParseError.Error()`). Every vector below was verified against the
+  // real Go CLI (`apps/cli-go`, pflag v1.0.10 → encoding/csv, Go 1.26).
+
+  it("keeps only the first record when an unquoted newline ends it (pflag reads ONE record)", () => {
+    expect(legacyParseStringSliceFlag(["1.2.3.4\n5.6.7.8"])).toEqual(["1.2.3.4"]);
+    // …even when the dropped remainder would itself be malformed CSV — Go
+    // never parses past the first record, so no error is raised.
+    expect(legacyParseStringSliceFlag(['1.2.3.4\na"b'])).toEqual(["1.2.3.4"]);
+    expect(legacyParseStringSliceFlag(["a,b\nc"])).toEqual(["a", "b"]);
+    expect(legacyParseStringSliceFlag(['"a"\njunk'])).toEqual(["a"]);
+    expect(legacyParseStringSliceFlag(["a\n"])).toEqual(["a"]);
+    expect(legacyParseStringSliceFlag(["a\r\nb"])).toEqual(["a"]);
+  });
+
+  it("skips blank lines before the record and errors with pflag's EOF for blank-only values", () => {
+    expect(legacyParseStringSliceFlag(["\n\na"])).toEqual(["a"]);
+    expect(legacyParseStringSliceFlag(["\r\na"])).toEqual(["a"]);
+    // A value of only blank lines: csv.Read returns io.EOF, which pflag
+    // surfaces verbatim (`invalid argument "\n" for "--x" flag: EOF`).
+    expect(() => legacyParseStringSliceFlag(["\n"])).toThrow(LegacyStringSliceFlagParseError);
+    expect(() => legacyParseStringSliceFlag(["\n"])).toThrow(/^EOF$/);
+  });
+
+  it("normalizes \\r\\n to \\n inside quoted fields, keeps lone \\r, drops trailing \\r at EOF", () => {
+    expect(legacyParseStringSliceFlag(['"a\nb"'])).toEqual(["a\nb"]); // quoted newline is data
+    expect(legacyParseStringSliceFlag(['"a\r\nb"'])).toEqual(["a\nb"]); // \r\n → \n
+    expect(legacyParseStringSliceFlag(['"a\rb"'])).toEqual(["a\rb"]); // lone \r kept
+    expect(legacyParseStringSliceFlag(['"x\r\n\ry"'])).toEqual(["x\n\ry"]);
+    expect(legacyParseStringSliceFlag(["a\rb"])).toEqual(["a\rb"]);
+    expect(legacyParseStringSliceFlag(["a\r"])).toEqual(["a"]); // trailing \r before EOF dropped
+    expect(legacyParseStringSliceFlag(["a\r,b"])).toEqual(["a\r", "b"]);
+  });
+
+  it("reports the physical error line, with the record-start prefix when they differ", () => {
+    // Unterminated quote spanning lines: EOF on line 2, column 5 (one past
+    // `junk`), record started on line 1.
+    expect(() => legacyParseStringSliceFlag(['"1.2.3.4\njunk'])).toThrow(
+      'record on line 1; parse error on line 2, column 5: extraneous or missing " in quoted-field',
+    );
+    // Blank lines INSIDE the quoted field still count as physical lines.
+    expect(() => legacyParseStringSliceFlag(['"1.2.3.4\n\njunk'])).toThrow(
+      'record on line 1; parse error on line 3, column 5: extraneous or missing " in quoted-field',
+    );
+    // Extraneous byte after the closing quote on line 2: column of the quote.
+    expect(() => legacyParseStringSliceFlag(['"1.2.3.4\njunk"extra'])).toThrow(
+      'record on line 1; parse error on line 2, column 5: extraneous or missing " in quoted-field',
+    );
+    // Second field's quote unterminated across lines.
+    expect(() => legacyParseStringSliceFlag(['a,"b\nc'])).toThrow(
+      'record on line 1; parse error on line 2, column 2: extraneous or missing " in quoted-field',
+    );
+    // Error on line 1 keeps the plain format (StartLine == Line)…
+    expect(() => legacyParseStringSliceFlag(['a"b\nc'])).toThrow(
+      'parse error on line 1, column 2: bare " in non-quoted-field',
+    );
+    // …as does a record that STARTS on line 2 (leading blank line skipped).
+    expect(() => legacyParseStringSliceFlag(['\n"bad'])).toThrow(
+      'parse error on line 2, column 5: extraneous or missing " in quoted-field',
+    );
+    expect(() => legacyParseStringSliceFlag(['\r\n"x'])).toThrow(
+      'parse error on line 2, column 3: extraneous or missing " in quoted-field',
+    );
+  });
+
+  it("counts multiline columns in bytes within the error's own line", () => {
+    // Line 2 is `éé"x`: two 2-byte é's put the closing quote at byte 5.
+    expect(() => legacyParseStringSliceFlag(['"é\néé"x'])).toThrow(
+      'record on line 1; parse error on line 2, column 5: extraneous or missing " in quoted-field',
+    );
+  });
+
+  it("EOF-column edge cases around \\r and \\n (readLine drops/normalizes before counting)", () => {
+    // `"a\r` — trailing \r before EOF is dropped, so EOF is at column 3.
+    expect(() => legacyParseStringSliceFlag(['"a\r'])).toThrow(
+      'parse error on line 1, column 3: extraneous or missing " in quoted-field',
+    );
+    // `"a\n` — the newline is quoted-field DATA (1 byte after normalization),
+    // and the error line stays 1 because no further line was read.
+    expect(() => legacyParseStringSliceFlag(['"a\n'])).toThrow(
+      'parse error on line 1, column 4: extraneous or missing " in quoted-field',
+    );
+    expect(() => legacyParseStringSliceFlag(['"a\r\n'])).toThrow(
+      'parse error on line 1, column 4: extraneous or missing " in quoted-field',
     );
   });
 });
