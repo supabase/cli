@@ -4,9 +4,10 @@ Alias: `supabase btw [message...]`
 
 ## Files Read
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                  | Format                              | When                                                                                              |
+| --------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `~/.supabase/profile` | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliConfigLayer`) |
+| `$SUPABASE_PROFILE`   | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                  |
 
 ## Files Written
 
@@ -26,9 +27,12 @@ submitter layer replaces `feedbackSubmitterStubLayer`.
 
 ## Environment Variables
 
-| Variable | Purpose | Required? |
-| -------- | ------- | --------- |
-| —        | —       | —         |
+| Variable                | Purpose                                         | Required?                                             |
+| ----------------------- | ----------------------------------------------- | ----------------------------------------------------- |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path         | no (falls back to `~/.supabase/profile` → `supabase`) |
+| `SUPABASE_WORKDIR`      | project directory override                      | no (falls back to `--workdir` → cwd)                  |
+| `SUPABASE_ACCESS_TOKEN` | access token captured by `legacyCliConfigLayer` | no (unused by this command)                           |
+| `SUPABASE_PROJECT_ID`   | project id captured by `legacyCliConfigLayer`   | no (unused by this command)                           |
 
 Agent-detection env vars (e.g. `CLAUDECODE`) are read indirectly by
 `@vercel/detect-agent` via `aiToolLayer` to set the submission's
@@ -86,5 +90,8 @@ terminal, a "What's on your mind?" text prompt collects it first.
   `supabase feedback -- "--yes should be the default"`.
 - Message resolution order: positional args → piped stdin (non-TTY) →
   interactive prompt (TTY, text mode) → error.
+- Submission context: CLI version, user agent (`SupabaseCLI/<version>` from
+  `LegacyCliConfig`), OS/arch, and agent detection. The context never includes
+  the resolved access token or project id.
 - The stub receipt `id` is a locally generated UUID; it does not imply
   server-side persistence.

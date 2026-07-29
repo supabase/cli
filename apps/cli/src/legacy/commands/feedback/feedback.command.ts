@@ -1,5 +1,8 @@
+import { Layer } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { feedbackSubmitterStubLayer } from "../../../shared/feedback/feedback-submitter.stub.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -41,4 +44,5 @@ export const legacyFeedbackCommand = Command.make("feedback", config).pipe(
   Command.provide(stdinLayer),
   Command.provide(aiToolLayer),
   Command.provide(feedbackSubmitterStubLayer),
+  Command.provide(legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer))),
 );

@@ -4,6 +4,7 @@ import { Context, Data } from "effect";
 /** Environment details attached to every submission alongside the message. */
 interface FeedbackContext {
   readonly cliVersion: string;
+  readonly userAgent: string;
   readonly os: string;
   readonly arch: string;
   readonly isAgent: boolean;

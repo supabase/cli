@@ -16,9 +16,12 @@ import {
   mockStdin,
   mockTelemetryRuntime,
 } from "../../../../tests/helpers/mocks.ts";
+import { mockLegacyCliConfig, useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
 import { legacyFeedbackHandler } from "./feedback.command.ts";
 import { LEGACY_FEEDBACK_EMPTY_MESSAGE } from "./feedback.errors.ts";
 import { legacyFeedback } from "./feedback.handler.ts";
+
+const tempRoot = useLegacyTempWorkdir("supabase-feedback-int-");
 
 function mockFeedbackSubmitter(opts: { failWith?: string } = {}) {
   const submissions: FeedbackSubmission[] = [];
@@ -86,6 +89,7 @@ function setupLegacyFeedback(
     mockStdin(opts.stdinIsTTY ?? true, opts.pipedInput),
     mockRuntimeInfo({ platform: "darwin", arch: "arm64" }),
     mockTelemetryRuntime({ cliVersion: "9.9.9" }),
+    mockLegacyCliConfig({ workdir: tempRoot.current, userAgent: "SupabaseCLI/9.9.9" }),
     mockAiTool(opts.agentName),
   );
   return { layer, out, submitter };
@@ -120,6 +124,7 @@ describe("legacy feedback", () => {
           message: "port conflicts when running two stacks",
           context: {
             cliVersion: "9.9.9",
+            userAgent: "SupabaseCLI/9.9.9",
             os: "darwin",
             arch: "arm64",
             isAgent: false,

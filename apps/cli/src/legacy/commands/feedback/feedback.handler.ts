@@ -1,4 +1,5 @@
 import { Effect, Option } from "effect";
+import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { FeedbackSubmitter } from "../../../shared/feedback/feedback-submitter.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -44,6 +45,7 @@ const legacyResolveFeedbackMessage = Effect.fnUntraced(function* (args: LegacyFe
 
 export const legacyFeedback = Effect.fn("legacy.feedback")(function* (args: LegacyFeedbackArgs) {
   const output = yield* Output;
+  const cliConfig = yield* LegacyCliConfig;
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryRuntime = yield* TelemetryRuntime;
   const aiTool = yield* AiTool;
@@ -55,6 +57,7 @@ export const legacyFeedback = Effect.fn("legacy.feedback")(function* (args: Lega
     message,
     context: {
       cliVersion: telemetryRuntime.cliVersion,
+      userAgent: cliConfig.userAgent,
       os: runtimeInfo.platform,
       arch: runtimeInfo.arch,
       isAgent: Option.isSome(aiTool.name),
