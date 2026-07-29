@@ -1211,12 +1211,27 @@ describe("legacy functions serve integration", () => {
 
   it.live("does not remove the existing runtime when interrupted before startup owns it", () => {
     const processControl = mockQueuedProcessControl();
+    // Block startup at the DB assertion (`container inspect`) — the last
+    // pre-ownership step under Go's ordering (`serve.go:110-120`: config load
+    // → assert DB → only THEN remove the existing container). The remote-JWKS
+    // fetch is post-assertion (`serve.go:141`), so if the ordering ever
+    // regresses to fetch-first, this test hangs at the pending fetch instead
+    // of reaching the inspect and fails on the waitFor timeout.
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { pending: true };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
 
     return Effect.gen(function* () {
       const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
         () =>
           new Promise<Response>(() => {
-            // Intentionally pending to keep startup in pre-removal work.
+            // Intentionally pending — must never be reached before the assertion.
           }),
       );
 
@@ -1249,7 +1264,16 @@ describe("legacy functions serve integration", () => {
         Effect.forkChild({ startImmediately: true }),
       );
 
-      yield* waitFor(() => fetchMock.mock.calls.length > 0, "timed out waiting for JWKS fetch");
+      yield* waitFor(
+        () =>
+          deployMockState.runCalls.some(
+            (call) =>
+              call.command === "docker" &&
+              call.args[0] === "container" &&
+              call.args[1] === "inspect",
+          ),
+        "timed out waiting for the DB inspect",
+      );
       processControl.signal("SIGINT");
 
       const exit = yield* Fiber.await(fiber);
@@ -1263,6 +1287,9 @@ describe("legacy functions serve integration", () => {
             call.args.includes("supabase_edge_runtime_test-project"),
         ),
       ).toBe(false);
+      // No remote JWKS request either — Go resolves JWKS only after the DB
+      // assertion succeeds (`serve.go:141`).
+      expect(fetchMock).not.toHaveBeenCalled();
       expect(out.stdoutText).toContain("Stopped serving");
     });
   });
@@ -2341,6 +2368,109 @@ describe("legacy functions serve integration", () => {
       );
 
       expect(error).toHaveProperty("_tag", "ProjectConfigParseError");
+      expect(deployMockState.runCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("makes no remote JWKS request when docker is down", () => {
+    // Go only fetches third-party JWKS inside `ServeFunctions` (`serve.go:141`,
+    // `ResolveJWKS`), strictly after `AssertSupabaseDbIsRunning`
+    // (`serve.go:110-113`) — with a down daemon the docker error surfaces
+    // immediately, without first waiting on OIDC/JWKS requests (two sequential
+    // 10s-timeout clients, `pkg/config/config.go:1727-1776`).
+    const daemonDownStderr =
+      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 1, stdout: "", stderr: daemonDownStderr };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        throw new Error(`unexpected fetch before the DB assertion: ${url}`);
+      });
+
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          fetchMock.mockRestore();
+        }),
+      );
+
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "",
+            "[auth.third_party.workos]",
+            "enabled = true",
+            'issuer_url = "https://issuer.example"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe(`failed to inspect service: ${daemonDownStderr}`);
+      }
+      // The docker-down error must win without a single external request.
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it.live("fails with the auth config error, not a docker error, when both are broken", () => {
+    // Go's `jwt_secret` ≥16-chars check runs during config load
+    // (`pkg/config/apikeys.go:43-47` via `config.go:1156`), BEFORE
+    // `AssertSupabaseDbIsRunning` — invalid auth config wins over a down
+    // docker daemon, so the local half of auth resolution must stay ahead of
+    // the DB assertion.
+    deployMockState.runHandler = () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          ['project_id = "test-project"', "", "[auth]", 'jwt_secret = "short"', ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe(
+          "Invalid config for auth.jwt_secret. Must be at least 16 characters",
+        );
+      }
       expect(deployMockState.runCalls).toHaveLength(0);
     });
   });

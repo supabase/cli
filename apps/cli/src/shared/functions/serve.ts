@@ -190,11 +190,11 @@ export interface StartedRuntime {
 
 /**
  * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs,
- * matching {@link resolveAuthArtifacts}'s return shape. Named and exported so
+ * matching {@link finalizeAuthArtifacts}'s return shape. Named and exported so
  * a caller outside this module (`start`'s own edge-runtime bring-up,
  * `legacy/commands/start/services/edge-runtime.service.ts`) can build the
  * exact same shape from values it has already resolved itself, instead of
- * calling {@link resolveAuthArtifacts} (which re-reads `config.toml`/signing
+ * calling {@link resolveLocalAuthArtifacts} (which re-reads `config.toml`/signing
  * keys independently — correct for the standalone `functions serve` command,
  * but would risk resolving different secrets than the rest of a `start`
  * stack for a caller that already has these values).
@@ -234,7 +234,7 @@ export interface ServeEdgeRuntimeContainerConfig {
  * Input to {@link startEdgeRuntimeContainer} — the reusable "bring up one
  * Edge Runtime container" core extracted from `serveFunctions`'s interactive
  * loop, kept independent of BOTH `functions serve`'s own config-loading
- * (`resolveServeConfig`/`resolveAuthArtifacts`) and its file-watch/log-stream
+ * (`resolveServeConfig`/`resolveLocalAuthArtifacts`) and its file-watch/log-stream
  * loop, so `start`'s bring-up can call it directly with values it has already
  * resolved through its own pipeline (see `internal-db-connection.ts` for why
  * {@link dbUrl} specifically must be caller-supplied rather than hardcoded).
@@ -516,7 +516,36 @@ async function readSigningKeys(pathname: string): Promise<ReadonlyArray<SigningK
   return decoded as ReadonlyArray<SigningKeyJwk>;
 }
 
-const resolveAuthArtifacts = Effect.fnUntraced(function* (
+/**
+ * {@link resolveLocalAuthArtifacts}'s return shape — everything
+ * {@link finalizeAuthArtifacts} needs to assemble the final
+ * {@link ServeAuthArtifacts} once the remote-JWKS fetch is allowed to run
+ * (i.e. after the DB assertion — see {@link startEdgeRuntime}).
+ */
+interface ServeLocalAuthArtifacts {
+  readonly publishableKey: string;
+  readonly secretKey: string;
+  readonly jwtSecret: string;
+  readonly anonKey: string;
+  readonly serviceRoleKey: string;
+  /** Third-party issuer to fetch remote JWKS from, if one is configured. */
+  readonly issuerUrl: string | undefined;
+  /** Local JWKS entries (signing keys / oct fallback), appended AFTER any remote keys (`config.go:1776-1786`). */
+  readonly localKeys: ReadonlyArray<unknown>;
+}
+
+/**
+ * Config-load-time auth resolution — exactly the work Go performs during
+ * `flags.LoadConfig`/`Config.Validate`, BEFORE `AssertSupabaseDbIsRunning`:
+ * the signing-keys read (`pkg/config/config.go:1110-1115`), the
+ * `auth.jwt_secret` ≥16-chars check (`pkg/config/apikeys.go:43-47` via
+ * `config.go:1156`), and anon/service-role key generation. Deliberately does
+ * NOT fetch remote JWKS: Go only does that inside `ServeFunctions`
+ * (`serve.go:141` → `ResolveJWKS`, `config.go:1727-1776`), after the DB
+ * assertion — that half lives in {@link finalizeAuthArtifacts} so a config
+ * error here still beats a docker-down error, matching Go's precedence.
+ */
+const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
   auth: PlainServeAuthConfig,
   configPath: string | undefined,
 ) {
@@ -566,7 +595,6 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
       : auth.service_role_key;
   const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
 
-  const keys: unknown[] = [];
   // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
   // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
   // c.Auth.Enabled` block (`config.go:1087-1153`), but `functions serve`'s own JWKS resolution
@@ -576,14 +604,8 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
   const issuerUrl = auth.enabled
     ? resolveThirdPartyIssuerUrl(auth.third_party)
     : thirdPartyIssuerUrlUnchecked(auth.third_party);
-  if (issuerUrl !== undefined) {
-    const remoteJwks = yield* Effect.tryPromise({
-      try: () => resolveRemoteJwks(issuerUrl),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<unknown>)));
-    keys.push(...remoteJwks);
-  }
-  keys.push(
+  const localKeys: unknown[] = [];
+  localKeys.push(
     ...(signingKeys.length > 0
       ? signingKeys.map(toPublicJwk)
       : shouldUseJwtSecretFallback
@@ -591,7 +613,7 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
         : []),
   );
   if (shouldUseJwtSecretFallback) {
-    keys.push({
+    localKeys.push({
       kty: "oct",
       k: Buffer.from(jwtSecret).toString("base64url"),
     });
@@ -609,8 +631,43 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
     jwtSecret,
     anonKey,
     serviceRoleKey,
+    issuerUrl,
+    localKeys,
+  } satisfies ServeLocalAuthArtifacts;
+});
+
+/**
+ * The post-assertion half of `functions serve`'s auth resolution — Go's
+ * `ResolveJWKS` call inside `ServeFunctions` (`serve.go:141`,
+ * `pkg/config/config.go:1727-1786`): fetch the third-party provider's remote
+ * JWKS (two sequential OIDC/JWKS requests with 10s-timeout clients,
+ * `config.go:1727-1776`) with the fetch error discarded (`jwks, _ :=`), then
+ * assemble the final key set with remote keys FIRST and local keys after
+ * (`config.go:1776-1786`). Kept separate from
+ * {@link resolveLocalAuthArtifacts} so `startEdgeRuntime` can run it strictly
+ * after `assertLocalDbRunning`, matching Go's ordering — with Docker down, no
+ * external JWKS request is ever made.
+ */
+const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuthArtifacts) {
+  const keys: unknown[] = [];
+  if (local.issuerUrl !== undefined) {
+    const issuerUrl = local.issuerUrl;
+    const remoteJwks = yield* Effect.tryPromise({
+      try: () => resolveRemoteJwks(issuerUrl),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<unknown>)));
+    keys.push(...remoteJwks);
+  }
+  keys.push(...local.localKeys);
+
+  return {
+    publishableKey: local.publishableKey,
+    secretKey: local.secretKey,
+    jwtSecret: local.jwtSecret,
+    anonKey: local.anonKey,
+    serviceRoleKey: local.serviceRoleKey,
     jwks: JSON.stringify({ keys }),
-  };
+  } satisfies ServeAuthArtifacts;
 });
 
 const resolveServeConfig = Effect.fnUntraced(function* (
@@ -1648,7 +1705,10 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   // A down Docker daemon therefore surfaces from the DB inspect below
   // (`assertLocalDbRunning`) as `failed to inspect service: …` with the
   // Docker Desktop install hint as a suggestion (`misc.go:155-166`), never as
-  // an upfront `failed to run docker.` failure.
+  // an upfront `failed to run docker.` failure. The remote-JWKS fetch is
+  // likewise held until AFTER that assertion (`finalizeAuthArtifacts` below —
+  // Go only fetches inside `ServeFunctions`, `serve.go:141`), so a down
+  // daemon never waits on external OIDC/JWKS requests first.
   const resolved = yield* resolveServeConfig(
     input.dependencies.projectRoot,
     input.dependencies.projectIdOverride,
@@ -1662,7 +1722,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     const networkMode = Option.getOrElse(input.networkId, () =>
       localDockerId("network", projectId),
     );
-    const authArtifacts = yield* resolveAuthArtifacts(resolved.auth, resolved.configPath);
+    const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);
     const edgeRuntimeVersionOverride = yield* Effect.tryPromise(() =>
       readFile(join(input.dependencies.supabaseDir, ".temp", "edge-runtime-version"), "utf8"),
     ).pipe(
@@ -1687,6 +1747,14 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     // also called directly by `start.go:1104`) never prints it, so it belongs in this
     // `functions serve`-only wrapper, not the shared core.
     yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
+
+    // Go's remote-JWKS fetch happens inside `ServeFunctions` (`serve.go:141`)
+    // — i.e. after `AssertSupabaseDbIsRunning`, the container removal, and the
+    // "Setting up…" print above — never before. Finalizing here (rather than
+    // inside `startEdgeRuntimeContainer`) keeps the shared core's
+    // caller-supplies-artifacts contract intact for `start`'s bring-up
+    // (`edge-runtime.service.ts`), which resolves its own JWKS.
+    const authArtifacts = yield* finalizeAuthArtifacts(localAuthArtifacts);
 
     startedRuntime = yield* startEdgeRuntimeContainer({
       config: {
