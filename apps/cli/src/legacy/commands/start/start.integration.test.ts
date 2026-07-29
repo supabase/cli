@@ -4528,11 +4528,13 @@ content_path = "./templates/custom_notice.html"
           expect(envFilePath).toBeDefined();
           const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
           expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
-          // Names reach the container verbatim and empty values are skipped —
-          // Go's `set.ListSecrets` SHA256>0 gate (`internal/secrets/set/set.go:48-52`),
-          // shared with `functions serve` via `toPlainEdgeRuntimeConfig`.
-          expect(envFileContent).toContain("my_lower_secret=keep-me");
-          expect(envFileContent).not.toContain("MY_LOWER_SECRET=");
+          // Names reach the container UPPERCASED — Go's config loader applies
+          // `strings.ToUpper` to every secret key (`pkg/config/config.go:766-771`)
+          // — and empty values are skipped — Go's `set.ListSecrets` SHA256>0
+          // gate (`internal/secrets/set/set.go:48-52`), shared with
+          // `functions serve` via `toPlainEdgeRuntimeConfig`.
+          expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
+          expect(envFileContent).not.toContain("my_lower_secret=");
           expect(envFileContent).not.toContain("EMPTY_SECRET=");
         }).pipe(Effect.provide(layer));
       },

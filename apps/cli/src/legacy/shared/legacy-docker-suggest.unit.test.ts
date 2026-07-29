@@ -23,6 +23,15 @@ describe("legacyIsDockerDaemonUnreachable", () => {
         "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock",
       ),
     ).toBe(true);
+    // No container runtime installed at all (`spawnContainerCli`'s
+    // runtime-not-found message) — the shell-out equivalent of Go's missing
+    // daemon socket, which `IsErrConnectionFailed` also classifies as a
+    // connection failure, so the install hint applies.
+    expect(
+      legacyIsDockerDaemonUnreachable(
+        "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH",
+      ),
+    ).toBe(true);
   });
 
   it("does not flag an unrelated inspect failure", () => {

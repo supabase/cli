@@ -58,7 +58,11 @@ const deployMockState = vi.hoisted(() => ({
           }
         // Never resolves — lets a test fork+interrupt while this specific call is in flight,
         // matching Effect's own canonical "forever pending, interruptible" primitive.
-        | { pending: true }),
+        | { pending: true }
+        // Fails the effect itself — models `spawnContainerCli` failing to spawn
+        // any container runtime (neither docker nor podman on PATH), as opposed
+        // to a spawned process exiting non-zero.
+        | { failure: Error }),
   reset() {
     this.runCalls = [];
     this.networkCalls = [];
@@ -123,7 +127,9 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
           stdout: "",
           stderr: "",
         };
-        return "pending" in result ? Effect.never : Effect.succeed(result);
+        if ("pending" in result) return Effect.never;
+        if ("failure" in result) return Effect.fail(result.failure);
+        return Effect.succeed(result);
       }),
   };
 });
@@ -1873,11 +1879,13 @@ describe("legacy functions serve integration", () => {
     });
   });
 
-  it.live("injects config secret names verbatim, skipping empty and unresolved values", () => {
-    // Go's `set.ListSecrets` (`internal/secrets/set/set.go:48-52`) injects
-    // `[edge_runtime.secrets]` keys verbatim — no case normalization — and
-    // only entries with a non-empty SHA256, i.e. it skips empty values and
-    // still-unresolved `env(VAR)` literals (`pkg/config/secret.go:94-107`).
+  it.live("uppercases config secret names, skipping empty and unresolved values", () => {
+    // Go's config loader uppercases every `[edge_runtime.secrets]` key with
+    // `strings.ToUpper` (`pkg/config/config.go:766-771`, viper #1014
+    // workaround) before `set.ListSecrets` (`internal/secrets/set/set.go:48-52`)
+    // reads the map, and ListSecrets keeps only entries with a non-empty
+    // SHA256, i.e. it skips empty values and still-unresolved `env(VAR)`
+    // literals (`pkg/config/secret.go:94-107`).
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
@@ -1938,8 +1946,8 @@ describe("legacy functions serve integration", () => {
       }
 
       const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      expect(envs).toContain("my_lower_secret=keep-me");
-      expect(envs.some((entry) => entry.startsWith("MY_LOWER_SECRET="))).toBe(false);
+      expect(envs).toContain("MY_LOWER_SECRET=keep-me");
+      expect(envs.some((entry) => entry.startsWith("my_lower_secret="))).toBe(false);
       expect(envs.some((entry) => entry.startsWith("EMPTY_SECRET="))).toBe(false);
       expect(envs.some((entry) => entry.startsWith("UNRESOLVED_SECRET="))).toBe(false);
     });
@@ -2262,6 +2270,53 @@ describe("legacy functions serve integration", () => {
       ]);
       expect(deployMockState.volumeCalls).toHaveLength(0);
       expect(deployMockState.networkCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("keeps the install hint when no container runtime is installed at all", () => {
+    // With no `docker` or `podman` binary on PATH the inspect never spawns —
+    // the shell-out equivalent of Go's missing daemon socket, which
+    // `client.IsErrConnectionFailed` classifies as a connection failure and so
+    // gets the Docker Desktop install hint (`internal/utils/misc.go:155-166`,
+    // `docker.go:350`). The spawn-failure cause must survive into the
+    // `failed to inspect service: …` message instead of being blanked.
+    const runtimeNotFoundMessage =
+      "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { failure: new Error(runtimeNotFoundMessage) };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe(`failed to inspect service: ${runtimeNotFoundMessage}`);
+        // The old TS-only upfront precheck message must never come back.
+        expect(error.message).not.toContain("failed to run docker");
+      }
+      expect(error).toHaveProperty(
+        "suggestion",
+        "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
+      );
     });
   });
 

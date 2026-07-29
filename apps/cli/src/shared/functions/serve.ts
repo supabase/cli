@@ -23,7 +23,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { styleText } from "node:util";
 import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
+import {
+  legacyDescribeContainerCliFailure,
+  spawnContainerCli,
+} from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
@@ -404,9 +407,12 @@ export function toPlainEdgeRuntimeConfig(
     policy: reveal(edgeRuntime.policy) ?? "",
     inspector_port: edgeRuntime.inspector_port,
     deno_version: edgeRuntime.deno_version,
-    // Go injects `[edge_runtime.secrets]` keys VERBATIM (no case
-    // normalization) and only those with a non-empty SHA256
-    // (`set.ListSecrets`, `internal/secrets/set/set.go:48-52`).
+    // Go's config loader rewrites every `[edge_runtime.secrets]` key with
+    // `strings.ToUpper` (`pkg/config/config.go:766-771`, the viper #1014
+    // workaround) before `set.ListSecrets`
+    // (`internal/secrets/set/set.go:48-52`) reads the map, so secret names
+    // always reach the container env UPPERCASED regardless of authored
+    // casing. ListSecrets then keeps only entries with a non-empty SHA256:
     // `DecryptSecretHookFunc` (`pkg/config/secret.go:94-107`) leaves the
     // SHA256 empty exactly when the value is empty or a still-unresolved
     // `env(VAR)` literal. In the TS pipeline `resolveProjectSubtree` wraps
@@ -417,7 +423,7 @@ export function toPlainEdgeRuntimeConfig(
     secrets: Object.fromEntries(
       Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
         Redacted.isRedacted(value) && Redacted.value(value).length > 0
-          ? [[name, Redacted.value(value)] as const]
+          ? [[name.toUpperCase(), Redacted.value(value)] as const]
           : [],
       ),
     ),
@@ -1206,10 +1212,20 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
 
 const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
   const dbId = localDockerId("db", projectId);
+  // A spawn failure (neither `docker` nor `podman` on PATH) must keep its
+  // cause: it is the shell-out equivalent of Go's missing daemon socket, which
+  // `client.IsErrConnectionFailed` classifies as a connection failure and so
+  // gets the Docker Desktop install hint (`internal/utils/misc.go:155-166`).
+  // Blanking stderr here would demote it to a bare "failed to inspect
+  // service" with no guidance.
   const result = yield* runChildProcess("docker", ["container", "inspect", dbId], {
     stdout: "ignore",
     stderr: "pipe",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.succeed({ exitCode: 1, stdout: "", stderr: legacyDescribeContainerCliFailure(cause) }),
+    ),
+  );
 
   if (result.exitCode === 0) {
     return;
