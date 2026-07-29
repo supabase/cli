@@ -354,29 +354,26 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
     },
   );
 
-  it.effect(
-    "a Go-valid comma fractional-second separator decodes and preserves the state",
-    () => {
-      // Go's `time.Parse(time.RFC3339Nano, …)` accepts `,` as well as `.`
-      // before fractional seconds (`commaOrPeriod`, `time/format.go`; verified
-      // against go1.26). Classifying this as malformed would regenerate the
-      // file with telemetry re-enabled and fresh identities — Go preserves it.
-      writeFileSync(
-        telemetryPath(),
-        JSON.stringify({
-          enabled: false,
-          device_id: "d",
-          session_id: "s",
-          session_last_active: "2025-01-01T00:00:00,123Z",
-        }),
-      );
-      return Effect.gen(function* () {
-        const state = yield* runLoad();
-        expect(state.enabled).toBe(false);
-        expect(state.device_id).toBe("d");
-      });
-    },
-  );
+  it.effect("a Go-valid comma fractional-second separator decodes and preserves the state", () => {
+    // Go's `time.Parse(time.RFC3339Nano, …)` accepts `,` as well as `.`
+    // before fractional seconds (`commaOrPeriod`, `time/format.go`; verified
+    // against go1.26). Classifying this as malformed would regenerate the
+    // file with telemetry re-enabled and fresh identities — Go preserves it.
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: "2025-01-01T00:00:00,123Z",
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+    });
+  });
 
   it.effect("a comma with no fractional digits is malformed and is wholly regenerated", () => {
     // Go rejects `…T00:00:00,Z` ("cannot parse \",Z\" as \"Z07:00\"") — the
