@@ -1,4 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Stdio } from "effect";
 import type { FeedbackSubmission } from "../../../shared/feedback/feedback-submitter.service.ts";
 import {
@@ -25,6 +28,20 @@ import { LEGACY_FEEDBACK_EMPTY_MESSAGE } from "./feedback.errors.ts";
 import { legacyFeedback } from "./feedback.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-feedback-int-");
+
+// Seeds `<workdir>/supabase/.temp/project-ref`, the file `supabase link` writes.
+// Passing `asDirectory` creates the path as a directory instead, which makes the
+// read fail with a non-NotFound error (the "broken ref file" degradation path).
+function writeLinkedProjectRef(workdir: string, ref: string, opts: { asDirectory?: boolean } = {}) {
+  const tempDir = join(workdir, "supabase", ".temp");
+  mkdirSync(tempDir, { recursive: true });
+  const refPath = join(tempDir, "project-ref");
+  if (opts.asDirectory === true) {
+    mkdirSync(refPath, { recursive: true });
+    return;
+  }
+  writeFileSync(refPath, `${ref}\n`);
+}
 
 function mockFeedbackSubmitter(opts: { failWith?: string } = {}) {
   const submissions: FeedbackSubmission[] = [];
@@ -58,7 +75,8 @@ function setupLegacyFeedback(
     pipedInput?: string;
     agentName?: string;
     submitFailWith?: string;
-    linkedProjectId?: string;
+    /** Simulates `SUPABASE_PROJECT_ID`, the only source `LegacyCliConfig` reads. */
+    projectIdEnv?: string;
   } = {},
 ) {
   const out = mockOutput(opts.output);
@@ -74,10 +92,12 @@ function setupLegacyFeedback(
     mockLegacyCliConfig({
       workdir: tempRoot.current,
       userAgent: "SupabaseCLI/9.9.9",
-      projectId:
-        opts.linkedProjectId === undefined ? Option.none() : Option.some(opts.linkedProjectId),
+      projectId: opts.projectIdEnv === undefined ? Option.none() : Option.some(opts.projectIdEnv),
     }),
     mockAiTool(opts.agentName),
+    // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
+    // temp workdir, so this must not be stubbed out.
+    BunServices.layer,
   );
   return { layer, out, submitter };
 }
@@ -143,12 +163,46 @@ describe("legacy feedback", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("attaches the linked project ref when the workdir has one", () => {
-    const { layer, submitter } = setupLegacyFeedback({ linkedProjectId: LEGACY_VALID_REF });
+  it.live("attaches the linked project ref written by supabase link", () => {
+    const { layer, submitter } = setupLegacyFeedback();
+    writeLinkedProjectRef(tempRoot.current, LEGACY_VALID_REF);
     return Effect.gen(function* () {
       yield* legacyFeedback({ message: ["linked project feedback"] });
 
       expect(submitter.submissions[0]?.projectRef).toBe(LEGACY_VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prefers SUPABASE_PROJECT_ID over the linked ref file", () => {
+    const { layer, submitter } = setupLegacyFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
+    writeLinkedProjectRef(tempRoot.current, LEGACY_VALID_REF);
+    return Effect.gen(function* () {
+      yield* legacyFeedback({ message: ["env override feedback"] });
+
+      expect(submitter.submissions[0]?.projectRef).toBe("envenvenvenvenvenvre");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sends no project ref when the workdir is not linked", () => {
+    const { layer, submitter } = setupLegacyFeedback();
+    return Effect.gen(function* () {
+      yield* legacyFeedback({ message: ["unlinked feedback"] });
+
+      expect(submitter.submissions[0]?.projectRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still submits when the linked ref file cannot be read", () => {
+    // A broken ref file must not block feedback — it degrades to "unlinked".
+    const { layer, out, submitter } = setupLegacyFeedback();
+    writeLinkedProjectRef(tempRoot.current, LEGACY_VALID_REF, { asDirectory: true });
+    return Effect.gen(function* () {
+      yield* legacyFeedback({ message: ["broken ref file feedback"] });
+
+      expect(submitter.submissions[0]?.projectRef).toBeUndefined();
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "success", message: "Thanks for the feedback!" }),
+      );
     }).pipe(Effect.provide(layer));
   });
 
