@@ -252,7 +252,17 @@ describe("db push", () => {
       expect(result.stderr).toContain("connect");
     });
 
-    testParity(["db", "push", "--local"]);
+    // Known parity divergence: Go never emits the Docker-start hint for --local (CLI-1995).
+    testParity(["db", "push", "--local"], {
+      normalize: {
+        stderr: {
+          stripPatterns: [
+            /\nMake sure your local IP is allowed in Network Restrictions and Network Bans\.\n[^\n]*/g, // Expected from Go
+            /\nMake sure Docker is running, then run: supabase start/g, // Expected from TS
+          ],
+        },
+      },
+    });
   });
 
   describe("db push:linked", () => {
