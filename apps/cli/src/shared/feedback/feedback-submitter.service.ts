@@ -13,26 +13,17 @@ interface FeedbackContext {
 
 export interface FeedbackSubmission {
   readonly message: string;
+  readonly projectRef?: string;
   readonly context: FeedbackContext;
 }
 
-interface FeedbackReceipt {
-  readonly id: string;
-  readonly submittedAt: string;
-}
-
-/**
- * Failure channel reserved for the real backend submitter (CLI-1946); the
- * stub layer never fails, but handlers and tests are wired for it already.
- */
+/** A rejected insert (PostgREST error) or a failed/timed-out network call. */
 export class FeedbackSubmitError extends Data.TaggedError("FeedbackSubmitError")<{
   readonly message: string;
 }> {}
 
 interface FeedbackSubmitterShape {
-  readonly submit: (
-    submission: FeedbackSubmission,
-  ) => Effect.Effect<FeedbackReceipt, FeedbackSubmitError>;
+  readonly submit: (submission: FeedbackSubmission) => Effect.Effect<void, FeedbackSubmitError>;
 }
 
 export class FeedbackSubmitter extends Context.Service<FeedbackSubmitter, FeedbackSubmitterShape>()(

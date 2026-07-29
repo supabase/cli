@@ -1,14 +1,16 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
-import { feedbackSubmitterStubLayer } from "../../../shared/feedback/feedback-submitter.stub.layer.ts";
+import { feedbackSubmitterLayer } from "../../../shared/feedback/feedback-submitter.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { aiToolLayer } from "../../../shared/telemetry/ai-tool.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
+import { legacyFeedbackEnvironment } from "./feedback.env.ts";
 import { legacyFeedback } from "./feedback.handler.ts";
 
 const config = {
@@ -24,6 +26,19 @@ export type LegacyFeedbackArgs = CliCommand.Command.Config.Infer<typeof config>;
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const legacyFeedbackHandler = (args: LegacyFeedbackArgs) =>
   legacyFeedback(args).pipe(withLegacyCommandInstrumentation(), withJsonErrorHandling);
+
+const legacyFeedbackCliConfigLayer = legacyCliConfigLayer.pipe(
+  Layer.provide(legacyDebugLoggerLayer),
+);
+
+// The feedback backend environment follows the resolved profile the same way
+// the Management API url does: staging profiles post to the staging project.
+const legacyFeedbackSubmitterLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* LegacyCliConfig;
+    return feedbackSubmitterLayer({ environment: legacyFeedbackEnvironment(config.profile) });
+  }),
+).pipe(Layer.provide(legacyFeedbackCliConfigLayer));
 
 export const legacyFeedbackCommand = Command.make("feedback", config).pipe(
   Command.withAlias("btw"),
@@ -43,6 +58,8 @@ export const legacyFeedbackCommand = Command.make("feedback", config).pipe(
   Command.provide(commandRuntimeLayer(["feedback"])),
   Command.provide(stdinLayer),
   Command.provide(aiToolLayer),
-  Command.provide(feedbackSubmitterStubLayer),
-  Command.provide(legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer))),
+  // `Layer.provide` does not share to siblings: the handler and the submitter
+  // each get their own cli-config provision (legacy CLAUDE.md item 5).
+  Command.provide(legacyFeedbackSubmitterLayer),
+  Command.provide(legacyFeedbackCliConfigLayer),
 );

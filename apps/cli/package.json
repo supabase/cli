@@ -57,6 +57,7 @@
     "@supabase/config": "workspace:*",
     "@supabase/process-compose": "workspace:*",
     "@supabase/stack": "workspace:*",
+    "@supabase/supabase-js": "^2.110.7",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@types/pg": "^8.15.0",
@@ -119,6 +120,7 @@
     "ignore": [
       "scripts/*.ts",
       "tests/**/*.ts",
+      "src/shared/feedback/database.types.ts",
       "src/shared/telemetry/event-catalog.ts"
     ],
     "ignoreBinaries": [

@@ -16,7 +16,11 @@ import {
   mockStdin,
   mockTelemetryRuntime,
 } from "../../../../tests/helpers/mocks.ts";
-import { mockLegacyCliConfig, useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  mockLegacyCliConfig,
+  useLegacyTempWorkdir,
+} from "../../../../tests/helpers/legacy-mocks.ts";
 import { legacyFeedbackHandler } from "./feedback.command.ts";
 import { LEGACY_FEEDBACK_EMPTY_MESSAGE } from "./feedback.errors.ts";
 import { legacyFeedback } from "./feedback.handler.ts";
@@ -34,7 +38,6 @@ function mockFeedbackSubmitter(opts: { failWith?: string } = {}) {
             ? Effect.fail(new FeedbackSubmitError({ message: opts.failWith }))
             : Effect.sync(() => {
                 submissions.push(submission);
-                return { id: "receipt-1", submittedAt: "2026-07-22T00:00:00.000Z" };
               }),
       }),
     ),
@@ -77,6 +80,7 @@ function setupLegacyFeedback(
     pipedInput?: string;
     agentName?: string;
     submitFailWith?: string;
+    linkedProjectId?: string;
   } = {},
 ) {
   const out = mockOutput(opts.output);
@@ -89,7 +93,12 @@ function setupLegacyFeedback(
     mockStdin(opts.stdinIsTTY ?? true, opts.pipedInput),
     mockRuntimeInfo({ platform: "darwin", arch: "arm64" }),
     mockTelemetryRuntime({ cliVersion: "9.9.9" }),
-    mockLegacyCliConfig({ workdir: tempRoot.current, userAgent: "SupabaseCLI/9.9.9" }),
+    mockLegacyCliConfig({
+      workdir: tempRoot.current,
+      userAgent: "SupabaseCLI/9.9.9",
+      projectId:
+        opts.linkedProjectId === undefined ? Option.none() : Option.some(opts.linkedProjectId),
+    }),
     mockAiTool(opts.agentName),
   );
   return { layer, out, submitter };
@@ -156,6 +165,15 @@ describe("legacy feedback", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("attaches the linked project ref when the workdir has one", () => {
+    const { layer, submitter } = setupLegacyFeedback({ linkedProjectId: LEGACY_VALID_REF });
+    return Effect.gen(function* () {
+      yield* legacyFeedback({ message: ["linked project feedback"] });
+
+      expect(submitter.submissions[0]?.projectRef).toBe(LEGACY_VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reads the message from piped stdin when no argument is given", () => {
     const { layer, submitter } = setupLegacyFeedback({
       stdinIsTTY: false,
@@ -204,11 +222,12 @@ describe("legacy feedback", () => {
       yield* legacyFeedback({ message: ["json mode feedback"] });
 
       expect(submitter.submissions).toHaveLength(1);
+      // Fire-and-forget: the ack carries no receipt payload, just the message.
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
           message: "Thanks for the feedback!",
-          data: { id: "receipt-1", submitted_at: "2026-07-22T00:00:00.000Z" },
+          data: undefined,
         }),
       );
     }).pipe(Effect.provide(layer));

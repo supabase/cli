@@ -17,13 +17,17 @@ Alias: `supabase btw [message...]`
 
 ## API Routes
 
-| Method | Path | Auth | Request body | Response (used fields) |
-| ------ | ---- | ---- | ------------ | ---------------------- |
-| —      | —    | —    | —            | —                      |
+| Method | Path                                             | Auth                                 | Request body                                                                                                                 | Response (used fields)                                   |
+| ------ | ------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `POST` | `<feedback-env-url>/rest/v1/interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, source: "cli", user_agent, project_ref (or null), metadata: { cli_version, os, arch, is_agent, agent_name? } }` | none (fire-and-forget; only the error status is checked) |
 
-The submitter is intentionally a local stub until the backend destination for
-CLI feedback is decided (CLI-1946). Add the API route row when the real
-submitter layer replaces `feedbackSubmitterStubLayer`.
+`<feedback-env-url>` follows the resolved profile (`feedback.env.ts`):
+`supabase-staging` / `supabase-local` → the staging feedback project;
+every other profile (incl. YAML-file profiles) → production. Production
+currently reuses the staging project until a dedicated one is provisioned
+(CLI-1946); connection constants live in
+`src/shared/feedback/feedback-config.ts` and are safe to commit (publishable
+key, insert-only RLS). The request times out after 10 s.
 
 ## Environment Variables
 
@@ -41,11 +45,11 @@ every command.
 
 ## Exit Codes
 
-| Code | Condition                                                            |
-| ---- | -------------------------------------------------------------------- |
-| `0`  | success                                                              |
-| `1`  | no message from args, piped stdin, or an interactive prompt          |
-| `1`  | submitter failure (unreachable with the stub; wired for the backend) |
+| Code | Condition                                                         |
+| ---- | ----------------------------------------------------------------- |
+| `0`  | success                                                           |
+| `1`  | no message from args, piped stdin, or an interactive prompt       |
+| `1`  | submit failure (PostgREST error, network failure, or 10s timeout) |
 
 ## Telemetry Events Fired
 
@@ -56,7 +60,8 @@ every command.
 The feedback message content is NEVER included in any telemetry event: the
 message is a positional argument, which `extractChangedFlagNames` structurally
 excludes from the `flags` property (it only scans `-`-prefixed argv tokens).
-Regression-tested in `feedback.integration.test.ts`.
+Regression-tested in `feedback.integration.test.ts`. The message goes only to
+the `interfaces_feedback` table via the API route above.
 
 ## Output
 
@@ -66,19 +71,20 @@ Regression-tested in `feedback.integration.test.ts`.
 Thanks for the feedback!
 ```
 
-Rendered as a clack success line. When no message is passed on an interactive
-terminal, a "What's on your mind?" text prompt collects it first.
+Rendered as a clack success line after a "Sending feedback..." spinner. When
+no message is passed on an interactive terminal, a "What's on your mind?"
+text prompt collects it first.
 
 ### `--output-format json`
 
 ```json
-{ "id": "…", "submitted_at": "…", "message": "Thanks for the feedback!" }
+{ "message": "Thanks for the feedback!" }
 ```
 
 ### `--output-format stream-json`
 
 ```ndjson
-{"type":"result","data":{"id":"…","submitted_at":"…"},"message":"Thanks for the feedback!"}
+{"type":"result","data":{"message":"Thanks for the feedback!"},"timestamp":"…"}
 ```
 
 ## Notes
@@ -91,7 +97,7 @@ terminal, a "What's on your mind?" text prompt collects it first.
 - Message resolution order: positional args → piped stdin (non-TTY) →
   interactive prompt (TTY, text mode) → error.
 - Submission context: CLI version, user agent (`SupabaseCLI/<version>` from
-  `LegacyCliConfig`), OS/arch, and agent detection. The context never includes
-  the resolved access token or project id.
-- The stub receipt `id` is a locally generated UUID; it does not imply
-  server-side persistence.
+  `LegacyCliConfig`), OS/arch, agent detection, and — when the workdir has a
+  linked project — its project ref. The resolved access token is never sent.
+- Fire-and-forget insert (no `.select()`), matching the docs feedback widget
+  and the table's insert-only RLS: the ack carries no server receipt.

@@ -53,20 +53,23 @@ export const legacyFeedback = Effect.fn("legacy.feedback")(function* (args: Lega
 
   const message = yield* legacyResolveFeedbackMessage(args);
 
-  const receipt = yield* submitter.submit({
-    message,
-    context: {
-      cliVersion: telemetryRuntime.cliVersion,
-      userAgent: cliConfig.userAgent,
-      os: runtimeInfo.platform,
-      arch: runtimeInfo.arch,
-      isAgent: Option.isSome(aiTool.name),
-      ...(Option.isSome(aiTool.name) ? { agentName: aiTool.name.value } : {}),
-    },
-  });
+  const sending = yield* output.task("Sending feedback...");
 
-  yield* output.success("Thanks for the feedback!", {
-    id: receipt.id,
-    submitted_at: receipt.submittedAt,
-  });
+  yield* submitter
+    .submit({
+      message,
+      ...(Option.isSome(cliConfig.projectId) ? { projectRef: cliConfig.projectId.value } : {}),
+      context: {
+        cliVersion: telemetryRuntime.cliVersion,
+        userAgent: cliConfig.userAgent,
+        os: runtimeInfo.platform,
+        arch: runtimeInfo.arch,
+        isAgent: Option.isSome(aiTool.name),
+        ...(Option.isSome(aiTool.name) ? { agentName: aiTool.name.value } : {}),
+      },
+    })
+    .pipe(Effect.tapError(() => sending.fail()));
+
+  yield* sending.clear();
+  yield* output.success("Thanks for the feedback!");
 });

@@ -147,6 +147,9 @@ importers:
       '@supabase/stack':
         specifier: workspace:*
         version: link:../../packages/stack
+      '@supabase/supabase-js':
+        specifier: ^2.110.7
+        version: 2.110.7
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.10
