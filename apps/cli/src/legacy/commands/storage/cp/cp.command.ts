@@ -8,6 +8,7 @@ import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-comm
 import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
 import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
 import { legacyStorageInvalidJobsMessage } from "../storage.errors.ts";
+import { legacyParseUintBase0 } from "./cp.parse-uint.ts";
 import {
   LegacyStorageLinkedFlagDef,
   LegacyStorageLocalFlagDef,
@@ -37,26 +38,35 @@ const config = {
     Flag.withDescription('Custom Content-Type header for HTTP upload. (default "auto-detect")'),
     Flag.optional,
   ),
-  jobs: Flag.integer("jobs").pipe(
+  jobs: Flag.string("jobs").pipe(
     Flag.withAlias("j"),
+    // Keep the help token `--jobs, -j integer` that `Flag.integer` rendered —
+    // the flag is a string only so the RAW token reaches the parser below.
+    Flag.withMetavar("integer"),
     Flag.withDescription("Maximum number of parallel jobs. (default 1)"),
     // Go's `--jobs` is a pflag uint (`UintVarP`, `cmd/storage.go:107`), so a
-    // negative fails at flag-parse time — before cobra's group validation,
-    // the experimental gate in `PersistentPreRunE` (`cmd/root.go:93-96`), and
-    // RunE, and without emitting telemetry. `Flag.integer` accepts negatives,
-    // so reject during parsing here; the resulting `CliError.InvalidValue`
-    // carries pflag's complete message, which `formatInvalidValueMessage`
-    // surfaces verbatim. Must sit before `Flag.optional`, which passes
-    // `InvalidValue` failures through untouched. Known residual: with a
-    // missing positional, Effect CLI reports the missing-argument error first
-    // (params parse in config-declaration order) where Go reports the flag
-    // error — same family as the `--jobs abc`/`3.5` parser-error divergence.
+    // non-uint token fails `strconv.ParseUint(s, 0, 64)` at flag-parse time —
+    // before cobra's group validation, the experimental gate in
+    // `PersistentPreRunE` (`cmd/root.go:93-96`), and RunE, and without
+    // emitting telemetry. The raw token is parsed with `legacyParseUintBase0`
+    // (an exact ParseUint port) rather than `Flag.integer`, because numeric
+    // normalization loses parity: `-0` normalizes to negative zero (which a
+    // `value < 0` check accepts, where Go rejects every sign prefix), error
+    // messages must carry the original spelling (`-01`, not `-1`), and Go's
+    // base-0 forms (`0x10` → 16, `010` → 8, `1_0` → 10) must keep parsing.
+    // The resulting `CliError.InvalidValue` carries pflag's complete message,
+    // which `formatInvalidValueMessage` surfaces verbatim. Must sit before
+    // `Flag.optional`, which passes `InvalidValue` failures through
+    // untouched. Known residual: with a missing positional, Effect CLI
+    // reports the missing-argument error first (params parse in
+    // config-declaration order) where Go reports the flag error.
     Flag.mapTryCatch(
-      (value) => {
-        if (value < 0) {
-          throw new Error(legacyStorageInvalidJobsMessage(value));
+      (token) => {
+        const parsed = legacyParseUintBase0(token);
+        if ("cause" in parsed) {
+          throw new Error(legacyStorageInvalidJobsMessage(token, parsed.cause));
         }
-        return value;
+        return parsed.value;
       },
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
@@ -88,7 +98,7 @@ export const legacyStorageCpCommand = Command.make("cp", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Gate before the mutex check below — order matters; see
-      // legacyRequireExperimental's doc comment for why. (A negative `--jobs`
+      // legacyRequireExperimental's doc comment for why. (A non-uint `--jobs`
       // never reaches this handler: the flag's own `Flag.mapTryCatch` rejects
       // it at parse time, matching Go's pflag-before-PersistentPreRunE order.)
       yield* legacyRequireExperimental;

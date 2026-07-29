@@ -67,8 +67,8 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
-  // Negative `--jobs` is already rejected in `cp.command.ts` with pflag's uint
-  // parse error (Go: `UintVarP`, `cmd/storage.go:107`). The remaining clamp is
+  // A non-uint `--jobs` is already rejected in `cp.command.ts` with pflag's
+  // uint parse error (Go: `UintVarP`, `cmd/storage.go:107`). The remaining clamp is
   // an intentional deviation from Go for `--jobs 0` only: Go accepts 0 and
   // reaches NewJobQueue(0) (apps/cli-go/pkg/queue/queue.go), whose unbuffered
   // channel + zero-run priming loop deadlocks the first Put. We clamp `0 → 1`

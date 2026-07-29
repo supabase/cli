@@ -115,4 +115,73 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
       }).pipe(Effect.provide(layer));
     },
   );
+
+  // Go validates the RAW token as unsigned (`strconv.ParseUint(s, 0, 64)`), so
+  // `-0` — which numeric normalization turns into negative zero, passing a
+  // `value < 0` check — is rejected, and the message keeps the original
+  // spelling (`-01`, not a normalized `-1`). Non-numeric tokens get the same
+  // byte-exact pflag message. All expected strings are go1.26 ground truth.
+  it.live.each([
+    {
+      token: "-0",
+      message:
+        'invalid argument "-0" for "-j, --jobs" flag: strconv.ParseUint: parsing "-0": invalid syntax',
+    },
+    {
+      token: "-01",
+      message:
+        'invalid argument "-01" for "-j, --jobs" flag: strconv.ParseUint: parsing "-01": invalid syntax',
+    },
+    {
+      token: "abc",
+      message:
+        'invalid argument "abc" for "-j, --jobs" flag: strconv.ParseUint: parsing "abc": invalid syntax',
+    },
+    {
+      token: "3.5",
+      message:
+        'invalid argument "3.5" for "-j, --jobs" flag: strconv.ParseUint: parsing "3.5": invalid syntax',
+    },
+    {
+      token: "18446744073709551616",
+      message:
+        'invalid argument "18446744073709551616" for "-j, --jobs" flag: strconv.ParseUint: parsing "18446744073709551616": value out of range',
+    },
+  ])(
+    "rejects --jobs=$token at parse time with pflag's exact raw-token message",
+    ({ token, message }) => {
+      const args = ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b", `--jobs=${token}`];
+      const { layer } = setup(args);
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).not.toContain(
+            "must set the --experimental flag to run this command",
+          );
+          expect(normalizeCause(exit.cause).message).toBe(message);
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // Go's base-0 ParseUint ACCEPTS prefix/underscore forms (`0x10` → 16,
+  // `010` → octal 8, `1_0` → 10), so these must clear flag parsing and fail
+  // later at the experimental gate — proving the token was not rejected.
+  it.live.each([{ token: "0x10" }, { token: "010" }, { token: "1_0" }])(
+    "accepts --jobs=$token (Go base-0 form) through flag parsing, reaching the experimental gate",
+    ({ token }) => {
+      const args = ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b", `--jobs=${token}`];
+      const { layer } = setup(args);
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "must set the --experimental flag to run this command",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
