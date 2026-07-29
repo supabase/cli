@@ -11,6 +11,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -412,4 +413,45 @@ func TestPostgresURLWithoutPassword(t *testing.T) {
 	// credential is never written to stdout by the db __shadow seam.
 	assert.Equal(t, `postgresql://postgres@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
 	assert.NotContains(t, url, "%21%40%23")
+}
+
+func TestPreserveTLSConfig(t *testing.T) {
+	const dsn = "postgresql://postgres:pw@example.com:5432/postgres"
+
+	t.Run("replays the sslmode resolved from the connection string", func(t *testing.T) {
+		for _, sslmode := range []string{"disable", "require", "verify-full"} {
+			parsed, err := pgconn.ParseConfig(dsn + "?sslmode=" + sslmode)
+			require.NoError(t, err)
+			rebuilt, err := pgx.ParseConfig(ToPostgresURL(*parsed))
+			require.NoError(t, err)
+			// Run test
+			preserveTLSConfig(*parsed)(rebuilt)
+			// Check TLS matches the DSN, not the re-parse default of "prefer"
+			assert.Equal(t, parsed.TLSConfig, rebuilt.TLSConfig, sslmode)
+		}
+	})
+
+	t.Run("mandates TLS even when PGSSLMODE would disable it", func(t *testing.T) {
+		t.Setenv("PGSSLMODE", "disable")
+		parsed, err := pgconn.ParseConfig(dsn + "?sslmode=require")
+		require.NoError(t, err)
+		require.NotNil(t, parsed.TLSConfig)
+		rebuilt, err := pgx.ParseConfig(ToPostgresURL(*parsed))
+		require.NoError(t, err)
+		require.Nil(t, rebuilt.TLSConfig)
+		// Run test
+		preserveTLSConfig(*parsed)(rebuilt)
+		// Check the env var no longer overrides the connection string
+		assert.NotNil(t, rebuilt.TLSConfig)
+	})
+
+	t.Run("leaves configs assembled in code untouched", func(t *testing.T) {
+		rebuilt, err := pgx.ParseConfig(ToPostgresURL(dbConfig))
+		require.NoError(t, err)
+		before := rebuilt.TLSConfig
+		// Run test
+		preserveTLSConfig(dbConfig)(rebuilt)
+		// Check libpq's default resolution is preserved
+		assert.Same(t, before, rebuilt.TLSConfig)
+	})
 }

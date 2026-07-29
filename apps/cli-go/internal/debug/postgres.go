@@ -59,6 +59,8 @@ func SetupPGX(config *pgx.ConnConfig) {
 	// pgx must not negotiate TLS again over the in-memory pipe; clearing these
 	// *without* DialFunc's handshake is what downgraded sslmode=require (#5872).
 	config.TLSConfig = nil
+	// pgconn reads Fallbacks independently of TLSConfig, so a restored sslmode=allow
+	// would still retry TLS through this plaintext proxy.
 	for _, fallback := range config.Fallbacks {
 		fallback.TLSConfig = nil
 	}
