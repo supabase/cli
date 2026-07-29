@@ -53,7 +53,10 @@ import {
   legacyGenerateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
-import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.write.ts";
+import {
+  legacyDeclarativeSchemaWrittenLine,
+  legacyWriteDeclarativeSchemas,
+} from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 
 const DEFAULT_SYNC_NAME = "declarative_sync";
@@ -256,14 +259,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
         // regardless of --no-cache (the warm is skipped, the line is not). It prints
         // `utils.GetDeclarativeDir()` — the relative dir above, never a resolved
-        // absolute path, because Go chdirs into the workdir (CLI-1980). NOTE: the
-        // generate and db pull ports of this same Go line still print the absolute
-        // dir today — pull's is moving to relative under CLI-1978; this rendering
-        // is the Go-faithful one.
-        yield* output.raw(
-          `Declarative schema written to ${legacyBold(declarativeDirRel)}\n`,
-          "stderr",
-        );
+        // absolute path, because Go chdirs into the workdir (CLI-1980). NOTE:
+        // `generate`'s port of this same Go line still prints the absolute dir
+        // today — a follow-up candidate for the same relative-dir treatment.
+        yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
       }
 
       // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
