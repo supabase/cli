@@ -10,13 +10,13 @@ import {
   mockAnalytics,
   mockOutput,
   mockProcessControl,
-  mockRuntimeInfo,
+  mockTelemetryRuntime,
   mockTty,
-  processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
-import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
-import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
+import {
+  legacyIsolatedHomeLayer,
+  useLegacyTempWorkdir,
+} from "../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyExperimentalRequiredError } from "../../shared/legacy-experimental-gate.ts";
 import { legacyStorageCommand } from "./storage.command.ts";
 import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
@@ -48,29 +48,14 @@ function setup(args: ReadonlyArray<string>) {
     // lazy factory, but isolate ambient env and homeDir defensively anyway —
     // same rationale as the sibling experimental-gate tests (ssl-enforcement,
     // postgres-config, network-bans).
-    processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
-    mockRuntimeInfo({ homeDir: tempRoot.current }),
+    legacyIsolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
     mockAnalytics().layer,
-    Layer.succeed(
-      TelemetryRuntime,
-      TelemetryRuntime.of({
-        configDir: `${tempRoot.current}/.supabase`,
-        tracesDir: `${tempRoot.current}/.supabase/traces`,
-        consent: "granted",
-        showDebug: false,
-        deviceId: "test-device-id",
-        sessionId: "test-session-id",
-        identity: makeTelemetryIdentity(undefined),
-        isFirstRun: false,
-        isTty: false,
-        isCi: false,
-        os: "linux",
-        arch: "x64",
-        cliVersion: "0.1.0",
-      }),
-    ),
+    mockTelemetryRuntime({
+      configDir: `${tempRoot.current}/.supabase`,
+      tracesDir: `${tempRoot.current}/.supabase/traces`,
+    }),
   );
   return { layer };
 }

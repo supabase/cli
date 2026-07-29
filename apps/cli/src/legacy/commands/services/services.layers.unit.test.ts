@@ -18,12 +18,11 @@ import {
   mockAnalytics,
   mockOutput,
   mockProcessControl,
-  mockRuntimeInfo,
   mockTelemetryRuntime,
   mockTty,
-  processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
 import {
+  legacyIsolatedHomeLayer,
   mockLegacyCliConfig,
   mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheLayer,
@@ -44,13 +43,13 @@ import { LegacyIdentityStitch } from "../../shared/legacy-identity-stitch.ts";
 
 import { legacyServicesRuntimeLayer } from "./services.layers.ts";
 
+const tempRoot = useLegacyTempWorkdir("supabase-services-layers-");
+
 /**
  * Stub layer satisfying every external service required by
  * `legacyServicesRuntimeLayer` from the root runtime. Services under test are
  * left as `Effect.die` no-ops — layer construction must not invoke them.
  */
-const tempRoot = useLegacyTempWorkdir("supabase-services-layers-");
-
 function ambientStubs() {
   const analytics = mockAnalytics();
   const out = mockOutput();
@@ -66,12 +65,9 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL legacyCliConfigLayer, which
-    // reads `<homeDir>/.supabase/profile` (resolving SUPABASE_HOME/SUPABASE_PROFILE
-    // from ambient env) through the real filesystem at layer construction.
-    // Isolate both so stale files or env vars on the host can't leak in.
-    mockRuntimeInfo({ homeDir: tempRoot.current }),
-    processEnvLayer(),
+    // The runtime layer under test builds the REAL legacyCliConfigLayer against
+    // the real filesystem — see legacyIsolatedHomeLayer's docs.
+    legacyIsolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,
