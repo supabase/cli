@@ -15,7 +15,13 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
-import { ConflictingFunctionDeployFlagsError } from "../../../../shared/functions/deploy.errors.ts";
+import { deployFunctions } from "../../../../shared/functions/deploy.ts";
+import {
+  ConflictingFunctionDeployFlagsError,
+  NoFunctionsToDeployError,
+} from "../../../../shared/functions/deploy.errors.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { legacyFunctionsDeploy } from "./deploy.handler.ts";
 import type { LegacyFunctionsDeployFlags } from "./deploy.command.ts";
 
@@ -767,6 +773,89 @@ describe("legacy functions deploy", () => {
         expect(out.stderrText).toContain("WARNING: Docker is not running\n");
         expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
+        );
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+  });
+
+  describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {
+    // Calls the shared `deployFunctions` with a marker `styleEmphasis` instead of
+    // going through `legacyFunctionsDeploy`: the real hook (`legacyBold`) is
+    // TTY-gated and therefore inert under vitest, so only an injected marker can
+    // deterministically observe which output formats apply the styling.
+    function setupNoFunctionsTest(format: "text" | "json") {
+      const out = mockOutput({ format });
+      const api = mockLegacyPlatformApi();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        Stdio.layerTest({ args: Effect.succeed(["functions", "deploy"]) }),
+      );
+      const deployNoFunctions = Effect.gen(function* () {
+        const platformApi = yield* LegacyPlatformApi;
+        return yield* deployFunctions(
+          { ...baseFlags, functionNames: [] },
+          {
+            api: platformApi,
+            cwd: tempRoot.current,
+            flagCwd: tempRoot.current,
+            projectRoot: tempRoot.current,
+            supabaseDir: join(tempRoot.current, "supabase"),
+            dashboardUrl: "https://supabase.com/dashboard",
+            goViperCompat: true,
+            yes: false,
+            rawArgs: ["functions", "deploy"],
+            edgeRuntimeVersion: "1.69.12",
+            resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+            styleEmphasis: (text) => `<sgr>${text}</sgr>`,
+          },
+        );
+      });
+      return { out, layer, deployNoFunctions };
+    }
+
+    it.live("keeps the injected styling out of the json error payload", () => {
+      const { out, layer, deployNoFunctions } = setupNoFunctionsTest("json");
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+
+        yield* deployNoFunctions.pipe(withJsonErrorHandling);
+
+        expect(out.messages).toContainEqual({
+          type: "fail",
+          message: "No Functions specified or found in supabase/functions",
+        });
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+
+    it.live("still emphasizes the functions dir in the text-mode error", () => {
+      const { layer, deployNoFunctions } = setupNoFunctionsTest("text");
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+
+        const error = yield* deployNoFunctions.pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(NoFunctionsToDeployError);
+        if (!(error instanceof NoFunctionsToDeployError)) {
+          throw new Error(`unexpected error: ${String(error)}`);
+        }
+        expect(error.message).toBe(
+          "No Functions specified or found in <sgr>supabase/functions</sgr>",
         );
       }).pipe(
         Effect.provide(layer),

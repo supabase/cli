@@ -2217,8 +2217,14 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
         new NoFunctionsToDeployError({
           // Go: `errors.Errorf("No Functions specified or found in %s",
           // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`) —
-          // the legacy handler injects the bold styling via `styleEmphasis`.
-          message: `No Functions specified or found in ${styleEmphasis(SUPABASE_FUNCTIONS_DIR)}`,
+          // the legacy handler injects the bold styling via `styleEmphasis`. Styling is
+          // text-mode only: in `--output-format json`/`stream-json` this message lands in
+          // the structured error payload, which must stay free of ANSI escapes.
+          message: `No Functions specified or found in ${
+            output.format === "text"
+              ? styleEmphasis(SUPABASE_FUNCTIONS_DIR)
+              : SUPABASE_FUNCTIONS_DIR
+          }`,
         }),
       );
     }
