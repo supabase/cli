@@ -38,6 +38,7 @@ function toInsertRow(submission: FeedbackSubmission): TablesInsert<"interfaces_f
     source: "cli",
     user_agent: context.userAgent,
     project_ref: submission.projectRef ?? null,
+    user_id: submission.userId ?? null,
     metadata: {
       cli_version: context.cliVersion,
       os: context.os,

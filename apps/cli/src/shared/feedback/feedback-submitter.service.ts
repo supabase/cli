@@ -14,6 +14,11 @@ interface FeedbackContext {
 export interface FeedbackSubmission {
   readonly message: string;
   readonly projectRef?: string;
+  /**
+   * Gotrue user UUID (persisted telemetry distinct_id); absent when not
+   * logged in or when telemetry consent is denied.
+   */
+  readonly userId?: string;
   readonly context: FeedbackContext;
 }
 

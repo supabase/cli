@@ -77,6 +77,9 @@ function setupLegacyFeedback(
     submitFailWith?: string;
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `LegacyCliConfig` reads. */
     projectIdEnv?: string;
+    /** Simulates the gotrue user id persisted to telemetry.json at login. */
+    distinctId?: string;
+    consent?: "granted" | "denied";
   } = {},
 ) {
   const out = mockOutput(opts.output);
@@ -88,7 +91,11 @@ function setupLegacyFeedback(
     submitter.layer,
     mockStdin(opts.stdinIsTTY ?? true, opts.pipedInput),
     mockRuntimeInfo({ platform: "darwin", arch: "arm64" }),
-    mockTelemetryRuntime({ cliVersion: "9.9.9" }),
+    mockTelemetryRuntime({
+      cliVersion: "9.9.9",
+      distinctId: opts.distinctId,
+      consent: opts.consent,
+    }),
     mockLegacyCliConfig({
       workdir: tempRoot.current,
       userAgent: "SupabaseCLI/9.9.9",
@@ -180,6 +187,40 @@ describe("legacy feedback", () => {
       yield* legacyFeedback({ message: ["env override feedback"] });
 
       expect(submitter.submissions[0]?.projectRef).toBe("envenvenvenvenvenvre");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("attaches the persisted gotrue user id when logged in", () => {
+    const { layer, submitter } = setupLegacyFeedback({
+      distinctId: "11111111-2222-3333-4444-555555555555",
+    });
+    return Effect.gen(function* () {
+      yield* legacyFeedback({ message: ["logged in feedback"] });
+
+      expect(submitter.submissions[0]?.userId).toBe("11111111-2222-3333-4444-555555555555");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sends no user id when not logged in", () => {
+    const { layer, submitter } = setupLegacyFeedback();
+    return Effect.gen(function* () {
+      yield* legacyFeedback({ message: ["logged out feedback"] });
+
+      expect(submitter.submissions[0]?.userId).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sends no user id when telemetry consent is denied", () => {
+    // The user id is consent-gated: opted-out users submit anonymously even
+    // when a persisted gotrue id exists.
+    const { layer, submitter } = setupLegacyFeedback({
+      distinctId: "11111111-2222-3333-4444-555555555555",
+      consent: "denied",
+    });
+    return Effect.gen(function* () {
+      yield* legacyFeedback({ message: ["opted out feedback"] });
+
+      expect(submitter.submissions[0]?.userId).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 

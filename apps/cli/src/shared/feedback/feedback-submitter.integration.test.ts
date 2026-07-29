@@ -7,6 +7,7 @@ import { FeedbackSubmitter } from "./feedback-submitter.service.ts";
 const SUBMISSION: FeedbackSubmission = {
   message: "port conflicts when running two stacks",
   projectRef: "abcdefghijklmnopqrst",
+  userId: "11111111-2222-3333-4444-555555555555",
   context: {
     cliVersion: "9.9.9",
     userAgent: "SupabaseCLI/9.9.9",
@@ -58,6 +59,7 @@ describe("feedbackSubmitterLayer", () => {
         source: "cli",
         user_agent: "SupabaseCLI/9.9.9",
         project_ref: "abcdefghijklmnopqrst",
+        user_id: "11111111-2222-3333-4444-555555555555",
         metadata: {
           cli_version: "9.9.9",
           os: "darwin",
@@ -90,6 +92,7 @@ describe("feedbackSubmitterLayer", () => {
 
       const body = JSON.parse(transport.requests[0]!.bodyText);
       expect(body.project_ref).toBeNull();
+      expect(body.user_id).toBeNull();
       expect(body.metadata).toEqual({
         cli_version: "9.9.9",
         os: "linux",
