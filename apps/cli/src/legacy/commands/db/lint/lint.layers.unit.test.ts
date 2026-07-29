@@ -33,12 +33,14 @@ import {
   mockRuntimeInfo,
   mockTelemetryRuntime,
   mockTty,
+  processEnvLayer,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheLayer,
   mockLegacyTelemetryStateLayer,
+  useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -64,6 +66,8 @@ import { legacyDbLintRuntimeLayer } from "./lint.layers.ts";
  * `legacyDbLintRuntimeLayer` and `legacyDbAdvisorsRuntimeLayer` from the root
  * runtime. Services whose logic is not under test are no-op stubs.
  */
+const tempRoot = useLegacyTempWorkdir("supabase-lint-layers-");
+
 function ambientStubs() {
   const analytics = mockAnalytics();
   const out = mockOutput();
@@ -104,7 +108,12 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    mockRuntimeInfo(),
+    // The runtime layers under test build the REAL legacyCliConfigLayer, which
+    // reads `<homeDir>/.supabase/profile` (resolving SUPABASE_HOME/SUPABASE_PROFILE
+    // from ambient env) through the real filesystem at layer construction.
+    // Isolate both so stale files or env vars on the host can't leak in.
+    mockRuntimeInfo({ homeDir: tempRoot.current }),
+    processEnvLayer(),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,

@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
@@ -69,6 +71,18 @@ type OutputEvent = {
   type: string;
   [key: string]: unknown;
 };
+
+// Default home for mocks that need *some* path value. Unique per process (never
+// created on disk here) so a test that accidentally combines this default with a
+// real FileSystem layer can never pick up stale files written by earlier test
+// runs or manual CLI invocations — the failure mode the previous fixed literal
+// `/tmp/supabase-cli-test-home` allowed. Tests that really read or write files
+// under homeDir must pass their own per-test temp dir instead (see
+// `useLegacyTempWorkdir` in `legacy-mocks.ts`).
+const defaultTestHomeDir = join(
+  tmpdir(),
+  `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+);
 
 // ---------------------------------------------------------------------------
 // Stateless mocks
@@ -158,7 +172,7 @@ export function mockRuntimeInfo(
     cwd: opts.cwd ?? "/test/project",
     platform: opts.platform ?? "linux",
     arch: opts.arch ?? "x64",
-    homeDir: opts.homeDir ?? "/tmp/supabase-cli-test-home",
+    homeDir: opts.homeDir ?? defaultTestHomeDir,
     execPath: opts.execPath ?? "/test/bin/bun",
     pid: opts.pid ?? 1234,
   });
@@ -585,8 +599,8 @@ export function mockTelemetryRuntime(
   return Layer.succeed(
     TelemetryRuntime,
     TelemetryRuntime.of({
-      configDir: opts.configDir ?? "/tmp/supabase-cli-test-home/.supabase",
-      tracesDir: opts.tracesDir ?? "/tmp/supabase-cli-test-home/.supabase/traces",
+      configDir: opts.configDir ?? join(defaultTestHomeDir, ".supabase"),
+      tracesDir: opts.tracesDir ?? join(defaultTestHomeDir, ".supabase", "traces"),
       consent: opts.consent ?? "granted",
       showDebug: opts.showDebug ?? false,
       deviceId: opts.deviceId ?? "test-device-id",

@@ -33,6 +33,7 @@ import {
   mockLegacyLoginApi,
   mockLegacyLoginCrypto,
   mockLegacyTelemetryStateLayer,
+  useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -57,6 +58,8 @@ import { legacyBootstrapRuntimeLayer } from "./bootstrap.layers.ts";
  * `legacyBootstrapRuntimeLayer` from the root runtime. Services under test are
  * left as `Effect.die` no-ops — layer construction must not invoke them.
  */
+const tempRoot = useLegacyTempWorkdir("supabase-bootstrap-layers-");
+
 function ambientStubs() {
   const analytics = mockAnalytics();
   const out = mockOutput();
@@ -100,7 +103,11 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    mockRuntimeInfo(),
+    // The runtime layer under test builds the REAL legacyCliConfigLayer, which
+    // reads `<homeDir>/.supabase/profile` through the real filesystem at layer
+    // construction — point homeDir at a per-test temp dir so stale files on the
+    // host can't leak in.
+    mockRuntimeInfo({ homeDir: tempRoot.current }),
     mockTty(),
     mockProcessControl().layer,
     mockBrowser(),

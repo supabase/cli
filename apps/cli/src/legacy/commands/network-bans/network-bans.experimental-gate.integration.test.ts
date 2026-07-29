@@ -43,7 +43,7 @@ function setup() {
     // command for the "gate open" case resolves ITS `RuntimeInfo` from this
     // layer. Point homeDir at this test's isolated tempRoot so the layer's
     // file-based token fallback (`<homeDir>/.supabase/access-token`) can't pick
-    // up a stray token left at the shared default `/tmp/supabase-cli-test-home`.
+    // up a stray token left at a shared default homeDir.
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
