@@ -81,6 +81,7 @@ Single `success` event with the parsed response as data.
 
 - `--domains` is mutually exclusive with `--add-domains` and `--remove-domains`.
 - `--metadata-file` and `--metadata-url` are mutually exclusive.
+- Flag values follow pflag's consumption rules, not the TS parser's: every value the handler acts on (`--project-ref`, `--metadata-file`, `--metadata-url`, `--attribute-mapping-file`, the three domain slices, plus set-ness of `--name-id-format`/`--skip-url-validation`) is reconciled against a pflag-faithful raw-argv scan — same mechanism as `sso add` (CLI-1982).
 - Always performs the GET pre-check (matches Go's `update.go:42`), regardless of whether `--add-domains` / `--remove-domains` are used.
 - Domain merge: removals are applied first, then additions. Go uses a `map[string]bool` so the resulting order is **unordered**; consumers must sort if comparing.
 - Metadata URL validation error message: `only HTTPS Metadata URLs are supported Use --skip-url-validation to suppress this error.` (single trailing period — matches Go's `update.go:69`, which wraps with `%w Use --skip-url-validation to suppress this error.`; differs from `sso add`'s variant which omits the trailing period).

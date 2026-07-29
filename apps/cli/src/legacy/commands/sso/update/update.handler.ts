@@ -9,7 +9,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  hasExplicitValueFlag,
+  pflagLongFlagOccurrences,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -36,6 +36,7 @@ import {
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
+import { legacySsoPflagSliceValue, legacySsoPflagStringValue } from "../sso.pflag-reconcile.ts";
 import { readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
 import type { LegacySsoUpdateFlags } from "./update.command.ts";
 
@@ -73,7 +74,7 @@ const SSO_UPDATE_MUTEX_GROUPS = [
 
 /**
  * Every value-taking (non-boolean) flag `sso update` declares
- * (`update.command.ts`) — tells `hasExplicitValueFlag` which bare tokens
+ * (`update.command.ts`) — tells `pflagLongFlagOccurrences` which bare tokens
  * consume the next argv token as their value. `--skip-url-validation` is this
  * command's only boolean flag and is deliberately excluded; booleans never
  * consume a following token.
@@ -163,20 +164,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // miss it, the same "changed vs truthy" gap CLI-1860 fixed for
     // `functions download`'s `--use-docker`.
     //
-    // `hasExplicitValueFlag` (not the simpler `hasExplicitLongFlag`) is
-    // required here because every flag in these groups takes a value: a bare
-    // `--metadata-file --metadata-url` is pflag consuming `--metadata-url` as
-    // `metadata-file`'s (oddly named) value, not two flags being set — see
-    // that function's doc comment.
+    // The scan is pflag-faithful: a bare `--metadata-file --metadata-url` is
+    // pflag consuming `--metadata-url` as `metadata-file`'s (oddly named)
+    // value, not two flags being set — see `pflagLongFlagOccurrences`.
+    const occurrences = pflagLongFlagOccurrences(
+      rawArgs,
+      SSO_UPDATE_COMMAND_PATH,
+      SSO_UPDATE_VALUE_FLAG_NAMES,
+    );
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
-      const changed = group.filter((flagName) =>
-        hasExplicitValueFlag(
-          rawArgs,
-          SSO_UPDATE_COMMAND_PATH,
-          SSO_UPDATE_VALUE_FLAG_NAMES,
-          flagName,
-        ),
-      );
+      const changed = group.filter((flagName) => occurrences.has(flagName));
       if (changed.length > 1) {
         return yield* Effect.fail(
           new LegacySsoMutexFlagError({
@@ -186,11 +183,36 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       }
     }
 
+    // Reconcile everything the handler acts on to the pflag-effective values
+    // from the same scan — the Effect parser refuses to consume flag-shaped
+    // tokens as values while pflag consumes them unconditionally, so the two
+    // can disagree on which flags are set and what they hold. See
+    // `add.handler.ts` and `sso.pflag-reconcile.ts` for the full rationale
+    // (CLI-1982). `--name-id-format` and `--skip-url-validation` keep their
+    // parsed values gated on the scan agreeing they were passed at all.
+    const projectRefFlag = legacySsoPflagStringValue(occurrences, "project-ref");
+    const metadataFile = legacySsoPflagStringValue(occurrences, "metadata-file");
+    const metadataUrl = legacySsoPflagStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = legacySsoPflagStringValue(occurrences, "attribute-mapping-file");
+    const domains = legacySsoPflagSliceValue(occurrences, "domains", flags.domains);
+    const addDomains = legacySsoPflagSliceValue(occurrences, "add-domains", flags.addDomains);
+    const removeDomains = legacySsoPflagSliceValue(
+      occurrences,
+      "remove-domains",
+      flags.removeDomains,
+    );
+    const nameIdFormat = occurrences.has("name-id-format")
+      ? flags.nameIdFormat
+      : Option.none<never>();
+    const skipUrlValidation = occurrences.has("skip-url-validation")
+      ? flags.skipUrlValidation
+      : false;
+
     const providerId = yield* validateUuid(flags.providerId).pipe(
       Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
     );
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolver.resolve(projectRefFlag);
 
     yield* Effect.gen(function* () {
       const fetching =
@@ -204,12 +226,12 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
 
       const body: Record<string, unknown> = {};
 
-      if (Option.isSome(flags.metadataFile)) {
-        const xml = yield* readMetadata(flags.metadataFile.value);
+      if (Option.isSome(metadataFile)) {
+        const xml = yield* readMetadata(metadataFile.value);
         body["metadata_xml"] = xml;
-      } else if (Option.isSome(flags.metadataUrl)) {
-        if (!flags.skipUrlValidation) {
-          yield* validateMetadataUrl(flags.metadataUrl.value).pipe(
+      } else if (Option.isSome(metadataUrl)) {
+        if (!skipUrlValidation) {
+          yield* validateMetadataUrl(metadataUrl.value).pipe(
             // Go's `update.go:69` wraps the cause with `%w Use --skip-url-validation to
             // suppress this error.` — note the single space between cause and `Use` and
             // the trailing period. Go's `create.go:47` uses the same format minus the
@@ -222,22 +244,22 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
             ),
           );
         }
-        body["metadata_url"] = flags.metadataUrl.value;
+        body["metadata_url"] = metadataUrl.value;
       }
 
-      if (Option.isSome(flags.attributeMappingFile)) {
-        const mapping = yield* readAttributeMapping(flags.attributeMappingFile.value);
+      if (Option.isSome(attributeMappingFile)) {
+        const mapping = yield* readAttributeMapping(attributeMappingFile.value);
         body["attribute_mapping"] = mapping;
       }
 
-      if (flags.domains.length > 0) {
-        body["domains"] = [...flags.domains];
-      } else if (flags.addDomains.length > 0 || flags.removeDomains.length > 0) {
-        body["domains"] = mergeDomains(existing.domains, flags.addDomains, flags.removeDomains);
+      if (domains.length > 0) {
+        body["domains"] = [...domains];
+      } else if (addDomains.length > 0 || removeDomains.length > 0) {
+        body["domains"] = mergeDomains(existing.domains, addDomains, removeDomains);
       }
 
-      if (Option.isSome(flags.nameIdFormat)) {
-        body["name_id_format"] = flags.nameIdFormat.value;
+      if (Option.isSome(nameIdFormat)) {
+        body["name_id_format"] = nameIdFormat.value;
       }
 
       const tokenOpt = yield* resolveLegacyAccessToken;

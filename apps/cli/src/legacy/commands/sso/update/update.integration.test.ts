@@ -46,10 +46,11 @@ interface SetupOpts {
   putBody?: unknown;
   upgradeGate?: "gated" | "notGated";
   /**
-   * Raw argv the handler sees via `Stdio.Stdio` — drives the
-   * `hasExplicitLongFlag`-based mutex checks. Defaults to a bare invocation
-   * with none of the mutually-exclusive domain flags present; tests that
-   * exercise those checks must pass the matching flags explicitly here.
+   * Raw argv the handler sees via `Stdio.Stdio` — drives the pflag-faithful
+   * scan (`pflagLongFlagOccurrences`) behind both the mutex checks and the
+   * value reconciliation. Defaults to a bare invocation with no optional
+   * flags present; tests that pass flags must pass matching argv here
+   * (usually via `cliArgsFor`), exactly as the real parser guarantees.
    */
   cliArgs?: ReadonlyArray<string>;
 }
@@ -164,6 +165,45 @@ const defaultFlags = {
   >(),
   providerId: VALID_PROVIDER_ID,
 };
+
+/**
+ * Serializes a flags record into the raw argv the real CLI would have been
+ * invoked with. The handler reconciles every value it acts on against a
+ * pflag-faithful scan of this argv, so tests must keep the two consistent —
+ * a flag passed in the record but absent from argv reconciles to "not set",
+ * exactly as it would be for a real invocation.
+ */
+function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
+  const argv: string[] = ["sso", "update", flags.providerId];
+  if (Option.isSome(flags.projectRef)) {
+    argv.push("--project-ref", flags.projectRef.value);
+  }
+  for (const domain of flags.domains) {
+    argv.push("--domains", domain);
+  }
+  for (const domain of flags.addDomains) {
+    argv.push("--add-domains", domain);
+  }
+  for (const domain of flags.removeDomains) {
+    argv.push("--remove-domains", domain);
+  }
+  if (Option.isSome(flags.metadataFile)) {
+    argv.push("--metadata-file", flags.metadataFile.value);
+  }
+  if (Option.isSome(flags.metadataUrl)) {
+    argv.push("--metadata-url", flags.metadataUrl.value);
+  }
+  if (flags.skipUrlValidation) {
+    argv.push("--skip-url-validation");
+  }
+  if (Option.isSome(flags.attributeMappingFile)) {
+    argv.push("--attribute-mapping-file", flags.attributeMappingFile.value);
+  }
+  if (Option.isSome(flags.nameIdFormat)) {
+    argv.push("--name-id-format", flags.nameIdFormat.value);
+  }
+  return argv;
+}
 
 describe("legacy sso update integration", () => {
   it.live("rejects bad UUID", () => {
@@ -412,7 +452,7 @@ describe("legacy sso update integration", () => {
   );
 
   it.live(
-    "mutex check: a bare --metadata-file followed by --metadata-url is not a violation",
+    "mutex check: a bare --metadata-file followed by --metadata-url is not a violation, and the consumed token is the file",
     () => {
       // pflag's `--flag arg` branch consumes the very next argv token as the
       // value unconditionally (`flag.go:1013-1031`), so real cobra parses this
@@ -420,45 +460,101 @@ describe("legacy sso update integration", () => {
       // `metadata-url` is never parsed as its own flag and stays unset. The
       // TS CLI's own parser (unlike pflag) never hands a dash-prefixed token
       // to a non-boolean flag as a bare value, so here both flags resolve to
-      // `Option.none()` — but the raw-argv mutex scan must reach the same
-      // "not a violation" conclusion pflag does, not double-count the
-      // `--metadata-url` token as a second explicit flag.
-      const { layer } = setup({
+      // `Option.none()` — the raw-argv scan must reach the same "not a
+      // violation" conclusion pflag does, and the handler must then behave
+      // like Go: try to open a file literally named `--metadata-url` instead
+      // of silently PUTting with no metadata at all.
+      const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--metadata-file", "--metadata-url"],
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
-        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateMetadataFileError");
+          expect(dump).toContain("failed to open metadata file");
+        }
+        expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("mutex check: a bare --add-domains followed by --domains=... is not a violation", () => {
-    // Same consumed-value class as the metadata-file/metadata-url case
-    // above, but for the domains group: pflag would hand `add-domains` the
-    // literal value `"--domains=x.com"` and never parse `--domains` at all.
-    const { layer } = setup({
-      cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--add-domains", "--domains=x.com"],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
-      expect(Exit.isSuccess(exit)).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "mutex check: a bare --add-domains followed by --domains=... is not a violation, and the consumed token is the domain",
+    () => {
+      // Same consumed-value class as the metadata-file/metadata-url case
+      // above, but for the domains group: pflag hands `add-domains` the
+      // literal value `"--domains=x.com"` and never parses `--domains` at
+      // all — so Go merges that odd-looking string into the existing domain
+      // list and PUTs it. The reconciled handler must produce the same body.
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--add-domains", "--domains=x.com"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isSuccess(exit)).toBe(true);
+        const putReq = api.requests.find((r) => r.method === "PUT");
+        const domains = (putReq?.body as { domains: string[] })?.domains;
+        expect([...domains].sort()).toEqual(["--domains=x.com", "old1.com", "old2.com"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "reconciles project-ref consuming --metadata-file: fails ref validation like Go, no API calls",
+    () => {
+      // `--project-ref --metadata-file x.xml --metadata-url u`: pflag hands
+      // `--metadata-file` to `--project-ref` as its value, so Go fails
+      // `AssertProjectRefIsValid` before any request — no mutex error, no
+      // GET, no metadata read. See `add.integration.test.ts` for the full
+      // rationale (CLI-1982); the reconciliation is shared.
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--project-ref",
+          "--metadata-file",
+          "x.xml",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({
+            ...defaultFlags,
+            metadataFile: Option.some("x.xml"),
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacyInvalidProjectRefError");
+          expect(dump).toContain("Invalid project ref format. Must be like");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("--domains replaces domains verbatim", () => {
-    const { layer, api } = setup();
+    const flags = { ...defaultFlags, domains: ["new.com"] };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({ ...defaultFlags, domains: ["new.com"] });
+      yield* legacySsoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       expect((putReq?.body as { domains?: string[] })?.domains).toEqual(["new.com"]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("--add-domains merges with existing GET domains", () => {
-    const { layer, api } = setup();
+    const flags = { ...defaultFlags, addDomains: ["new.com"] };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
+      yield* legacySsoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       // Go map iteration is unordered — sort before asserting.
@@ -467,9 +563,10 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("--remove-domains strips from existing GET domains", () => {
-    const { layer, api } = setup();
+    const flags = { ...defaultFlags, removeDomains: ["old1.com"] };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({ ...defaultFlags, removeDomains: ["old1.com"] });
+      yield* legacySsoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       expect([...domains].sort()).toEqual(["old2.com"]);
@@ -488,9 +585,10 @@ describe("legacy sso update integration", () => {
   it.live("reads metadata file and sends as metadata_xml on PUT", () => {
     const path = join(tempRoot.current, "good.xml");
     writeFileSync(path, '<?xml version="1.0"?><md/>');
-    const { layer, api } = setup();
+    const flags = { ...defaultFlags, metadataFile: Option.some(path) };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({ ...defaultFlags, metadataFile: Option.some(path) });
+      yield* legacySsoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       expect((putReq?.body as { metadata_xml?: string })?.metadata_xml).toContain("<md/>");
     }).pipe(Effect.provide(layer));
@@ -499,9 +597,10 @@ describe("legacy sso update integration", () => {
   it.live("preserves attribute_mapping `default` field in PUT body", () => {
     const path = join(tempRoot.current, "map.json");
     writeFileSync(path, JSON.stringify({ keys: { a: { default: 3 } } }));
-    const { layer, api } = setup();
+    const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({ ...defaultFlags, attributeMappingFile: Option.some(path) });
+      yield* legacySsoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const mapping = (putReq?.body as { attribute_mapping?: { keys: { a: { default: number } } } })
         ?.attribute_mapping;
@@ -583,12 +682,13 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("nameIdFormat is forwarded in PUT body when provided", () => {
-    const { layer, api } = setup();
+    const flags = {
+      ...defaultFlags,
+      nameIdFormat: Option.some("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" as const),
+    };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({
-        ...defaultFlags,
-        nameIdFormat: Option.some("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"),
-      });
+      yield* legacySsoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       expect((putReq?.body as { name_id_format?: string })?.name_id_format).toBe(
         "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
@@ -597,15 +697,14 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("malformed metadata URL surfaces as update metadata file error", () => {
-    const { layer } = setup();
+    const flags = {
+      ...defaultFlags,
+      metadataUrl: Option.some("::::not a url::::"),
+      skipUrlValidation: false,
+    };
+    const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacySsoUpdate({
-          ...defaultFlags,
-          metadataUrl: Option.some("::::not a url::::"),
-          skipUrlValidation: false,
-        }),
-      );
+      const exit = yield* Effect.exit(legacySsoUpdate(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
@@ -620,11 +719,10 @@ describe("legacy sso update integration", () => {
   it.live("malformed attribute-mapping JSON surfaces a tagged error", () => {
     const path = join(tempRoot.current, "malformed.json");
     writeFileSync(path, "{not json}");
-    const { layer } = setup();
+    const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
+    const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacySsoUpdate({ ...defaultFlags, attributeMappingFile: Option.some(path) }),
-      );
+      const exit = yield* Effect.exit(legacySsoUpdate(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LegacySsoUpdateAttributeMappingFileError");
@@ -633,13 +731,10 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("--add-domains + --remove-domains combined apply remove then add", () => {
-    const { layer, api } = setup();
+    const flags = { ...defaultFlags, addDomains: ["new.com"], removeDomains: ["old1.com"] };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({
-        ...defaultFlags,
-        addDomains: ["new.com"],
-        removeDomains: ["old1.com"],
-      });
+      yield* legacySsoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       // Go uses map iteration → unordered; sort before asserting.

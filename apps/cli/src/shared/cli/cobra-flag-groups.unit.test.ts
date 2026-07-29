@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   cobraMutuallyExclusiveErrorMessage,
   hasExplicitLongFlag,
-  hasExplicitValueFlag,
+  pflagLongFlagOccurrences,
 } from "./cobra-flag-groups.ts";
 
 const COMMAND_PATH = ["functions", "deploy"] as const;
@@ -48,85 +48,172 @@ describe("hasExplicitLongFlag", () => {
   });
 });
 
-describe("hasExplicitValueFlag", () => {
+describe("pflagLongFlagOccurrences", () => {
   const SSO_UPDATE_PATH = ["sso", "update"] as const;
   const VALUE_FLAGS = new Set(["metadata-file", "metadata-url", "domains", "add-domains"]);
 
-  test("finds a bare flag after the command path", () => {
-    expect(
-      hasExplicitValueFlag(
-        ["sso", "update", "id", "--metadata-file", "foo.xml"],
-        SSO_UPDATE_PATH,
-        VALUE_FLAGS,
-        "metadata-file",
-      ),
-    ).toBe(true);
+  test("records a bare flag's next token as its value", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-file", "foo.xml"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-file")).toEqual(["foo.xml"]);
   });
 
-  test("finds a flag with an inline value", () => {
-    expect(
-      hasExplicitValueFlag(
-        ["sso", "update", "id", "--domains=a.com"],
-        SSO_UPDATE_PATH,
-        VALUE_FLAGS,
-        "domains",
-      ),
-    ).toBe(true);
+  test("records an inline (`=`) value, split on the first `=`", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--domains=a.com", "--metadata-file=a=b"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("domains")).toEqual(["a.com"]);
+    expect(occurrences.get("metadata-file")).toEqual(["a=b"]);
   });
 
-  test("does not mistake a value-taking flag's consumed value for a sibling flag", () => {
+  test("an explicit empty `--flag=` still counts as changed", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-file="],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-file")).toEqual([""]);
+  });
+
+  test("a consumed flag-shaped token becomes the value, not a sibling flag", () => {
     // pflag's `--flag arg` branch consumes the next token unconditionally
     // (`flag.go:1013-1031`), so `--metadata-file --metadata-url` gives
     // `metadata-file` the literal value `"--metadata-url"` and never parses
     // `--metadata-url` as its own flag.
-    const args = ["sso", "update", "id", "--metadata-file", "--metadata-url"];
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-file")).toBe(true);
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-url")).toBe(false);
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-file", "--metadata-url"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-file")).toEqual(["--metadata-url"]);
+    expect(occurrences.has("metadata-url")).toBe(false);
   });
 
-  test("does not mistake a value-taking flag's consumed value for a sibling flag, reversed", () => {
-    const args = ["sso", "update", "id", "--metadata-url", "--metadata-file"];
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-url")).toBe(true);
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-file")).toBe(false);
+  test("a consumed flag-shaped token becomes the value, reversed order", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-url", "--metadata-file"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-url")).toEqual(["--metadata-file"]);
+    expect(occurrences.has("metadata-file")).toBe(false);
   });
 
-  test("an inline (`=`) value is never treated as consuming the next token", () => {
+  test("an inline (`=`) value never consumes the next token", () => {
     // `--metadata-file=--metadata-url` is one token: metadata-file's value is
     // the literal string "--metadata-url", and no token is consumed after it.
-    const args = ["sso", "update", "id", "--metadata-file=--metadata-url", "--domains", "a.com"];
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-file")).toBe(true);
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-url")).toBe(false);
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "domains")).toBe(true);
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-file=--metadata-url", "--domains", "a.com"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-file")).toEqual(["--metadata-url"]);
+    expect(occurrences.has("metadata-url")).toBe(false);
+    expect(occurrences.get("domains")).toEqual(["a.com"]);
   });
 
-  test("a real, non-adjacent occurrence of both flags is still detected", () => {
-    const args = ["sso", "update", "id", "--metadata-file", "foo.xml", "--metadata-url", "url"];
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-file")).toBe(true);
-    expect(hasExplicitValueFlag(args, SSO_UPDATE_PATH, VALUE_FLAGS, "metadata-url")).toBe(true);
+  test("real, non-adjacent occurrences of both flags are both recorded", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-file", "foo.xml", "--metadata-url", "url"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-file")).toEqual(["foo.xml"]);
+    expect(occurrences.get("metadata-url")).toEqual(["url"]);
   });
 
-  test("returns false when the flag is absent", () => {
+  test("repeated occurrences accumulate in argv order", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--domains", "a.com", "--domains=b.com"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("domains")).toEqual(["a.com", "b.com"]);
+  });
+
+  test("a bare boolean (non-value) flag is recorded without consuming", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--skip-url-validation", "--metadata-url", "url"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("skip-url-validation")).toEqual([""]);
+    expect(occurrences.get("metadata-url")).toEqual(["url"]);
+  });
+
+  test("returns an empty map when no flags are present", () => {
     expect(
-      hasExplicitValueFlag(["sso", "update", "id"], SSO_UPDATE_PATH, VALUE_FLAGS, "domains"),
-    ).toBe(false);
+      pflagLongFlagOccurrences(["sso", "update", "id"], SSO_UPDATE_PATH, VALUE_FLAGS).size,
+    ).toBe(0);
   });
 
   test("stops scanning at a -- terminator", () => {
-    expect(
-      hasExplicitValueFlag(
-        ["sso", "update", "id", "--", "--domains"],
-        SSO_UPDATE_PATH,
-        VALUE_FLAGS,
-        "domains",
-      ),
-    ).toBe(false);
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--", "--domains"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.has("domains")).toBe(false);
+  });
+
+  test("a -- consumed as a bare value flag's value does not terminate the scan", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-file", "--", "--domains", "a.com"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-file")).toEqual(["--"]);
+    expect(occurrences.get("domains")).toEqual(["a.com"]);
+  });
+
+  test("a bare value flag at the end of argv records an empty value", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "--metadata-file"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-file")).toEqual([""]);
+  });
+
+  test("shorthand tokens are skipped without consuming", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["sso", "update", "id", "-t", "--metadata-url", "url"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("metadata-url")).toEqual(["url"]);
+  });
+
+  test("ignores flags that appear before the command path", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["--domains", "a.com", "sso", "update", "id"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.has("domains")).toBe(false);
   });
 
   test("falls back to a bare scan when the command path is not found", () => {
-    expect(hasExplicitValueFlag(["--domains"], SSO_UPDATE_PATH, VALUE_FLAGS, "domains")).toBe(true);
-    expect(hasExplicitValueFlag(["--metadata-file"], SSO_UPDATE_PATH, VALUE_FLAGS, "domains")).toBe(
-      false,
+    const occurrences = pflagLongFlagOccurrences(
+      ["--domains", "a.com"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
     );
+    expect(occurrences.get("domains")).toEqual(["a.com"]);
+  });
+
+  test("an unscoped scan does not treat -- as a terminator", () => {
+    const occurrences = pflagLongFlagOccurrences(
+      ["--", "--domains", "a.com"],
+      SSO_UPDATE_PATH,
+      VALUE_FLAGS,
+    );
+    expect(occurrences.get("domains")).toEqual(["a.com"]);
   });
 });
 

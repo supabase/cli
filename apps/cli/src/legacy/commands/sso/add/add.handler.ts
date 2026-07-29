@@ -7,7 +7,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  hasExplicitValueFlag,
+  pflagLongFlagOccurrences,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -31,6 +31,7 @@ import {
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
+import { legacySsoPflagSliceValue, legacySsoPflagStringValue } from "../sso.pflag-reconcile.ts";
 import { readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
 import type { LegacySsoAddFlags } from "./add.command.ts";
 
@@ -58,7 +59,7 @@ const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
 /**
  * Every value-taking (non-boolean) flag `sso add` declares
- * (`add.command.ts`) — tells `hasExplicitValueFlag` which bare tokens
+ * (`add.command.ts`) — tells `pflagLongFlagOccurrences` which bare tokens
  * consume the next argv token as their value. `--skip-url-validation` is
  * this command's only boolean flag and is deliberately excluded; booleans
  * never consume a following token. `--type`'s `-t` shorthand is not covered
@@ -91,24 +92,21 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
   yield* Effect.gen(function* () {
     // cobra runs `ValidateFlagGroups` (`command.go:1010`) before `RunE`
     // (`command.go:1014`), so the mutex check must precede everything Go does
-    // inside `RunE` — project-ref resolution included. Keep this block first.
+    // inside `RunE`. Keep this block first.
     //
     // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
     // all — not the resulting value: `--metadata-file= --metadata-url x` must
     // still trip the error even though the file path is empty. Scanning raw
-    // argv (like `sso update` does) keeps detection aligned with pflag's
-    // semantics rather than with whatever the TS parser produced — e.g. a
-    // bare `--metadata-file --metadata-url` parses to two `none`s here but
-    // is a single consumed value in pflag (CLI-1982).
-    //
-    // `hasExplicitValueFlag` (not the simpler `hasExplicitLongFlag`) is
-    // required here because both flags in the group take a value: a bare
-    // `--metadata-file --metadata-url` is pflag consuming `--metadata-url` as
-    // `metadata-file`'s (oddly named) value, not two flags being set — see
-    // that function's doc comment.
-    const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) =>
-      hasExplicitValueFlag(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_VALUE_FLAG_NAMES, flagName),
+    // argv keeps detection aligned with pflag's semantics rather than with
+    // whatever the TS parser produced — e.g. a bare
+    // `--metadata-file --metadata-url` parses to two `none`s here but is a
+    // single consumed value in pflag (CLI-1982).
+    const occurrences = pflagLongFlagOccurrences(
+      rawArgs,
+      SSO_ADD_COMMAND_PATH,
+      SSO_ADD_VALUE_FLAG_NAMES,
     );
+    const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) => occurrences.has(flagName));
     if (changed.length > 1) {
       return yield* Effect.fail(
         new LegacySsoMutexFlagError({
@@ -117,7 +115,30 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       );
     }
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    // The scan and the Effect parser can disagree on more than the mutex:
+    // pflag consumes flag-shaped tokens as values, the Effect parser does
+    // not. Everything the handler acts on below is therefore reconciled to
+    // the pflag-effective values from the same scan, so a suppressed mutex
+    // can never pair with a metadata source pflag never set (e.g.
+    // `--project-ref --metadata-file x.xml --metadata-url u`, where Go hands
+    // `--metadata-file` to `--project-ref` and fails ref validation without
+    // ever touching metadata). `--type` keeps its parsed value: `-t` is a
+    // shorthand the scan cannot see, and required-ness is parser-enforced.
+    // `--name-id-format` and `--skip-url-validation` keep their parsed
+    // values gated on the scan agreeing they were passed at all.
+    const projectRef = legacySsoPflagStringValue(occurrences, "project-ref");
+    const metadataFile = legacySsoPflagStringValue(occurrences, "metadata-file");
+    const metadataUrl = legacySsoPflagStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = legacySsoPflagStringValue(occurrences, "attribute-mapping-file");
+    const domains = legacySsoPflagSliceValue(occurrences, "domains", flags.domains);
+    const nameIdFormat = occurrences.has("name-id-format")
+      ? flags.nameIdFormat
+      : Option.none<never>();
+    const skipUrlValidation = occurrences.has("skip-url-validation")
+      ? flags.skipUrlValidation
+      : false;
+
+    const ref = yield* resolver.resolve(projectRef);
 
     yield* Effect.gen(function* () {
       // Permissive request body. We POST as raw JSON to preserve any
@@ -128,12 +149,12 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         type: flags.type,
       };
 
-      if (Option.isSome(flags.metadataFile)) {
-        const xml = yield* readMetadata(flags.metadataFile.value);
+      if (Option.isSome(metadataFile)) {
+        const xml = yield* readMetadata(metadataFile.value);
         body["metadata_xml"] = xml;
-      } else if (Option.isSome(flags.metadataUrl)) {
-        if (!flags.skipUrlValidation) {
-          yield* validateMetadataUrl(flags.metadataUrl.value).pipe(
+      } else if (Option.isSome(metadataUrl)) {
+        if (!skipUrlValidation) {
+          yield* validateMetadataUrl(metadataUrl.value).pipe(
             // Note: Go suffixes with no trailing period (matches `create.go:47`).
             Effect.mapError(
               (cause) =>
@@ -143,20 +164,20 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
             ),
           );
         }
-        body["metadata_url"] = flags.metadataUrl.value;
+        body["metadata_url"] = metadataUrl.value;
       }
 
-      if (Option.isSome(flags.attributeMappingFile)) {
-        const mapping = yield* readAttributeMapping(flags.attributeMappingFile.value);
+      if (Option.isSome(attributeMappingFile)) {
+        const mapping = yield* readAttributeMapping(attributeMappingFile.value);
         body["attribute_mapping"] = mapping;
       }
 
-      if (flags.domains.length > 0) {
-        body["domains"] = [...flags.domains];
+      if (domains.length > 0) {
+        body["domains"] = [...domains];
       }
 
-      if (Option.isSome(flags.nameIdFormat)) {
-        body["name_id_format"] = flags.nameIdFormat.value;
+      if (Option.isSome(nameIdFormat)) {
+        body["name_id_format"] = nameIdFormat.value;
       }
 
       const creating =
