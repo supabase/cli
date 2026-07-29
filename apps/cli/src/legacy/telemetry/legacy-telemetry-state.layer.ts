@@ -70,6 +70,10 @@ function isGoRfc3339(text: string): boolean {
   return true;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Faithful port of Go's `decodeState` (`internal/telemetry/state.go:87-115`):
  * ALL-OR-NOTHING. Go decodes the whole file or classifies it as
@@ -92,9 +96,9 @@ function isGoRfc3339(text: string): boolean {
  */
 function readExistingState(text: string): PriorState | undefined {
   try {
-    const parsed = JSON.parse(text);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
-    const record = parsed as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(text);
+    if (!isRecord(parsed)) return undefined;
+    const record = parsed;
 
     // Go's `parseConsent` (`state.go:52-67`): a non-null `consent` must be
     // `granted`/`denied` (and unlocks the unix-millis timestamp form);
