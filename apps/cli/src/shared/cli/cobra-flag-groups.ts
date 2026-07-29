@@ -92,13 +92,58 @@ export interface PflagArgvScan {
    */
   readonly positionals: ReadonlyArray<string>;
   /**
-   * Long flag names whose `--name`/`--name=…` token was itself consumed as
-   * another flag's value — pflag never parses them, so they stay unchanged
-   * even though the token is visibly present in argv. Used to emulate
-   * cobra's `ValidateRequiredFlags` for flags the Effect parser believed
-   * were set.
+   * Canonical long names of flags whose own token was consumed as another
+   * flag's value — pflag never parses them, so they stay unchanged even
+   * though the token is visibly present in argv. Covers both long tokens
+   * (`--type`, `--type=saml`) and mapped shorthand tokens (`-t`, `-t=saml`,
+   * `-tsaml`). Used to emulate cobra's `ValidateRequiredFlags` for flags the
+   * Effect parser believed were set.
    */
-  readonly consumedLongFlagNames: ReadonlySet<string>;
+  readonly consumedFlagNames: ReadonlySet<string>;
+  /**
+   * pflag's `ValueRequiredError` message when a bare value-taking flag is
+   * the final argv token — byte-exact per pflag `errors.go:75,78`
+   * (`flag needs an argument: --domains` / `flag needs an argument: 't' in
+   * -t`). pflag fails `ParseFlags` (cobra `command.go:919`) before
+   * `ValidateArgs`, every hook, `ValidateRequiredFlags`, and
+   * `ValidateFlagGroups`, so handlers must reject argv carrying this before
+   * any other check or side effect (binary-verified: `sso update a b
+   * --domains` reports the missing argument, not the arity violation).
+   */
+  readonly missingValueError: string | undefined;
+}
+
+/**
+ * Walks a shorthand cluster (`token.slice(1)`) the way pflag's
+ * `parseShortArg`/`parseSingleShortArg` does: characters before the first
+ * value-taking shorthand are boolean/unknown and consume nothing; the first
+ * value-taking shorthand either carries an inline value (`-o=json`, `-ojson`)
+ * or must consume the next argv token (`-o`). Returns `undefined` when no
+ * character maps to a value-taking flag.
+ */
+function clusterValueShorthand(
+  cluster: string,
+  valueFlagShorthands: ReadonlyMap<string, string>,
+):
+  | { readonly longName: string; readonly remaining: string; readonly inlineValue?: string }
+  | undefined {
+  let shorthands = cluster;
+  while (shorthands.length > 0) {
+    const longName = valueFlagShorthands.get(shorthands[0] ?? "");
+    if (longName === undefined) {
+      // Boolean or unknown shorthand — consumes nothing.
+      shorthands = shorthands.slice(1);
+      continue;
+    }
+    if (shorthands.length > 2 && shorthands[1] === "=") {
+      return { longName, remaining: shorthands, inlineValue: shorthands.slice(2) }; // `-o=json`
+    }
+    if (shorthands.length > 1) {
+      return { longName, remaining: shorthands, inlineValue: shorthands.slice(1) }; // `-ojson`
+    }
+    return { longName, remaining: shorthands }; // `-o json`
+  }
+  return undefined;
 }
 
 /**
@@ -128,9 +173,16 @@ export interface PflagArgvScan {
  *   token for `-t v`; other characters (booleans, `-h`) consume nothing.
  * - A bare `--` that was not consumed as a value terminates flag parsing;
  *   every remaining token is positional (pflag `parseArgs`).
- * - A bare value-taking flag as the very last token records an empty value
- *   (pflag itself would error `flag needs an argument`; recording keeps the
- *   changed-set stable for mutex checks on argv the Effect parser accepts).
+ * - A bare value-taking flag as the very last token records nothing and
+ *   reports pflag's `flag needs an argument` parse error via
+ *   `missingValueError` — pflag aborts before the flag is ever Set.
+ *
+ * Anchoring mirrors cobra's `Find`/`stripFlags`: persistent flags (and the
+ * values they consume) may sit before or between command path segments —
+ * `sso --profile foo update <id>` routes to `sso update` — so the walk steps
+ * over flag tokens while matching path segments in order. When the path
+ * cannot be completed (a stray operand, a `--`, or argv ends), the scan
+ * falls back to an unscoped pass over the whole argv.
  *
  * Remaining gap, kept deliberately: the spec is written out per command
  * rather than derived from the command tree, and unknown flags are treated
@@ -146,15 +198,38 @@ export function pflagArgvScan(
 ): PflagArgvScan {
   const valueFlagNames = spec.valueFlagNames;
   const valueFlagShorthands = spec.valueFlagShorthands ?? new Map<string, string>();
-  const commandIndex = rawArgs.findIndex((_, index) =>
-    commandPath.every((segment, offset) => rawArgs[index + offset] === segment),
-  );
-  const anchored = commandIndex !== -1;
-  const tokens = anchored ? rawArgs.slice(commandIndex + commandPath.length) : rawArgs;
+  // Anchor: match the command path segments in argv order, stepping over
+  // flag tokens and the values they consume (cobra `stripFlags` consumes the
+  // next token for any bare value-taking flag while locating subcommands).
+  let segmentIndex = 0;
+  let cursor = 0;
+  while (cursor < rawArgs.length && segmentIndex < commandPath.length) {
+    const token = rawArgs[cursor];
+    if (token === undefined || token === "--") {
+      break; // `--` ends flag parsing — the path can no longer be completed.
+    }
+    if (token === commandPath[segmentIndex]) {
+      segmentIndex += 1;
+      cursor += 1;
+      continue;
+    }
+    if (!token.startsWith("-") || token === "-") {
+      break; // A stray operand — this argv does not route to the command.
+    }
+    if (token.startsWith("--")) {
+      cursor += !token.includes("=") && valueFlagNames.has(token.slice(2)) ? 2 : 1;
+      continue;
+    }
+    const hit = clusterValueShorthand(token.slice(1), valueFlagShorthands);
+    cursor += hit !== undefined && hit.inlineValue === undefined ? 2 : 1;
+  }
+  const anchored = segmentIndex === commandPath.length;
+  const tokens = anchored ? rawArgs.slice(cursor) : rawArgs;
 
   const occurrences = new Map<string, Array<string>>();
   const positionals: Array<string> = [];
-  const consumedLongFlagNames = new Set<string>();
+  const consumedFlagNames = new Set<string>();
+  let missingValueError: string | undefined;
   const record = (name: string, value: string) => {
     const existing = occurrences.get(name);
     if (existing === undefined) {
@@ -165,17 +240,28 @@ export function pflagArgvScan(
   };
   // pflag's `--flag arg` / `-f arg` branches: the very next token is the
   // value, unconditionally, so it can't be read as a flag (or positional) of
-  // its own. When that token is itself a long flag, remember the name pflag
-  // never got to parse. Returns the index to resume scanning from.
-  const consumeNext = (name: string, index: number): number => {
+  // its own. When that token is itself a flag pflag never got to parse,
+  // remember its canonical name. When there is no next token, pflag fails
+  // parsing (`errors.go:63-78`) — nothing is recorded because the flag never
+  // gets Set. Returns the index to resume scanning from.
+  const consumeNext = (name: string, index: number, missingMessage: string): number => {
     const next = tokens[index + 1];
-    record(name, next ?? "");
     if (next === undefined) {
+      missingValueError ??= missingMessage;
       return index;
     }
+    record(name, next);
     if (next.startsWith("--") && next.length > 2) {
       const equalsIndex = next.indexOf("=");
-      consumedLongFlagNames.add(next.slice(2, equalsIndex === -1 ? undefined : equalsIndex));
+      consumedFlagNames.add(next.slice(2, equalsIndex === -1 ? undefined : equalsIndex));
+    } else if (next.startsWith("-") && !next.startsWith("--") && next !== "-") {
+      // A consumed shorthand cluster (`--domains -t saml`): pflag never
+      // parses `-t`, so `type` stays unchanged even though the Effect parser
+      // read it as a flag (CLI-1982, PR #5974 review round 3).
+      const hit = clusterValueShorthand(next.slice(1), valueFlagShorthands);
+      if (hit !== undefined) {
+        consumedFlagNames.add(hit.longName);
+      }
     }
     return index + 1;
   };
@@ -205,22 +291,19 @@ export function pflagArgvScan(
     if (!token.startsWith("--")) {
       // Shorthand cluster — pflag `parseShortArg` walks it one character at
       // a time; the first value-taking shorthand ends the cluster.
-      let shorthands = token.slice(1);
-      while (shorthands.length > 0) {
-        const longName = valueFlagShorthands.get(shorthands[0] ?? "");
-        if (longName === undefined) {
-          // Boolean or unknown shorthand — consumes nothing.
-          shorthands = shorthands.slice(1);
-          continue;
-        }
-        if (shorthands.length > 2 && shorthands[1] === "=") {
-          record(longName, shorthands.slice(2)); // `-o=json`
-        } else if (shorthands.length > 1) {
-          record(longName, shorthands.slice(1)); // `-ojson`
+      const hit = clusterValueShorthand(token.slice(1), valueFlagShorthands);
+      if (hit !== undefined) {
+        if (hit.inlineValue !== undefined) {
+          record(hit.longName, hit.inlineValue); // `-o=json` / `-ojson`
         } else {
-          index = consumeNext(longName, index); // `-o json`
+          // `-o json` — pflag `errors.go:75` quotes the shorthand character
+          // and the remaining cluster when the value is missing.
+          index = consumeNext(
+            hit.longName,
+            index,
+            `flag needs an argument: '${hit.remaining[0]}' in -${hit.remaining}`,
+          );
         }
-        break;
       }
       continue;
     }
@@ -231,12 +314,12 @@ export function pflagArgvScan(
     }
     const name = token.slice(2);
     if (valueFlagNames.has(name)) {
-      index = consumeNext(name, index);
+      index = consumeNext(name, index, `flag needs an argument: --${name}`);
     } else {
       record(name, "");
     }
   }
-  return { anchored, occurrences, positionals, consumedLongFlagNames };
+  return { anchored, occurrences, positionals, consumedFlagNames, missingValueError };
 }
 
 /**

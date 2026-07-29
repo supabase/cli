@@ -29,6 +29,7 @@ import {
   legacySuggestUpgrade,
 } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
+  LegacySsoFlagNeedsArgumentError,
   LegacySsoMutexFlagError,
   LegacySsoUpdateArityError,
   LegacySsoUpdateAttributeMappingFileError,
@@ -182,6 +183,19 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // value, not two flags being set — see `pflagArgvScan`.
     const scan = pflagArgvScan(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
     const occurrences = scan.occurrences;
+
+    // pflag fails `ParseFlags` (cobra `command.go:919`) when a bare
+    // value-taking flag is the final token (`sso update <id> --domains`) —
+    // before `ValidateArgs`, every hook, and `RunE`, so Go reports the
+    // missing argument even when the arg count is also wrong
+    // (binary-verified: `sso update a b --domains`). The Effect parser
+    // accepts that argv (the flag parses as unset), so no GET/PUT may happen
+    // here either. Keep this ahead of the arity check.
+    if (scan.missingValueError !== undefined) {
+      return yield* Effect.fail(
+        new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
+      );
+    }
 
     // `ExactArgs(1)` (`cmd/sso.go:87`) counts pflag-effective positionals,
     // which shift away from what the Effect parser saw whenever pflag

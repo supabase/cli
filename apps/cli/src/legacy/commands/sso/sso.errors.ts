@@ -63,6 +63,18 @@ export class LegacySsoMutexFlagError extends Data.TaggedError("LegacySsoMutexFla
   readonly message: string;
 }> {}
 
+// pflag's `ValueRequiredError` (`errors.go:63-78`), emulated for the case the
+// Effect parser accepts but pflag rejects: a bare value-taking flag as the
+// final argv token (`sso update <id> --domains`). pflag fails `ParseFlags`
+// (cobra `command.go:919`) before `ValidateArgs`, every hook, and `RunE`, so
+// Go exits without any API call. Shared across add + update; message
+// byte-matches pflag's template.
+export class LegacySsoFlagNeedsArgumentError extends Data.TaggedError(
+  "LegacySsoFlagNeedsArgumentError",
+)<{
+  readonly message: string;
+}> {}
+
 // cobra's `ValidateRequiredFlags` (`command.go:1007`), emulated for the case
 // the Effect parser cannot see: pflag consumed the required flag's own token
 // as another flag's value, so pflag never marks it `Changed` and Go exits

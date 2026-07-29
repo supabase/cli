@@ -40,16 +40,17 @@ same shape via an inline anonymous struct with `Default *any`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                              |
-| `1`  | `LegacySsoAddRequiredFlagError` — pflag consumed the `--type` token as another flag's value (cobra `ValidateRequiredFlags`) |
-| `1`  | `LegacySsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                          |
-| `1`  | `LegacySsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8 |
-| `1`  | `LegacySsoAddAttributeMappingFileError` — JSON file unreadable or malformed                                          |
-| `1`  | `LegacySsoAddSamlDisabledError` — 404 from POST                                                                      |
-| `1`  | `LegacySsoAddUnexpectedStatusError` — other non-2xx                                                                  |
-| `1`  | `LegacySsoAddNetworkError` — transport-level failure                                                                 |
+| Code | Condition                                                                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success                                                                                                                                                      |
+| `1`  | `LegacySsoFlagNeedsArgumentError` — a bare value-taking flag is the final argv token (pflag `ValueRequiredError`, fails before every validation; no request) |
+| `1`  | `LegacySsoAddRequiredFlagError` — pflag consumed the `--type`/`-t` token as another flag's value (cobra `ValidateRequiredFlags`)                             |
+| `1`  | `LegacySsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                                                                  |
+| `1`  | `LegacySsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                         |
+| `1`  | `LegacySsoAddAttributeMappingFileError` — JSON file unreadable or malformed                                                                                  |
+| `1`  | `LegacySsoAddSamlDisabledError` — 404 from POST                                                                                                              |
+| `1`  | `LegacySsoAddUnexpectedStatusError` — other non-2xx                                                                                                          |
+| `1`  | `LegacySsoAddNetworkError` — transport-level failure                                                                                                         |
 
 ## Telemetry Events Fired
 

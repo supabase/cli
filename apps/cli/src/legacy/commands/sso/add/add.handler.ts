@@ -30,6 +30,7 @@ import {
   LegacySsoAddRequiredFlagError,
   LegacySsoAddSamlDisabledError,
   LegacySsoAddUnexpectedStatusError,
+  LegacySsoFlagNeedsArgumentError,
   LegacySsoMutexFlagError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView } from "../sso.format.ts";
@@ -111,14 +112,27 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     const scan = pflagArgvScan(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
+    // pflag fails `ParseFlags` (cobra `command.go:919`) when a bare
+    // value-taking flag is the final token (`sso add --type saml --domains`)
+    // — before every validation, hook, and `RunE`, so no POST is ever made.
+    // The Effect parser accepts that argv (the flag parses as unset), hence
+    // the emulation. Binary-verified against `apps/cli-go` (PR #5974 review
+    // round 3). Keep this the very first check.
+    if (scan.missingValueError !== undefined) {
+      return yield* Effect.fail(
+        new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
+      );
+    }
+
     // `MarkFlagRequired("type")` (`cmd/sso.go:165`): when pflag consumed the
-    // `--type` token as another flag's value (e.g. `--domains --type saml`),
-    // pflag never marks `type` changed and Go fails the required-flag check
-    // before `RunE` — no POST is ever made. The Effect parser can't see this
-    // (it refuses flag-shaped values, so it read `--type saml` as a normal
-    // flag), hence the emulation here. A genuine `-t saml` records a `type`
-    // occurrence via the scan's shorthand map and never trips this.
-    if (!occurrences.has("type") && scan.consumedLongFlagNames.has("type")) {
+    // `--type` or `-t` token as another flag's value (e.g. `--domains --type
+    // saml` or `--domains -t saml`), pflag never marks `type` changed and Go
+    // fails the required-flag check before `RunE` — no POST is ever made.
+    // The Effect parser can't see this (it refuses flag-shaped values, so it
+    // read `--type saml` / `-t saml` as a normal flag), hence the emulation
+    // here. A genuine `-t saml` records a `type` occurrence via the scan's
+    // shorthand map and never trips this.
+    if (!occurrences.has("type") && scan.consumedFlagNames.has("type")) {
       return yield* Effect.fail(
         new LegacySsoAddRequiredFlagError({ message: `required flag(s) "type" not set` }),
       );

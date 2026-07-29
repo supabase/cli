@@ -709,6 +709,118 @@ describe("legacy sso update integration", () => {
     },
   );
 
+  it.live(
+    "missing-value emulation: a trailing bare --domains fails pflag parse, no GET/PUT",
+    () => {
+      // Binary-verified: `sso update <id> --domains` errors
+      // `flag needs an argument: --domains` — pflag fails `ParseFlags`
+      // (cobra `command.go:919`) before `ValidateArgs`, every hook, and
+      // `RunE`, so Go makes no API call. The Effect parser accepts the argv
+      // (the flag parses as unset), so without this check the handler would
+      // GET and PUT with an empty domain list (PR #5974 review round 3).
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoFlagNeedsArgumentError");
+          expect(dump).toContain("flag needs an argument: --domains");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("missing-value emulation: the pflag parse error wins over an arity violation", () => {
+    // pflag fails parsing (`command.go:919`) before cobra's `ValidateArgs`
+    // (`command.go:968`), so when `--domains` swallows `--metadata-url`
+    // (orphaning `u` as a second positional) AND `--add-domains` trails
+    // bare, Go reports the missing argument, not the arg count
+    // (binary-verified: `sso update a b --domains`).
+    const { layer, api } = setup({
+      cliArgs: [
+        "sso",
+        "update",
+        "--domains",
+        "--metadata-url",
+        "https://idp.example.com/m",
+        VALID_PROVIDER_ID,
+        "--add-domains",
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoUpdate({
+          ...defaultFlags,
+          metadataUrl: Option.some("https://idp.example.com/m"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoFlagNeedsArgumentError");
+        expect(dump).toContain("flag needs an argument: --add-domains");
+        expect(dump).not.toContain("LegacySsoUpdateArityError");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "anchoring: a persistent flag between sso and update still enforces arity, like Go",
+    () => {
+      // Binary-verified: `sso --profile foo update --domains --metadata-url
+      // u <id>` errors `accepts 1 arg(s), received 2` — cobra routes through
+      // the interspersed persistent flag (`Find`/`stripFlags`) and pflag
+      // still hands `--metadata-url` to `--domains`. The scan must anchor
+      // across the interspersed flag or the arity re-count silently
+      // vanishes and the handler GETs/PUTs (PR #5974 review round 3).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "--profile",
+          "supabase",
+          "update",
+          "--domains",
+          "--metadata-url",
+          "https://idp.example.com/m",
+          VALID_PROVIDER_ID,
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({
+            ...defaultFlags,
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("accepts 1 arg(s), received 2");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("anchoring: a persistent flag between sso and update sails through to the PUT", () => {
+    // Regression guard for the anchor walk: a well-formed interspersed
+    // invocation (`sso --profile supabase update <id>`) must behave exactly
+    // like the contiguous one.
+    const { layer, api } = setup({
+      cliArgs: ["sso", "--profile", "supabase", "update", VALID_PROVIDER_ID],
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoUpdate(defaultFlags);
+      expect(api.requests.some((r) => r.method === "PUT")).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("--domains replaces domains verbatim", () => {
     const flags = { ...defaultFlags, domains: ["new.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });

@@ -466,6 +466,54 @@ describe("legacy sso add integration", () => {
   );
 
   it.live(
+    "required emulation: a bare --domains consuming -t fails the required-flag check, no POST",
+    () => {
+      // Binary-verified: `sso add --domains -t saml` (and `-t=saml`) fails
+      // Go's required-flag check — pflag hands the `-t` token to `--domains`
+      // as its value, so `type` is never marked changed and `saml` becomes a
+      // positional (Go's add command has no Args validation and accepts it).
+      // The Effect parser read `-t saml` as a normal flag, so without the
+      // scan's consumed-shorthand tracking the handler would POST
+      // `type: "saml"`, `domains: ["-t"]` (PR #5974 review round 3).
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--domains", "-t", "saml"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoAddRequiredFlagError");
+          expect(dump).toContain('required flag(s) \\"type\\" not set');
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("missing-value emulation: a trailing bare --domains fails pflag parse, no POST", () => {
+    // Binary-verified: `sso add --type saml --domains` errors
+    // `flag needs an argument: --domains` — pflag fails `ParseFlags` (cobra
+    // `command.go:919`) before the required-flag and mutex validations and
+    // Go never POSTs. The Effect parser accepts the argv (the flag parses
+    // as unset), so the handler must reject it before any side effect
+    // (PR #5974 review round 3).
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", "--domains"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoFlagNeedsArgumentError");
+        expect(dump).toContain("flag needs an argument: --domains");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
     "reconciles a bare --domains consuming --metadata-file: POSTs the domain pflag saw, no metadata",
     () => {
       // `--domains --metadata-file x.xml`: pflag appends the literal string

@@ -41,17 +41,18 @@ GET still uses the typed client.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                              |
+| Code | Condition                                                                                                                                                                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                       |
+| `1`  | `LegacySsoFlagNeedsArgumentError` — a bare value-taking flag is the final argv token (pflag `ValueRequiredError`, fails before `ValidateArgs`; no request)                    |
 | `1`  | `LegacySsoUpdateArityError` — pflag-effective positional count ≠ 1 (cobra `ValidateArgs`/`ExactArgs(1)`; a consumed flag token orphans its parser-value into the positionals) |
-| `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID                                                                    |
-| `1`  | `LegacySsoMutexFlagError` — flag combinations: `--domains` with `--add/--remove-domains`, or `--metadata-file` with `--metadata-url` |
-| `1`  | `LegacySsoUpdateMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8              |
-| `1`  | `LegacySsoUpdateAttributeMappingFileError` — JSON file unreadable or malformed                                                       |
-| `1`  | `LegacySsoUpdateNotFoundError` — 404 from GET                                                                                        |
-| `1`  | `LegacySsoUpdateUnexpectedStatusError` — non-2xx from GET or PUT                                                                     |
-| `1`  | `LegacySsoUpdateNetworkError` — transport-level failure                                                                              |
+| `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                             |
+| `1`  | `LegacySsoMutexFlagError` — flag combinations: `--domains` with `--add/--remove-domains`, or `--metadata-file` with `--metadata-url`                                          |
+| `1`  | `LegacySsoUpdateMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                       |
+| `1`  | `LegacySsoUpdateAttributeMappingFileError` — JSON file unreadable or malformed                                                                                                |
+| `1`  | `LegacySsoUpdateNotFoundError` — 404 from GET                                                                                                                                 |
+| `1`  | `LegacySsoUpdateUnexpectedStatusError` — non-2xx from GET or PUT                                                                                                              |
+| `1`  | `LegacySsoUpdateNetworkError` — transport-level failure                                                                                                                       |
 
 ## Telemetry Events Fired
 
