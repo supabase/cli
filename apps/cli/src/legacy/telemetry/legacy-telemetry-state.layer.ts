@@ -34,9 +34,12 @@ interface PriorState {
 
 // Go's `time.Parse(time.RFC3339Nano, …)` shape: date, `T`, time, optional
 // fraction, `Z` or a `±hh:mm` offset. JS `new Date(…)` alone accepts far more
-// (bare dates, RFC 2822, …) that Go rejects as malformed.
+// (bare dates, RFC 2822, …) that Go rejects as malformed. The fractional
+// separator is `.` OR `,` — Go's parser accepts either (`commaOrPeriod`,
+// `time/format.go`; verified against go1.26: `…T00:00:00,1Z` parses) — while
+// the digits after it stay mandatory (`…T00:00:00,Z` is rejected).
 const RFC3339_RE =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
 const DAYS_PER_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 
@@ -189,10 +192,10 @@ export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.load
     const now = opts.now ?? new Date();
     const nowIso = now.toISOString();
 
-    // A Go-valid timestamp JS cannot parse (offset `+24:00`/`+05:60`) yields
-    // NaN here → treated as expired, rotating the session — which Go would
-    // also do for any realistic such timestamp; `enabled`/identity are
-    // preserved either way.
+    // A Go-valid timestamp JS cannot parse (offset `+24:00`/`+05:60`, comma
+    // fraction `…00,1Z`) yields NaN here → treated as expired, rotating the
+    // session — which Go would also do for any realistic such timestamp;
+    // `enabled`/identity are preserved either way.
     const priorActive =
       prior?.session_last_active !== undefined ? new Date(prior.session_last_active).getTime() : 0;
     const expired =
