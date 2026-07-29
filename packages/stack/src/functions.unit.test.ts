@@ -6,11 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { resolveConfig } from "./createStack.ts";
+import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
 import {
   configureFunctionsRuntime,
   functionsRuntimeConfigPath,
   resolveFunctionsRuntimeConfig,
 } from "./functions.ts";
+import { verifyRequest } from "./services/edge-runtime-main.ts";
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-stack-functions-"));
@@ -53,6 +55,50 @@ async function writeProject(cwd: string) {
     }),
   );
 }
+
+function jwtWithInvalidSignature(algorithm?: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: algorithm, typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: "test-user" })).toString("base64url");
+  return `${header}.${payload}.invalid`;
+}
+
+const authFailureCases = [
+  {
+    name: "returns the missing authorization error",
+    code: "UNAUTHORIZED_NO_AUTH_HEADER",
+    message: "Missing authorization header",
+  },
+  {
+    name: "returns the invalid JWT format error",
+    authorization: "Bearer not-a-jwt",
+    code: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+    message: "Invalid JWT format",
+  },
+  {
+    name: "returns the invalid JWT format error when the algorithm is missing",
+    authorization: `Bearer ${jwtWithInvalidSignature()}`,
+    code: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+    message: "Invalid JWT format",
+  },
+  {
+    name: "returns the legacy JWT error",
+    authorization: `Bearer ${jwtWithInvalidSignature("HS256")}`,
+    code: "UNAUTHORIZED_LEGACY_JWT",
+    message: "Invalid JWT",
+  },
+  {
+    name: "returns the asymmetric JWT error",
+    authorization: `Bearer ${jwtWithInvalidSignature("ES256")}`,
+    code: "UNAUTHORIZED_ASYMMETRIC_JWT",
+    message: "Invalid JWT",
+  },
+  {
+    name: "returns the unsupported algorithm error",
+    authorization: `Bearer ${jwtWithInvalidSignature("none")}`,
+    code: "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
+    message: "Unsupported JWT algorithm none",
+  },
+];
 
 describe("stack Functions runtime config", () => {
   it.live("auto-detects enabled functions from projectDir", () => {
@@ -148,5 +194,54 @@ describe("stack Functions runtime config", () => {
       Effect.provide(BunServices.layer),
       Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
     );
+  });
+});
+
+describe("stack Functions runtime auth", () => {
+  for (const { name, authorization, code, message } of authFailureCases) {
+    it(name, async () => {
+      const response = await verifyRequest(
+        new Request("http://127.0.0.1/functions/v1/test", {
+          headers: authorization === undefined ? undefined : { authorization },
+        }),
+        { jwtSecret: defaultJwtSecret },
+        { verifyJWT: true },
+      );
+
+      expect(response).not.toBeNull();
+      if (response === null) return;
+
+      expect(response.status).toBe(401);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("sb-error-code")).toBe(code);
+      expect(response.headers.get("access-control-expose-headers")).toBe("sb-error-code");
+      expect(await response.json()).toEqual({ code, message, msg: message });
+    });
+  }
+
+  it("accepts a valid legacy JWT", async () => {
+    const token = generateJwt(defaultJwtSecret, "anon");
+    const response = await verifyRequest(
+      new Request("http://127.0.0.1/functions/v1/test", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      { jwtSecret: defaultJwtSecret },
+      { verifyJWT: true },
+    );
+
+    expect(response).toBeNull();
+  });
+
+  it("accepts a lowercase bearer scheme", async () => {
+    const token = generateJwt(defaultJwtSecret, "anon");
+    const response = await verifyRequest(
+      new Request("http://127.0.0.1/functions/v1/test", {
+        headers: { authorization: `bearer ${token}` },
+      }),
+      { jwtSecret: defaultJwtSecret },
+      { verifyJWT: true },
+    );
+
+    expect(response).toBeNull();
   });
 });
