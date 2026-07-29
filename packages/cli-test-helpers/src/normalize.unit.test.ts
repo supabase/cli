@@ -179,17 +179,6 @@ describe("normalize", () => {
     expect(normalize(table)).toBe(table.replace(/[ \t]+$/gm, ""));
   });
 
-  it("strips system-keyring availability noise in both Go wordings", () => {
-    const goStderr = [
-      "Do you want to delete project aaaaaaaaaaaaaaaaaaaa? This action is irreversible. [y/N] y",
-      "Keyring is not supported on WSL",
-      "failed to delete credentials: The name org.freedesktop.secrets was not provided by any .service files",
-    ].join("\n");
-    expect(normalize(goStderr)).toBe(
-      "Do you want to delete project aaaaaaaaaaaaaaaaaaaa? This action is irreversible. [y/N] y\n",
-    );
-  });
-
   it("can strip caller-provided patterns before shared normalization", () => {
     expect(
       normalize("status: transient\nversion: 2.0.0", { stripPatterns: [/^status: .+\n/gm] }),

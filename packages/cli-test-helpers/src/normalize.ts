@@ -132,17 +132,6 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
       //      strip it from both sides. (Same class of divergence that defers the
       //      login/logout parity tests in auth.e2e.test.ts.)
       .replace(/^Keyring is not supported on WSL\n?/gm, "")
-      //      Go wraps other Secret Service failures instead of mapping them to
-      //      the WSL message: when no D-Bus secrets daemon is running, keyring
-      //      ops fail with "The name org.freedesktop.secrets was not provided
-      //      by any .service files", printed inside store.go's "failed to
-      //      load/set/delete credentials: %w" wrappers (e.g. `projects delete`'s
-      //      best-effort credential cleanup, delete.go:46-48). Same
-      //      backend-availability noise, different wording — strip it too.
-      .replace(
-        /^[^\n]*The name org\.freedesktop\.secrets was not provided by any \.service files\n?/gm,
-        "",
-      )
       // 17c. Docker image-pull progress streamed to stderr. The Go CLI pre-pulls
       //      via the Docker API and renders progress with jsonmessage
       //      (`apps/cli-go/internal/utils/docker.go:206-214`), while the ts-legacy
