@@ -661,7 +661,7 @@ const connect = (
       const suggestion =
         cfg.suggestionContext === undefined
           ? undefined
-          : legacyConnectSuggestion(error, cfg.suggestionContext);
+          : legacyConnectSuggestion(error, { ...cfg.suggestionContext, isLocal });
       return new LegacyDbConnectError({
         message: `failed to connect to postgres: ${legacyConnectFailureMessage(cfg, error)}`,
         ...(suggestion === undefined ? {} : { suggestion }),

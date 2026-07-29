@@ -24,6 +24,8 @@ const CONNECT_REFUSED_STDERR_STRIP: readonly RegExp[] = [
   /(?<=failed to connect to postgres:).*/g,
   // Go's SetConnectSuggestion: Network-Restrictions hint + dashboard URL line.
   /\nMake sure your local IP is allowed in Network Restrictions and Network Bans\.\n[^\n]*/g,
+  // TS's local-only Docker hint (CLI-1995); Go never emits this for --local.
+  /\nMake sure Docker is running, then run: supabase start/g,
   // TS's generic --debug suggestion.
   /\nTry rerunning the command with --debug to troubleshoot the error\./g,
 ];
