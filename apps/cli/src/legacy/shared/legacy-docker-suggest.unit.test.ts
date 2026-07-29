@@ -32,6 +32,19 @@ describe("legacyIsDockerDaemonUnreachable", () => {
         "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH",
       ),
     ).toBe(true);
+    // Windows daemon-down: a failed npipe open is wrapped "error during
+    // connect" by the pinned SDK (`client/request.go:175-185`, v28.5.2) —
+    // both the elevated and the non-elevated variants.
+    expect(
+      legacyIsDockerDaemonUnreachable(
+        'error during connect: this error may indicate that the docker daemon is not running: Get "http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.51/containers/supabase_db_test/json": open //./pipe/docker_engine: The system cannot find the file specified.',
+      ),
+    ).toBe(true);
+    expect(
+      legacyIsDockerDaemonUnreachable(
+        "error during connect: in the default daemon configuration on Windows, the docker client must be run with elevated privileges to connect: open //./pipe/docker_engine: Access is denied.",
+      ),
+    ).toBe(true);
   });
 
   it("does not flag an unrelated inspect failure", () => {

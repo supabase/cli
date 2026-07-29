@@ -25,9 +25,21 @@ export const LEGACY_SUGGEST_DOCKER_INSTALL =
  * socket — on a machine with no Docker installed, Go's socket dial fails,
  * `client.IsErrConnectionFailed` fires, and the install hint is exactly the
  * guidance that case needs (`misc.go:155-166`).
+ *
+ * "error during connect" is the pinned SDK's uniform outer wrap for every
+ * transport-level failure (`client/request.go:175-185`, docker/docker
+ * v28.5.2) and therefore the closest 1:1 stderr equivalent of
+ * `errConnectionFailed`'s breadth. It notably covers Windows daemon-down,
+ * where a failed npipe open is wrapped as "error during connect: this error
+ * may indicate that the docker daemon is not running: …" (elevated,
+ * `request.go:181`) or "… the docker client must be run with elevated
+ * privileges …" (non-elevated, `request.go:178`) — word orders none of the
+ * Unix-socket phrases match. The inner OS text ("The system cannot find the
+ * file specified") is localized per the SDK's own comment
+ * (`request.go:172-174`), so it is deliberately not matched.
  */
 export function legacyIsDockerDaemonUnreachable(stderr: string): boolean {
-  return /cannot connect to the docker daemon|cannot connect to podman|is the docker daemon running|permission denied while trying to connect|docker: command not found/iu.test(
+  return /cannot connect to the docker daemon|cannot connect to podman|is the docker daemon running|permission denied while trying to connect|docker: command not found|error during connect/iu.test(
     stderr,
   );
 }
