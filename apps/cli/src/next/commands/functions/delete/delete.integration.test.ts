@@ -129,11 +129,6 @@ function setup(
   return { out, layer, api };
 }
 
-// Strip ANSI SGR (aqua slug/ref via `legacyAqua`) so byte-assertions are
-// stable whether or not the test stdout supports color.
-// eslint-disable-next-line no-control-regex
-const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
-
 describe("functions delete", () => {
   it.live("deletes a function from the linked project in text mode", () =>
     Effect.gen(function* () {
@@ -146,7 +141,7 @@ describe("functions delete", () => {
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/hello-world",
       );
       expect(api.requests[0]?.headers["x-supabase-command"]).toBe("functions delete");
-      expect(stripSgr(out.stdoutText)).toBe(
+      expect(out.stdoutText).toBe(
         "Deleted Function hello-world from project abcdefghijklmnopqrst.\n",
       );
     }),
@@ -165,7 +160,7 @@ describe("functions delete", () => {
       expect(api.requests[0]?.url).toBe(
         "https://api.supabase.com/v1/projects/qrstuvwxyzabcdefghij/functions/hello-world",
       );
-      expect(stripSgr(out.stdoutText)).toBe(
+      expect(out.stdoutText).toBe(
         "Deleted Function hello-world from project qrstuvwxyzabcdefghij.\n",
       );
     }),
