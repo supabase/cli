@@ -44,6 +44,7 @@ import {
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { Tty } from "../../src/shared/runtime/tty.service.ts";
+import { CurrentAnalyticsContext } from "../../src/shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../src/shared/telemetry/identity.ts";
@@ -563,6 +564,29 @@ export function mockAnalytics() {
     aliased,
     groupIdentified,
   };
+}
+
+// `withCommandInstrumentation`/`withLegacyCommandInstrumentation` thread
+// `flags`/`command`/etc. through `CurrentAnalyticsContext`, not the direct
+// `capture()` call args. `mockAnalytics()` above deliberately doesn't merge
+// that context (most callers don't need it) — use this variant when asserting
+// on instrumentation-provided properties.
+export function mockContextualAnalytics() {
+  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
+  const layer = Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: (event: string, properties: Record<string, unknown> = {}) =>
+        Effect.gen(function* () {
+          const context = yield* CurrentAnalyticsContext;
+          captured.push({ event, properties: { ...context, ...properties } });
+        }),
+      identify: () => Effect.void,
+      alias: () => Effect.void,
+      groupIdentify: () => Effect.void,
+    }),
+  );
+  return { layer, captured };
 }
 
 export function mockTelemetryRuntime(

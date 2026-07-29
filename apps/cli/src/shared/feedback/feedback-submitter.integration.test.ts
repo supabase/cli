@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { FEEDBACK_STAGING } from "./feedback-config.ts";
-import { feedbackSubmitterLayer } from "./feedback-submitter.layer.ts";
+import { FEEDBACK_STAGING, feedbackSubmitterLayer } from "./feedback-submitter.layer.ts";
 import type { FeedbackSubmission } from "./feedback-submitter.service.ts";
 import { FeedbackSubmitter } from "./feedback-submitter.service.ts";
 

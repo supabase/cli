@@ -21,13 +21,13 @@ Alias: `supabase btw [message...]`
 | ------ | ------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `POST` | `<feedback-env-url>/rest/v1/interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, source: "cli", user_agent, project_ref (or null), metadata: { cli_version, os, arch, is_agent, agent_name? } }` | none (fire-and-forget; only the error status is checked) |
 
-`<feedback-env-url>` follows the resolved profile (`feedback.env.ts`):
+`<feedback-env-url>` follows the resolved profile (`feedback.command.ts`):
 `supabase-staging` / `supabase-local` → the staging feedback project;
 every other profile (incl. YAML-file profiles) → production. Production
 currently reuses the staging project until a dedicated one is provisioned
 (CLI-1946); connection constants live in
-`src/shared/feedback/feedback-config.ts` and are safe to commit (publishable
-key, insert-only RLS). The request times out after 10 s.
+`src/shared/feedback/feedback-submitter.layer.ts` and are safe to commit
+(publishable key, insert-only RLS). The request times out after 10 s.
 
 ## Environment Variables
 

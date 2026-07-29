@@ -52,20 +52,21 @@ export const legacyFeedback = Effect.fn("legacy.feedback")(function* (args: Lega
   const submitter = yield* FeedbackSubmitter;
 
   const message = yield* legacyResolveFeedbackMessage(args);
+  const agentName = Option.getOrUndefined(aiTool.name);
 
   const sending = yield* output.task("Sending feedback...");
 
   yield* submitter
     .submit({
       message,
-      ...(Option.isSome(cliConfig.projectId) ? { projectRef: cliConfig.projectId.value } : {}),
+      projectRef: Option.getOrUndefined(cliConfig.projectId),
       context: {
         cliVersion: telemetryRuntime.cliVersion,
         userAgent: cliConfig.userAgent,
         os: runtimeInfo.platform,
         arch: runtimeInfo.arch,
-        isAgent: Option.isSome(aiTool.name),
-        ...(Option.isSome(aiTool.name) ? { agentName: aiTool.name.value } : {}),
+        isAgent: agentName !== undefined,
+        agentName,
       },
     })
     .pipe(Effect.tapError(() => sending.fail()));

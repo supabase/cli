@@ -6,10 +6,9 @@ import {
   FeedbackSubmitter,
 } from "../../../shared/feedback/feedback-submitter.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import {
+  mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
@@ -50,27 +49,6 @@ function mockAiTool(agentName?: string) {
     AiTool,
     AiTool.of({ name: agentName === undefined ? Option.none() : Option.some(agentName) }),
   );
-}
-
-// `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
-// `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors
-// the identical local helper in `functions/delete/delete.integration.test.ts`.
-function mockContextualAnalytics() {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-  return { layer, captured };
 }
 
 function setupLegacyFeedback(

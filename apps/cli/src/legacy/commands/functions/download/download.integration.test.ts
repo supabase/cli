@@ -5,8 +5,6 @@ import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../../shared/telemetry/analytics.service.ts";
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
@@ -16,7 +14,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockContextualAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../../shared/functions/download.errors.ts";
 import { legacyFunctionsDownloadHandler } from "./download.command.ts";
@@ -25,28 +23,6 @@ import { legacyFunctionsDownload } from "./download.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-functions-download-legacy-");
 
-// `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
-// `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors
-// the identical local helper in `legacy-command-instrumentation.unit.test.ts`.
-// The shared `mockAnalytics()` in tests/helpers/mocks.ts deliberately doesn't
-// merge this context (most callers don't need it).
-function mockContextualAnalytics() {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-  return { layer, captured };
-}
 const baseFlags: LegacyFunctionsDownloadFlags = {
   functionName: Option.some("hello-world"),
   projectRef: Option.none(),
