@@ -19,45 +19,69 @@ import (
 
 type Proxy struct {
 	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
-	// tlsConfig is what pgx resolved from sslmode. DialFunc completes the
-	// handshake itself, so logged frames are plaintext in memory but not on the wire.
-	tlsConfig *tls.Config
-	errChan   chan error
+	// tlsPlan is pgconn's TLS config per attempt, primary first. DialFunc walks it
+	// so sslmode=allow keeps its plaintext-then-TLS retry, and completes the
+	// handshake itself, leaving logged frames plaintext in memory but not on the wire.
+	tlsPlan  []*tls.Config
+	attempts map[string]int
+	errChan  chan error
 }
 
 func NewProxy() Proxy {
 	dialer := net.Dialer{}
 	return Proxy{
 		dialContext: dialer.DialContext,
+		attempts:    map[string]int{},
 		errChan:     make(chan error, 1),
 	}
 }
 
 func SetupPGX(config *pgx.ConnConfig) {
+	tlsPlan := []*tls.Config{config.TLSConfig}
+	for _, fallback := range config.Fallbacks {
+		if fallback.Host != config.Host {
+			break
+		}
+		tlsPlan = append(tlsPlan, fallback.TLSConfig)
+	}
 	proxy := Proxy{
 		dialContext: config.DialFunc,
-		tlsConfig:   config.TLSConfig,
+		tlsPlan:     tlsPlan,
+		attempts:    map[string]int{},
 		errChan:     make(chan error, 1),
 	}
 	config.DialFunc = proxy.DialFunc
 	// pgx must not negotiate TLS again over the in-memory pipe; clearing these
 	// *without* DialFunc's handshake is what downgraded sslmode=require (#5872).
-	// Every attempt then reuses the primary's config, which pgconn only leaves
-	// plaintext for sslmode=disable and =allow (config.go:772-780), so a required
-	// connection stays encrypted; =allow loses its opportunistic TLS retry.
 	config.TLSConfig = nil
 	for _, fallback := range config.Fallbacks {
 		fallback.TLSConfig = nil
 	}
 }
 
+// nextTLSConfig returns the TLS config for this attempt against addr. pgconn dials
+// each plan entry once per resolved address, in plan order, so a per-address
+// counter replays the same TLS/plaintext sequence it would have used itself.
+func (p *Proxy) nextTLSConfig(addr string) *tls.Config {
+	if p.attempts == nil {
+		p.attempts = map[string]int{}
+	}
+	i := p.attempts[addr]
+	p.attempts[addr]++
+	if i < len(p.tlsPlan) {
+		return p.tlsPlan[i]
+	}
+	return nil
+}
+
 func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, error) {
+	tlsConfig := p.nextTLSConfig(addr)
 	serverConn, err := p.dialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
-	if p.tlsConfig != nil {
-		if serverConn, err = startTLS(ctx, serverConn, p.tlsConfig); err != nil {
+	if tlsConfig != nil {
+		if serverConn, err = startTLS(ctx, serverConn, tlsConfig); err != nil {
 			return nil, err
 		}
 	}
