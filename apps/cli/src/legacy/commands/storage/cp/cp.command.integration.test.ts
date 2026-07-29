@@ -147,6 +147,24 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
       message:
         'invalid argument "18446744073709551616" for "-j, --jobs" flag: strconv.ParseUint: parsing "18446744073709551616": value out of range',
     },
+    // pflag `%q`s the value and strconv's NumError `strconv.Quote`s `e.Num`
+    // (`strconv/number.go:258-260`), so escapable tokens stay one escaped
+    // line — never a raw quote/backslash/newline in stderr.
+    {
+      token: 'a"b',
+      message:
+        'invalid argument "a\\"b" for "-j, --jobs" flag: strconv.ParseUint: parsing "a\\"b": invalid syntax',
+    },
+    {
+      token: "a\\b",
+      message:
+        'invalid argument "a\\\\b" for "-j, --jobs" flag: strconv.ParseUint: parsing "a\\\\b": invalid syntax',
+    },
+    {
+      token: "1\n2",
+      message:
+        'invalid argument "1\\n2" for "-j, --jobs" flag: strconv.ParseUint: parsing "1\\n2": invalid syntax',
+    },
   ])(
     "rejects --jobs=$token at parse time with pflag's exact raw-token message",
     ({ token, message }) => {
