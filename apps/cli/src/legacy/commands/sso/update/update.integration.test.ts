@@ -47,7 +47,7 @@ interface SetupOpts {
   upgradeGate?: "gated" | "notGated";
   /**
    * Raw argv the handler sees via `Stdio.Stdio` — drives the pflag-faithful
-   * scan (`pflagLongFlagOccurrences`) behind both the mutex checks and the
+   * scan (`pflagArgvScan`) behind the arity check, the mutex checks, and the
    * value reconciliation. Defaults to a bare invocation with no optional
    * flags present; tests that pass flags must pass matching argv here
    * (usually via `cliArgsFor`), exactly as the real parser guarantees.
@@ -502,13 +502,17 @@ describe("legacy sso update integration", () => {
   );
 
   it.live(
-    "reconciles project-ref consuming --metadata-file: fails ref validation like Go, no API calls",
+    "arity emulation: project-ref consuming --metadata-file orphans x.xml — fails ExactArgs like Go, no API calls",
     () => {
-      // `--project-ref --metadata-file x.xml --metadata-url u`: pflag hands
-      // `--metadata-file` to `--project-ref` as its value, so Go fails
-      // `AssertProjectRefIsValid` before any request — no mutex error, no
-      // GET, no metadata read. See `add.integration.test.ts` for the full
-      // rationale (CLI-1982); the reconciliation is shared.
+      // `<id> --project-ref --metadata-file x.xml --metadata-url u`: pflag
+      // hands `--metadata-file` to `--project-ref` as its value, which makes
+      // `x.xml` a positional — cobra's `ValidateArgs`/`ExactArgs(1)`
+      // (`command.go:968`, `cmd/sso.go:87`) then rejects the arg count
+      // before any hook, mutex check, or request. The Effect parser read
+      // `--metadata-file x.xml` as a normal flag and saw exactly one
+      // positional, so the handler must re-count from the scan (PR #5974
+      // review; this refines the earlier ref-validation expectation — Go
+      // never even reaches the ref check here).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -532,10 +536,175 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyInvalidProjectRefError");
-          expect(dump).toContain("Invalid project ref format. Must be like");
+          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("accepts 1 arg(s), received 2");
         }
         expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "arity emulation: a bare --domains consuming --metadata-url orphans the URL — fails ExactArgs like Go, no GET/PUT",
+    () => {
+      // `--domains --metadata-url https://… <id>`: pflag consumes
+      // `--metadata-url` as the domains value, leaving BOTH the URL and the
+      // provider ID positional — Go rejects via `ExactArgs(1)` before any
+      // request. The Effect parser instead read the URL as metadata-url's
+      // value and saw one positional, so without the re-count the handler
+      // would GET and PUT (PR #5974 review, Codex thread).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          "--domains",
+          "--metadata-url",
+          "https://idp.example.com/m",
+          VALID_PROVIDER_ID,
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({
+            ...defaultFlags,
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("accepts 1 arg(s), received 2");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "arity emulation: a bare --domains consuming a persistent global flag orphans its value",
+    () => {
+      // Binary-verified Go behaviour: `--domains --profile staging <id>`
+      // arity-errors because pflag hands `--profile` to `--domains` and
+      // `staging` becomes positional. The scan must know the root's
+      // persistent value flags (`cmd/root.go:324-333`) to see this.
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", "--domains", "--profile", "staging", VALID_PROVIDER_ID],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("accepts 1 arg(s), received 2");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "arity emulation: persistent global value flags and -o do not miscount positionals",
+    () => {
+      // Regression guards for the re-count: pflag consumes these globals'
+      // values (`--workdir .`, `--output-format json`, `-o json`), so none
+      // of them may register as a second positional — each invocation must
+      // sail through to the PUT exactly as before.
+      const argvVariants: ReadonlyArray<ReadonlyArray<string>> = [
+        ["sso", "update", "--workdir", ".", VALID_PROVIDER_ID],
+        ["sso", "update", "--output-format", "json", VALID_PROVIDER_ID],
+        ["sso", "update", "-o", "json", VALID_PROVIDER_ID],
+      ];
+      return Effect.gen(function* () {
+        for (const cliArgs of argvVariants) {
+          const { layer, api } = setup({ cliArgs });
+          yield* legacySsoUpdate(defaultFlags).pipe(Effect.provide(layer));
+          expect(api.requests.some((r) => r.method === "PUT")).toBe(true);
+        }
+      });
+    },
+  );
+
+  it.live("arity emulation: the arity error wins over a mutex violation", () => {
+    // cobra's `ValidateArgs` (`command.go:968`) runs before
+    // `ValidateFlagGroups` (`command.go:1010`): with `--domains` +
+    // `--add-domains` both set AND `--metadata-file` swallowing
+    // `--metadata-url` (orphaning `u` as a second positional), Go reports
+    // the arg-count error, not the mutex template.
+    const { layer, api } = setup({
+      cliArgs: [
+        "sso",
+        "update",
+        "--domains",
+        "a.com",
+        "--add-domains",
+        "b.com",
+        "--metadata-file",
+        "--metadata-url",
+        "u",
+        VALID_PROVIDER_ID,
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoUpdate({
+          ...defaultFlags,
+          domains: ["a.com"],
+          addDomains: ["b.com"],
+          metadataUrl: Option.some("u"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoUpdateArityError");
+        expect(dump).not.toContain("LegacySsoMutexFlagError");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("arity emulation: the arity error wins over an invalid provider ID", () => {
+    // Go's provider-ID format check lives inside `RunE` (`cmd/sso.go:90-91`),
+    // long after `ValidateArgs` — a bad UUID must not mask the arg-count
+    // error.
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", "--domains", "--metadata-url", "u", "not-a-uuid"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoUpdate({
+          ...defaultFlags,
+          providerId: "not-a-uuid",
+          metadataUrl: Option.some("u"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoUpdateArityError");
+        expect(dump).not.toContain("LegacySsoInvalidUuidError");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "arity emulation: a consumed boolean global keeps the count at 1 and PUTs, like Go",
+    () => {
+      // `--domains --yes <id>`: pflag hands `--yes` to `--domains` (a
+      // consumed token is a value no matter what it looks like), so only the
+      // provider ID stays positional — Go proceeds and PUTs
+      // `domains: ["--yes"]` (binary-verified). The re-count must not turn
+      // this into an arity error.
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", "--domains", "--yes", VALID_PROVIDER_ID],
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoUpdate(defaultFlags);
+        const putReq = api.requests.find((r) => r.method === "PUT");
+        expect((putReq?.body as { domains?: string[] })?.domains).toEqual(["--yes"]);
       }).pipe(Effect.provide(layer));
     },
   );

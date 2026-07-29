@@ -9,7 +9,9 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  pflagLongFlagOccurrences,
+  PERSISTENT_VALUE_FLAG_NAMES,
+  PERSISTENT_VALUE_FLAG_SHORTHANDS,
+  pflagArgvScan,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -28,6 +30,7 @@ import {
 } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoMutexFlagError,
+  LegacySsoUpdateArityError,
   LegacySsoUpdateAttributeMappingFileError,
   LegacySsoUpdateMetadataFileError,
   LegacySsoUpdateNetworkError,
@@ -73,22 +76,29 @@ const SSO_UPDATE_MUTEX_GROUPS = [
 ] as const;
 
 /**
- * Every value-taking (non-boolean) flag `sso update` declares
- * (`update.command.ts`) — tells `pflagLongFlagOccurrences` which bare tokens
- * consume the next argv token as their value. `--skip-url-validation` is this
- * command's only boolean flag and is deliberately excluded; booleans never
- * consume a following token.
+ * Every value-taking (non-boolean) flag reachable when `sso update` parses:
+ * the command's own (`update.command.ts`) plus the root's persistent value
+ * flags — these tell `pflagArgvScan` which bare tokens consume the next argv
+ * token as their value (and therefore which tokens are pflag-effective
+ * positionals). `--skip-url-validation` is this command's only boolean flag
+ * and is deliberately excluded; booleans never consume a following token.
+ * `sso update` declares no shorthands of its own (`cmd/sso.go:170-176`), so
+ * only the persistent `-o` is mapped.
  */
-const SSO_UPDATE_VALUE_FLAG_NAMES = new Set([
-  "project-ref",
-  "domains",
-  "add-domains",
-  "remove-domains",
-  "metadata-file",
-  "metadata-url",
-  "attribute-mapping-file",
-  "name-id-format",
-]);
+const SSO_UPDATE_SCAN_SPEC = {
+  valueFlagNames: new Set([
+    "project-ref",
+    "domains",
+    "add-domains",
+    "remove-domains",
+    "metadata-file",
+    "metadata-url",
+    "attribute-mapping-file",
+    "name-id-format",
+    ...PERSISTENT_VALUE_FLAG_NAMES,
+  ]),
+  valueFlagShorthands: PERSISTENT_VALUE_FLAG_SHORTHANDS,
+} as const;
 
 const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
@@ -153,11 +163,12 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
   const rawArgs = yield* stdio.args;
 
   yield* Effect.gen(function* () {
-    // cobra runs `ValidateFlagGroups` (`command.go:1010`) before `RunE`
-    // (`command.go:1014`), and Go's provider-ID format check lives inside
-    // `RunE` (`cmd/sso.go:90-91`) — so a mutex violation must win over an
-    // invalid provider ID when both apply. Keep this block ahead of
-    // `validateUuid` below to match that precedence.
+    // cobra runs `ValidateArgs` (`command.go:968`, before every hook), then
+    // `ValidateFlagGroups` (`command.go:1010`), before `RunE`
+    // (`command.go:1015`), and Go's provider-ID format check lives inside
+    // `RunE` (`cmd/sso.go:90-91`) — so an arity violation must win over a
+    // mutex violation, and both must win over an invalid provider ID. Keep
+    // this block ahead of `validateUuid` below to match that precedence.
     //
     // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
     // all — not the resulting value. `--domains`/`--add-domains`/
@@ -168,12 +179,26 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     //
     // The scan is pflag-faithful: a bare `--metadata-file --metadata-url` is
     // pflag consuming `--metadata-url` as `metadata-file`'s (oddly named)
-    // value, not two flags being set — see `pflagLongFlagOccurrences`.
-    const occurrences = pflagLongFlagOccurrences(
-      rawArgs,
-      SSO_UPDATE_COMMAND_PATH,
-      SSO_UPDATE_VALUE_FLAG_NAMES,
-    );
+    // value, not two flags being set — see `pflagArgvScan`.
+    const scan = pflagArgvScan(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
+    const occurrences = scan.occurrences;
+
+    // `ExactArgs(1)` (`cmd/sso.go:87`) counts pflag-effective positionals,
+    // which shift away from what the Effect parser saw whenever pflag
+    // consumed a flag token as a value: `--domains --metadata-url u <id>` is
+    // pflag handing `--metadata-url` to `--domains` and leaving BOTH `u` and
+    // `<id>` positional — Go rejects the arg count before any hook, flag
+    // validation, or request. The parser's own arity check can't see this,
+    // so re-count from the scan (gated on `anchored`: an unscoped scan has
+    // no positional information).
+    if (scan.anchored && scan.positionals.length !== 1) {
+      return yield* Effect.fail(
+        new LegacySsoUpdateArityError({
+          message: `accepts 1 arg(s), received ${scan.positionals.length}`,
+        }),
+      );
+    }
+
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
       const changed = group.filter((flagName) => occurrences.has(flagName));
       if (changed.length > 1) {

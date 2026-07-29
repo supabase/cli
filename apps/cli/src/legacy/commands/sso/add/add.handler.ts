@@ -7,7 +7,9 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  pflagLongFlagOccurrences,
+  PERSISTENT_VALUE_FLAG_NAMES,
+  PERSISTENT_VALUE_FLAG_SHORTHANDS,
+  pflagArgvScan,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -25,6 +27,7 @@ import {
   LegacySsoAddAttributeMappingFileError,
   LegacySsoAddMetadataFileError,
   LegacySsoAddNetworkError,
+  LegacySsoAddRequiredFlagError,
   LegacySsoAddSamlDisabledError,
   LegacySsoAddUnexpectedStatusError,
   LegacySsoMutexFlagError,
@@ -58,25 +61,28 @@ const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
 /**
- * Every value-taking (non-boolean) flag `sso add` declares
- * (`add.command.ts`) — tells `pflagLongFlagOccurrences` which bare tokens
- * consume the next argv token as their value. `--skip-url-validation` is
- * this command's only boolean flag and is deliberately excluded; booleans
- * never consume a following token. `--type`'s `-t` shorthand is not covered
- * — the raw-argv scan only understands long flags, same limitation as
- * `sso update`'s scan (a shorthand's consumed value could in principle be
- * misread, but pflag would fail `-t`'s enum validation on any dash-prefixed
- * value before flag groups are even checked).
+ * Every value-taking (non-boolean) flag reachable when `sso add` parses:
+ * the command's own (`add.command.ts`) plus the root's persistent value
+ * flags — these tell `pflagArgvScan` which bare tokens consume the next
+ * argv token as their value. `--skip-url-validation` is this command's only
+ * boolean flag and is deliberately excluded; booleans never consume a
+ * following token. `--type`'s `-t` shorthand (Go `cmd/sso.go:157` `VarP`)
+ * is covered via the shorthand map so a genuine `-t saml` invocation is
+ * seen exactly as pflag sees it.
  */
-const SSO_ADD_VALUE_FLAG_NAMES = new Set([
-  "project-ref",
-  "type",
-  "domains",
-  "metadata-file",
-  "metadata-url",
-  "attribute-mapping-file",
-  "name-id-format",
-]);
+const SSO_ADD_SCAN_SPEC = {
+  valueFlagNames: new Set([
+    "project-ref",
+    "type",
+    "domains",
+    "metadata-file",
+    "metadata-url",
+    "attribute-mapping-file",
+    "name-id-format",
+    ...PERSISTENT_VALUE_FLAG_NAMES,
+  ]),
+  valueFlagShorthands: new Map([["t", "type"], ...PERSISTENT_VALUE_FLAG_SHORTHANDS]),
+} as const;
 
 export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: LegacySsoAddFlags) {
   const output = yield* Output;
@@ -90,9 +96,10 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
   const rawArgs = yield* stdio.args;
 
   yield* Effect.gen(function* () {
-    // cobra runs `ValidateFlagGroups` (`command.go:1010`) before `RunE`
-    // (`command.go:1014`), so the mutex check must precede everything Go does
-    // inside `RunE`. Keep this block first.
+    // cobra runs `ValidateRequiredFlags` (`command.go:1007`) and
+    // `ValidateFlagGroups` (`command.go:1010`) — in that order — before
+    // `RunE` (`command.go:1015`), so these checks must precede everything Go
+    // does inside `RunE`. Keep this block first.
     //
     // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
     // all — not the resulting value: `--metadata-file= --metadata-url x` must
@@ -101,11 +108,22 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // whatever the TS parser produced — e.g. a bare
     // `--metadata-file --metadata-url` parses to two `none`s here but is a
     // single consumed value in pflag (CLI-1982).
-    const occurrences = pflagLongFlagOccurrences(
-      rawArgs,
-      SSO_ADD_COMMAND_PATH,
-      SSO_ADD_VALUE_FLAG_NAMES,
-    );
+    const scan = pflagArgvScan(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
+    const occurrences = scan.occurrences;
+
+    // `MarkFlagRequired("type")` (`cmd/sso.go:165`): when pflag consumed the
+    // `--type` token as another flag's value (e.g. `--domains --type saml`),
+    // pflag never marks `type` changed and Go fails the required-flag check
+    // before `RunE` — no POST is ever made. The Effect parser can't see this
+    // (it refuses flag-shaped values, so it read `--type saml` as a normal
+    // flag), hence the emulation here. A genuine `-t saml` records a `type`
+    // occurrence via the scan's shorthand map and never trips this.
+    if (!occurrences.has("type") && scan.consumedLongFlagNames.has("type")) {
+      return yield* Effect.fail(
+        new LegacySsoAddRequiredFlagError({ message: `required flag(s) "type" not set` }),
+      );
+    }
+
     const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) => occurrences.has(flagName));
     if (changed.length > 1) {
       return yield* Effect.fail(
@@ -122,8 +140,10 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // can never pair with a metadata source pflag never set (e.g.
     // `--project-ref --metadata-file x.xml --metadata-url u`, where Go hands
     // `--metadata-file` to `--project-ref` and fails ref validation without
-    // ever touching metadata). `--type` keeps its parsed value: `-t` is a
-    // shorthand the scan cannot see, and required-ness is parser-enforced.
+    // ever touching metadata). `--type` keeps its parsed value: the enum has
+    // a single member the parser already validated, so whenever the handler
+    // runs at all the parsed value equals the pflag-effective one (the
+    // consumed-token case is rejected by the required-flag check above).
     // `--name-id-format` and `--skip-url-validation` keep their parsed
     // values gated on the scan agreeing they were passed at all.
     const projectRef = legacySsoPflagStringValue(occurrences, "project-ref");

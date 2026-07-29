@@ -63,6 +63,16 @@ export class LegacySsoMutexFlagError extends Data.TaggedError("LegacySsoMutexFla
   readonly message: string;
 }> {}
 
+// cobra's `ValidateRequiredFlags` (`command.go:1007`), emulated for the case
+// the Effect parser cannot see: pflag consumed the required flag's own token
+// as another flag's value, so pflag never marks it `Changed` and Go exits
+// before `RunE` (CLI-1982). Message byte-matches cobra's template.
+export class LegacySsoAddRequiredFlagError extends Data.TaggedError(
+  "LegacySsoAddRequiredFlagError",
+)<{
+  readonly message: string;
+}> {}
+
 // Shared across add + update — metadata URL validation.
 export class LegacySsoMetadataUrlInvalidError extends Data.TaggedError(
   "LegacySsoMetadataUrlInvalidError",
@@ -106,6 +116,15 @@ export class LegacySsoShowEnvNotSupportedError extends Data.TaggedError(
 }> {}
 
 // `sso update`
+// cobra's `ValidateArgs` / `ExactArgs(1)` (`command.go:968`, `cmd/sso.go:87`),
+// emulated for the case the Effect parser cannot see: pflag consumed a flag
+// token as a value, shifting what the parser read as a flag's value into the
+// positional list, so Go rejects the arg count before any hook or request
+// (CLI-1982). Message byte-matches cobra's `ExactArgs` template.
+export class LegacySsoUpdateArityError extends Data.TaggedError("LegacySsoUpdateArityError")<{
+  readonly message: string;
+}> {}
+
 export class LegacySsoUpdateNetworkError extends Data.TaggedError("LegacySsoUpdateNetworkError")<{
   readonly message: string;
 }> {}

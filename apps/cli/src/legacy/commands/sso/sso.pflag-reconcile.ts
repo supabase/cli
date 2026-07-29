@@ -4,7 +4,7 @@ import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-fla
 
 /**
  * Reconciles an Effect-parsed option flag with pflag semantics
- * (`pflagLongFlagOccurrences`): the flag is only set when the raw-argv scan
+ * (`pflagArgvScan`): the flag is only set when the raw-argv scan
  * says pflag would have set it, and its value is the scan's — for a pflag
  * `StringVar`, the last occurrence wins.
  *

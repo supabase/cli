@@ -41,8 +41,8 @@ interface SetupOpts {
   metadataUrlResponse?: { status: number; body: string };
   /**
    * Raw argv the handler sees via `Stdio.Stdio` — drives the pflag-faithful
-   * scan (`pflagLongFlagOccurrences`) behind both the mutex check and the
-   * value reconciliation. Defaults to a bare invocation with no optional
+   * scan (`pflagArgvScan`) behind the required-flag check, the mutex check,
+   * and the value reconciliation. Defaults to a bare invocation with no optional
    * flags present; tests that pass flags must pass matching argv here
    * (usually via `cliArgsFor`), exactly as the real parser guarantees.
    */
@@ -365,6 +365,102 @@ describe("legacy sso add integration", () => {
           expect(dump).toContain("Invalid project ref format. Must be like");
         }
         expect(api.requests.some((r) => r.method === "POST")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "required emulation: a bare --domains consuming --type fails the required-flag check, no POST",
+    () => {
+      // `sso add --domains --type saml`: pflag hands `--type` to `--domains`
+      // as its value and `saml` becomes a positional — `type` is never
+      // marked changed, so Go fails cobra's `ValidateRequiredFlags`
+      // (`command.go:1007`, `MarkFlagRequired("type")` at `cmd/sso.go:165`)
+      // before `RunE` and never POSTs. The Effect parser read `--type saml`
+      // as a normal flag, so the handler must re-derive the required check
+      // from the scan (PR #5974 review).
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--domains", "--type", "saml"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoAddRequiredFlagError");
+          expect(dump).toContain('required flag(s) \\"type\\" not set');
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("required emulation: the required-flag error wins over a mutex violation", () => {
+    // cobra runs `ValidateRequiredFlags` (`command.go:1007`) before
+    // `ValidateFlagGroups` (`command.go:1010`), so when `--domains` swallows
+    // `--type` AND both metadata flags are set, Go reports the required-flag
+    // error, not the mutex template (binary-verified).
+    const { layer, api } = setup({
+      cliArgs: [
+        "sso",
+        "add",
+        "--domains",
+        "--type",
+        "saml",
+        "--metadata-file",
+        "a.xml",
+        "--metadata-url",
+        "https://idp.example.com/m",
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoAdd({
+          ...defaultFlags,
+          metadataFile: Option.some("a.xml"),
+          metadataUrl: Option.some("https://idp.example.com/m"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoAddRequiredFlagError");
+        expect(dump).not.toContain("LegacySsoMutexFlagError");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("required emulation: a -t shorthand invocation POSTs normally", () => {
+    // The scan resolves `-t saml` to a `type` occurrence via the shorthand
+    // map (`cmd/sso.go:157` registers `VarP`), so a genuine shorthand
+    // invocation must never trip the emulated required-flag check.
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "-t", "saml"],
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoAdd(defaultFlags);
+      const req = api.requests.find((r) => r.method === "POST");
+      expect((req?.body as { type?: string })?.type).toBe("saml");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "required emulation: -t saml plus a consumed --type still POSTs, like pflag (type IS changed)",
+    () => {
+      // `-t saml --domains --type saml`: pflag sets `type` via the shorthand
+      // first, then `--domains` swallows the long `--type` token — the flag
+      // is changed, so Go proceeds and POSTs with `domains: ["--type"]`.
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "-t", "saml", "--domains", "--type", "saml"],
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoAdd(defaultFlags);
+        const req = api.requests.find((r) => r.method === "POST");
+        expect(req).toBeDefined();
+        const body = req?.body as { type?: string; domains?: string[] };
+        expect(body?.type).toBe("saml");
+        expect(body?.domains).toEqual(["--type"]);
       }).pipe(Effect.provide(layer));
     },
   );

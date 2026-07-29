@@ -44,6 +44,7 @@ GET still uses the typed client.
 | Code | Condition                                                                                                                            |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `0`  | success                                                                                                                              |
+| `1`  | `LegacySsoUpdateArityError` — pflag-effective positional count ≠ 1 (cobra `ValidateArgs`/`ExactArgs(1)`; a consumed flag token orphans its parser-value into the positionals) |
 | `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID                                                                    |
 | `1`  | `LegacySsoMutexFlagError` — flag combinations: `--domains` with `--add/--remove-domains`, or `--metadata-file` with `--metadata-url` |
 | `1`  | `LegacySsoUpdateMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8              |
@@ -82,6 +83,7 @@ Single `success` event with the parsed response as data.
 - `--domains` is mutually exclusive with `--add-domains` and `--remove-domains`.
 - `--metadata-file` and `--metadata-url` are mutually exclusive.
 - Flag values follow pflag's consumption rules, not the TS parser's: every value the handler acts on (`--project-ref`, `--metadata-file`, `--metadata-url`, `--attribute-mapping-file`, the three domain slices, plus set-ness of `--name-id-format`/`--skip-url-validation`) is reconciled against a pflag-faithful raw-argv scan — same mechanism as `sso add` (CLI-1982).
+- Positional arity follows pflag too: cobra's `ExactArgs(1)` is re-counted over pflag-effective positionals (`ValidateArgs` runs before every hook and flag validation), so a consumed flag token that orphans its parser-value (`--domains --metadata-url u <id>`) fails with cobra's exact `accepts 1 arg(s), received 2` before the GET — and wins over both the mutex and invalid-UUID errors.
 - Always performs the GET pre-check (matches Go's `update.go:42`), regardless of whether `--add-domains` / `--remove-domains` are used.
 - Domain merge: removals are applied first, then additions. Go uses a `map[string]bool` so the resulting order is **unordered**; consumers must sort if comparing.
 - **`domains` is always present in the PUT body** (CLI-1981): Go's `--add-domains`/`--remove-domains` default to a non-nil `[]string{}` (`cmd/sso.go:171-172`), so `update.go:84`'s `!= nil` merge gate is always true from the CLI. With no domain flags (or an explicit empty `--domains=`) the body carries the recomputed existing set; when the provider has no domains it is the literal `"domains":[]` (non-nil `*[]string` under `omitempty` — verified by live capture against the Go binary).
