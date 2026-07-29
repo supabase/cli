@@ -42,6 +42,11 @@ func SetupPGX(config *pgx.ConnConfig) {
 		if fallback.Host != config.Host {
 			break
 		}
+		// ConnectByUrl drops plaintext fallbacks once the primary is TLS, and it
+		// runs after this, so apply the same rule here or --debug reinstates them.
+		if config.TLSConfig != nil && fallback.TLSConfig == nil {
+			continue
+		}
 		tlsPlan = append(tlsPlan, fallback.TLSConfig)
 	}
 	proxy := Proxy{
@@ -66,12 +71,17 @@ func (p *Proxy) nextTLSConfig(addr string) *tls.Config {
 	if p.attempts == nil {
 		p.attempts = map[string]int{}
 	}
+	if len(p.tlsPlan) == 0 {
+		return nil
+	}
 	i := p.attempts[addr]
 	p.attempts[addr]++
-	if i < len(p.tlsPlan) {
-		return p.tlsPlan[i]
+	// pgconn redials an addr for the target_session_attrs retry, so clamp rather
+	// than fall off the plan into plaintext.
+	if i >= len(p.tlsPlan) {
+		i = len(p.tlsPlan) - 1
 	}
-	return nil
+	return p.tlsPlan[i]
 }
 
 func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, error) {
