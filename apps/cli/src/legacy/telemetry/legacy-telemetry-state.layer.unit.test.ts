@@ -268,4 +268,89 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
       expect(state.session_id).not.toBe("s");
     });
   });
+
+  // Go's `time.Parse(time.RFC3339Nano, …)` rejects calendar-invalid dates
+  // ("day out of range" / "hour out of range") that JS `Date.parse` silently
+  // normalizes (Feb 29 → Mar 1, T24 → next day) — verified against go1.26.
+  // A file carrying one must be wholly regenerated, not preserved.
+  it.effect(
+    "a calendar-invalid session_last_active (Feb 29, non-leap year) is wholly regenerated",
+    () => {
+      writeFileSync(
+        telemetryPath(),
+        JSON.stringify({
+          enabled: false,
+          device_id: "d",
+          session_id: "s",
+          session_last_active: "2025-02-29T00:00:00Z",
+        }),
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(true);
+        expect(state.device_id).toMatch(UUID_RE);
+        expect(state.session_id).toMatch(UUID_RE);
+      });
+    },
+  );
+
+  it.effect("a valid leap-day session_last_active decodes and preserves the state", () => {
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: "2024-02-29T00:00:00Z",
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      // The timestamp is long-stale so the session rotates, but the file
+      // decoded: enabled/device_id are preserved, exactly like Go.
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+    });
+  });
+
+  it.effect("an out-of-range hour (T24) in session_last_active is wholly regenerated", () => {
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: "2025-01-01T24:00:00Z",
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
+    });
+  });
+
+  it.effect(
+    "a Go-valid zone offset JS cannot parse (+24:00) still decodes and preserves the state",
+    () => {
+      // Go's parser bounds the offset hour at 24 and minute at 60, so
+      // `+24:00` is a VALID Go timestamp — regenerating here (as a plain
+      // `Date.parse` validity check would) would wrongly reset `enabled` and
+      // rotate the device identity.
+      writeFileSync(
+        telemetryPath(),
+        JSON.stringify({
+          enabled: false,
+          device_id: "d",
+          session_id: "s",
+          session_last_active: "2025-01-01T00:00:00+24:00",
+        }),
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.device_id).toBe("d");
+      });
+    },
+  );
 });

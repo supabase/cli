@@ -35,7 +35,40 @@ interface PriorState {
 // Go's `time.Parse(time.RFC3339Nano, …)` shape: date, `T`, time, optional
 // fraction, `Z` or a `±hh:mm` offset. JS `new Date(…)` alone accepts far more
 // (bare dates, RFC 2822, …) that Go rejects as malformed.
-const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const RFC3339_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+const DAYS_PER_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+// Gregorian leap rule, mirroring Go's `isLeap` (`time/time.go`).
+function daysInMonth(year: number, month: number): number {
+  if (month === 2 && year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) return 29;
+  return DAYS_PER_MONTH[month - 1] ?? 0;
+}
+
+/**
+ * Component-level port of Go's `time.Parse(time.RFC3339Nano, …)` validity
+ * (`parseSessionLastActive`, `state.go:69-85`). `Date.parse` cannot stand in
+ * for it in either direction (verified against go1.26 and Bun 1.3):
+ * - JS silently normalizes valid-range day overflow (`2025-02-29` → Mar 1,
+ *   `2025-04-31` → May 1) and hour 24 (`T24:00:00Z` → next day) that Go
+ *   rejects as "day/hour out of range";
+ * - JS rejects zone offsets Go accepts — Go bounds the offset hour at 24 and
+ *   the offset minute at 60 (`+24:00` and `+05:60` both parse), where JS
+ *   returns NaN.
+ */
+function isGoRfc3339(text: string): boolean {
+  const match = RFC3339_RE.exec(text);
+  if (match === null) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > daysInMonth(year, month)) return false;
+  if (Number(match[4]) > 23 || Number(match[5]) > 59 || Number(match[6]) > 59) return false;
+  if (match[7] !== undefined && (Number(match[7]) > 24 || Number(match[8]) > 60)) return false;
+  return true;
+}
 
 /**
  * Faithful port of Go's `decodeState` (`internal/telemetry/state.go:87-115`):
@@ -48,12 +81,14 @@ const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}
  * new `device_id`, new `session_id`. Notably, a corrupt file that still says
  * `"enabled": false` does NOT stay disabled.
  *
- * Two Go strictness corners are not reproducible here: `JSON.parse` collapses
- * `2.0` → `2`, so an integer-valued float `schema_version`/millis passes where
- * Go's unmarshal-into-int rejects it; and `enabled`'s type is only checked on
- * the non-consent path, where Go's single-shot `json.Unmarshal` type-checks
- * every field regardless. Both require a hand-corrupted file the CLI never
- * writes.
+ * Three Go strictness corners are not reproducible here: `JSON.parse`
+ * collapses `2.0` → `2`, so an integer-valued float `schema_version`/millis
+ * passes where Go's unmarshal-into-int rejects it; `enabled`'s type is only
+ * checked on the non-consent path, where Go's single-shot `json.Unmarshal`
+ * type-checks every field regardless; and integer unix millis beyond
+ * ECMAScript's ±8.64e15 `Date` range but within int64 make `toISOString()`
+ * throw → caught → full regeneration, where Go preserves the state. All
+ * require a hand-corrupted file the CLI never writes.
  */
 function readExistingState(text: string): PriorState | undefined {
   try {
@@ -88,7 +123,7 @@ function readExistingState(text: string): PriorState | undefined {
     const rawLastActive = record.session_last_active;
     let sessionLastActive: string;
     if (typeof rawLastActive === "string") {
-      if (!RFC3339_RE.test(rawLastActive) || !Number.isFinite(Date.parse(rawLastActive))) {
+      if (!isGoRfc3339(rawLastActive)) {
         return undefined;
       }
       sessionLastActive = rawLastActive;
@@ -150,6 +185,10 @@ export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.load
     const now = opts.now ?? new Date();
     const nowIso = now.toISOString();
 
+    // A Go-valid timestamp JS cannot parse (offset `+24:00`/`+05:60`) yields
+    // NaN here → treated as expired, rotating the session — which Go would
+    // also do for any realistic such timestamp; `enabled`/identity are
+    // preserved either way.
     const priorActive =
       prior?.session_last_active !== undefined ? new Date(prior.session_last_active).getTime() : 0;
     const expired =
