@@ -44,28 +44,75 @@ describe("legacyParseStringSliceFlag (pflag StringSlice CSV parity)", () => {
     expect(legacyParseStringSliceFlag([" public , private "])).toEqual([" public ", " private "]);
   });
 
-  // --- malformed inputs: must THROW ---
+  // --- malformed inputs: must THROW with Go's exact message ---
+  //
+  // Columns are 1-based BYTE offsets, matching Go `encoding/csv`'s
+  // `ParseError.Column`. Every vector below was verified against the real Go
+  // CLI (`apps/cli-go`, pflag v1.0.10 → encoding/csv, Go 1.26).
 
-  it("throws on an unterminated quoted field", () => {
-    // `"tenant` — opening quote but no closing quote
+  it("throws on an unterminated quoted field (column = byte length + 1, Go hits EOF)", () => {
+    // `"tenant` — opening quote but no closing quote; 7 bytes → column 8
     expect(() => legacyParseStringSliceFlag(['"tenant'])).toThrow(LegacyStringSliceFlagParseError);
     expect(() => legacyParseStringSliceFlag(['"tenant'])).toThrow(
-      /extraneous or missing " in quoted-field/,
+      'parse error on line 1, column 8: extraneous or missing " in quoted-field',
+    );
+    // `"1.2.3.4` — 8 bytes → column 9
+    expect(() => legacyParseStringSliceFlag(['"1.2.3.4'])).toThrow(
+      'parse error on line 1, column 9: extraneous or missing " in quoted-field',
+    );
+    // `a,"b` — the unterminated quote opens the SECOND field, but the column
+    // still counts from the start of the whole value; 4 bytes → column 5
+    expect(() => legacyParseStringSliceFlag(['a,"b'])).toThrow(
+      'parse error on line 1, column 5: extraneous or missing " in quoted-field',
     );
   });
 
-  it("throws on extra bytes after a closing quote", () => {
-    // `"a"b` — closing quote followed by a non-comma character
+  it("throws on extra bytes after a closing quote (column = byte position of the closing quote)", () => {
+    // `"a"b` — closing quote at byte 3
     expect(() => legacyParseStringSliceFlag(['"a"b'])).toThrow(LegacyStringSliceFlagParseError);
     expect(() => legacyParseStringSliceFlag(['"a"b'])).toThrow(
-      /extraneous or missing " in quoted-field/,
+      'parse error on line 1, column 3: extraneous or missing " in quoted-field',
+    );
+    // `aa,"b"x` — closing quote of the second field at byte 6
+    expect(() => legacyParseStringSliceFlag(['aa,"b"x'])).toThrow(
+      'parse error on line 1, column 6: extraneous or missing " in quoted-field',
     );
   });
 
-  it("throws on a bare quote inside an unquoted field", () => {
-    // `a"b` — bare " in a field that did not start with a quote
+  it("throws on a bare quote inside an unquoted field (column = byte position of the quote)", () => {
+    // `a"b` — bare " at byte 2
     expect(() => legacyParseStringSliceFlag(['a"b'])).toThrow(LegacyStringSliceFlagParseError);
-    expect(() => legacyParseStringSliceFlag(['a"b'])).toThrow(/bare " in non-quoted-field/);
+    expect(() => legacyParseStringSliceFlag(['a"b'])).toThrow(
+      'parse error on line 1, column 2: bare " in non-quoted-field',
+    );
+    // `1.2.3.4,5"6` — bare " in the second field, at byte 10 of the value
+    expect(() => legacyParseStringSliceFlag(['1.2.3.4,5"6'])).toThrow(
+      'parse error on line 1, column 10: bare " in non-quoted-field',
+    );
+  });
+
+  it("counts columns in bytes, not code points (Go csv tracks byte offsets)", () => {
+    // `é"x` — é is 2 UTF-8 bytes, so the bare quote sits at byte 3
+    expect(() => legacyParseStringSliceFlag(['é"x'])).toThrow(
+      'parse error on line 1, column 3: bare " in non-quoted-field',
+    );
+    // `"é` — 3 bytes total, EOF in a quoted field → column 4
+    expect(() => legacyParseStringSliceFlag(['"é'])).toThrow(
+      'parse error on line 1, column 4: extraneous or missing " in quoted-field',
+    );
+  });
+
+  it("carries the offending occurrence and column on the error for pflag framing", () => {
+    try {
+      legacyParseStringSliceFlag(["public", '"broken']);
+      expect.unreachable("expected legacyParseStringSliceFlag to throw");
+    } catch (err) {
+      if (!(err instanceof LegacyStringSliceFlagParseError)) throw err;
+      // pflag wraps the csv error PER OCCURRENCE (`flag.go` `Set`), quoting
+      // only the malformed value — not the accumulated list.
+      expect(err.value).toBe('"broken');
+      expect(err.column).toBe(8);
+    }
   });
 
   it("throws on the first malformed value in a multi-value list", () => {

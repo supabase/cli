@@ -6,7 +6,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
 import { LEGACY_RESOURCE_OUTPUT_FORMATS } from "../../../shared/legacy-go-output-flag.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { legacyParseStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
+import { legacyStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import {
   legacyValidateOutputFormat,
   withLegacyCommandInstrumentation,
@@ -15,14 +15,16 @@ import { legacyNetworkBansRemove } from "./remove.handler.ts";
 
 // Go declares `--db-unban-ip` with pflag's `StringSliceVar` (`cmd/bans.go:48`),
 // which CSV-splits each occurrence (`--db-unban-ip=1.2.3.4,5.6.7.8` → two IPs)
-// and appends across repeats.
-export const legacyNetworkBansRemoveDbUnbanIpFlag = Flag.string("db-unban-ip").pipe(
-  Flag.withDescription("IP to allow DB connections from."),
-  Flag.atLeast(0),
-  Flag.mapTryCatch(
-    (rawValues) => legacyParseStringSliceFlag(rawValues),
-    (err) => (err instanceof Error ? err.message : String(err)),
-  ),
+// and appends across repeats. Malformed CSV fails at parse time with pflag's
+// exact diagnostic (see `legacyStringSliceFlag`). Accepted approximation:
+// given an invalid `-o` AND malformed CSV together, Go fails on whichever bad
+// flag comes first in argv (pflag parses left-to-right); here the CSV error
+// always wins, because the global `-o` is validated in-handler
+// (`legacyValidateOutputFormat`) — same divergence class as the `-o` vs
+// `--experimental` ordering note in the handler below.
+export const legacyNetworkBansRemoveDbUnbanIpFlag = legacyStringSliceFlag(
+  "db-unban-ip",
+  "IP to allow DB connections from.",
 );
 
 const config = {

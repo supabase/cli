@@ -9,15 +9,27 @@
  * Whitespace is NOT trimmed and empty fields are NOT dropped: Go's csv.Reader
  * returns raw field values; pflag appends them directly to the slice.
  */
+import { Flag } from "effect/unstable/cli";
+
+/**
+ * Go's `encoding/csv` reports `ParseError.Column` as a **1-based byte offset**
+ * within the input line (`reader.go` tracks `pos.col` in bytes, not runes) —
+ * verified against the real Go CLI: `é"x` fails at column 3 (`é` is 2 UTF-8
+ * bytes), not 2.
+ */
+const utf8ByteOffset = (val: string, index: number): number =>
+  new TextEncoder().encode(val.slice(0, index)).length + 1;
 
 /** Thrown by `legacyParseStringSliceFlag` when a value is not valid CSV. */
 export class LegacyStringSliceFlagParseError extends Error {
   readonly value: string;
+  readonly column: number;
   readonly detail: string;
-  constructor(value: string, detail: string) {
-    super(`parse error on line 1, column 0: ${detail}`);
+  constructor(value: string, column: number, detail: string) {
+    super(`parse error on line 1, column ${column}: ${detail}`);
     this.name = "LegacyStringSliceFlagParseError";
     this.value = value;
+    this.column = column;
     this.detail = detail;
   }
 }
@@ -60,20 +72,36 @@ function readAsCSVStrict(val: string): string[] {
         }
       }
       if (!closed) {
-        // Ran off the end without finding a closing quote.
-        throw new LegacyStringSliceFlagParseError(val, `extraneous or missing " in quoted-field`);
+        // Ran off the end without finding a closing quote. Go's csv.Reader
+        // hits EOF here, so the reported column is one past the final byte.
+        throw new LegacyStringSliceFlagParseError(
+          val,
+          utf8ByteOffset(val, val.length),
+          `extraneous or missing " in quoted-field`,
+        );
       }
       // After the closing quote only a comma or end-of-string is allowed.
+      // Go reports the byte position of the closing quote itself
+      // (`reader.go`: `pos.col - quoteLen`) — `i` already skipped past it.
       if (i < val.length && val[i] !== ",") {
-        throw new LegacyStringSliceFlagParseError(val, `extraneous or missing " in quoted-field`);
+        throw new LegacyStringSliceFlagParseError(
+          val,
+          utf8ByteOffset(val, i - 1),
+          `extraneous or missing " in quoted-field`,
+        );
       }
       fields.push(field);
     } else {
-      // Unquoted field: a bare `"` anywhere inside is illegal.
+      // Unquoted field: a bare `"` anywhere inside is illegal. Go reports
+      // the byte position of the offending quote.
       const start = i;
       while (i < val.length && val[i] !== ",") {
         if (val[i] === '"') {
-          throw new LegacyStringSliceFlagParseError(val, `bare " in non-quoted-field`);
+          throw new LegacyStringSliceFlagParseError(
+            val,
+            utf8ByteOffset(val, i),
+            `bare " in non-quoted-field`,
+          );
         }
         i++;
       }
@@ -113,4 +141,35 @@ export function legacyParseStringSliceFlag(
     }
   }
   return values;
+}
+
+/**
+ * Builds a legacy flag that ports a shorthand-less pflag `StringSliceVar`:
+ * repeatable, CSV-split per occurrence, accumulated across repeats.
+ *
+ * On malformed CSV it fails at parse time — matching Go, where pflag's
+ * `readAsCSV` error aborts cobra's `ParseFlags` before `PersistentPreRunE`
+ * (so before the `--experimental` gate, telemetry, and the handler) — with
+ * pflag's exact diagnostic: `invalid argument %q for %q flag: %v`
+ * (pflag v1.0.10 `errors.go:116`, wrapped per occurrence in `flag.go:493`).
+ * The full Go message is emitted as the failure's `expected` text so the
+ * renderer's pflag passthrough (`formatInvalidValueMessage`) prints it
+ * verbatim, byte-matching the Go CLI's stderr line. `JSON.stringify` mirrors
+ * Go's `%q` for the ASCII/printable-Unicode values these flags carry (same
+ * precedent as `sso.format.ts`).
+ */
+export function legacyStringSliceFlag(name: string, description: string) {
+  return Flag.string(name).pipe(
+    Flag.withDescription(description),
+    Flag.atLeast(0),
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseStringSliceFlag(rawValues),
+      (err) =>
+        err instanceof LegacyStringSliceFlagParseError
+          ? `invalid argument ${JSON.stringify(err.value)} for "--${name}" flag: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err),
+    ),
+  );
 }

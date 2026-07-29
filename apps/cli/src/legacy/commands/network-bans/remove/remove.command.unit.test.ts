@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import { legacyNetworkBansRemoveDbUnbanIpFlag } from "./remove.command.ts";
 
@@ -45,7 +45,7 @@ describe("legacy network-bans remove --db-unban-ip flag (pflag StringSlice parit
     expect(ips).toEqual([]);
   });
 
-  test("rejects malformed CSV (unterminated quote)", async () => {
+  test("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
       legacyNetworkBansRemoveDbUnbanIpFlag
         .parse({
@@ -57,5 +57,14 @@ describe("legacy network-bans remove --db-unban-ip flag (pflag StringSlice parit
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) return;
+    // Byte-matches the Go CLI (pflag v1.0.10 `errors.go:116` wrapping
+    // `encoding/csv`'s error; `"12.3.4.5` is 9 bytes → EOF at column 10).
+    const error = Cause.squash(exit.cause);
+    expect(error).toMatchObject({
+      _tag: "InvalidValue",
+      expected:
+        'invalid argument "\\"12.3.4.5" for "--db-unban-ip" flag: parse error on line 1, column 10: extraneous or missing " in quoted-field',
+    });
   });
 });

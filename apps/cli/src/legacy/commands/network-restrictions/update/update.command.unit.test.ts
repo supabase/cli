@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import { legacyNetworkRestrictionsUpdateDbAllowCidrFlag } from "./update.command.ts";
 
@@ -46,7 +46,7 @@ describe("legacy network-restrictions update --db-allow-cidr flag (pflag StringS
     expect(cidrs).toEqual([]);
   });
 
-  test("rejects malformed CSV (unterminated quote)", async () => {
+  test("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
       legacyNetworkRestrictionsUpdateDbAllowCidrFlag
         .parse({
@@ -58,5 +58,14 @@ describe("legacy network-restrictions update --db-allow-cidr flag (pflag StringS
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) return;
+    // Byte-matches the Go CLI (pflag v1.0.10 `errors.go:116` wrapping
+    // `encoding/csv`'s error; `"1.2.3.0/24` is 11 bytes → EOF at column 12).
+    const error = Cause.squash(exit.cause);
+    expect(error).toMatchObject({
+      _tag: "InvalidValue",
+      expected:
+        'invalid argument "\\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field',
+    });
   });
 });
