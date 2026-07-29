@@ -113,8 +113,10 @@ written to `<workdir>/supabase/.temp/start-secrets/<containerName>/` (directory 
 `0700`, files mode `0644` — world-readable, since Kong (uid 100) and Postgres's
 post-privilege-drop `postgres` user read these bind-mounted files as non-root, and a
 Linux/Podman bind mount preserves the host file's mode verbatim) and
-bind-mounted `:ro` into the container at the exact path each container's
-entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
+bind-mounted `:ro,Z` into the container at the exact path each container's
+entrypoint/`Cmd` expects (`Z` — private SELinux relabel of these CLI-generated files so
+the confined container can read them on SELinux-enforcing hosts; no-op elsewhere) —
+see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
 doc comment for the full rationale (CWE-214/522: keeping secret content out of the
 `docker create` argv the host can see via `ps`/`/proc/<pid>/cmdline`) and for why this
 directory is a DETERMINISTIC, PERSISTENT path under the project's own workdir rather
@@ -132,7 +134,7 @@ script + value files, and bootstrap `index.ts` template (`shared/functions/serve
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) are
 staged the same way, under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
 containerName>/{env,multiline-env,main}/` (directory mode `0700`, files mode `0600`),
-bind-mounted `:ro` into the container — a deterministic, persistent path rather than
+bind-mounted `:ro,Z` into the container — a deterministic, persistent path rather than
 `os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
 `legacyCleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
 them on `stop` or a failed-start rollback, exactly like the Kong/Postgres/Supavisor

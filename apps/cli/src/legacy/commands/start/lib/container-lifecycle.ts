@@ -546,8 +546,9 @@ function legacyDockerStartContainer(
  * an arbitrary host-invoking uid at `0600` would get `EACCES` there — Go's
  * own equivalent (heredoc'd directly into the container by a root-authored
  * entrypoint script) already lands at world-readable `0644`, matching this
- * exactly — then returns the `<hostPath>:<containerPath>:ro`
- * bind for each. Mirrors this same session's `-e KEY`-only env fix
+ * exactly — then returns the `<hostPath>:<containerPath>:ro,Z` bind for each
+ * (`Z`: private SELinux relabel — see the inline comment at the bind).
+ * Mirrors this same session's `-e KEY`-only env fix
  * (`legacyDockerCreateContainer`'s doc comment) for entrypoint/`Cmd`-bound
  * secret content instead of env values: the file's HOST path is the only
  * thing that ever reaches `docker create`'s argv, never the secret `content`
@@ -603,7 +604,12 @@ function legacyStageStartSecretFiles(
             // `077`/`027`) can't silently narrow this to `0600` and break the non-root
             // in-container reader (see this function's doc comment).
             await chmod(hostPath, 0o644);
-            return `${hostPath}:${secretFile.containerPath}:ro`;
+            // `Z`: SELinux-enforcing hosts (e.g. Fedora + rootless Podman) relabel this
+            // CLI-generated file so the confined container can read it (supabase/cli#5989).
+            // Private label, not shared `z` — each staged dir is 1:1 with one container,
+            // and no sibling container has any business reading these secrets. No-op
+            // elsewhere; Docker/Podman ignore ENOTSUP from non-labelable filesystems.
+            return `${hostPath}:${secretFile.containerPath}:ro,Z`;
           }),
         );
         return { binds, cleanup: () => rm(dir, { recursive: true, force: true }) };

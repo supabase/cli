@@ -93,8 +93,8 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
         )[0];
         const multilineEnvDir = args
           .flatMap((value, index) => (args[index - 1] === "-v" ? [value] : []))
-          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro"))
-          ?.slice(0, -":/root/.supabase/multiline-env:ro".length);
+          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
+          ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
         const enrichedOptions =
           envFile === undefined && multilineEnvDir === undefined
             ? options
@@ -482,7 +482,7 @@ describe("legacy functions serve integration", () => {
         expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.73.13");
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/index.ts:ro"),
+            value.endsWith(":/root/index.ts:ro,Z"),
           ),
         ).toBe(true);
         expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
@@ -568,8 +568,8 @@ describe("legacy functions serve integration", () => {
             throw new Error("expected docker run call before docker logs spawn");
           }
           multilineEnvDirWhenLogsStarted = extractFlagValues(dockerRun.args, "-v")
-            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro"))
-            ?.slice(0, -":/root/.supabase/multiline-env:ro".length);
+            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
+            ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
           multilineEnvDirExistedWhenLogsStarted =
             multilineEnvDirWhenLogsStarted !== undefined &&
             existsSync(multilineEnvDirWhenLogsStarted);
@@ -615,7 +615,7 @@ describe("legacy functions serve integration", () => {
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 
       const multilineBind = extractFlagValues(dockerRun.args, "-v").find((value) =>
-        value.endsWith(":/root/.supabase/multiline-env:ro"),
+        value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
       );
       expect(multilineBind).toBeDefined();
       if (multilineBind === undefined) {
@@ -727,7 +727,7 @@ describe("legacy functions serve integration", () => {
         }
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/.supabase/multiline-env:ro"),
+            value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
           ),
         ).toBe(false);
       });
@@ -1445,7 +1445,7 @@ describe("legacy functions serve integration", () => {
       );
       expect(
         extractFlagValues(dockerRun.args, "-v").some((value) =>
-          value.endsWith(":/root/index.ts:ro"),
+          value.endsWith(":/root/index.ts:ro,Z"),
         ),
       ).toBe(true);
       expect(commandScript).not.toContain("@ts-nocheck");
