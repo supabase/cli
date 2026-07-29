@@ -346,7 +346,9 @@ func ConnectByConfigStream(ctx context.Context, config pgconn.Config, w io.Write
 		return ConnectLocalPostgres(ctx, config, options...)
 	}
 	fmt.Fprintln(w, "Connecting to remote database...")
-	opts := append(options, preserveTLSConfig(config), func(cc *pgx.ConnConfig) {
+	// Ahead of the caller's overrides so they still win, e.g. pgtest clearing TLS.
+	opts := append([]func(*pgx.ConnConfig){preserveTLSConfig(config)}, options...)
+	opts = append(opts, func(cc *pgx.ConnConfig) {
 		if DNSResolver.Value == DNS_OVER_HTTPS {
 			cc.LookupFunc = FallbackLookupIP
 		}
