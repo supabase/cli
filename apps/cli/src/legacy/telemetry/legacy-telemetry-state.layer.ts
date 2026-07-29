@@ -27,7 +27,8 @@ interface PriorState {
   readonly enabled: boolean;
   readonly device_id: string;
   readonly session_id: string;
-  readonly session_last_active: string;
+  /** Epoch millis of `session_last_active`, from the Go-shape parse below. */
+  readonly sessionLastActiveMs: number;
   readonly distinct_id?: string;
   readonly schema_version: number;
 }
@@ -39,7 +40,7 @@ interface PriorState {
 // `time/format.go`; verified against go1.26: `…T00:00:00,1Z` parses) — while
 // the digits after it stay mandatory (`…T00:00:00,Z` is rejected).
 const RFC3339_RE =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
 const DAYS_PER_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 
@@ -50,27 +51,48 @@ function daysInMonth(year: number, month: number): number {
 }
 
 /**
- * Component-level port of Go's `time.Parse(time.RFC3339Nano, …)` validity
- * (`parseSessionLastActive`, `state.go:69-85`). `Date.parse` cannot stand in
- * for it in either direction (verified against go1.26 and Bun 1.3):
+ * Component-level port of Go's `time.Parse(time.RFC3339Nano, …)`
+ * (`parseSessionLastActive`, `state.go:69-85`): validates like Go and, when
+ * valid, returns the epoch milliseconds of the parsed instant. `Date.parse` /
+ * `new Date(…)` cannot stand in for it in either direction (verified against
+ * go1.26 and Bun 1.3):
  * - JS silently normalizes valid-range day overflow (`2025-02-29` → Mar 1,
  *   `2025-04-31` → May 1) and hour 24 (`T24:00:00Z` → next day) that Go
  *   rejects as "day/hour out of range";
- * - JS rejects zone offsets Go accepts — Go bounds the offset hour at 24 and
- *   the offset minute at 60 (`+24:00` and `+05:60` both parse), where JS
- *   returns NaN.
+ * - JS rejects forms Go accepts — a `,` fractional separator, and zone
+ *   offsets bounded at hour 24 / minute 60 (`+24:00` and `+05:60` both
+ *   parse) — where JS returns NaN.
+ * The epoch therefore also has to come from these components, NOT from a
+ * second `new Date(string)` pass: a Go-valid form JS cannot parse would
+ * NaN there and wrongly count as session-expired (see the rotation check in
+ * `loadOrCreateLegacyTelemetryState`).
  */
-function isGoRfc3339(text: string): boolean {
+function parseGoRfc3339Ms(text: string): number | undefined {
   const match = RFC3339_RE.exec(text);
-  if (match === null) return false;
+  if (match === null) return undefined;
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  if (month < 1 || month > 12) return false;
-  if (day < 1 || day > daysInMonth(year, month)) return false;
-  if (Number(match[4]) > 23 || Number(match[5]) > 59 || Number(match[6]) > 59) return false;
-  if (match[7] !== undefined && (Number(match[7]) > 24 || Number(match[8]) > 60)) return false;
-  return true;
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12) return undefined;
+  if (day < 1 || day > daysInMonth(year, month)) return undefined;
+  if (hour > 23 || minute > 59 || second > 59) return undefined;
+  if (match[9] !== undefined && (Number(match[9]) > 24 || Number(match[10]) > 60)) return undefined;
+  // `setUTCFullYear` (not `Date.UTC`) so years 0000-0099 aren't remapped to
+  // 1900-1999; components are already range-checked, so no rollover occurs.
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, 0);
+  // Go reads at most 9 fractional digits (nanoseconds); ms precision is
+  // exact for the 30-minute comparison this feeds.
+  const fractionMs = match[7] !== undefined ? Number(`0.${match[7].slice(0, 9)}`) * 1000 : 0;
+  const offsetMs =
+    match[8] !== undefined
+      ? (match[8] === "-" ? -1 : 1) * (Number(match[9]) * 3600 + Number(match[10]) * 60) * 1000
+      : 0;
+  return date.getTime() + fractionMs - offsetMs;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -88,14 +110,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * new `device_id`, new `session_id`. Notably, a corrupt file that still says
  * `"enabled": false` does NOT stay disabled.
  *
- * Three Go strictness corners are not reproducible here: `JSON.parse`
+ * Two Go strictness corners are not reproducible here: `JSON.parse`
  * collapses `2.0` → `2`, so an integer-valued float `schema_version`/millis
- * passes where Go's unmarshal-into-int rejects it; `enabled`'s type is only
- * checked on the non-consent path, where Go's single-shot `json.Unmarshal`
- * type-checks every field regardless; and integer unix millis beyond
- * ECMAScript's ±8.64e15 `Date` range but within int64 make `toISOString()`
- * throw → caught → full regeneration, where Go preserves the state. All
- * require a hand-corrupted file the CLI never writes.
+ * passes where Go's unmarshal-into-int rejects it; and `enabled`'s type is
+ * only checked on the non-consent path, where Go's single-shot
+ * `json.Unmarshal` type-checks every field regardless. Both require a
+ * hand-corrupted file the CLI never writes. (Unix millis beyond ECMAScript's
+ * ±8.64e15 `Date` range no longer regenerate: the epoch is kept as a plain
+ * number, so — like Go's `time.UnixMilli` — the state is preserved and the
+ * far-future comparison simply never expires the session.)
  */
 function readExistingState(text: string): PriorState | undefined {
   try {
@@ -126,17 +149,18 @@ function readExistingState(text: string): PriorState | undefined {
     }
 
     // Go's `parseSessionLastActive` (`state.go:69-85`): an RFC3339Nano string,
-    // or — only on the consent form — integer unix millis.
+    // or — only on the consent form — integer unix millis (`time.UnixMilli`).
     const rawLastActive = record.session_last_active;
-    let sessionLastActive: string;
+    let sessionLastActiveMs: number;
     if (typeof rawLastActive === "string") {
-      if (!isGoRfc3339(rawLastActive)) {
+      const parsedMs = parseGoRfc3339Ms(rawLastActive);
+      if (parsedMs === undefined) {
         return undefined;
       }
-      sessionLastActive = rawLastActive;
+      sessionLastActiveMs = parsedMs;
     } else if (allowUnixMillis && typeof rawLastActive === "number") {
       if (!Number.isInteger(rawLastActive)) return undefined;
-      sessionLastActive = new Date(rawLastActive).toISOString();
+      sessionLastActiveMs = rawLastActive;
     } else {
       return undefined;
     }
@@ -170,7 +194,7 @@ function readExistingState(text: string): PriorState | undefined {
       enabled,
       device_id: record.device_id,
       session_id: record.session_id,
-      session_last_active: sessionLastActive,
+      sessionLastActiveMs,
       ...(typeof record.distinct_id === "string" && record.distinct_id.length > 0
         ? { distinct_id: record.distinct_id }
         : {}),
@@ -192,14 +216,16 @@ export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.load
     const now = opts.now ?? new Date();
     const nowIso = now.toISOString();
 
-    // A Go-valid timestamp JS cannot parse (offset `+24:00`/`+05:60`, comma
-    // fraction `…00,1Z`) yields NaN here → treated as expired, rotating the
-    // session — which Go would also do for any realistic such timestamp;
-    // `enabled`/identity are preserved either way.
-    const priorActive =
-      prior?.session_last_active !== undefined ? new Date(prior.session_last_active).getTime() : 0;
+    // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms`
+    // during decode — NOT a `new Date(string)` re-parse. Go-valid forms JS
+    // cannot parse (comma fraction `…00,5Z`, offsets `+24:00`/`+05:60`)
+    // would NaN there and read as expired, rotating `session_id` where Go —
+    // which decoded the instant fine — retains it inside the 30-minute
+    // window (`LoadOrCreateState`, `state.go:140-148`; verified against the
+    // Go binary: a recent `…00,5Z` keeps the seeded session id).
+    const priorActiveMs = prior?.sessionLastActiveMs;
     const expired =
-      !Number.isFinite(priorActive) || now.getTime() - priorActive > SESSION_ROTATION_MS;
+      priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
 
     const state: State = {
       enabled: prior?.enabled ?? true,

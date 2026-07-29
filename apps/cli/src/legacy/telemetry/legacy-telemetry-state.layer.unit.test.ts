@@ -181,6 +181,8 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
   const runLoad = () => loadOrCreateLegacyTelemetryState().pipe(Effect.provide(BunServices.layer));
+  const runLoadAt = (now: Date) =>
+    loadOrCreateLegacyTelemetryState({ now }).pipe(Effect.provide(BunServices.layer));
 
   it.effect("a bool-only file missing device_id/session_id is wholly regenerated", () => {
     writeFileSync(telemetryPath(), JSON.stringify({ enabled: false }));
@@ -391,6 +393,95 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
       const state = yield* runLoad();
       expect(state.enabled).toBe(true);
       expect(state.device_id).not.toBe("d");
+    });
+  });
+
+  // Session expiry must be computed from the SAME component-level Go parse
+  // that validated the string — a `new Date(string)` re-parse NaNs on
+  // Go-valid forms (comma fraction, exotic offsets) and would count them as
+  // expired, rotating `session_id` where the Go binary retains it (verified:
+  // seeding `<now>,5Z` and running `supabase-go telemetry status` keeps the
+  // seeded session id; the TS CLI before this fix rotated it).
+  it.effect("a recent comma-fraction timestamp keeps the session id within 30 minutes", () => {
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: "2025-01-01T00:00:00,5Z",
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoadAt(new Date("2025-01-01T00:10:00Z"));
+      expect(state.session_id).toBe("s");
+      expect(state.device_id).toBe("d");
+      expect(state.enabled).toBe(false);
+    });
+  });
+
+  it.effect("a Go-exotic +05:60 offset participates in the expiry arithmetic", () => {
+    // `+05:60` normalizes to a 6-hour offset in Go, so this instant is
+    // 2025-01-01T00:00:00Z — 10 minutes before `now` → session retained.
+    // (JS `new Date` returns NaN for minute-60 offsets, which would rotate.)
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: "2025-01-01T06:00:00+05:60",
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoadAt(new Date("2025-01-01T00:10:00Z"));
+      expect(state.session_id).toBe("s");
+      expect(state.device_id).toBe("d");
+    });
+  });
+
+  it.effect("a +24:00 offset shifts the instant a full day back, expiring the session", () => {
+    // Wall clock 2025-01-01T00:00:00 at +24:00 is 2024-12-31T00:00:00Z, so at
+    // `now` = 2025-01-01T00:10:00Z the session is 24h10m stale → Go rotates.
+    // Reading the wall clock as UTC (ignoring the offset) would wrongly
+    // retain it. The decoded file is still preserved (enabled/device_id).
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: "2025-01-01T00:00:00+24:00",
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoadAt(new Date("2025-01-01T00:10:00Z"));
+      expect(state.session_id).not.toBe("s");
+      expect(state.device_id).toBe("d");
+      expect(state.enabled).toBe(false);
+    });
+  });
+
+  it.effect("consent-form unix millis beyond the JS Date range preserve the state like Go", () => {
+    // Go's `time.UnixMilli(9e15)` is a valid far-future instant (~year
+    // 287396): the state decodes, and `now.Sub(last)` is hugely negative →
+    // never expired, session retained. Kept as a plain number here so the
+    // comparison behaves identically (a `Date`/`toISOString` round-trip
+    // throws beyond ±8.64e15 and used to regenerate the whole file).
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        consent: "denied",
+        device_id: "d",
+        session_id: "s",
+        session_last_active: 9_000_000_000_000_000,
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+      expect(state.session_id).toBe("s");
     });
   });
 });
