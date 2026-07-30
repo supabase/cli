@@ -304,30 +304,30 @@ export class BinaryResolver extends Context.Service<
               }
             });
 
-            // Clean up the staging directory on any failure (download error,
-            // checksum mismatch, extraction failure, or interruption) so no
-            // `.tmp-*` directories are left behind in the cache root.
-            yield* stage.pipe(Effect.onError(() => cleanupTmpDir));
-
             // Publish the completed staging directory by atomically renaming
             // it into place. If another process already published cacheDir
             // first, discard our own copy and resolve to theirs instead of
-            // failing.
-            const published = yield* fs.rename(tmpDir, cacheDir).pipe(
-              Effect.as(true),
-              Effect.catchTag("PlatformError", (renameError) =>
-                fs
-                  .exists(cacheDir)
-                  .pipe(
-                    Effect.flatMap((alreadyPresent) =>
-                      alreadyPresent ? Effect.succeed(false) : Effect.fail(renameError),
+            // failing. The whole stage-and-publish lifecycle is wrapped in a
+            // single `Effect.ensuring(cleanupTmpDir)` finalizer so every exit
+            // — stage failure, a genuine rename failure, or an interruption
+            // at any point — removes the staging directory. `cleanupTmpDir`
+            // force-removes and ignores errors, so it's a safe no-op once
+            // the rename has already moved tmpDir into place.
+            const published = yield* Effect.gen(function* () {
+              yield* stage;
+              return yield* fs.rename(tmpDir, cacheDir).pipe(
+                Effect.as(true),
+                Effect.catchTag("PlatformError", (renameError) =>
+                  fs
+                    .exists(cacheDir)
+                    .pipe(
+                      Effect.flatMap((alreadyPresent) =>
+                        alreadyPresent ? Effect.succeed(false) : Effect.fail(renameError),
+                      ),
                     ),
-                  ),
-              ),
-            );
-            if (!published) {
-              yield* cleanupTmpDir;
-            }
+                ),
+              );
+            }).pipe(Effect.ensuring(cleanupTmpDir));
 
             return {
               path: cacheDir,
