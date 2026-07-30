@@ -252,7 +252,9 @@ export class StackLifecycleCoordinator extends Context.Service<
                 Stream.mapError(
                   (cause) =>
                     new StackBuildError({
-                      detail: "Failed to prepare stack assets",
+                      // Carry the underlying failure text (e.g. which native binary
+                      // is missing) — `.cause` alone never reaches CLI output.
+                      detail: `Failed to prepare stack assets: ${cause.message}`,
                       cause,
                     }),
                 ),

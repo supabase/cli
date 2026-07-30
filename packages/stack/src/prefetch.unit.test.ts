@@ -279,6 +279,41 @@ describe("prefetch", () => {
     expect(events.at(-1)).toBe("PreparationCompleted");
   });
 
+  test("native mode fails on a missing binary instead of silently falling back to Docker", async () => {
+    const resolver = mockBinaryResolver({ failServices: ["auth"] });
+    const spawner = mockSequenceSpawner([]);
+
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const error = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["auth"] }).pipe(Effect.provide(layer), Effect.flip),
+    );
+
+    expect(error._tag).toBe("BinaryNotFoundError");
+    // The silent substrate flip is the bug: no Docker resolution may be attempted.
+    expect(spawner.spawned).toEqual([]);
+  });
+
+  test("native mode fails on a download error instead of silently falling back to Docker", async () => {
+    const resolver = mockBinaryResolver({ downloadErrorServices: ["postgres"] });
+    const spawner = mockSequenceSpawner([]);
+
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const error = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["postgres"] }).pipe(Effect.provide(layer), Effect.flip),
+    );
+
+    expect(error._tag).toBe("DownloadError");
+    expect(spawner.spawned).toEqual([]);
+  });
+
   test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner([{ exitCode: 0 }]);

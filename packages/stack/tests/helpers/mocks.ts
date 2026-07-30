@@ -4,7 +4,7 @@ import {
   type BinarySpec,
   type ResolveBinaryOptions,
 } from "../../src/BinaryResolver.ts";
-import { BinaryNotFoundError } from "../../src/errors.ts";
+import { BinaryNotFoundError, DownloadError } from "../../src/errors.ts";
 import { DEFAULT_VERSIONS } from "../../src/versions.ts";
 
 export function mockBinaryResolver(
@@ -14,6 +14,7 @@ export function mockBinaryResolver(
     downloadDelayMs?: number;
     downloadDelaysMs?: Partial<Record<string, number>>;
     failServices?: string[];
+    downloadErrorServices?: string[];
   } = {},
 ) {
   const resolved: Array<{ service: string; version: string }> = [];
@@ -29,6 +30,12 @@ export function mockBinaryResolver(
         return yield* new BinaryNotFoundError({
           service: spec.service,
           platform: "darwin-arm64",
+        });
+      }
+      if (opts.downloadErrorServices?.includes(spec.service)) {
+        return yield* new DownloadError({
+          url: `https://releases.invalid/${spec.service}/${spec.version}`,
+          cause: new Error("404 Not Found"),
         });
       }
       resolved.push({ service: spec.service, version: spec.version });

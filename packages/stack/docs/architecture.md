@@ -326,11 +326,11 @@ The download is written to a temporary file (`_download.tar` or `_download.zip`)
 
 ---
 
-### resolveService — binary-first Docker fallback
+### resolveService — binary-first, mode-aware Docker fallback
 
 **File:** `src/resolve.ts`
 
-`resolveService` is a thin helper that wraps `BinaryResolver.resolve()` and implements the binary-first, Docker-fallback strategy used by `StackPreparation` and therefore shared by both `stack.start()` and `prefetch()`.
+`resolveService` is a thin helper that wraps `BinaryResolver.resolve()` and implements the binary-first resolution strategy used by `StackPreparation` and therefore shared by both `stack.start()` and `prefetch()`. The Docker fallback is **mode-aware**: it only applies in `"auto"` mode — `"native"` mode propagates resolution failures instead of silently flipping the service onto Docker (supabase/cli#5787).
 
 #### ServiceResolution type
 
@@ -344,34 +344,39 @@ This discriminated union is the canonical output of resolution: downstream code 
 
 #### Resolution logic
 
-`resolveService(resolver, service, version)` calls `resolver.resolve({ service, version })` and maps the result:
+`resolveService(resolver, service, version, mode = "auto")` calls `resolver.resolve({ service, version })` and maps the result:
 
 - **Success** (binary found and extracted) → `{ type: "binary", path }`.
-- **`BinaryNotFoundError`** (no native asset for this OS/arch) → `{ type: "docker", image }` using the default Docker image for the service and version.
-- **`DownloadError`** (network or extraction failure) → `{ type: "docker", image }` — falls back to Docker rather than hard-failing.
-- **`ChecksumMismatchError`** → propagates as a real error; a tampered or corrupted download is never silently replaced by Docker.
+- **`BinaryNotFoundError`** (no native asset for this OS/arch) → in `"auto"` mode, `{ type: "docker", image }` using the default Docker image for the service and version; in `"native"` mode the error propagates.
+- **`DownloadError`** (network or extraction failure) → in `"auto"` mode, `{ type: "docker", image }` rather than hard-failing; in `"native"` mode the error propagates.
+- **`ChecksumMismatchError`** → propagates as a real error in every mode; a tampered or corrupted download is never silently replaced by Docker.
 
 ```ts
 export const resolveService = (
   resolver: BinaryResolver["Service"],
   service: ServiceName,
   version: string,
-): Effect.Effect<ServiceResolution, ChecksumMismatchError> =>
-  resolver.resolve({ service, version }).pipe(
-    Effect.map((path): ServiceResolution => ({ type: "binary", path })),
-    Effect.catchTag("BinaryNotFoundError", () =>
-      Effect.succeed<ServiceResolution>({
-        type: "docker",
-        image: dockerImageForService(service, version),
-      }),
-    ),
-    Effect.catchTag("DownloadError", () =>
-      Effect.succeed<ServiceResolution>({
-        type: "docker",
-        image: dockerImageForService(service, version),
-      }),
-    ),
+  mode: "native" | "auto" = "auto",
+): Effect.Effect<
+  ServiceResolution,
+  ChecksumMismatchError | BinaryNotFoundError | DownloadError
+> => {
+  const nativeBinary = resolver
+    .resolve({ service, version })
+    .pipe(Effect.map((path): ServiceResolution => ({ type: "binary", path })));
+  if (mode === "native") {
+    return nativeBinary;
+  }
+  const dockerFallback = () =>
+    Effect.succeed<ServiceResolution>({
+      type: "docker",
+      image: dockerImageForService(service, version),
+    });
+  return nativeBinary.pipe(
+    Effect.catchTag("BinaryNotFoundError", dockerFallback),
+    Effect.catchTag("DownloadError", dockerFallback),
   );
+};
 ```
 
 ---

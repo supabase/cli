@@ -3,24 +3,41 @@ import { Data } from "effect";
 export class BinaryNotFoundError extends Data.TaggedError("BinaryNotFoundError")<{
   readonly service: string;
   readonly platform: string;
-}> {}
+}> {
+  override get message() {
+    return `No native ${this.service} binary is available for ${this.platform}. Native mode requires a native binary — use mode "auto" or "docker" to run this service with Docker.`;
+  }
+}
 
 export class DownloadError extends Data.TaggedError("DownloadError")<{
   readonly url: string;
   readonly cause: unknown;
-}> {}
+}> {
+  override get message() {
+    const cause = this.cause instanceof Error ? `: ${this.cause.message}` : "";
+    return `Failed to download ${this.url}${cause}`;
+  }
+}
 
 export class ChecksumMismatchError extends Data.TaggedError("ChecksumMismatchError")<{
   readonly url: string;
   readonly expected: string;
   readonly actual: string;
-}> {}
+}> {
+  override get message() {
+    return `Checksum mismatch for ${this.url} (expected ${this.expected}, got ${this.actual})`;
+  }
+}
 
 export class DockerPullError extends Data.TaggedError("DockerPullError")<{
   readonly image: string;
   readonly detail: string;
   readonly cause: unknown;
-}> {}
+}> {
+  override get message() {
+    return this.detail;
+  }
+}
 
 export class StackBuildError extends Data.TaggedError("StackBuildError")<{
   readonly detail: string;

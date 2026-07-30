@@ -29,6 +29,7 @@ export { BinaryResolver } from "./BinaryResolver.ts";
 
 export type { ServiceResolution } from "./resolve.ts";
 export { resolveService } from "./resolve.ts";
+export type { StackPreparationError } from "./StackPreparation.ts";
 
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export { prefetch } from "./prefetch.ts";

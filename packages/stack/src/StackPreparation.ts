@@ -1,7 +1,7 @@
 import { Cause, Data, Effect, Exit, Layer, Queue, Context, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
-import type { ChecksumMismatchError } from "./errors.ts";
+import type { BinaryNotFoundError, ChecksumMismatchError, DownloadError } from "./errors.ts";
 import { DockerPullError } from "./errors.ts";
 import type { ServiceResolution } from "./resolve.ts";
 import {
@@ -21,6 +21,13 @@ export interface StackPreparationInput {
   readonly services?: ReadonlyArray<ServiceName>;
   readonly mode?: "native" | "auto" | "docker";
 }
+
+/** `BinaryNotFoundError`/`DownloadError` surface only in `mode: "native"` (no Docker fallback there). */
+export type StackPreparationError =
+  | DockerPullError
+  | ChecksumMismatchError
+  | BinaryNotFoundError
+  | DownloadError;
 
 export class ServiceDownloadStarted extends Data.TaggedClass("ServiceDownloadStarted")<{
   readonly service: ServiceName;
@@ -86,7 +93,7 @@ export const prepareAssetsWithDependencies = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   input?: StackPreparationInput,
   publishEvent?: (event: StackPreparationEvent) => Effect.Effect<void>,
-): Effect.Effect<PreparedStackArtifacts, DockerPullError | ChecksumMismatchError> =>
+): Effect.Effect<PreparedStackArtifacts, StackPreparationError> =>
   Effect.gen(function* () {
     const versions = { ...DEFAULT_VERSIONS, ...input?.versions };
     const services: ReadonlyArray<ServiceName> = input?.services ?? SERVICE_NAMES;
@@ -94,9 +101,7 @@ export const prepareAssetsWithDependencies = (
 
     type Entry = readonly [ServiceName, ServiceResolution];
 
-    const resolveService = (
-      service: ServiceName,
-    ): Effect.Effect<Entry, DockerPullError | ChecksumMismatchError> => {
+    const resolveService = (service: ServiceName): Effect.Effect<Entry, StackPreparationError> => {
       let isDownloading = false;
       const markDownloadStart = () =>
         Effect.sync(() => {
@@ -120,6 +125,10 @@ export const prepareAssetsWithDependencies = (
         );
       }
 
+      // Docker-only services resolve to Docker in every mode, including "native".
+      // The native+docker-only-service CONFIG contract is enforced one layer up
+      // (`StackBuilder.validateResolvedConfig`), not here: `prefetch()` defaults
+      // to ALL services, so failing here would break `prefetch({ mode: "native" })`.
       if (dockerOnlyServices.has(service)) {
         return resolveDockerImageForService(spawner, service, versions[service], {
           onDownloadStart: markDownloadStart(),
@@ -135,6 +144,7 @@ export const prepareAssetsWithDependencies = (
         service,
         versions[service],
         markDownloadStart(),
+        mode,
       ).pipe(
         Effect.map((resolution): Entry => [service, resolution]),
         Effect.ensuring(markDownloadFinished()),
@@ -157,10 +167,10 @@ export class StackPreparation extends Context.Service<
   {
     readonly prepare: (
       input?: StackPreparationInput,
-    ) => Effect.Effect<PreparedStackArtifacts, DockerPullError | ChecksumMismatchError>;
+    ) => Effect.Effect<PreparedStackArtifacts, StackPreparationError>;
     readonly prepareEvents: (
       input?: StackPreparationInput,
-    ) => Stream.Stream<StackPreparationEvent, DockerPullError | ChecksumMismatchError>;
+    ) => Stream.Stream<StackPreparationEvent, StackPreparationError>;
   }
 >()("stack/StackPreparation") {
   static layer: Layer.Layer<
@@ -177,7 +187,7 @@ export class StackPreparation extends Context.Service<
         prepare: (input?: StackPreparationInput) =>
           prepareAssetsWithDependencies(resolver, spawner, input),
         prepareEvents: (input?: StackPreparationInput) =>
-          Stream.callback<StackPreparationEvent, DockerPullError | ChecksumMismatchError>((queue) =>
+          Stream.callback<StackPreparationEvent, StackPreparationError>((queue) =>
             prepareAssetsWithDependencies(resolver, spawner, input, (event) =>
               Queue.offer(queue, event),
             ).pipe(
@@ -268,34 +278,25 @@ const resolveServiceWithMetadata = (
   service: ServiceName,
   version: string,
   onDownloadStart: Effect.Effect<void>,
-): Effect.Effect<ServiceResolution, DockerPullError | ChecksumMismatchError> =>
-  resolver.resolveWithMetadata({ service, version }, { onDownloadStart }).pipe(
-    Effect.map(({ path }): ServiceResolution => ({ type: "binary", path })),
-    Effect.catchTag("BinaryNotFoundError", () =>
-      resolveDockerImageForService(spawner, service, version, {
-        onDownloadStart,
-      }).pipe(
-        Effect.map(
-          (image): ServiceResolution => ({
-            type: "docker",
-            image,
-          }),
-        ),
-      ),
-    ),
-    Effect.catchTag("DownloadError", () =>
-      resolveDockerImageForService(spawner, service, version, {
-        onDownloadStart,
-      }).pipe(
-        Effect.map(
-          (image): ServiceResolution => ({
-            type: "docker",
-            image,
-          }),
-        ),
-      ),
-    ),
+  mode: "native" | "auto",
+): Effect.Effect<ServiceResolution, StackPreparationError> => {
+  const nativeBinary = resolver
+    .resolveWithMetadata({ service, version }, { onDownloadStart })
+    .pipe(Effect.map(({ path }): ServiceResolution => ({ type: "binary", path })));
+  // `mode: "native"` requires native binaries (README): resolution failures
+  // propagate instead of silently flipping the service onto Docker.
+  if (mode === "native") {
+    return nativeBinary;
+  }
+  const dockerFallback = () =>
+    resolveDockerImageForService(spawner, service, version, {
+      onDownloadStart,
+    }).pipe(Effect.map((image): ServiceResolution => ({ type: "docker", image })));
+  return nativeBinary.pipe(
+    Effect.catchTag("BinaryNotFoundError", dockerFallback),
+    Effect.catchTag("DownloadError", dockerFallback),
   );
+};
 
 const runPullCommand = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
