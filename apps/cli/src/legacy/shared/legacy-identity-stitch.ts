@@ -4,6 +4,7 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../../shared/telemetry/identity.ts";
+import { legacyTelemetrySchemaVersionToken } from "../telemetry/legacy-telemetry-state.layer.ts";
 
 /**
  * Session identity stitching, a 1:1 port of Go's `identityTransport` +
@@ -133,6 +134,14 @@ const makeLegacyIdentityStitcher: Effect.Effect<
           }
         },
       });
+      // Exact int64 token of the prior schema_version, when there is one:
+      // `numberField` below rounds valid tokens above 2^53 through `Number`
+      // (9007199254740993 → …992), and this writer re-persists the field —
+      // Go decodes and re-encodes the 64-bit `int` verbatim.
+      const priorSchemaVersionToken = Option.match(existing, {
+        onNone: () => undefined,
+        onSome: legacyTelemetrySchemaVersionToken,
+      });
       const enabled = boolField(prior, "enabled") ?? true;
       if (!enabled) return;
 
@@ -156,7 +165,12 @@ const makeLegacyIdentityStitcher: Effect.Effect<
       };
 
       yield* fs.makeDirectory(runtime.configDir, { recursive: true });
-      yield* fs.writeFileString(telemetryPath, JSON.stringify(state));
+      yield* fs.writeFileString(
+        telemetryPath,
+        priorSchemaVersionToken === undefined
+          ? JSON.stringify(state)
+          : JSON.stringify({ ...state, schema_version: JSON.rawJSON(priorSchemaVersionToken) }),
+      );
     });
 
   const stitch = (response: HttpClientResponse.HttpClientResponse) => {

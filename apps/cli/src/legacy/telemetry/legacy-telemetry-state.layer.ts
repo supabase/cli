@@ -14,6 +14,14 @@ interface State {
   readonly session_last_active: string;
   readonly distinct_id?: string;
   readonly schema_version: number;
+  /**
+   * Exact decoded `schema_version` token, carried for re-serialization and
+   * stripped from the written JSON by {@link serializeLegacyTelemetryState}.
+   * Go decodes the field into a 64-bit `int` and `json.Marshal` re-emits it
+   * verbatim; a JS `Number` above 2^53 rounds (9007199254740993 → …992) and
+   * would persist the altered version.
+   */
+  readonly schemaVersionToken?: string;
 }
 
 const SCHEMA_VERSION = 1;
@@ -23,6 +31,19 @@ function legacyTelemetryPath(env: Record<string, string | undefined>, pathSvc: P
   return pathSvc.join(legacySupabaseHome(homedir(), env), "telemetry.json");
 }
 
+/**
+ * Serializes the state like Go's `json.Marshal` of `State` (`state.go:25-31`):
+ * a carried exact `schema_version` token is spliced back in verbatim via
+ * `JSON.rawJSON` (review r3683813242 — `Number` rounds valid int64 tokens
+ * above 2^53, so `9007199254740993` would persist as `…992` where Go
+ * re-encodes the decoded `int` exactly). Field order matches Go's struct.
+ */
+function serializeLegacyTelemetryState(state: State): string {
+  const { schemaVersionToken, ...fields } = state;
+  if (schemaVersionToken === undefined) return JSON.stringify(fields);
+  return JSON.stringify({ ...fields, schema_version: JSON.rawJSON(schemaVersionToken) });
+}
+
 interface PriorState {
   readonly enabled: boolean;
   readonly device_id: string;
@@ -30,7 +51,12 @@ interface PriorState {
   /** Epoch millis of `session_last_active`, from the Go-shape parse below. */
   readonly sessionLastActiveMs: number;
   readonly distinct_id?: string;
-  readonly schema_version: number;
+  /**
+   * Exact raw token of the decoded non-zero `schema_version`, absent when Go
+   * would fall back to the `SchemaVersion` constant (`state.go:103-106`).
+   * Kept as the token — not a `Number` — so re-serialization is int64-exact.
+   */
+  readonly schemaVersionToken?: string;
 }
 
 // Go's `time.Parse(time.RFC3339Nano, …)` shape: date, `T`, time, optional
@@ -376,8 +402,14 @@ function readExistingState(text: string): PriorState | undefined {
 
     // `SchemaVersion int`: absent (or only null occurrences) → zero value;
     // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
+    // The zero test and the kept value both use the exact TOKEN — `BigInt`
+    // for the comparison, the raw text for re-serialization — because
+    // `Number` rounds valid int64 magnitudes above 2^53.
     const schemaVersionToken = lastNonNullToken(entries, "schema_version");
-    const schemaVersionValue = schemaVersionToken !== undefined ? Number(schemaVersionToken) : 0;
+    const keptSchemaVersionToken =
+      schemaVersionToken !== undefined && BigInt(schemaVersionToken) !== 0n
+        ? schemaVersionToken
+        : undefined;
 
     return {
       enabled,
@@ -385,11 +417,36 @@ function readExistingState(text: string): PriorState | undefined {
       session_id: sessionId,
       sessionLastActiveMs,
       ...(distinctId !== undefined && distinctId.length > 0 ? { distinct_id: distinctId } : {}),
-      schema_version: schemaVersionValue !== 0 ? schemaVersionValue : SCHEMA_VERSION,
+      ...(keptSchemaVersionToken !== undefined
+        ? { schemaVersionToken: keptSchemaVersionToken }
+        : {}),
     };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Exact raw token of the effective (last non-null) `schema_version` in a
+ * telemetry.json document, when it is a Go-decodable non-zero int64 token.
+ * For the identity-stitch writer (`legacy-identity-stitch.ts`), which
+ * re-persists the field independently of this layer and must not round it
+ * through `Number` — Go re-encodes the decoded 64-bit `int` verbatim, while
+ * `Number` rounds magnitudes above 2^53 (review r3683813242). Returns
+ * `undefined` for invalid JSON, non-object roots, non-int64 tokens, and zero
+ * (where Go falls back to the `SchemaVersion` constant, `state.go:103-106`).
+ */
+export function legacyTelemetrySchemaVersionToken(text: string): string | undefined {
+  try {
+    JSON.parse(text); // the scanner below assumes well-formed JSON
+  } catch {
+    return undefined;
+  }
+  const entries = scanRootJsonEntries(text);
+  if (entries === undefined) return undefined;
+  const token = lastNonNullToken(entries, "schema_version");
+  if (token === undefined || !isInt64Token(token) || BigInt(token) === 0n) return undefined;
+  return token;
 }
 
 export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.loadOrCreateState")(
@@ -422,11 +479,17 @@ export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.load
       session_last_active: nowIso,
       ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
       // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
-      schema_version: prior?.schema_version ?? SCHEMA_VERSION,
+      // The numeric field is for in-memory readers; the exact token rides
+      // along for the write so magnitudes above 2^53 round-trip like Go.
+      schema_version:
+        prior?.schemaVersionToken !== undefined ? Number(prior.schemaVersionToken) : SCHEMA_VERSION,
+      ...(prior?.schemaVersionToken !== undefined
+        ? { schemaVersionToken: prior.schemaVersionToken }
+        : {}),
     };
 
     yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-    yield* fs.writeFileString(filePath, JSON.stringify(state));
+    yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(state));
     return state;
   },
 );
@@ -443,7 +506,7 @@ export const setLegacyTelemetryEnabled = Effect.fn("legacy.telemetry.setEnabled"
   const nextState: State = { ...state, enabled };
   const filePath = legacyTelemetryPath(process.env, pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, JSON.stringify(nextState));
+  yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(nextState));
   return nextState;
 });
 
@@ -465,7 +528,7 @@ const persistLegacyDistinctId = Effect.fn("legacy.telemetry.persistDistinctId")(
     distinctId !== undefined && distinctId.length > 0 ? { ...rest, distinct_id: distinctId } : rest;
   const filePath = legacyTelemetryPath(process.env, pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, JSON.stringify(nextState));
+  yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(nextState));
 });
 
 const persistLegacyIdentityReset = Effect.fn("legacy.telemetry.persistIdentityReset")(function* () {
@@ -476,7 +539,7 @@ const persistLegacyIdentityReset = Effect.fn("legacy.telemetry.persistIdentityRe
   const nextState: State = { ...rest, device_id: crypto.randomUUID() };
   const filePath = legacyTelemetryPath(process.env, pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, JSON.stringify(nextState));
+  yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(nextState));
 });
 
 /**

@@ -11,8 +11,10 @@ import { mockAnalytics } from "../../../tests/helpers/mocks.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import {
+  legacyTelemetrySchemaVersionToken,
   legacyTelemetryStateLayer,
   loadOrCreateLegacyTelemetryState,
+  setLegacyTelemetryEnabled,
 } from "./legacy-telemetry-state.layer.ts";
 import { LegacyTelemetryState } from "./legacy-telemetry-state.service.ts";
 
@@ -850,6 +852,83 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
         expect(state.enabled).toBe(true);
         expect(state.device_id).not.toBe("d");
       });
+    });
+  });
+});
+
+describe("exact int64 schema_version round-trip (Go json.Marshal parity)", () => {
+  const runLoad = () => loadOrCreateLegacyTelemetryState().pipe(Effect.provide(BunServices.layer));
+
+  // File contents are hand-built strings: `JSON.stringify(9007199254740993)`
+  // would round inside the test itself, hiding exactly the bug under test.
+  const fileWith = (schemaVersionToken: string): string =>
+    `{"enabled":false,"device_id":"d","session_id":"s","session_last_active":${JSON.stringify(
+      new Date().toISOString(),
+    )},"schema_version":${schemaVersionToken}}`;
+
+  it.effect("a valid schema_version above 2^53 is persisted verbatim, like Go's int64", () => {
+    // Go decodes 9007199254740993 into `SchemaVersion int` exactly and
+    // `json.Marshal` re-emits it verbatim; a `Number` round-trip persists the
+    // rounded …992 (review r3683813242).
+    writeFileSync(telemetryPath(), fileWith("9007199254740993"));
+    return Effect.gen(function* () {
+      yield* runLoad();
+      const written = readFileSync(telemetryPath(), "utf8");
+      expect(written).toContain('"schema_version":9007199254740993');
+      expect(written).not.toContain("9007199254740992");
+    });
+  });
+
+  it.effect("the int64 maximum round-trips exactly", () => {
+    writeFileSync(telemetryPath(), fileWith("9223372036854775807"));
+    return Effect.gen(function* () {
+      yield* runLoad();
+      const written = readFileSync(telemetryPath(), "utf8");
+      expect(written).toContain('"schema_version":9223372036854775807');
+    });
+  });
+
+  it.effect("setLegacyTelemetryEnabled's rewrite also preserves the exact token", () => {
+    writeFileSync(telemetryPath(), fileWith("9007199254740993"));
+    return Effect.gen(function* () {
+      yield* setLegacyTelemetryEnabled(true).pipe(Effect.provide(BunServices.layer));
+      const written = readFileSync(telemetryPath(), "utf8");
+      expect(written).toContain('"enabled":true');
+      expect(written).toContain('"schema_version":9007199254740993');
+    });
+  });
+
+  it.effect("a zero schema_version still falls back to the current constant, like Go", () => {
+    writeFileSync(telemetryPath(), fileWith("0"));
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.schema_version).toBe(1);
+      const written = readFileSync(telemetryPath(), "utf8");
+      expect(written).toContain('"schema_version":1');
+    });
+  });
+
+  describe("legacyTelemetrySchemaVersionToken (identity-stitch writer helper)", () => {
+    it("returns the exact token for a valid non-zero int64, incl. above 2^53", () => {
+      expect(legacyTelemetrySchemaVersionToken(fileWith("9007199254740993"))).toBe(
+        "9007199254740993",
+      );
+      expect(legacyTelemetrySchemaVersionToken(fileWith("7"))).toBe("7");
+    });
+
+    it("returns undefined for zero, non-int64 tokens, and invalid documents", () => {
+      expect(legacyTelemetrySchemaVersionToken(fileWith("0"))).toBeUndefined();
+      expect(legacyTelemetrySchemaVersionToken(fileWith("1.5"))).toBeUndefined();
+      expect(legacyTelemetrySchemaVersionToken(fileWith("1e3"))).toBeUndefined();
+      expect(legacyTelemetrySchemaVersionToken(fileWith("9223372036854775808"))).toBeUndefined();
+      expect(legacyTelemetrySchemaVersionToken("not json")).toBeUndefined();
+      expect(legacyTelemetrySchemaVersionToken("[1,2]")).toBeUndefined();
+    });
+
+    it("uses the last non-null occurrence, like Go's decode-overwrite semantics", () => {
+      const doc =
+        '{"enabled":false,"device_id":"d","session_id":"s","session_last_active":"2026-01-01T00:00:00Z","schema_version":7,"schema_version":null}';
+      expect(legacyTelemetrySchemaVersionToken(doc)).toBe("7");
     });
   });
 });
