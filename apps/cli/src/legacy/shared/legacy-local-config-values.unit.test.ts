@@ -3018,7 +3018,7 @@ describe("legacyResolveLocalJwks", () => {
     });
 
     // The key divergence from `shared/functions/serve.ts`'s own (unrelated)
-    // `resolveAuthArtifacts`: Go's `start` treats a remote-JWKS fetch failure as a hard,
+    // `finalizeAuthArtifacts`: Go's `start` treats a remote-JWKS fetch failure as a hard,
     // command-failing error (`internal/start/start.go:274-277`) — `legacyResolveLocalJwks`
     // must propagate it too, not swallow it and continue with zero remote keys.
     it("fails the whole resolution when the remote JWKS fetch fails, unlike functions serve's leniency", async () => {

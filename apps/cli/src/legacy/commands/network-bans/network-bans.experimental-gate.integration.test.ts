@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
+import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
 import { mockOutput, mockTelemetryRuntime } from "../../../../tests/helpers/mocks.ts";
@@ -96,4 +97,36 @@ describe("legacy network-bans experimental gate (Go PersistentPreRunE parity)", 
       }).pipe(Effect.provide(layer));
     });
   }
+
+  it.live(
+    "remove: malformed --db-unban-ip CSV fails at parse time with pflag's exact diagnostic, before the gate",
+    () => {
+      // Go parity (CLI-1983): pflag's `readAsCSV` error aborts cobra's
+      // `ParseFlags` BEFORE `PersistentPreRunE`'s experimental-gate check, so
+      // the parse error must win even with `--experimental` unset. The
+      // rendered line — what `runCli`'s `handledProgram` writes to stderr via
+      // `normalizeCause` — byte-matches the real Go CLI (pflag v1.0.10
+      // `errors.go:116` wrapping `encoding/csv`; `"1.2.3.4` is 8 bytes → EOF
+      // at column 9).
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Command.runWith(testRoot, { version: "0.0.0-test" })([
+            "network-bans",
+            "remove",
+            "--db-unban-ip",
+            '"1.2.3.4',
+          ]),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).not.toContain("LegacyExperimentalRequiredError");
+          expect(normalizeCause(exit.cause).message).toBe(
+            'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field',
+          );
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
