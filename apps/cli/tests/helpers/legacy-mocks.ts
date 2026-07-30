@@ -317,14 +317,17 @@ export function mockLegacyLinkedProjectCacheTracked(): {
   readonly layer: Layer.Layer<LegacyLinkedProjectCache>;
   readonly cached: boolean;
   readonly cachedRef: string | undefined;
+  readonly cachedApiUrl: string | undefined;
 } {
   let cached = false;
   let cachedRef: string | undefined;
+  let cachedApiUrl: string | undefined;
   const layer = Layer.succeed(LegacyLinkedProjectCache, {
-    cache: (ref: string) =>
+    cache: (ref: string, _workdir?: string, apiUrl?: string) =>
       Effect.sync(() => {
         cached = true;
         cachedRef = ref;
+        cachedApiUrl = apiUrl;
       }),
   });
   return {
@@ -334,6 +337,9 @@ export function mockLegacyLinkedProjectCacheTracked(): {
     },
     get cachedRef() {
       return cachedRef;
+    },
+    get cachedApiUrl() {
+      return cachedApiUrl;
     },
   };
 }

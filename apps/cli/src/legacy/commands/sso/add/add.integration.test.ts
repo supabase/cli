@@ -1178,7 +1178,7 @@ describe("legacy sso add integration", () => {
       const envProfile = writeProfileYaml("env-profile.yml", "http://reconciled.example");
       const alternate = writeProfileYaml("alternate.yml", "http://alternate.example");
       const restoreEnv = withProfileEnv(envProfile);
-      const { layer, api } = setup({
+      const { layer, api, cache } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--domains", "--profile", alternate],
         profileFlag: alternate,
       });
@@ -1192,6 +1192,9 @@ describe("legacy sso add integration", () => {
         expect((posts[0]?.body as { domains?: ReadonlyArray<string> })?.domains).toEqual([
           "--profile",
         ]);
+        // The linked-project cache fill targets the reconciled host too
+        // (Go's ensureProjectGroupsCached uses the process-wide profile).
+        expect(cache.cachedApiUrl).toBe("http://reconciled.example");
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );

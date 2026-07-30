@@ -250,6 +250,13 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
 
     const ref = yield* resolver.resolve(projectRef);
 
+    // Effective API base URL: the pflag-reconciled profile's when the scan
+    // and the parser disagreed on `--profile`, the config layer's otherwise.
+    // Go's reconciled `CurrentProfile` applies process-wide, so the POST, the
+    // upgrade-gate fallback GETs, and the linked-project cache GET all target
+    // the same host (PR #5974 round 7).
+    const apiUrl = Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl);
+
     yield* Effect.gen(function* () {
       // Permissive request body. We POST as raw JSON to preserve any
       // user-supplied keys inside `attribute_mapping.keys.<x>` (notably the
@@ -300,7 +307,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       // redaction marker on the Authorization header so that any future debug
       // serialisation of the request stays opaque about the bearer token value.
       const request = HttpClientRequest.post(
-        `${Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl)}/v1/projects/${ref}/config/auth/sso/providers`,
+        `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers`,
       ).pipe(
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
         HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
@@ -330,6 +337,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
           featureKey: "auth.saml_2",
           statusCode: response.status,
           response,
+          apiUrl,
         });
         yield* creating?.fail() ?? Effect.void;
         if (response.status === 404) {
@@ -379,6 +387,12 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       }
 
       yield* output.raw(renderSingleProvider(toLegacySsoProviderView(parsedJson)));
-    }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+    }).pipe(
+      // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through the
+      // process-wide `CurrentProfile` — the reconciled host, never the layer's.
+      Effect.ensuring(
+        linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl)),
+      ),
+    );
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

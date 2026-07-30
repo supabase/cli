@@ -15,8 +15,14 @@ interface LegacyLinkedProjectCacheShape {
    * Best-effort. Never fails the calling effect — auth errors, network errors,
    * and write errors are all swallowed (matches Go's `ensureProjectGroupsCached`
    * which logs to debug and returns).
+   *
+   * `apiUrl` overrides the Management API base URL of the cache-fill GET.
+   * Go's `ensureProjectGroupsCached` goes through `GetSupabase()` and the
+   * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
+   * profile differing from the config layer's (sso add/update, PR #5974
+   * round 7) pass that profile's URL. Defaults to `cliConfig.apiUrl`.
    */
-  readonly cache: (ref: string, workdir?: string) => Effect.Effect<void>;
+  readonly cache: (ref: string, workdir?: string, apiUrl?: string) => Effect.Effect<void>;
 }
 
 export class LegacyLinkedProjectCache extends Context.Service<

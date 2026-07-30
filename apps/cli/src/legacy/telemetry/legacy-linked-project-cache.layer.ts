@@ -54,7 +54,7 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
     const { stitch } = yield* LegacyIdentityStitch;
 
     return LegacyLinkedProjectCache.of({
-      cache: (ref: string, workdir?: string) =>
+      cache: (ref: string, workdir?: string, apiUrl?: string) =>
         Effect.gen(function* () {
           const cachePath = legacyTempPaths(path, workdir ?? cliConfig.workdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
@@ -67,7 +67,9 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
           if (Option.isNone(tokenOpt)) return;
           const token = Redacted.value(tokenOpt.value);
 
-          const request = HttpClientRequest.get(`${cliConfig.apiUrl}/v1/projects/${ref}`).pipe(
+          const request = HttpClientRequest.get(
+            `${apiUrl ?? cliConfig.apiUrl}/v1/projects/${ref}`,
+          ).pipe(
             HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
             HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
           );

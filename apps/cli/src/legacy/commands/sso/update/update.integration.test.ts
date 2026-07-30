@@ -16,6 +16,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
 import { legacySsoUpdate } from "./update.handler.ts";
 
@@ -43,6 +44,12 @@ interface SetupOpts {
   goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
   getStatus?: number;
   getBody?: unknown;
+  /**
+   * Serves the provider GET as a raw body + content type instead of
+   * `jsonResponse` — for the reconciled-profile raw GET's decode branches
+   * (invalid JSON, non-JSON content type).
+   */
+  getRaw?: { status: number; body: string; contentType: string };
   putStatus?: number;
   putBody?: unknown;
   upgradeGate?: "gated" | "notGated";
@@ -93,8 +100,20 @@ function setup(opts: SetupOpts = {}) {
     handler: (request) => {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers/")) {
-        if (request.method === "GET")
+        if (request.method === "GET") {
+          if (opts.getRaw !== undefined) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(opts.getRaw.body, {
+                  status: opts.getRaw.status,
+                  headers: { "content-type": opts.getRaw.contentType },
+                }),
+              ),
+            );
+          }
           return Effect.succeed(jsonResponse(request, getStatus, getBody));
+        }
         if (request.method === "PUT")
           return Effect.succeed(jsonResponse(request, putStatus, putBody));
       }
@@ -137,6 +156,18 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
+  // Tracked identity stitcher: the reconciled-profile raw GET must stitch
+  // through the shared per-command guard exactly like the typed client's
+  // response transform (Go's identityTransport wraps every response).
+  let stitchedResponses = 0;
+  const stitchLayer = Layer.succeed(LegacyIdentityStitch, {
+    stitch: () =>
+      Effect.sync(() => {
+        stitchedResponses += 1;
+      }),
+    stitchedDistinctId: () => undefined,
+  });
+
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
@@ -151,12 +182,23 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
     }),
+    stitchLayer,
     opts.profileFlag === undefined
       ? Layer.empty
       : Layer.succeed(LegacyProfileFlag, opts.profileFlag),
   );
 
-  return { layer, out, api, analytics, telemetry, cache };
+  return {
+    layer,
+    out,
+    api,
+    analytics,
+    telemetry,
+    cache,
+    get stitchedResponses() {
+      return stitchedResponses;
+    },
+  };
 }
 
 const defaultFlags = {
@@ -1502,10 +1544,11 @@ describe("legacy sso update integration", () => {
       const first = writeProfileYaml("first.yml", "http://first.example");
       const second = writeProfileYaml("second.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
-      const { layer, api } = setup({
+      const testSetup = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
         profileFlag: first,
       });
+      const { layer, api, cache } = testSetup;
       return Effect.gen(function* () {
         yield* legacySsoUpdate(defaultFlags);
         const providerUrl = `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`;
@@ -1517,6 +1560,12 @@ describe("legacy sso update integration", () => {
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
         expect(api.requests.some((r) => r.url.startsWith("http://first.example"))).toBe(false);
+        // The raw GET stitches identity through the shared per-command guard,
+        // like Go's identityTransport on every Management API response.
+        expect(testSetup.stitchedResponses).toBeGreaterThan(0);
+        // The linked-project cache fill targets the reconciled host too
+        // (Go's ensureProjectGroupsCached uses the process-wide profile).
+        expect(cache.cachedApiUrl).toBe("http://second.example");
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );
@@ -1657,6 +1706,90 @@ describe("legacy sso update integration", () => {
           expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
         }
         expect(api.requests.length).toBe(0);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: an undecodable 200 body from the reconciled GET aborts before the PUT",
+    () => {
+      // Go's generated `ParseV1GetASsoProviderResponse` unmarshals the 200
+      // JSON body; the unmarshal error exits `update.Run` with `failed to
+      // get sso provider: %w` before any PUT (`update.go:42-45`).
+      const first = writeProfileYaml("first-badjson.yml", "http://first.example");
+      const second = writeProfileYaml("second-badjson.yml", "http://second.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        getRaw: { status: 200, body: "{not json", contentType: "application/json" },
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
+        profileFlag: first,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateNetworkError");
+          expect(dump).toContain("failed to get sso provider:");
+        }
+        expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: a 200 without a JSON content type maps to the unexpected-status branch, like Go's nil JSON200",
+    () => {
+      // `update.go:47-55`: a 200 whose content type isn't JSON leaves
+      // `JSON200` nil, so Go runs the gate check and errors with the raw
+      // body — no PUT.
+      const first = writeProfileYaml("first-nonjson.yml", "http://first.example");
+      const second = writeProfileYaml("second-nonjson.yml", "http://second.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        getRaw: { status: 200, body: "plain text body", contentType: "text/plain" },
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
+        profileFlag: first,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateUnexpectedStatusError");
+          expect(dump).toContain("unexpected error fetching identity provider: plain text body");
+        }
+        expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: a gated 4xx on the reconciled GET sends the fallback gate requests to the reconciled host",
+    () => {
+      // Go's `SuggestUpgradeOnError` goes through `GetSupabase()` and the
+      // process-wide reconciled `CurrentProfile`; the project + entitlement
+      // fallback GETs must hit the same host as the main call.
+      const first = writeProfileYaml("first-gate.yml", "http://first.example");
+      const second = writeProfileYaml("second-gate.yml", "http://second.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        getStatus: 403,
+        getBody: {},
+        upgradeGate: "gated",
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
+        profileFlag: first,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        const project = api.requests.find((r) =>
+          r.url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`),
+        );
+        const entitlements = api.requests.find((r) => r.url.includes("/entitlements"));
+        expect(project?.url).toBe(`http://second.example/v1/projects/${LEGACY_VALID_REF}`);
+        expect(entitlements?.url).toBe("http://second.example/v1/organizations/acme/entitlements");
+        expect(api.requests.some((r) => r.url.startsWith("http://first.example"))).toBe(false);
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );

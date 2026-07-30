@@ -5,6 +5,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
@@ -194,6 +195,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
+  const identityStitch = yield* Effect.serviceOption(LegacyIdentityStitch);
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
 
@@ -371,33 +373,73 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
               }),
           ),
         );
-        if (response.status !== 200) {
-          yield* fetching?.fail() ?? Effect.void;
-          const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-          const bodyText = sanitizeLegacyErrorBody(rawBody);
-          yield* legacySuggestUpgrade({
-            projectRef: ref,
-            featureKey: "auth.saml_2",
-            statusCode: response.status,
-            response,
-          });
-          if (response.status === 404) {
+        // Go's `identityTransport` wraps EVERY Management API response
+        // (`cmd/root.go:146-154`); the typed client stitches via its response
+        // transform (`legacy-platform-api.layer.ts`), so this raw GET must
+        // stitch through the same once-per-command guard — before the status
+        // gate, like the linked-project cache's raw GET. `serviceOption`:
+        // absent outside the real CLI tree (handler-level tests), where no
+        // telemetry runtime exists to stitch into.
+        if (Option.isSome(identityStitch)) {
+          yield* identityStitch.value.stitch(response);
+        }
+        // Go's generated `ParseV1GetASsoProviderResponse` reads the body up
+        // front; the read error surfaces as `failed to get sso provider: %w`
+        // (`update.go:42-45`).
+        const rawBody = yield* response.text.pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.mapError(
+            (cause) =>
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${String(cause)}`,
+              }),
+          ),
+        );
+        const contentType = response.headers["content-type"] ?? "";
+        if (response.status === 200 && contentType.includes("json")) {
+          // Go unmarshals a 200 JSON body and exits with the unmarshal error
+          // before any PUT (`update.go:42-45`); detail text is JS
+          // `JSON.parse`'s, not encoding/json's (documented micro-divergence
+          // — both CLIs exit 1 with no PUT).
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(rawBody);
+          } catch (cause) {
+            yield* fetching?.fail() ?? Effect.void;
             return yield* Effect.fail(
-              new LegacySsoUpdateNotFoundError({
-                message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
               }),
             );
           }
+          return { domains: extractDomainItems(parsed) };
+        }
+        // Non-200 — or a 200 without a JSON content type, which leaves Go's
+        // `JSON200` nil and falls into the same branch (`update.go:47-55`):
+        // gate check, then 404 / unexpected-status.
+        yield* fetching?.fail() ?? Effect.void;
+        const bodyText = sanitizeLegacyErrorBody(rawBody);
+        yield* legacySuggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: response.status,
+          response,
+          apiUrl,
+        });
+        if (response.status === 404) {
           return yield* Effect.fail(
-            new LegacySsoUpdateUnexpectedStatusError({
-              status: response.status,
-              body: bodyText,
-              message: `unexpected error fetching identity provider: ${bodyText}`,
+            new LegacySsoUpdateNotFoundError({
+              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
             }),
           );
         }
-        const parsed = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
-        return { domains: extractDomainItems(parsed) };
+        return yield* Effect.fail(
+          new LegacySsoUpdateUnexpectedStatusError({
+            status: response.status,
+            body: bodyText,
+            message: `unexpected error fetching identity provider: ${bodyText}`,
+          }),
+        );
       });
 
       // Go's `update.go:42` always GETs first, regardless of which flags are set.
@@ -487,6 +529,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           featureKey: "auth.saml_2",
           statusCode: response.status,
           response,
+          apiUrl,
         });
         yield* fetching?.fail() ?? Effect.void;
         return yield* Effect.fail(
@@ -531,6 +574,12 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       }
 
       yield* output.raw(renderSingleProvider(toLegacySsoProviderView(parsedJson)));
-    }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+    }).pipe(
+      // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through the
+      // process-wide `CurrentProfile` — the reconciled host, never the layer's.
+      Effect.ensuring(
+        linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl)),
+      ),
+    );
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

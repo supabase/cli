@@ -91,6 +91,15 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly statusCode: number;
   readonly response?: HttpClientResponse.HttpClientResponse;
   /**
+   * Overrides the API base URL of the fallback project + entitlement GETs.
+   * Go's `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
+   * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
+   * profile differing from the config layer's (sso add/update, PR #5974
+   * round 7) pass that profile's URL so the gate requests hit the same host
+   * as their main calls. Defaults to `LegacyCliConfig.apiUrl`.
+   */
+  readonly apiUrl?: string;
+  /**
    * Set false where the Go twin fires no `TrackUpgradeSuggested` (vanity
    * check-availability), keeping telemetry 1:1.
    */
@@ -133,9 +142,11 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       ? HttpClientRequest.bearerToken(tokenOpt.value)
       : (req) => req;
 
-    const projectReq = HttpClientRequest.get(
-      `${cliConfig.apiUrl}/v1/projects/${opts.projectRef}`,
-    ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
+    const apiUrl = opts.apiUrl ?? cliConfig.apiUrl;
+    const projectReq = HttpClientRequest.get(`${apiUrl}/v1/projects/${opts.projectRef}`).pipe(
+      authHeader,
+      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+    );
     const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
     if (projectResp._tag === "None" || projectResp.value.status !== 200) {
       return;
@@ -149,9 +160,10 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       return;
     }
 
-    const entReq = HttpClientRequest.get(
-      `${cliConfig.apiUrl}/v1/organizations/${orgSlug}/entitlements`,
-    ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
+    const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
+      authHeader,
+      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+    );
     const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
     if (entResp._tag === "None" || entResp.value.status !== 200) {
       return;
