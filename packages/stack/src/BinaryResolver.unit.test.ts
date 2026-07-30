@@ -1,9 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, FileSystem, Layer, Path, PlatformError, Sink, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver, type BinarySpec } from "./BinaryResolver.ts";
+import { detectPlatform, postgrestAssetName } from "./Platform.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const postgresVersion = DEFAULT_VERSIONS.postgres;
@@ -133,6 +144,7 @@ describe("BinaryResolver.cachePath", () => {
 function createFakeCacheFs() {
   const dirs = new Set<string>();
   const files = new Map<string, Uint8Array>();
+  const mtimes = new Map<string, number>();
 
   const isWithin = (candidatePath: string, rootPath: string): boolean =>
     candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
@@ -143,6 +155,7 @@ function createFakeCacheFs() {
     for (let i = 0; i < segments.length - 1; i++) {
       current += `/${segments[i]}`;
       dirs.add(current);
+      if (!mtimes.has(current)) mtimes.set(current, Date.now());
     }
   };
 
@@ -161,8 +174,28 @@ function createFakeCacheFs() {
       makeDirectory: (dirPath) =>
         Effect.sync(() => {
           dirs.add(dirPath);
+          mtimes.set(dirPath, Date.now());
           addAncestorDirs(dirPath);
         }),
+      stat: (targetPath) =>
+        Effect.sync(
+          (): FileSystem.File.Info => ({
+            type: dirs.has(targetPath) ? "Directory" : "File",
+            mtime: Option.some(new Date(mtimes.get(targetPath) ?? Date.now())),
+            atime: Option.none(),
+            birthtime: Option.none(),
+            dev: 0,
+            ino: Option.none(),
+            mode: 0,
+            nlink: Option.none(),
+            uid: Option.none(),
+            gid: Option.none(),
+            rdev: Option.none(),
+            size: FileSystem.Size(0),
+            blksize: Option.none(),
+            blocks: Option.none(),
+          }),
+        ),
       readDirectory: (dirPath) =>
         Effect.sync(() => {
           const prefix = `${dirPath}/`;
@@ -229,6 +262,20 @@ function createFakeCacheFs() {
         if (key.startsWith(prefix)) names.add(key.slice(prefix.length).split("/")[0]!);
       }
       return [...names];
+    },
+    /** Backdates (or refreshes) a path's fake mtime, for staleness tests. */
+    setMtime: (targetPath: string, when: Date): void => {
+      mtimes.set(targetPath, when.getTime());
+    },
+    /** Directly seeds a directory with content, bypassing the resolver — simulates
+     * a pre-existing cacheDir left by an older, pre-atomic-rename CLI version or
+     * an abandoned staging directory from a killed process. */
+    seedDirWithFile: (dirPath: string, relativeFilePath: string): void => {
+      dirs.add(dirPath);
+      if (!mtimes.has(dirPath)) mtimes.set(dirPath, Date.now());
+      const filePath = `${dirPath}/${relativeFilePath}`;
+      files.set(filePath, new Uint8Array([9, 9, 9]));
+      addAncestorDirs(filePath);
     },
   };
 }
@@ -336,4 +383,133 @@ describe("BinaryResolver.resolveWithMetadata concurrency", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+/** Resolves the real cacheDir a `postgrest` spec would use on the host running the test. */
+const resolvePostgrestCacheDir = Effect.gen(function* () {
+  const platform = yield* detectPlatform;
+  const assetName = postgrestAssetName(platform);
+  if (assetName === null) {
+    return yield* Effect.die(`unsupported test platform: ${platform.os}-${platform.arch}`);
+  }
+  return BinaryResolver.cachePath("/cache-root/bin", {
+    service: "postgrest",
+    version: postgrestVersion,
+    assetName,
+  });
+});
+
+describe("BinaryResolver.resolveWithMetadata stale staging cleanup", () => {
+  it.live(
+    "reaps an abandoned staging directory older than the age threshold on a later resolve",
+    () => {
+      const fakeFs = createFakeCacheFs();
+      const spawner = mockExtractingSpawner(fakeFs);
+      const httpLayer = mockDownloadHttpClient({
+        archiveBytes: new Uint8Array([1, 2, 3]),
+        delayMs: 0,
+      });
+
+      const layer = BinaryResolver.make("/cache-root").pipe(
+        Layer.provide(fakeFs.layer),
+        Layer.provide(Path.layer),
+        Layer.provide(httpLayer),
+        Layer.provide(spawner.layer),
+      );
+
+      return Effect.gen(function* () {
+        const resolver = yield* BinaryResolver;
+        const cacheDir = yield* resolvePostgrestCacheDir;
+        const abandonedDir = `${cacheDir}.tmp-abandoned`;
+
+        // Simulate a staging directory left behind by a process that was
+        // SIGKILL'd/OOM-killed mid-download, more than the age threshold ago.
+        fakeFs.seedDirWithFile(abandonedDir, "_download-abandoned.tar");
+        fakeFs.setMtime(abandonedDir, new Date(Date.now() - 25 * 60 * 60 * 1000));
+
+        yield* resolver.resolveWithMetadata({ service: "postgrest", version: postgrestVersion });
+
+        expect(fakeFs.dirs.has(abandonedDir)).toBe(false);
+        expect([...fakeFs.files.keys()].some((p) => p.startsWith(abandonedDir))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "leaves a fresh staging directory alone (not old enough to be considered abandoned)",
+    () => {
+      const fakeFs = createFakeCacheFs();
+      const spawner = mockExtractingSpawner(fakeFs);
+      const httpLayer = mockDownloadHttpClient({
+        archiveBytes: new Uint8Array([1, 2, 3]),
+        delayMs: 0,
+      });
+
+      const layer = BinaryResolver.make("/cache-root").pipe(
+        Layer.provide(fakeFs.layer),
+        Layer.provide(Path.layer),
+        Layer.provide(httpLayer),
+        Layer.provide(spawner.layer),
+      );
+
+      return Effect.gen(function* () {
+        const resolver = yield* BinaryResolver;
+        const cacheDir = yield* resolvePostgrestCacheDir;
+        const freshDir = `${cacheDir}.tmp-fresh`;
+
+        // A staging directory from a genuinely live concurrent download —
+        // recent mtime, must survive the sweep.
+        fakeFs.seedDirWithFile(freshDir, "_download-fresh.tar");
+        fakeFs.setMtime(freshDir, new Date());
+
+        yield* resolver.resolveWithMetadata({ service: "postgrest", version: postgrestVersion });
+
+        expect(fakeFs.dirs.has(freshDir)).toBe(true);
+        expect(fakeFs.files.has(`${freshDir}/_download-fresh.tar`)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
+
+describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
+  it.live("reclaims a broken cacheDir left by an older, pre-atomic-rename CLI version", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockDownloadHttpClient({
+      archiveBytes: new Uint8Array([1, 2, 3]),
+      delayMs: 0,
+    });
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
+
+      // A non-empty cacheDir with no completion marker — exactly what an
+      // older, pre-atomic-rename CLI version would leave behind if it was
+      // killed mid-extraction (it wrote directly into cacheDir, no staging).
+      fakeFs.seedDirWithFile(cacheDir, "stray-legacy-file.txt");
+
+      const result = yield* resolver.resolveWithMetadata(spec);
+
+      // The broken leftover was reclaimed, not trusted or left in place.
+      expect(result.path).toBe(cacheDir);
+      expect(result.downloaded).toBe(true);
+      expect(fakeFs.files.has(`${cacheDir}/stray-legacy-file.txt`)).toBe(false);
+
+      // A subsequent resolve is now a clean cache hit — proving the
+      // reclaimed entry is genuinely complete (carries the marker), not
+      // just superficially non-empty again.
+      const second = yield* resolver.resolveWithMetadata(spec);
+      expect(second.downloaded).toBe(false);
+      expect(second.path).toBe(cacheDir);
+    }).pipe(Effect.provide(layer));
+  });
 });

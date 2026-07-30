@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Effect, FileSystem, Layer, Path, Context } from "effect";
+import { Effect, FileSystem, Layer, Path, Context, Option } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryNotFoundError, ChecksumMismatchError, DownloadError } from "./errors.ts";
@@ -66,6 +66,24 @@ const checksumUrl = (info: AssetInfo): string | null => {
 
 const cachePath = (baseDir: string, info: AssetInfo): string =>
   `${baseDir}/${info.service}/${info.version}/${info.assetName}`;
+
+/**
+ * Written as the last step of staging, so its presence in `cacheDir` after
+ * the atomic rename is a version-agnostic signal that the entry is a
+ * complete, valid cache hit — not just non-empty. A `cacheDir` that exists
+ * but lacks this marker can only be a broken leftover from an older,
+ * pre-atomic-rename CLI version that wrote directly into `cacheDir` and
+ * could be killed mid-extraction.
+ */
+const CACHE_COMPLETE_MARKER = ".supabase-cache-complete";
+
+/**
+ * Age threshold for reaping abandoned `.tmp-*` staging siblings (see the
+ * sweep in `resolveWithMetadata`). Generous on purpose: well beyond how long
+ * any of these downloads/extracts should realistically take, so it can
+ * never step on a genuinely live concurrent download.
+ */
+const STALE_TMP_DIR_AGE_MS = 24 * 60 * 60 * 1000;
 
 const extractCommand = (
   url: string,
@@ -181,26 +199,58 @@ export class BinaryResolver extends Context.Service<
             const cacheDir = cachePath(baseDir, info);
             const url = downloadUrl(info);
 
-            // Check if already cached (directory exists AND has files). The
-            // final cacheDir is only ever created via an atomic rename of a
-            // fully-populated staging directory (see below), so a non-empty
-            // cacheDir is always a complete, valid cache hit — including when
-            // a concurrent process races to resolve the same spec.
+            // Check if already cached. The final cacheDir is only ever
+            // populated by an atomic rename of a fully-staged directory
+            // carrying a completion marker (see below), so we check for that
+            // marker rather than mere non-emptiness — a cacheDir that exists
+            // but lacks it can only be a broken leftover (e.g. from an older,
+            // pre-atomic-rename CLI version), never a valid cache entry.
+            const isComplete = yield* fs.exists(path.join(cacheDir, CACHE_COMPLETE_MARKER));
+            if (isComplete) {
+              return {
+                path: cacheDir,
+                downloaded: false,
+              } satisfies ResolveBinaryResult;
+            }
             const isCached = yield* fs.exists(cacheDir);
             if (isCached) {
-              const entries = yield* fs.readDirectory(cacheDir);
-              if (entries.length > 0) {
-                return {
-                  path: cacheDir,
-                  downloaded: false,
-                } satisfies ResolveBinaryResult;
-              }
-              // An empty cacheDir can no longer be produced by this resolver
-              // itself; it can only come from external interference (e.g. a
-              // pre-atomic-rename cache from an older CLI version). Remove
-              // and re-download defensively.
               yield* fs.remove(cacheDir, { recursive: true });
             }
+
+            // Opportunistically reap staging directories abandoned by a
+            // prior invocation that was killed (SIGKILL/OOM) between
+            // creating its tmpDir and the atomic rename — Effect.ensuring
+            // can't run past a hard process kill, and every attempt mints a
+            // fresh UUID, so nothing else ever revisits these siblings
+            // otherwise. Scoped to just this cacheDir's own tmp-* siblings
+            // (not a general cache-root scan), gated by a generous age
+            // threshold, and entirely best-effort.
+            const tmpDirPrefix = `${path.basename(cacheDir)}.tmp-`;
+            const parentDir = path.dirname(cacheDir);
+            yield* fs.readDirectory(parentDir).pipe(
+              Effect.flatMap((siblings) =>
+                Effect.forEach(
+                  siblings.filter((name) => name.startsWith(tmpDirPrefix)),
+                  (name) => {
+                    const staleDir = path.join(parentDir, name);
+                    return fs.stat(staleDir).pipe(
+                      Effect.flatMap((info) =>
+                        Option.match(info.mtime, {
+                          onNone: () => Effect.void,
+                          onSome: (mtime) =>
+                            Date.now() - mtime.getTime() > STALE_TMP_DIR_AGE_MS
+                              ? fs.remove(staleDir, { recursive: true, force: true })
+                              : Effect.void,
+                        }),
+                      ),
+                      Effect.ignore,
+                    );
+                  },
+                  { concurrency: "unbounded" },
+                ),
+              ),
+              Effect.ignore,
+            );
 
             yield* options?.onDownloadStart ?? Effect.void;
 
@@ -302,12 +352,24 @@ export class BinaryResolver extends Context.Service<
                 ]);
                 yield* spawner.exitCode(codesignCmd).pipe(Effect.ignore);
               }
+
+              // Write the completion marker last, so it's carried into
+              // cacheDir by the same atomic rename as the rest of the
+              // payload — its presence is the version-agnostic completeness
+              // signal the cache-hit and lost-race checks rely on.
+              yield* fs.writeFile(path.join(tmpDir, CACHE_COMPLETE_MARKER), new Uint8Array());
             });
 
             // Publish the completed staging directory by atomically renaming
-            // it into place. If another process already published cacheDir
-            // first, discard our own copy and resolve to theirs instead of
-            // failing. The whole stage-and-publish lifecycle is wrapped in a
+            // it into place. If another process already published a
+            // complete cacheDir first (verified via the completion marker,
+            // not mere existence), discard our own copy and resolve to
+            // theirs instead of failing. If cacheDir exists but isn't a
+            // complete, marker-carrying entry — a broken/incomplete leftover
+            // from an older, pre-atomic-rename CLI version, or the rename
+            // failed for some unrelated reason — our own staged build is the
+            // only known-good copy: reclaim the spot and retry the rename
+            // once. The whole stage-and-publish lifecycle is wrapped in a
             // single `Effect.ensuring(cleanupTmpDir)` finalizer so every exit
             // — stage failure, a genuine rename failure, or an interruption
             // at any point — removes the staging directory. `cleanupTmpDir`
@@ -315,14 +377,20 @@ export class BinaryResolver extends Context.Service<
             // the rename has already moved tmpDir into place.
             const published = yield* Effect.gen(function* () {
               yield* stage;
-              return yield* fs.rename(tmpDir, cacheDir).pipe(
-                Effect.as(true),
-                Effect.catchTag("PlatformError", (renameError) =>
+
+              const renameOnce = () => fs.rename(tmpDir, cacheDir).pipe(Effect.as(true));
+
+              return yield* renameOnce().pipe(
+                Effect.catchTag("PlatformError", () =>
                   fs
-                    .exists(cacheDir)
+                    .exists(path.join(cacheDir, CACHE_COMPLETE_MARKER))
                     .pipe(
-                      Effect.flatMap((alreadyPresent) =>
-                        alreadyPresent ? Effect.succeed(false) : Effect.fail(renameError),
+                      Effect.flatMap((legitimateWinner) =>
+                        legitimateWinner
+                          ? Effect.succeed(false)
+                          : fs
+                              .remove(cacheDir, { recursive: true, force: true })
+                              .pipe(Effect.ignore, Effect.andThen(renameOnce())),
                       ),
                     ),
                 ),
