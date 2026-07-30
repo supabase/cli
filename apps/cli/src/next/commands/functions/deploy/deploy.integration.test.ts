@@ -1233,16 +1233,17 @@ describe("functions deploy", () => {
         functionNames: ["hello-world"],
       }).pipe(Effect.provide(layer));
 
-      expect(api.multiparts[0]?.fileNames).toContain("app/supabase/functions/hello-world/index.ts");
-      expect(api.multiparts[0]?.fileNames).toContain(
-        "app/supabase/functions/hello-world/deno.json",
-      );
-      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
+      // Go parity (CLI-1985): names anchored at the workdir like Go's
+      // `toRelPath` (relative to `os.Getwd()`), so git-root workspace imports
+      // outside the workdir upload with `../`-relative names.
+      expect(api.multiparts[0]?.fileNames).toContain("supabase/functions/hello-world/index.ts");
+      expect(api.multiparts[0]?.fileNames).toContain("supabase/functions/hello-world/deno.json");
+      expect(api.multiparts[0]?.fileNames).toContain("../packages/shared/src/index.ts");
       expect(api.multiparts[0]?.metadata).toContain(
-        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
+        '"entrypoint_path":"supabase/functions/hello-world/index.ts"',
       );
       expect(api.multiparts[0]?.metadata).toContain(
-        '"import_map_path":"app/supabase/functions/hello-world/deno.json"',
+        '"import_map_path":"supabase/functions/hello-world/deno.json"',
       );
       expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
     }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
@@ -1290,9 +1291,9 @@ describe("functions deploy", () => {
         functionNames: ["hello-world"],
       }).pipe(Effect.provide(layer));
 
-      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
+      expect(api.multiparts[0]?.fileNames).toContain("../packages/shared/src/index.ts");
       expect(api.multiparts[0]?.metadata).toContain(
-        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
+        '"entrypoint_path":"supabase/functions/hello-world/index.ts"',
       );
     }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
   });
@@ -1600,7 +1601,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
-  it.live("forwards npm auth environment to the Docker bundler", () => {
+  it.live("forwards only NPM_CONFIG_REGISTRY to the Docker bundler", () => {
     const tempDir = makeTempDir();
     const previousRegistry = process.env["NPM_CONFIG_REGISTRY"];
     const previousToken = process.env["NPM_AUTH_TOKEN"];
@@ -1655,9 +1656,10 @@ describe("functions deploy", () => {
         args[index - 1] === "-e" ? [arg] : [],
       );
 
-      expect(forwardedEnv).toEqual(
-        expect.arrayContaining(["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"]),
-      );
+      // Go parity (`bundle.go:68-70`, CLI-1985): only NPM_CONFIG_REGISTRY is
+      // forwarded into the bundler container; NPM_AUTH_TOKEN is not.
+      expect(forwardedEnv).toContain("NPM_CONFIG_REGISTRY");
+      expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN");
       expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN=test-token");
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), restoreEnv])));
   });

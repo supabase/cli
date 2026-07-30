@@ -325,6 +325,110 @@ describe("legacy functions deploy", () => {
     );
   });
 
+  it.live("anchors API upload paths at the workdir when the git root is an ancestor", () => {
+    // Go parity (CLI-1985): Go's `toRelPath` (`pkg/function/deploy.go:94-103`)
+    // anchors uploaded file names and the server-recorded `entrypoint_path` /
+    // `import_map_path` at `os.Getwd()` — the workdir — never at the git root.
+    // Monorepo imports outside the workdir (allowed since #5755) upload with
+    // Go-style `../`-relative names.
+    const repoRoot = tempRoot.current;
+    const workdir = join(repoRoot, "app");
+    const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) => {
+        if (request.body._tag === "FormData") {
+          const metadata = request.body.formData.get("metadata");
+          multiparts.push({
+            metadata: typeof metadata === "string" ? metadata : undefined,
+            fileNames: request.body.formData
+              .getAll("file")
+              .flatMap((part) => (part instanceof File ? [part.name] : [])),
+          });
+        }
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
+          legacyJsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "supabase/functions/hello-world/index.ts",
+            import_map_path: "supabase/functions/hello-world/deno.json",
+          }),
+        );
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir }),
+        runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => writeProjectConfig(workdir));
+      yield* Effect.tryPromise(() =>
+        writeLocalFunction(
+          workdir,
+          "hello-world",
+          'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        mkdir(join(repoRoot, "packages", "shared", "src"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(repoRoot, "packages", "shared", "src", "index.ts"),
+          'export const shared = "ok"\n',
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(workdir, "supabase", "functions", "hello-world", "deno.json"),
+          JSON.stringify({
+            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+          }),
+        ),
+      );
+
+      yield* legacyFunctionsDeploy(baseFlags);
+
+      expect(multiparts[0]?.metadata).toContain(
+        '"entrypoint_path":"supabase/functions/hello-world/index.ts"',
+      );
+      expect(multiparts[0]?.metadata).toContain(
+        '"import_map_path":"supabase/functions/hello-world/deno.json"',
+      );
+      expect(multiparts[0]?.fileNames).toContain("supabase/functions/hello-world/index.ts");
+      expect(multiparts[0]?.fileNames).toContain("../packages/shared/src/index.ts");
+      expect(out.stderrText).toContain(
+        "Uploading asset (hello-world): ../packages/shared/src/index.ts\n",
+      );
+      expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
   it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({

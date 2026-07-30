@@ -261,7 +261,14 @@ const dockerComposeProjectLabel = "com.docker.compose.project";
  * directory using its OWN workdir rather than the caller's cwd.
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
-const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"] as const;
+/**
+ * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`): the eszip
+ * bundler container receives only `NPM_CONFIG_REGISTRY` from the host
+ * environment. `NPM_AUTH_TOKEN` is deliberately NOT forwarded — the Go-side PR
+ * proposing it (supabase/cli#4933) was closed unmerged, and CLI-1985 ruled
+ * strict parity over the TS-only forwarding that #5645 had added.
+ */
+const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY"] as const;
 
 export function dockerProjectLabels(projectId: string) {
   return {
@@ -890,6 +897,7 @@ async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: 
 
 async function writeSourceDeployForm(
   sourceRoot: string,
+  workdir: string,
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
   outputRaw: (text: string) => Effect.Effect<void, never>,
@@ -905,7 +913,10 @@ async function writeSourceDeployForm(
       return;
     }
     uploadedAssets.add(realPathname);
-    const relativePath = toApiRelativePath(sourceRoot, pathname);
+    // Uploaded file names are anchored at the workdir like Go's `toRelPath`
+    // (`apps/cli-go/pkg/function/deploy.go:94-103`, relative to `os.Getwd()`),
+    // NOT at `sourceRoot` — see the CLI-1985 note in `deployViaApi`.
+    const relativePath = toApiRelativePath(workdir, pathname);
     await Effect.runPromise(outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`));
     form.append("file", new File([contents], relativePath));
   };
@@ -952,7 +963,7 @@ async function writeSourceDeployForm(
         importMap,
         pathname,
         importMapAllowedRoots,
-        sourceRoot,
+        workdir,
         uploadImportMapTargetAsset,
         async (message) => {
           await Effect.runPromise(outputRaw(message));
@@ -1006,7 +1017,7 @@ async function writeSourceDeployForm(
     importMap,
     config.entrypoint,
     [realSourceRoot],
-    sourceRoot,
+    workdir,
     uploadAsset,
     async (message) => {
       await Effect.runPromise(outputRaw(message));
@@ -1017,8 +1028,14 @@ async function writeSourceDeployForm(
   return form;
 }
 
+/**
+ * Server-recorded metadata paths are anchored at the workdir, matching Go's
+ * `toRelPath` (`apps/cli-go/pkg/function/deploy.go:42-57,94-103`): relative to
+ * `os.Getwd()` (the Go CLI chdirs to the workdir), forward slashes via
+ * `filepath.ToSlash` — see the CLI-1985 note in `deployViaApi`.
+ */
 function createSourceMetadata(
-  sourceRoot: string,
+  workdir: string,
   config: ResolvedDeployFunctionConfig,
   remote?: RemoteFunction,
 ): SourceDeployMetadata {
@@ -1026,10 +1043,10 @@ function createSourceMetadata(
   return {
     name: config.slug,
     ...(verifyJwt === undefined ? {} : { verify_jwt: verifyJwt }),
-    entrypoint_path: toApiRelativePath(sourceRoot, config.entrypoint),
+    entrypoint_path: toApiRelativePath(workdir, config.entrypoint),
     import_map_path:
-      config.importMap.length > 0 ? toApiRelativePath(sourceRoot, config.importMap) : "",
-    static_patterns: config.staticFiles.map((pathname) => toApiRelativePath(sourceRoot, pathname)),
+      config.importMap.length > 0 ? toApiRelativePath(workdir, config.importMap) : "",
+    static_patterns: config.staticFiles.map((pathname) => toApiRelativePath(workdir, pathname)),
   };
 }
 
@@ -1545,6 +1562,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   sourceRoot: string,
+  workdir: string,
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
   bundleOnly: boolean,
@@ -1552,7 +1570,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   const output = yield* Output;
   const files = yield* Effect.tryPromise({
     try: async () => {
-      const form = await writeSourceDeployForm(sourceRoot, config, metadata, (text) =>
+      const form = await writeSourceDeployForm(sourceRoot, workdir, config, metadata, (text) =>
         output.raw(text, "stderr"),
       );
       return form.getAll("file").flatMap((part) => (part instanceof Blob ? [part] : []));
@@ -1940,6 +1958,18 @@ const deployViaApi = Effect.fnUntraced(function* (
   jobs: number,
 ) {
   const output = yield* Output;
+  // CLI-1985: uploaded file names and the server-recorded metadata paths
+  // (`entrypoint_path`, `import_map_path`, `static_patterns`) are anchored at the
+  // workdir (`projectRoot`), matching the pinned Go CLI's `toRelPath`, which is
+  // relative to `os.Getwd()` after the CLI chdirs to the workdir
+  // (`apps/cli-go/pkg/function/deploy.go:94-103`, `internal/utils/misc.go:238`).
+  // Upstream Go never anchored deploy paths at the git root — that was a TS-only
+  // divergence introduced by #5755. The import-walk *boundary* (which files may
+  // be uploaded at all) intentionally stays at the nearest git root: the boundary
+  // itself is a TS-only safeguard with no Go equivalent (Go's `WalkImportPaths`
+  // uploads any reachable import unbounded; #5755 widened the TS boundary from
+  // the workdir to the git root so monorepo imports outside the workdir deploy).
+  // Such files upload with Go-`toRelPath`-style `../`-relative names.
   const sourceRoot = yield* Effect.tryPromise({
     try: () => resolveFunctionsSourceRoot(projectRoot),
     catch: (error) => (error instanceof Error ? error : new Error(String(error))),
@@ -1965,8 +1995,9 @@ const deployViaApi = Effect.fnUntraced(function* (
       api,
       projectRef,
       sourceRoot,
+      projectRoot,
       config,
-      createSourceMetadata(sourceRoot, config, remoteBySlug.get(config.slug)),
+      createSourceMetadata(projectRoot, config, remoteBySlug.get(config.slug)),
       false,
     );
     return;
@@ -1982,8 +2013,9 @@ const deployViaApi = Effect.fnUntraced(function* (
             api,
             projectRef,
             sourceRoot,
+            projectRoot,
             config,
-            createSourceMetadata(sourceRoot, config, remoteBySlug.get(config.slug)),
+            createSourceMetadata(projectRoot, config, remoteBySlug.get(config.slug)),
             true,
           ),
         );
