@@ -10,19 +10,19 @@ The CLI is distributed as a set of platform-specific npm packages. Each platform
 @supabase/cli-darwin-arm64/
 └── bin/
     ├── supabase       ← TypeScript CLI (Bun single-file executable)
-    └── supabase-go    ← Go CLI binary (for Phase 0 proxy commands)
+    └── supabase-go    ← Go CLI binary (for the remaining proxied commands)
 ```
 
 The base `supabase` package routes to the correct platform package via `src/shared/cli/bin.ts`, which resolves and `execFileSync`s the platform-specific `bin/supabase` binary.
 
 ## Why Two Binaries
 
-The legacy shell is a gradual TypeScript port of the Go CLI. Commands are ported in phases:
+The legacy shell is a TypeScript port of the Go CLI. The port was done in phases:
 
-- **Phase 0** — The command is defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
-- **Phase 1+** — The command is implemented natively in TypeScript.
+- **Phase 0** — Every command was defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
+- **Phase 1+** — Commands were replaced with native TypeScript implementations.
 
-During Phase 0, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once all commands are ported to TypeScript, the Go binary will no longer be needed.
+The port is complete: `apps/cli-go/` is frozen and almost all commands are native TypeScript, but a small number of commands still proxy to the Go binary. While any proxied command remains, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once the remaining commands are ported to TypeScript, the Go binary will no longer be needed.
 
 ## Package Layout
 
@@ -42,7 +42,7 @@ The musl packages only carry the Bun TS binary (compiled for musl). The Go binar
 
 ## Runtime Resolution
 
-When a Phase 0 command runs, `go-proxy.layer.ts` resolves the Go binary in this order:
+When a proxied command runs, `go-proxy.layer.ts` resolves the Go binary in this order:
 
 1. **`SUPABASE_GO_BINARY` env var** — explicit override, takes priority.
 2. **Co-located `supabase-go`** — looks next to `process.execPath`. Works in compiled SFE mode because the base shim uses `execFileSync`, making the TS SFE the main process with `process.execPath` pointing to itself.
@@ -59,6 +59,8 @@ pnpm repos:install
 
 This must be run after a fresh clone before building a legacy release.
 
+The Go tree is frozen: it exists only to build the `supabase-go` sidecar and as a read-only parity reference for the TypeScript port. Do not modify it — all CLI changes are TypeScript-only.
+
 ## Development Workflow
 
 No build step is required to run the legacy CLI from source. The PATH fallback handles Go binary resolution automatically.
@@ -73,8 +75,8 @@ No build step is required to run the legacy CLI from source. The PATH fallback h
 3. Run commands:
 
    ```sh
-   supabase-dev orgs list    # Phase 0: proxied to Go binary on PATH
-   supabase-dev login        # Phase 1+: native TypeScript implementation
+   supabase-dev completion bash   # still proxied to the Go binary
+   supabase-dev login             # native TypeScript implementation
    ```
 
 Alternatively, set `SUPABASE_GO_BINARY` to point to a specific binary:

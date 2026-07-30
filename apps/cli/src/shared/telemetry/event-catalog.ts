@@ -1,6 +1,7 @@
-// CLI telemetry catalog. Mirrors apps/cli-go/internal/telemetry/events.go
-// 1:1 so legacy/ ports send byte-identical PostHog payloads. When the Go
-// catalog changes, update this file in the same PR.
+// CLI telemetry catalog. Mirrors the frozen Go catalog
+// (apps/cli-go/internal/telemetry/events.go) 1:1 so legacy/ ports send
+// byte-identical PostHog payloads. The Go tree no longer changes; this
+// file is the canonical catalog going forward.
 
 export const EventCommandExecuted = "cli_command_executed";
 export const EventProjectLinked = "cli_project_linked";
