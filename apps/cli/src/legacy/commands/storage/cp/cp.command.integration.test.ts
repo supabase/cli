@@ -202,4 +202,37 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
       }).pipe(Effect.provide(layer));
     },
   );
+
+  // Go parses flags before validating `ExactArgs(2)` (`cmd/storage.go:63,107`),
+  // so a malformed `--jobs` wins even when `src`/`dst` are missing. The config
+  // record declares flags ahead of the positionals to reproduce that order —
+  // Effect CLI parses params in config-declaration order.
+  it.live.each([
+    { label: "zero positionals", args: ["storage", "cp", "--jobs=-1"] },
+    { label: "one positional", args: ["storage", "cp", "onearg", "--jobs=-1"] },
+  ])("rejects --jobs=-1 ahead of missing operands ($label)", ({ args }) => {
+    const { layer } = setup(args);
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).not.toContain("MissingArgument");
+        expect(normalizeCause(exit.cause).message).toBe(
+          'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still reports the missing operand when --jobs is valid", () => {
+    const args = ["storage", "cp", "--jobs=2"];
+    const { layer } = setup(args);
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(normalizeCause(exit.cause).message).toBe("Missing required argument: src");
+      }
+    }).pipe(Effect.provide(layer));
+  });
 });

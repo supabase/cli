@@ -23,9 +23,15 @@ import { legacyStorageCp } from "./cp.handler.ts";
 // keeps its empty runtime default (`""` ⇒ auto-detect via sniffing), but Go
 // overrides only the *displayed* default to `auto-detect` (`storage.go:106`), so
 // the help text — not the resolved value — reads `auto-detect`.
+// Flags are declared BEFORE the `src`/`dst` positionals on purpose: Effect CLI
+// parses params in config-declaration order (`parseParams` walks
+// `orderedParams`, built from record-key order), so this mirrors cobra running
+// `ParseFlags` before `ExactArgs(2)` validation (`cmd/storage.go:63,107`) — a
+// malformed `--jobs` must win over a missing operand, exactly as in Go.
+// Positional mapping is unaffected (only the relative order of Arguments
+// matters), and `--help` renders flags in relative declaration order, so the
+// help output is unchanged.
 const config = {
-  src: Argument.string("src").pipe(Argument.withDescription("Source path to copy from.")),
-  dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to copy to.")),
   recursive: Flag.boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively copy a directory."),
@@ -57,9 +63,9 @@ const config = {
     // The resulting `CliError.InvalidValue` carries pflag's complete message,
     // which `formatInvalidValueMessage` surfaces verbatim. Must sit before
     // `Flag.optional`, which passes `InvalidValue` failures through
-    // untouched. Known residual: with a missing positional, Effect CLI
-    // reports the missing-argument error first (params parse in
-    // config-declaration order) where Go reports the flag error.
+    // untouched. Because flags are declared ahead of the positionals (see the
+    // config comment above), this error also wins when `src`/`dst` are
+    // missing, matching Go's flags-before-args order.
     Flag.mapTryCatch(
       (token) => {
         const parsed = legacyParseUintBase0(token);
@@ -74,6 +80,8 @@ const config = {
   ),
   linked: LegacyStorageLinkedFlagDef,
   local: LegacyStorageLocalFlagDef,
+  src: Argument.string("src").pipe(Argument.withDescription("Source path to copy from.")),
+  dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to copy to.")),
 } as const;
 
 export type LegacyStorageCpFlags = CliCommand.Command.Config.Infer<typeof config>;
