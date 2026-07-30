@@ -1,3 +1,5 @@
+import { LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE } from "./legacy-container-cli.ts";
+
 /**
  * Go's Docker prerequisite hint (`apps/cli-go/internal/utils/docker.go:350`,
  * `suggestDockerInstall`). Go sets it as `CmdSuggestion` — rendered as a separate
@@ -20,11 +22,13 @@ export const LEGACY_SUGGEST_DOCKER_INSTALL =
  * `errConnectionFailed`), so Go surfaces the install hint for it as well.
  *
  * Also matches `spawnContainerCli`'s runtime-not-found message
- * ("docker: command not found …", `legacy-container-cli.ts`): a missing
- * container-CLI binary is the shell-out equivalent of Go's missing daemon
- * socket — on a machine with no Docker installed, Go's socket dial fails,
- * `client.IsErrConnectionFailed` fires, and the install hint is exactly the
- * guidance that case needs (`misc.go:155-166`).
+ * (`LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE`, imported from
+ * `legacy-container-cli.ts` rather than duplicated here so the producer and
+ * this classifier can't drift apart): a missing container-CLI binary is the
+ * shell-out equivalent of Go's missing daemon socket — on a machine with no
+ * Docker installed, Go's socket dial fails, `client.IsErrConnectionFailed`
+ * fires, and the install hint is exactly the guidance that case needs
+ * (`misc.go:155-166`).
  *
  * "error during connect" is the pinned SDK's uniform outer wrap for every
  * transport-level failure (`client/request.go:175-185`, docker/docker
@@ -39,7 +43,9 @@ export const LEGACY_SUGGEST_DOCKER_INSTALL =
  * (`request.go:172-174`), so it is deliberately not matched.
  */
 export function legacyIsDockerDaemonUnreachable(stderr: string): boolean {
-  return /cannot connect to the docker daemon|cannot connect to podman|is the docker daemon running|permission denied while trying to connect|docker: command not found|error during connect/iu.test(
-    stderr,
+  return (
+    /cannot connect to the docker daemon|cannot connect to podman|is the docker daemon running|permission denied while trying to connect|error during connect/iu.test(
+      stderr,
+    ) || stderr.includes(LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE)
   );
 }

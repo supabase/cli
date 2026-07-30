@@ -4,6 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   containerCliExitCode,
+  LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
   legacyDescribeContainerCliFailure,
   legacyDockerSupportsVolumePruneAllFlag,
   spawnContainerCli,
@@ -120,7 +121,7 @@ describe("containerCliExitCode", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(legacyDescribeContainerCliFailure(error)).toBe(
-          "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH",
+          LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
         );
       }),
     );
@@ -204,7 +205,9 @@ describe("legacyDescribeContainerCliFailure", () => {
     return containerCliExitCode(mock.spawner, ["ps"]).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(legacyDescribeContainerCliFailure(error)).toContain("docker: command not found");
+        expect(legacyDescribeContainerCliFailure(error)).toContain(
+          LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
+        );
       }),
     );
   });
