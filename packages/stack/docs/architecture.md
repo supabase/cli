@@ -268,12 +268,10 @@ flowchart TD
     B --> C{"assetName?"}
     C -->|"null"| D["BinaryNotFoundError"]
     C -->|"string"| E["construct cacheDir"]
-    E --> F{"fs.exists(cacheDir/.supabase-cache-complete)?"}
+    E --> F2["sweep stale cacheDir.tmp-* siblings (best-effort, always runs)"]
+    F2 --> F{"fs.exists(cacheDir/.supabase-cache-complete)?"}
     F -->|"yes"| G["return cacheDir (cache hit)"]
-    F -->|"no, cacheDir exists w/o marker"| F1["remove broken cacheDir leftover"]
-    F -->|"no, cacheDir absent"| F2["sweep stale cacheDir.tmp-* siblings (best-effort)"]
-    F1 --> F2
-    F2 --> H["HttpClient.get tarball from GitHub"]
+    F -->|"no"| H["HttpClient.get tarball from GitHub"]
     H -->|"network error"| I["DownloadError"]
     H -->|"ok"| J{"checksumUrl?"}
     J -->|"null"| L["skip verification"]
@@ -286,17 +284,20 @@ flowchart TD
     P --> Q["tar/unzip extract into tmpDir"]
     Q -->|"exitCode != 0"| R["DownloadError"]
     Q -->|"ok"| T["chmod +x, (macOS) codesign, write completion marker — all in tmpDir"]
-    T --> U["fs.rename(tmpDir, cacheDir) — atomic publish"]
+    T --> U["fs.rename(tmpDir, cacheDir)"]
     U -->|"ok"| G
     U -->|"rename fails, cacheDir has marker"| V["another process won — discard tmpDir, return cacheDir"]
-    U -->|"rename fails, cacheDir has no marker"| W["reclaim: remove broken cacheDir, retry rename"]
+    U -->|"rename fails, no marker, attempts remain"| W["reclaim: remove broken/legacy cacheDir, retry rename"]
+    U -->|"rename fails, no marker, attempts exhausted"| X["DownloadError"]
+    W --> U
     V --> G
-    W --> G
 ```
+
+Note that a markerless `cacheDir` (e.g. a legacy binary from before this marker existed) is never removed upfront on the miss check — only `W`, at publish time, ever removes one, and only once a fully-staged replacement (`tmpDir`) is ready to take its place.
 
 #### Cache layout
 
-The cache directory mirrors the logical identity of each binary: `<cacheDir>/<service>/<version>/<assetName>/`. Two versions of the same service coexist without conflict. The check is for a version-agnostic completion marker file (`.supabase-cache-complete`) inside `cacheDir`, not mere directory existence — `cacheDir` only ever becomes non-empty via an atomic rename of a fully-staged directory that carries this marker, so a `cacheDir` that exists but lacks it can only be a broken leftover (e.g. from an older, pre-staging CLI version) and is removed rather than reused.
+The cache directory mirrors the logical identity of each binary: `<cacheDir>/<service>/<version>/<assetName>/`. Two versions of the same service coexist without conflict. The check is for a version-agnostic completion marker file (`.supabase-cache-complete`) inside `cacheDir`, not mere directory existence. A `cacheDir` that exists but lacks the marker can only be a broken or legacy leftover (e.g. from an older, pre-staging CLI version) — but it is left in place rather than removed on the miss check. Deleting it eagerly, before even attempting a download, would destroy a plausibly-still-usable binary before knowing whether a replacement can be produced (an offline machine or a GitHub outage would otherwise turn a would-have-been cache hit into both a failure and a lost cache). It's reclaimed later, only at publish time, once a fully-staged replacement is ready to atomically take its place.
 
 ```
 ~/.supabase/bin/
@@ -331,7 +332,7 @@ After extraction, permissions are restored (`chmod`) and, on macOS, executables 
 The staging directory is then published by an atomic `fs.rename` into `cacheDir`:
 
 - If another process already published a complete `cacheDir` first (detected via the marker, not mere existence), the losing process discards its own staged copy and resolves to the winner's `cacheDir` instead of failing.
-- If `cacheDir` exists but isn't a complete, marker-carrying entry — a broken/incomplete leftover from an older, pre-staging CLI version, or the rename failing for an unrelated reason — the current process treats it as reclaimable: it removes the leftover and retries the rename. If a legitimate winner lands in the narrow gap between that reclaim and the retry, the retry's failure is treated the same way (re-checked against the marker) rather than surfacing as an error.
+- If `cacheDir` exists but isn't a complete, marker-carrying entry — a broken/legacy leftover (this is the only place such a leftover is ever removed — see "Cache layout" above), or the rename failing for an unrelated reason — the current process treats it as reclaimable: it removes the leftover and retries the rename, up to a small bounded number of attempts. If a legitimate winner lands in the narrow gap between that reclaim and the retry, the retry's failure is re-checked against the marker on every attempt (including the last) and the winner is adopted immediately, regardless of how many reclaim attempts remain. Only the destructive reclaim-and-retry path is bounded: a rename that keeps failing for a reason unrelated to a competing destination (permissions, a read-only filesystem, disk I/O) can never succeed no matter how many times it's retried, so once attempts are exhausted the real rename error is surfaced as a `DownloadError` instead of retrying forever.
 
 The whole stage-and-publish sequence runs under a single `Effect.ensuring` finalizer that force-removes the staging directory on any exit path (success, failure, or interruption), and a best-effort sweep opportunistically reaps stale `.tmp-*` siblings older than 24 hours left behind by prior hard-killed processes. That sweep runs unconditionally before the cache-hit check, since once `cacheDir` becomes a complete cache hit, a sweep placed after the check would never run again for that entry's siblings.
 

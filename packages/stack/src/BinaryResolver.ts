@@ -244,24 +244,23 @@ export class BinaryResolver extends Context.Service<
             // carrying a completion marker (see below), so we check for that
             // marker rather than mere non-emptiness — a cacheDir that exists
             // but lacks it can only be a broken leftover (e.g. from an older,
-            // pre-atomic-rename CLI version), never a valid cache entry.
+            // pre-staging CLI version). We deliberately do NOT remove it
+            // here: every cache entry written before this marker existed is
+            // markerless, so eagerly deleting it before we've even attempted
+            // a download would destroy a plausibly-still-usable legacy
+            // binary before knowing whether we can replace it (e.g. an
+            // offline invocation or a GitHub outage would previously have
+            // succeeded from that cache; deleting it upfront turns that into
+            // a hard failure with no cache left afterward either). It's left
+            // in place and only ever reclaimed later, in the publish step
+            // below, once a fully-staged replacement is ready to atomically
+            // take its place.
             const isComplete = yield* fs.exists(path.join(cacheDir, CACHE_COMPLETE_MARKER));
             if (isComplete) {
               return {
                 path: cacheDir,
                 downloaded: false,
               } satisfies ResolveBinaryResult;
-            }
-            const isCached = yield* fs.exists(cacheDir);
-            if (isCached) {
-              // force: true — tolerate another process having already
-              // reclaimed and removed this same broken/markerless cacheDir
-              // concurrently (both processes can observe it before either
-              // removes it). Without force, the loser's remove would throw
-              // on the now-missing path and force an unnecessary Docker
-              // fallback even though the winner is about to publish a good
-              // native binary.
-              yield* fs.remove(cacheDir, { recursive: true, force: true });
             }
 
             yield* options?.onDownloadStart ?? Effect.void;
@@ -378,15 +377,23 @@ export class BinaryResolver extends Context.Service<
             // not mere existence), discard our own copy and resolve to
             // theirs instead of failing. If cacheDir exists but isn't a
             // complete, marker-carrying entry — a broken/incomplete leftover
-            // from an older, pre-atomic-rename CLI version, or the rename
-            // failed for some unrelated reason — our own staged build is the
-            // only known-good copy: reclaim the spot and retry the rename.
-            // A legitimate winner can also land in the narrow gap between
-            // the marker check and our own reclaim-and-retry (e.g. a third
-            // resolver, or a pre-atomic-rename CLI version writing
-            // concurrently); rather than surfacing that retry's failure,
-            // attemptPublish loops back into the same check and adopts the
-            // new winner. The mirror case — clobbering a destination
+            // from an older, pre-staging CLI version (see the comment above
+            // the marker check: this is the only place such a leftover is
+            // ever removed), or the rename failed for some unrelated reason
+            // — our own staged build is the only known-good copy: reclaim
+            // the spot and retry the rename, up to MAX_RECLAIM_ATTEMPTS
+            // times. A legitimate winner can also land in the narrow gap
+            // between the marker check and our own reclaim-and-retry (e.g. a
+            // third resolver, or a legacy writer); attemptPublish always
+            // re-checks the marker on every attempt (including the last) and
+            // adopts a winner immediately if one appears, regardless of how
+            // many reclaim attempts remain. Only the destructive
+            // reclaim-and-retry path is bounded — a rename that keeps
+            // failing for a reason unrelated to a competing destination
+            // (permissions, a read-only filesystem, disk I/O) can never
+            // succeed no matter how many times we retry, so once attempts
+            // are exhausted we surface the real rename error instead of
+            // retrying forever. The mirror case — clobbering a destination
             // published in the sliver of time between the marker check and
             // our `fs.remove` — is an accepted, narrow residual limitation:
             // fully closing it needs real cross-process locking, which is
@@ -398,25 +405,30 @@ export class BinaryResolver extends Context.Service<
             // any point — removes the staging directory. `cleanupTmpDir`
             // force-removes and ignores errors, so it's a safe no-op once
             // the rename has already moved tmpDir into place.
+            const MAX_RECLAIM_ATTEMPTS = 3;
+
             const published = yield* Effect.gen(function* () {
               yield* stage;
 
               const renameOnce = () => fs.rename(tmpDir, cacheDir).pipe(Effect.as(true));
 
-              const attemptPublish = (): Effect.Effect<boolean, PlatformError.PlatformError> =>
+              const attemptPublish = (
+                attemptsRemaining = MAX_RECLAIM_ATTEMPTS,
+              ): Effect.Effect<boolean, PlatformError.PlatformError> =>
                 renameOnce().pipe(
-                  Effect.catchTag("PlatformError", () =>
-                    fs
-                      .exists(path.join(cacheDir, CACHE_COMPLETE_MARKER))
-                      .pipe(
-                        Effect.flatMap((legitimateWinner) =>
-                          legitimateWinner
-                            ? Effect.succeed(false)
-                            : fs
-                                .remove(cacheDir, { recursive: true, force: true })
-                                .pipe(Effect.ignore, Effect.andThen(attemptPublish())),
-                        ),
-                      ),
+                  Effect.catchTag("PlatformError", (renameError) =>
+                    fs.exists(path.join(cacheDir, CACHE_COMPLETE_MARKER)).pipe(
+                      Effect.flatMap((legitimateWinner) => {
+                        if (legitimateWinner) return Effect.succeed(false);
+                        if (attemptsRemaining <= 0) return Effect.fail(renameError);
+                        return fs
+                          .remove(cacheDir, { recursive: true, force: true })
+                          .pipe(
+                            Effect.ignore,
+                            Effect.andThen(attemptPublish(attemptsRemaining - 1)),
+                          );
+                      }),
+                    ),
                   ),
                 );
 

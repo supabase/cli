@@ -11,9 +11,11 @@ import {
   Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver, type BinarySpec } from "./BinaryResolver.ts";
+import { DownloadError } from "./errors.ts";
 import { detectPlatform, postgrestAssetName } from "./Platform.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
@@ -146,6 +148,7 @@ function createFakeCacheFs() {
   const files = new Map<string, Uint8Array>();
   const mtimes = new Map<string, number>();
   const removeInterceptors = new Map<string, () => void>();
+  const alwaysFailRenameTo = new Set<string>();
 
   const isWithin = (candidatePath: string, rootPath: string): boolean =>
     candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
@@ -234,6 +237,17 @@ function createFakeCacheFs() {
         });
       },
       rename: (oldPath, newPath) => {
+        if (alwaysFailRenameTo.has(newPath)) {
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "rename",
+              description: "permission denied (simulated permanent failure)",
+              pathOrDescriptor: newPath,
+            }),
+          );
+        }
         if (hasContentAt(newPath)) {
           return Effect.fail(
             PlatformError.systemError({
@@ -305,6 +319,12 @@ function createFakeCacheFs() {
     onRemove: (targetPath: string, sideEffect: () => void): void => {
       removeInterceptors.set(targetPath, sideEffect);
     },
+    /** Makes every rename into `targetPath` fail permanently (regardless of
+     * destination content), simulating a filesystem error unrelated to
+     * destination contention — e.g. permissions, a read-only mount. */
+    alwaysFailRenameTo: (targetPath: string): void => {
+      alwaysFailRenameTo.add(targetPath);
+    },
   };
 }
 
@@ -365,6 +385,23 @@ function mockDownloadHttpClient(opts: { archiveBytes: Uint8Array; delayMs: numbe
         yield* Effect.sleep(`${opts.delayMs} millis`);
         return HttpClientResponse.fromWeb(request, new Response(opts.archiveBytes));
       }),
+    ),
+  );
+}
+
+/** An `HttpClient` that always fails, simulating an offline machine or a GitHub outage. */
+function mockOfflineHttpClient() {
+  return Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({
+            request,
+            description: "offline (simulated)",
+          }),
+        }),
+      ),
     ),
   );
 }
@@ -627,4 +664,73 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
       expect(fakeFs.files.has(`${cacheDir}/${BinaryResolver.CACHE_COMPLETE_MARKER}`)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "surfaces a DownloadError instead of retrying forever when rename fails for a reason unrelated to destination contention",
+    () => {
+      const fakeFs = createFakeCacheFs();
+      const spawner = mockExtractingSpawner(fakeFs);
+      const httpLayer = mockDownloadHttpClient({
+        archiveBytes: new Uint8Array([1, 2, 3]),
+        delayMs: 0,
+      });
+
+      const layer = BinaryResolver.make("/cache-root").pipe(
+        Layer.provide(fakeFs.layer),
+        Layer.provide(Path.layer),
+        Layer.provide(httpLayer),
+        Layer.provide(spawner.layer),
+      );
+
+      return Effect.gen(function* () {
+        const resolver = yield* BinaryResolver;
+        const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+        const cacheDir = yield* resolvePostgrestCacheDir;
+
+        // Simulate a permanent filesystem error unrelated to a competing
+        // destination (e.g. permissions, a read-only mount) — every rename
+        // attempt into cacheDir fails, regardless of its content, so no
+        // amount of reclaim-and-retry can ever succeed.
+        fakeFs.alwaysFailRenameTo(cacheDir);
+
+        const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+
+        // Bounded attempts surface the real error instead of hanging.
+        expect(error).toBeInstanceOf(DownloadError);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "does not destroy a markerless legacy cacheDir before a download attempt that then fails",
+    () => {
+      const fakeFs = createFakeCacheFs();
+      const spawner = mockExtractingSpawner(fakeFs);
+      const httpLayer = mockOfflineHttpClient();
+
+      const layer = BinaryResolver.make("/cache-root").pipe(
+        Layer.provide(fakeFs.layer),
+        Layer.provide(Path.layer),
+        Layer.provide(httpLayer),
+        Layer.provide(spawner.layer),
+      );
+
+      return Effect.gen(function* () {
+        const resolver = yield* BinaryResolver;
+        const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+        const cacheDir = yield* resolvePostgrestCacheDir;
+
+        // A markerless legacy cacheDir from before this resolver's staging
+        // model existed — still a perfectly usable binary on disk.
+        fakeFs.seedDirWithFile(cacheDir, "bin/postgrest");
+
+        const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(DownloadError);
+        // The legacy binary must survive an offline/failed download attempt
+        // — it must not be deleted before we know we can replace it.
+        expect(fakeFs.files.has(`${cacheDir}/bin/postgrest`)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
