@@ -86,9 +86,14 @@ const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
  *   to Go, `false` to the parser), and
  * - the Effect parser accepts `yes`/`no`, which `strconv.ParseBool` rejects.
  *
- * A recorded empty value is a *bare* occurrence, not `--flag=`: the Effect
- * parser rejects an explicit empty boolean at parse time, so argv carrying
- * one never reaches a handler.
+ * The scan records a *bare* occurrence as pflag's `NoOptDefVal` `"true"`
+ * (pflag `flag.go:1017-1019`) and an inline-empty `--flag=` as `""`, so the
+ * two stay distinguishable here: `""` goes through the ParseBool table and
+ * fails exactly like Go. Reachable despite the Effect parser rejecting an
+ * explicit empty boolean at parse time, because first-wins parsing never
+ * validates later occurrences (binary-verified, PR #5974 review round 5:
+ * `--skip-url-validation=false --skip-url-validation=` aborts Go's
+ * ParseFlags before any request; the parser accepts the argv).
  */
 export function legacySsoPflagBoolValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
@@ -100,10 +105,6 @@ export function legacySsoPflagBoolValue(
   }
   let effective = false;
   for (const raw of values) {
-    if (raw === "") {
-      effective = true;
-      continue;
-    }
     const parsed = GO_PARSE_BOOL.get(raw);
     if (parsed === undefined) {
       return Result.fail(

@@ -166,8 +166,13 @@ function clusterValueShorthand(
  *   tokens), which is why handlers must reconcile the values they act on
  *   against this scan instead of trusting the parsed options alone
  *   (CLI-1982).
- * - A bare `--name` not in `valueFlagNames` (a boolean flag) records the
- *   occurrence with an empty value and consumes nothing.
+ * - A bare `--name` not in `valueFlagNames` (a boolean flag) records pflag's
+ *   bool `NoOptDefVal` `"true"` (`flag.go:1017-1019`) and consumes nothing,
+ *   while an inline-empty `--name=` records `""` (`flag.go:1014-1016`) — the
+ *   two must stay distinguishable because pflag hands `""` to
+ *   `strconv.ParseBool`, which rejects it (PR #5974 review round 5:
+ *   `--skip-url-validation=false --skip-url-validation=` aborts Go's
+ *   ParseFlags; a bare repeat ends true).
  * - A shorthand cluster is walked per pflag's `parseSingleShortArg`: a
  *   value-taking shorthand takes `-t=v` / `-tv` inline or consumes the next
  *   token for `-t v`; other characters (booleans, `-h`) consume nothing.
@@ -316,7 +321,10 @@ export function pflagArgvScan(
     if (valueFlagNames.has(name)) {
       index = consumeNext(name, index, `flag needs an argument: --${name}`);
     } else {
-      record(name, "");
+      // pflag's `NoOptDefVal` branch (`flag.go:1017-1019`): a bare boolean
+      // records the value pflag would Set — `"true"` — keeping it distinct
+      // from the `""` an inline-empty `--name=` records above.
+      record(name, "true");
     }
   }
   return { anchored, occurrences, positionals, consumedFlagNames, missingValueError };

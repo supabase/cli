@@ -519,6 +519,48 @@ describe("legacy sso add integration", () => {
   );
 
   it.live(
+    "invalid-value emulation: a later inline-empty --skip-url-validation= fails like pflag, no POST",
+    () => {
+      // `--skip-url-validation=false --skip-url-validation=`: the Effect
+      // parser resolves repeats first-wins and never validates the second
+      // occurrence, so it parses; pflag hands `""` to strconv.ParseBool
+      // (`flag.go:1014-1016`) and aborts ParseFlags before every hook and
+      // the POST — only a *bare* repeat means NoOptDefVal true
+      // (binary-verified, PR #5974 review round 5).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--type",
+          "saml",
+          "--skip-url-validation=false",
+          "--skip-url-validation=",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoAdd({
+            ...defaultFlags,
+            skipUrlValidation: false, // Effect's first-wins parse
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain(
+            'invalid argument \\"\\" for \\"--skip-url-validation\\" flag: strconv.ParseBool: parsing \\"\\": invalid syntax',
+          );
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag and skips validation",
     () => {
       // `--skip-url-validation=false --skip-url-validation` ends true for

@@ -12,21 +12,41 @@ describe("legacySsoPflagBoolValue", () => {
     expect(legacySsoPflagBoolValue(occ([]), "skip-url-validation")).toEqual(Result.succeed(false));
   });
 
-  it("treats a bare occurrence as pflag's NoOptDefVal true", () => {
+  it('treats a bare occurrence (recorded as pflag\'s NoOptDefVal "true") as true', () => {
     expect(
-      legacySsoPflagBoolValue(occ([["skip-url-validation", [""]]]), "skip-url-validation"),
+      legacySsoPflagBoolValue(occ([["skip-url-validation", ["true"]]]), "skip-url-validation"),
     ).toEqual(Result.succeed(true));
   });
 
   it("resolves repeats last-wins, not first-wins (pflag Sets every occurrence)", () => {
     // `--skip-url-validation=false --skip-url-validation` — Go ends up true.
     expect(
-      legacySsoPflagBoolValue(occ([["skip-url-validation", ["false", ""]]]), "skip-url-validation"),
+      legacySsoPflagBoolValue(
+        occ([["skip-url-validation", ["false", "true"]]]),
+        "skip-url-validation",
+      ),
     ).toEqual(Result.succeed(true));
     // `--skip-url-validation --skip-url-validation=false` — Go ends up false.
     expect(
-      legacySsoPflagBoolValue(occ([["skip-url-validation", ["", "false"]]]), "skip-url-validation"),
+      legacySsoPflagBoolValue(
+        occ([["skip-url-validation", ["true", "false"]]]),
+        "skip-url-validation",
+      ),
     ).toEqual(Result.succeed(false));
+  });
+
+  it("fails on an inline-empty occurrence exactly like Go's ParseBool", () => {
+    // `--skip-url-validation=false --skip-url-validation=` — the Effect
+    // parser resolves repeats first-wins and never validates the second
+    // occurrence, but pflag hands `""` to strconv.ParseBool and aborts
+    // ParseFlags before any request (binary-verified, PR #5974 round 5).
+    expect(
+      legacySsoPflagBoolValue(occ([["skip-url-validation", ["false", ""]]]), "skip-url-validation"),
+    ).toEqual(
+      Result.fail(
+        `invalid argument "" for "--skip-url-validation" flag: strconv.ParseBool: parsing "": invalid syntax`,
+      ),
+    );
   });
 
   it("accepts exactly Go's strconv.ParseBool literal set", () => {

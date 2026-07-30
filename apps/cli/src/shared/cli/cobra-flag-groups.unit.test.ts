@@ -151,15 +151,27 @@ describe("pflagArgvScan", () => {
     expect(occurrences.get("domains")).toEqual(["a.com", "b.com"]);
   });
 
-  test("a bare boolean (non-value) flag is recorded without consuming", () => {
+  test("a bare boolean (non-value) flag records pflag's NoOptDefVal true without consuming", () => {
     const scan = pflagArgvScan(
       ["sso", "update", "id", "--skip-url-validation", "--metadata-url", "url"],
       SSO_UPDATE_PATH,
       SPEC,
     );
-    expect(scan.occurrences.get("skip-url-validation")).toEqual([""]);
+    expect(scan.occurrences.get("skip-url-validation")).toEqual(["true"]);
     expect(scan.occurrences.get("metadata-url")).toEqual(["url"]);
     expect(scan.positionals).toEqual(["id"]);
+  });
+
+  test("an inline-empty boolean (`--flag=`) records the empty string, distinct from bare", () => {
+    // pflag `flag.go:1014-1019`: `--flag=` Sets `""` (which ParseBool later
+    // rejects) while a bare `--flag` Sets NoOptDefVal `"true"` — the scan
+    // must preserve that difference (PR #5974 review round 5).
+    const scan = pflagArgvScan(
+      ["sso", "update", "id", "--skip-url-validation=false", "--skip-url-validation="],
+      SSO_UPDATE_PATH,
+      SPEC,
+    );
+    expect(scan.occurrences.get("skip-url-validation")).toEqual(["false", ""]);
   });
 
   test("returns an empty map when no flags are present", () => {
