@@ -355,6 +355,33 @@ SUPABASE_ANON_KEY = "anon"
 `,
     );
   });
+
+  it("sorts map keys by UTF-8 byte order like Go's sort.Strings", () => {
+    // Go orders U+E000/U+FF21 before the astral U+1D400/U+1F600 (UTF-8 byte
+    // order); JS `<` on UTF-16 units would sort both astral keys first.
+    const spec = legacyGoMap(legacyGoString);
+    expect(
+      encodeLegacyGoToml(
+        {
+          "\u{1F600}": "emoji",
+          "\uE000": "private-use",
+          z: "ascii",
+          é: "latin",
+          Ａ: "fullwidth-A",
+          "\u{1D400}": "math-bold-A",
+        },
+        spec,
+      ),
+    ).toBe(
+      `z = "ascii"
+"é" = "latin"
+"\uE000" = "private-use"
+"Ａ" = "fullwidth-A"
+"\u{1D400}" = "math-bold-A"
+"\u{1F600}" = "emoji"
+`,
+    );
+  });
 });
 
 describe("encodeLegacyGoYaml", () => {
@@ -683,6 +710,95 @@ B: "5"
 a: "2"
 b: "6"
 z: "1"
+`,
+    );
+  });
+
+  it("sorts unicode map keys by rune and escapes astral keys like yaml.v3", () => {
+    // keyList.Less compares runes, so the astral U+1F600/U+1D400 sort after
+    // U+E000/U+FF21 (JS `<` on UTF-16 units would say the opposite), and the
+    // emitter double-quotes astral characters (4-byte UTF-8 is not printable
+    // to libyaml) as \U-escapes.
+    const spec = legacyGoMap(legacyGoString);
+    expect(
+      encodeLegacyGoYaml(
+        {
+          "\u{1F600}": "emoji",
+          "\uE000": "private-use",
+          z: "ascii",
+          é: "latin",
+          Ａ: "fullwidth-A",
+          "\u{1D400}": "math-bold-A",
+        },
+        spec,
+      ),
+    ).toBe(
+      `\uE000: private-use
+"\\U0001F600": emoji
+z: ascii
+é: latin
+Ａ: fullwidth-A
+"\\U0001D400": math-bold-A
+`,
+    );
+  });
+
+  it("validates calendar dates and zone offsets like time.Parse before quoting timestamps", () => {
+    const spec = legacyGoMap(legacyGoString);
+    expect(
+      encodeLegacyGoYaml(
+        {
+          t01: "2025-02-31",
+          t02: "2024-02-29",
+          t03: "2023-02-29",
+          t04: "2100-02-29",
+          t05: "2000-02-29",
+          t06: "2025-04-31",
+          t07: "2025-01-01T00:00:00+24:00",
+          t08: "2025-01-01T00:00:00+25:00",
+          t09: "2025-01-01T00:00:00+23:99",
+          t10: "2025-01-01T00:00:00+00:60",
+          t11: "0000-02-29",
+          t12: "1900-02-29",
+        },
+        spec,
+      ),
+    ).toBe(
+      `t01: 2025-02-31
+t02: "2024-02-29"
+t03: 2023-02-29
+t04: 2100-02-29
+t05: "2000-02-29"
+t06: 2025-04-31
+t07: "2025-01-01T00:00:00+24:00"
+t08: 2025-01-01T00:00:00+25:00
+t09: 2025-01-01T00:00:00+23:99
+t10: "2025-01-01T00:00:00+00:60"
+t11: "0000-02-29"
+t12: 1900-02-29
+`,
+    );
+  });
+
+  it("escapes non-printable scalars with \\x/\\u/\\U like yaml.v3's emitter", () => {
+    const spec = legacyGoMap(legacyGoString);
+    expect(
+      encodeLegacyGoYaml(
+        {
+          e1: "a\uFEFFb",
+          e2: "a\uFFFEb",
+          e3: "mixed \u{1F600} emoji",
+          e4: "\u{1D400}",
+          e5: "nel\u0085break",
+        },
+        spec,
+      ),
+    ).toBe(
+      `e1: "a\\uFEFFb"
+e2: "a\\uFFFEb"
+e3: "mixed \\U0001F600 emoji"
+e4: "\\U0001D400"
+e5: "nel\\Nbreak"
 `,
     );
   });

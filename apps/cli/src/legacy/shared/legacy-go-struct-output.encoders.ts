@@ -427,6 +427,23 @@ function yamlMapEntries(
   return [...entries].sort(([a], [b]) => (yamlKeyLess(a, b) ? -1 : yamlKeyLess(b, a) ? 1 : 0));
 }
 
+/**
+ * Go string ordering: `sort.Strings` compares UTF-8 bytes and yaml.v3's
+ * `keyList.Less` compares runes — both equal Unicode code-point order, which
+ * differs from JS `<` (UTF-16 code-unit order) when an astral character meets
+ * a high-BMP one (e.g. Go sorts U+E000 before U+1F600, UTF-16 the reverse).
+ */
+function goStringCompare(a: string, b: string): number {
+  let i = 0;
+  while (i < a.length && i < b.length) {
+    const ac = a.codePointAt(i) as number;
+    const bc = b.codePointAt(i) as number;
+    if (ac !== bc) return ac < bc ? -1 : 1;
+    i += ac > 0xffff ? 2 : 1;
+  }
+  return a.length - b.length;
+}
+
 /** Port of yaml.v3's `keyList.Less` natural string ordering (sorter.go). */
 function yamlKeyLess(a: string, b: string): boolean {
   const ar = [...a];
@@ -441,7 +458,8 @@ function yamlKeyLess(a: string, b: string): boolean {
     }
     const al = isLetter(ac);
     const bl = isLetter(bc);
-    if (al && bl) return ac < bc;
+    // Go compares runes (`ar[i] < br[i]`), i.e. code points, not UTF-16 units.
+    if (al && bl) return (ac.codePointAt(0) as number) < (bc.codePointAt(0) as number);
     if (al || bl) return digits ? al : bl;
     let an = 0n;
     let bn = 0n;
@@ -464,7 +482,7 @@ function yamlKeyLess(a: string, b: string): boolean {
     }
     if (an !== bn) return an < bn;
     if (ai !== bi) return ai < bi;
-    return ac < bc;
+    return (ac.codePointAt(0) as number) < (bc.codePointAt(0) as number);
   }
   return ar.length < br.length;
 }
@@ -640,14 +658,23 @@ function yamlHasSpecialChars(s: string): boolean {
   for (const ch of s) {
     const code = ch.codePointAt(0) as number;
     if (code === 0x09 || code === 0x0a) continue;
-    if (code < 0x20) return true;
-    if (code === 0x7f) return true;
-    if (code >= 0x80 && code < 0xa0) return true; // C1 controls incl. NEL
+    if (!yamlIsPrintable(code)) return true;
     if (code === 0x2028 || code === 0x2029) return true;
-    if (code === 0xfffe || code === 0xffff) return true;
-    if (code >= 0xd800 && code <= 0xdfff) return true; // unpaired surrogate
   }
   return false;
+}
+
+/**
+ * libyaml's `is_printable` (yamlprivateh.go) in code-point terms. Notably the
+ * byte-oriented original never accepts a 4-byte UTF-8 lead, so every astral
+ * character — as well as C0/C1 controls, DEL, surrogates, the U+FEFF BOM, and
+ * U+FFFE/U+FFFF — is "not printable" and gets double-quoted escapes.
+ */
+function yamlIsPrintable(code: number): boolean {
+  if (code === 0x0a) return true;
+  if (code >= 0x20 && code <= 0x7e) return true;
+  if (code >= 0xa0 && code <= 0xd7ff) return true;
+  return code >= 0xe000 && code <= 0xfffd && code !== 0xfeff;
 }
 
 /** Emitter `block_plain_allowed` analysis for single-line printable strings. */
@@ -776,24 +803,45 @@ function goParseIntBase0(plain: string): boolean {
   return parsed < 18446744073709551616n;
 }
 
-/** yaml.v3's `parseTimestamp` layouts (resolve.go `allowedTimestampFormats`). */
+/**
+ * yaml.v3's `parseTimestamp` layouts (resolve.go `allowedTimestampFormats`),
+ * which delegates to `time.Parse` — so calendar dates and zone offsets are
+ * validated exactly like Go's time package (verified against the Go binary:
+ * `2025-02-31` and `2100-02-29` stay plain, `2024-02-29` is a timestamp).
+ */
 function yamlIsTimestamp(s: string): boolean {
   const match =
     /^(\d{4})-(\d{1,2})-(\d{1,2})(?:([Tt ])(\d{1,2}):(\d{1,2}):(\d{1,2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/.exec(
       s,
     );
   if (match === null) return false;
-  const [, , monthRaw, dayRaw, separator, hour, minute, second, offset] = match;
+  const [, yearRaw, monthRaw, dayRaw, separator, hour, minute, second, offset] = match;
   // The space-separated layout has no timezone; T/t layouts require one.
   if (hour !== undefined) {
     if (separator === " " && offset !== undefined) return false;
     if (separator !== " " && offset === undefined) return false;
     if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return false;
   }
+  // time.Parse's zone-offset range checks (time/format.go): the hour is
+  // rejected above 24 and the minute above 60 — `+24:59` and `+00:60` are
+  // accepted, `+25:00` and `+23:99` are not (verified against Go 1.26).
+  if (offset !== undefined && offset !== "Z") {
+    if (Number(offset.slice(1, 3)) > 24 || Number(offset.slice(4, 6)) > 60) return false;
+  }
   const month = Number(monthRaw);
   const day = Number(dayRaw);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > goDaysInMonth(Number(yearRaw), month)) return false;
   return true;
+}
+
+/** `time.Parse`'s "day out of range" bound (`daysIn`, proleptic Gregorian). */
+function goDaysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return leap ? 29 : 28;
+  }
+  return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
 }
 
 function yamlStringScalar(s: string, style: Exclude<YamlStringStyle, "literal">): string {
@@ -855,12 +903,16 @@ function yamlDoubleQuoted(s: string): string {
         out += "\\P";
         break;
       default:
-        if (code < 0x20 || code === 0x7f || (code >= 0x80 && code < 0xa0)) {
+        // Non-printables escape by rune width like yaml.v3's double-quoted
+        // writer: `\xXX`, `\uXXXX`, or `\U00XXXXXX` with uppercase hex.
+        if (yamlIsPrintable(code)) {
+          out += ch;
+        } else if (code <= 0xff) {
           out += `\\x${code.toString(16).toUpperCase().padStart(2, "0")}`;
-        } else if (code >= 0xd800 && code <= 0xdfff) {
+        } else if (code <= 0xffff) {
           out += `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`;
         } else {
-          out += ch;
+          out += `\\U${code.toString(16).toUpperCase().padStart(8, "0")}`;
         }
     }
   }
@@ -1009,7 +1061,7 @@ function tomlTable(
   }
   const entries =
     value.k === "map"
-      ? [...value.entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      ? [...value.entries].sort(([a], [b]) => goStringCompare(a, b))
       : value.entries;
   const direct = entries.filter(([, v]) => !tomlIsTable(v));
   const sub = entries.filter(([, v]) => tomlIsTable(v));
@@ -1035,7 +1087,7 @@ function tomlArrayOfTables(
     if (item.k === "struct" || item.k === "map") {
       const entries =
         item.k === "map"
-          ? [...item.entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          ? [...item.entries].sort(([a], [b]) => goStringCompare(a, b))
           : item.entries;
       const direct = entries.filter(([, v]) => !tomlIsTable(v));
       const sub = entries.filter(([, v]) => tomlIsTable(v));
