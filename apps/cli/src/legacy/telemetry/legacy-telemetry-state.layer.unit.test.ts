@@ -529,4 +529,83 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
       expect(state.session_id).toBe("s");
     });
   });
+
+  it.effect("consent-form unix millis beyond the int64 range regenerate everything like Go", () => {
+    // Go's `json.Unmarshal` into `int64` rejects 1e100 (overflows the signed
+    // 64-bit range) → `errMalformedState` → wholesale regeneration: telemetry
+    // re-enabled, fresh identities — even though the file said "denied".
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        consent: "denied",
+        device_id: "d",
+        session_id: "s",
+        session_last_active: 1e100,
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
+
+  it.effect("consent-form unix millis at Go's int64 bounds preserve the state", () => {
+    // Hand-built JSON so the raw text pins Go's exact max valid literal
+    // 9223372036854775807 (JSON.stringify of the rounded double would emit
+    // 9223372036854775808 e-notation-free but a different literal). After
+    // JSON.parse it becomes exactly 2^63, which the inclusive bound accepts —
+    // an exclusive bound would regenerate a file Go decodes fine.
+    writeFileSync(
+      telemetryPath(),
+      '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":9223372036854775807}',
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+      expect(state.session_id).toBe("s");
+    });
+  });
+
+  it.effect("consent-form unix millis at Go's int64 min decode but expire the session", () => {
+    // int64 min -9223372036854775808 = -(2^63) is exactly representable as a
+    // double, so this Go-valid literal round-trips precisely. The instant is
+    // far past, so — exactly like Go — the file DECODES (enabled/device_id
+    // preserved, no wholesale regeneration) while the >30-minute-stale
+    // session id rotates.
+    writeFileSync(
+      telemetryPath(),
+      '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":-9223372036854775808}',
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
+
+  it.effect("a schema_version beyond the int64 range regenerates everything like Go", () => {
+    // `SchemaVersion int` sits in the same single-shot unmarshal
+    // (`state.go:41`, `state.go:88-90`): an overflowing value malforms the
+    // whole file, not just the field.
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        enabled: false,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: new Date().toISOString(),
+        schema_version: 1e100,
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
 });

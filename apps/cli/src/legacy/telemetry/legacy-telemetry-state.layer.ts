@@ -100,6 +100,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Go decodes both the consent-form unix millis (`int64`, `state.go:69-85`)
+ * and `schema_version` (`int`, 64-bit on every supported platform,
+ * `state.go:41`) with `json.Unmarshal` into a signed 64-bit integer, so a
+ * non-integer or a magnitude outside that range fails the decode and the
+ * whole file is malformed → regenerated (`state.go:87-90`). The upper bound
+ * is `2 ** 63` INCLUSIVE: `JSON.parse` rounds Go's max valid value
+ * 9223372036854775807 up to exactly 2^63 (doubles at that magnitude are
+ * 1024 apart), so an exclusive bound would regenerate a file Go accepts.
+ * Go-invalid 9223372036854775808 collapses to the same double — that single
+ * post-parse value is inherently ambiguous, and inclusive is the closest
+ * achievable parity. (int64 min, -(2^63), is exactly representable.)
+ */
+function isGoInt64(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= -(2 ** 63) &&
+    value <= 2 ** 63
+  );
+}
+
+/**
  * Faithful port of Go's `decodeState` (`internal/telemetry/state.go:87-115`):
  * ALL-OR-NOTHING. Go decodes the whole file or classifies it as
  * `errMalformedState` — it never salvages individual fields. A file missing
@@ -111,9 +133,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * `"enabled": false` does NOT stay disabled.
  *
  * One Go strictness corner is not reproducible here: `JSON.parse` collapses
- * `2.0` → `2`, so an integer-valued float `schema_version`/millis passes
- * where Go's unmarshal-into-int rejects it. It requires a hand-corrupted
- * file the CLI never writes. (Unix millis beyond ECMAScript's
+ * `2.0` → `2` and `1e3` → `1000`, so an integer-valued float / in-range
+ * exponent-form `schema_version`/millis passes where Go's unmarshal-into-int
+ * rejects it. It requires a hand-corrupted file the CLI never writes.
+ * Magnitudes outside Go's int64 range DO regenerate like Go (see
+ * {@link isGoInt64}). (Unix millis in-range but beyond ECMAScript's
  * ±8.64e15 `Date` range no longer regenerate: the epoch is kept as a plain
  * number, so — like Go's `time.UnixMilli` — the state is preserved and the
  * far-future comparison simply never expires the session.)
@@ -170,7 +194,7 @@ function readExistingState(text: string): PriorState | undefined {
       }
       sessionLastActiveMs = parsedMs;
     } else if (allowUnixMillis && typeof rawLastActive === "number") {
-      if (!Number.isInteger(rawLastActive)) return undefined;
+      if (!isGoInt64(rawLastActive)) return undefined;
       sessionLastActiveMs = rawLastActive;
     } else {
       return undefined;
@@ -192,7 +216,7 @@ function readExistingState(text: string): PriorState | undefined {
     if (
       record.schema_version !== undefined &&
       record.schema_version !== null &&
-      !Number.isInteger(record.schema_version)
+      !isGoInt64(record.schema_version)
     ) {
       return undefined;
     }
