@@ -179,6 +179,34 @@ describe("normalize", () => {
     expect(normalize(table)).toBe(table.replace(/[ \t]+$/gm, ""));
   });
 
+  it("strips system-keyring availability noise in both Go wordings", () => {
+    const goStderr = [
+      "Do you want to delete project aaaaaaaaaaaaaaaaaaaa? This action is irreversible. [y/N] y",
+      "Keyring is not supported on WSL",
+      "failed to delete credentials: The name org.freedesktop.secrets was not provided by any .service files",
+    ].join("\n");
+    expect(normalize(goStderr)).toBe(
+      "Do you want to delete project aaaaaaaaaaaaaaaaaaaa? This action is irreversible. [y/N] y\n",
+    );
+  });
+
+  it("strips dbus session-bus keyring noise under every credentials wrapper", () => {
+    expect(
+      normalize("failed to load credentials: dbus: couldn't determine address of session bus\n"),
+    ).toBe("");
+    expect(
+      normalize(
+        "failed to delete all credentials in Supabase CLI: dbus: couldn't determine address of session bus\n",
+      ),
+    ).toBe("");
+  });
+
+  it("keeps genuine credentials failures intact", () => {
+    expect(normalize("failed to delete credentials: permission denied\n")).toBe(
+      "failed to delete credentials: permission denied\n",
+    );
+  });
+
   it("can strip caller-provided patterns before shared normalization", () => {
     expect(
       normalize("status: transient\nversion: 2.0.0", { stripPatterns: [/^status: .+\n/gm] }),
