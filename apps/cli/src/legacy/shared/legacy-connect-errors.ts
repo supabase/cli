@@ -64,14 +64,32 @@ export function legacyIsIPv6ConnectivityError(message: string): boolean {
 export const LEGACY_SUGGEST_ENV_VAR =
   "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD";
 
+/**
+ * TS-only addition — Go's `SetConnectSuggestion` has no local/remote distinction,
+ * so a refused `--local` connection (Docker/Postgres not running) got the same
+ * remote-only "Network Restrictions" dashboard hint as an actual network-restricted
+ * connection, which is a dead end locally. Shown instead of that hint when
+ * `ctx.isLocal` is true — see `legacyConnectSuggestion`.
+ */
+export const LEGACY_SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
+
+/**
+ * Go's `SetConnectSuggestion` remote-only "Network Restrictions" hint
+ * (`internal/utils/connect.go:319-321`), shown for a connection refused/blocked
+ * by IP allow-listing. Shared by both the always-remote `Address not in tenant
+ * allow_list` branch and the non-local `ECONNREFUSED`/`connection refused`
+ * branch in `legacyConnectSuggestion`.
+ */
+function legacySuggestNetworkRestrictions(dashboardUrl: string): string {
+  return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${dashboardUrl}/project/_/database/settings`;
+}
+
 /** Context the connect-suggestion needs but cannot derive from the error alone. */
 export interface LegacyConnectSuggestionContext {
   /** Active profile's dashboard URL (Go's `CurrentProfile.DashboardURL`). */
   readonly dashboardUrl: string;
   /** Active profile name (Go's `CurrentProfile.Name`). */
   readonly profileName: string;
-  /** Whether `--debug` is set (Go's `viper.GetBool("DEBUG")`). */
-  readonly debug: boolean;
 }
 
 /**
@@ -213,6 +231,14 @@ const LEGACY_TLS_DISCONNECT_MESSAGE =
 const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
 
 /**
+ * Whether a driver error `code` is a Postgres SQLSTATE (a server ErrorResponse)
+ * rather than a node system errno (`ECONNRESET`, …). Shared by the connect-cause
+ * renderer below and the driver layer's exec-error mapping, which both need to
+ * distinguish server errors from socket/driver failures.
+ */
+export const legacyIsSqlState = (code: string): boolean => SQLSTATE_PATTERN.test(code);
+
+/**
  * Render the underlying driver failure the way pgconn stages its
  * `connectError.msg` (`server error` / `hostname resolving error` /
  * `dial error` / `tls error`, each with the cause parenthesized —
@@ -245,7 +271,7 @@ function legacyConnectCauseDetail(cause: unknown): string {
       : typeof code === "string"
         ? code
         : String(cause);
-  if (typeof severity === "string" && typeof code === "string" && SQLSTATE_PATTERN.test(code)) {
+  if (typeof severity === "string" && typeof code === "string" && legacyIsSqlState(code)) {
     return `server error (${severity}: ${text} (SQLSTATE ${code}))`;
   }
   if (syscall === "getaddrinfo" || code === "ENOTFOUND" || code === "EAI_AGAIN") {
@@ -347,20 +373,20 @@ function legacyHasIPv6DialCause(error: unknown, depth = 0): boolean {
  */
 export function legacyConnectSuggestion(
   error: unknown,
-  ctx: LegacyConnectSuggestionContext,
+  ctx: LegacyConnectSuggestionContext & { readonly isLocal: boolean },
 ): string | undefined {
   const text = legacyCollectConnectErrorText(error);
-  // connect: connection refused / Address not in tenant allow_list → network restrictions.
-  if (
-    text.includes("ECONNREFUSED") ||
-    text.includes("connection refused") ||
-    text.includes("Address not in tenant allow_list")
-  ) {
-    return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${ctx.dashboardUrl}/project/_/database/settings`;
+  // connect: connection refused - "Address not in tenant allow_list" only ever comes from the remote pooler
+  // rejecting the caller's IP, so it always means network restrictions.
+  if (text.includes("Address not in tenant allow_list")) {
+    return legacySuggestNetworkRestrictions(ctx.dashboardUrl);
   }
-  // SSL connection is required (only under --debug, which disables TLS).
-  if (text.includes("SSL connection is required") && ctx.debug) {
-    return "SSL connection is not supported with --debug flag";
+  // connect: connection refused — don't send the user to the
+  // dashboard's Network Restrictions page for a --local connection.
+  if (text.includes("ECONNREFUSED") || text.includes("connection refused")) {
+    return ctx.isLocal
+      ? LEGACY_SUGGEST_LOCAL_STACK
+      : legacySuggestNetworkRestrictions(ctx.dashboardUrl);
   }
   // Wrong password (Go: "SCRAM exchange: Wrong password" / "failed SASL auth";
   // node-postgres surfaces the server's `28P01` "password authentication failed").

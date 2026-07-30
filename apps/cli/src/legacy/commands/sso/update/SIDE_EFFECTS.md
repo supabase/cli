@@ -20,13 +20,13 @@
 
 ## API Routes
 
-| Method | Path                                                         | Auth         | Request body                                                                    | Response (used fields)                                             |
-| ------ | ------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `GET`  | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | none                                                                            | `{id, saml?, domains?, created_at?, updated_at?}`                  |
-| `PUT`  | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | `{metadata_xml?, metadata_url?, domains?, attribute_mapping?, name_id_format?}` | `{id, saml?, domains?, ...}` (parsed loosely)                      |
-| `GET`  | `<metadata-url>`                                             | none         | `Accept: application/xml`, 10s timeout                                          | XML body (UTF-8) — validation when `--skip-url-validation` not set |
-| `GET`  | `/v1/projects/{ref}`                                         | Bearer token | none                                                                            | `{organization_slug}` — upgrade-gate side-call on 4xx              |
-| `GET`  | `/v1/organizations/{slug}/entitlements`                      | Bearer token | none                                                                            | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate          |
+| Method | Path                                                         | Auth         | Request body                                                                   | Response (used fields)                                             |
+| ------ | ------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `GET`  | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | none                                                                           | `{id, saml?, domains?, created_at?, updated_at?}`                  |
+| `PUT`  | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | `{metadata_xml?, metadata_url?, domains, attribute_mapping?, name_id_format?}` | `{id, saml?, domains?, ...}` (parsed loosely)                      |
+| `GET`  | `<metadata-url>`                                             | none         | `Accept: application/xml`, 10s timeout                                         | XML body (UTF-8) — validation when `--skip-url-validation` not set |
+| `GET`  | `/v1/projects/{ref}`                                         | Bearer token | none                                                                           | `{organization_slug}` — upgrade-gate side-call on 4xx              |
+| `GET`  | `/v1/organizations/{slug}/entitlements`                      | Bearer token | none                                                                           | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate          |
 
 Bypasses the typed Management API client for the PUT so user-supplied keys inside
 `attribute_mapping.keys.<x>` (e.g. `default`) are preserved verbatim. The initial
@@ -83,6 +83,7 @@ Single `success` event with the parsed response as data.
 - `--metadata-file` and `--metadata-url` are mutually exclusive.
 - Always performs the GET pre-check (matches Go's `update.go:42`), regardless of whether `--add-domains` / `--remove-domains` are used.
 - Domain merge: removals are applied first, then additions. Go uses a `map[string]bool` so the resulting order is **unordered**; consumers must sort if comparing.
+- **`domains` is always present in the PUT body** (CLI-1981): Go's `--add-domains`/`--remove-domains` default to a non-nil `[]string{}` (`cmd/sso.go:171-172`), so `update.go:84`'s `!= nil` merge gate is always true from the CLI. With no domain flags (or an explicit empty `--domains=`) the body carries the recomputed existing set; when the provider has no domains it is the literal `"domains":[]` (non-nil `*[]string` under `omitempty` — verified by live capture against the Go binary).
 - Metadata URL validation error message: `only HTTPS Metadata URLs are supported Use --skip-url-validation to suppress this error.` (single trailing period — matches Go's `update.go:69`, which wraps with `%w Use --skip-url-validation to suppress this error.`; differs from `sso add`'s variant which omits the trailing period).
 - The `## Attribute Mapping` / `## SAML 2.0 Metadata XML` sections are emitted as plain markdown (heading + fence). Visual styling of the headings does not match Go's Glamour-rendered output; the table portion and the XML body inside the fence are byte-parity (see `formatSsoMetadataXml`).
 - **PUT failure message reuses the GET error string**: a non-2xx PUT response produces `unexpected error fetching identity provider: <body>` — note "fetching" not "updating". This matches Go's `update.go:133` verbatim.

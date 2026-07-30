@@ -1,7 +1,6 @@
 import { Effect, Layer } from "effect";
 import * as net from "node:net";
 
-import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
 import {
   LegacyPgDeltaSslProbe,
   LegacyPgDeltaSslProbeError,
@@ -76,10 +75,7 @@ export function legacyInterpretSslProbeByte(byte: number | undefined): "tls" | "
  */
 export const legacyPgDeltaSslProbeLayer = Layer.effect(
   LegacyPgDeltaSslProbe,
-  Effect.gen(function* () {
-    // Go disables SSL in debug mode (`require := !viper.GetBool("DEBUG")`), so a
-    // server that speaks TLS still reports "not required" under `--debug`.
-    const debug = yield* LegacyDebugFlag;
+  Effect.sync(() => {
     const probeTarget = (target: LegacySslProbeTarget) =>
       Effect.gen(function* () {
         const outcome = yield* Effect.callback<"tls" | "refused", LegacyPgDeltaSslProbeError>(
@@ -136,7 +132,7 @@ export const legacyPgDeltaSslProbeLayer = Layer.effect(
           },
         );
         if (outcome === "refused") return false;
-        return !debug;
+        return true;
       });
     return LegacyPgDeltaSslProbe.of({
       requireSsl: (dbUrl) =>

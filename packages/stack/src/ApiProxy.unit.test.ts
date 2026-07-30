@@ -197,6 +197,7 @@ describe("ApiProxy", () => {
     expect(res.headers.get("access-control-allow-methods")).toContain("GET");
     expect(res.headers.get("access-control-allow-headers")).toContain("apikey");
     expect(res.headers.get("access-control-expose-headers")).toContain("Content-Range");
+    expect(res.headers.get("access-control-expose-headers")).toContain("sb-error-code");
     expect(res.headers.get("access-control-max-age")).toBe("86400");
   });
 

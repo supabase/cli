@@ -86,6 +86,15 @@ importers:
       nx:
         specifier: 'catalog:'
         version: 23.1.0(@swc-node/register@1.12.1(@swc/core@1.15.46)(@swc/types@0.1.27)(@typescript/typescript6@6.0.2))(@swc/core@1.15.46)
+      oxfmt:
+        specifier: 'catalog:'
+        version: 0.59.0
+      oxlint:
+        specifier: 'catalog:'
+        version: 1.74.0(oxlint-tsgolint@0.25.0)
+      oxlint-tsgolint:
+        specifier: 'catalog:'
+        version: 0.25.0
       pkg-pr-new:
         specifier: 0.0.75
         version: 0.0.75

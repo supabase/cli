@@ -11,7 +11,11 @@ import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 // resolves, so the COPY path and the pooled path use the same driver.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
-import { legacyConnectFailureMessage, legacyConnectSuggestion } from "./legacy-connect-errors.ts";
+import {
+  legacyConnectFailureMessage,
+  legacyConnectSuggestion,
+  legacyIsSqlState,
+} from "./legacy-connect-errors.ts";
 import {
   LegacyDbConnectError,
   LegacyDbCopyError,
@@ -122,6 +126,70 @@ function legacyExtractSqlState(error: unknown): string | undefined {
     current = Reflect.get(current, "cause");
   }
   return undefined;
+}
+
+/** Structured fields of a Postgres server ErrorResponse (pgconn's `PgError` subset). */
+interface LegacyPgServerError {
+  readonly severity: string;
+  readonly message: string;
+  readonly code: string;
+  readonly detail?: string;
+  readonly position?: number;
+}
+
+/**
+ * Extracts the server ErrorResponse from a driver error's `cause` chain. The
+ * `@effect/sql` `SqlError` wraps its reason on `cause`, and the reason wraps the
+ * node-postgres `DatabaseError` the same way; a `DatabaseError` is identified by
+ * its string `severity` plus a SQLSTATE-shaped `code` (never a node system error).
+ * `detail` and `position` mirror Go's `pgErr.Detail`/`pgErr.Position`
+ * (node-postgres carries `position` as a decimal string): `detail` only when
+ * non-empty, `position` only when > 0, matching Go's gates in `ExecBatch`
+ * (`pkg/migration/file.go:98-101` — `markError` no-ops on 0 anyway).
+ */
+function legacyExtractPgServerError(error: unknown): LegacyPgServerError | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
+    const severity = Reflect.get(current, "severity");
+    const code = Reflect.get(current, "code");
+    if (typeof severity === "string" && typeof code === "string" && legacyIsSqlState(code)) {
+      const message = Reflect.get(current, "message");
+      const detail = Reflect.get(current, "detail");
+      const rawPosition = Reflect.get(current, "position");
+      const position = typeof rawPosition === "string" ? Number.parseInt(rawPosition, 10) : NaN;
+      return {
+        severity,
+        message: typeof message === "string" ? message : "",
+        code,
+        ...(typeof detail === "string" && detail.length > 0 ? { detail } : {}),
+        ...(Number.isInteger(position) && position > 0 ? { position } : {}),
+      };
+    }
+    current = Reflect.get(current, "cause");
+  }
+  return undefined;
+}
+
+/**
+ * Maps a failed statement to `LegacyDbExecError`. A server ErrorResponse renders
+ * pgconn's `PgError.Error()` byte-for-byte — `<Severity>: <Message> (SQLSTATE
+ * <Code>)` (pgconn `errors.go:51`) — which is the head line Go prints when a
+ * migration statement fails (`pkg/migration/file.go:112`, `%w`), and carries the
+ * structured `detail`/`position` fields the migration-apply error context renders
+ * (Go `file.go:96-110`). Non-server failures (socket drops, driver errors) keep
+ * the driver's own text.
+ */
+export function legacyToExecError(error: unknown): LegacyDbExecError {
+  const server = legacyExtractPgServerError(error);
+  if (server !== undefined) {
+    return new LegacyDbExecError({
+      message: `${server.severity}: ${server.message} (SQLSTATE ${server.code})`,
+      code: server.code,
+      detail: server.detail,
+      position: server.position,
+    });
+  }
+  return new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) });
 }
 
 /**
@@ -593,7 +661,7 @@ const connect = (
       const suggestion =
         cfg.suggestionContext === undefined
           ? undefined
-          : legacyConnectSuggestion(error, cfg.suggestionContext);
+          : legacyConnectSuggestion(error, { ...cfg.suggestionContext, isLocal });
       return new LegacyDbConnectError({
         message: `failed to connect to postgres: ${legacyConnectFailureMessage(cfg, error)}`,
         ...(suggestion === undefined ? {} : { suggestion }),
@@ -772,31 +840,15 @@ const connect = (
     });
 
     const session: LegacyDbSession = {
-      exec: (sql) =>
-        client.unsafe(sql).pipe(
-          Effect.asVoid,
-          Effect.mapError(
-            (error) =>
-              new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) }),
-          ),
-        ),
+      exec: (sql) => client.unsafe(sql).pipe(Effect.asVoid, Effect.mapError(legacyToExecError)),
       query: (sql, params) =>
-        client.unsafe<Record<string, unknown>>(sql, params).pipe(
-          Effect.mapError(
-            (error) =>
-              new LegacyDbExecError({
-                message: String(error),
-                code: legacyExtractSqlState(error),
-              }),
-          ),
-        ),
+        client
+          .unsafe<Record<string, unknown>>(sql, params)
+          .pipe(Effect.mapError(legacyToExecError)),
       extensionExists: (name) =>
         client`select 1 from pg_extension where extname = ${name}`.pipe(
           Effect.map((rows) => rows.length > 0),
-          Effect.mapError(
-            (error) =>
-              new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) }),
-          ),
+          Effect.mapError(legacyToExecError),
         ),
       queryRaw: (sql) =>
         Effect.gen(function* () {
