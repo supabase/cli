@@ -8,7 +8,7 @@ import {
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  hasExplicitLongFlag,
+  hasExplicitValueFlag,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
@@ -88,15 +88,27 @@ function isProjectNotFound(cause: unknown) {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
-function ensureMutuallyExclusive(
-  group: ReadonlyArray<string>,
-  present: ReadonlyArray<string>,
-): Effect.Effect<void, Error> {
-  if (present.length <= 1) {
-    return Effect.void;
-  }
-  return Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, present)));
-}
+type LegacyGenTypesMutexFlag =
+  | "local"
+  | "linked"
+  | "project-id"
+  | "db-url"
+  | "postgrest-v9-compat"
+  | "swift-access-control"
+  | "query-timeout";
+
+// Go registers four mutually-exclusive flag groups (apps/cli-go/cmd/gen.go:153-162).
+// Cobra validates them in lexicographically sorted group-key order and reports only
+// the first violated group (spf13/cobra flag_groups.go `validateExclusiveFlagGroups`
+// iterating `sortedKeys`), so they are listed here in that sorted order — e.g.
+// `--db-url X --postgrest-v9-compat --project-id Y` reports the postgrest group,
+// not the local/linked/project-id/db-url group.
+const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<LegacyGenTypesMutexFlag>> = [
+  ["linked", "project-id", "postgrest-v9-compat"],
+  ["linked", "project-id", "query-timeout"],
+  ["linked", "project-id", "swift-access-control"],
+  ["local", "linked", "project-id", "db-url"],
+];
 
 function forwardByteStream(
   stream: Stream.Stream<Uint8Array, unknown>,
@@ -199,56 +211,55 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const dbConfig = yield* LegacyDbConfigResolver;
   const sslProbe = yield* LegacyPgDeltaSslProbe;
 
-  yield* ensureMutuallyExclusive(
-    ["local", "linked", "project-id", "db-url"],
-    [
-      ...(flags.local ? ["local"] : []),
-      ...(flags.linked ? ["linked"] : []),
-      ...(Option.isSome(flags.projectId) ? ["project-id"] : []),
-      ...(Option.isSome(flags.dbUrl) ? ["db-url"] : []),
-    ],
-  );
+  const flagChanged = (flagName: string) =>
+    hasExplicitValueFlag(rawArgs, GEN_TYPES_COMMAND_PATH, LONG_FLAGS_WITH_VALUES, flagName);
+
+  // Go parses `--query-timeout` at flag-parse time, before any PreRunE or
+  // flag-group validation, so an invalid duration wins over the guards below.
+  const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
+
+  // Guard order matches Go exactly: the command's PreRunE runs first
+  // (apps/cli-go/cmd/gen.go:79-88), then cobra validates the mutually-exclusive
+  // flag groups (spf13/cobra command.go:1000-1010) — so a PreRunE error wins
+  // when both apply (e.g. `--local --linked --postgrest-v9-compat`).
+  if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
+    // Byte-match of Go's error, including the "must used" typo (cmd/gen.go:81).
+    return yield* Effect.fail(new Error("--postgrest-v9-compat must used together with --db-url"));
+  }
   const legacyLang = findLegacyPositionalLanguage(rawArgs);
-  if (
-    Option.isSome(legacyLang) &&
-    legacyLang.value !== "typescript" &&
-    !hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "lang")
-  ) {
+  if (Option.isSome(legacyLang) && legacyLang.value !== "typescript" && !flagChanged("lang")) {
     return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
+  }
+
+  // Cobra's mutual exclusion keys off pflag `Changed` — a flag counts as set
+  // once passed explicitly, regardless of value, so `--linked=false` still
+  // trips its groups. The raw-argv scan mirrors that for the booleans and for
+  // the defaulted value flags (`--swift-access-control`, `--query-timeout`,
+  // whose parsed value cannot distinguish an explicit default from an unset
+  // flag). A true boolean or Some optional also implies the flag was passed,
+  // which keeps the check working when the handler is driven directly in
+  // tests without matching raw argv.
+  const changedMutexFlags: Record<LegacyGenTypesMutexFlag, boolean> = {
+    local: flags.local || flagChanged("local"),
+    linked: flags.linked || flagChanged("linked"),
+    "project-id": Option.isSome(flags.projectId),
+    "db-url": Option.isSome(flags.dbUrl),
+    "postgrest-v9-compat": flags.postgrestV9Compat || flagChanged("postgrest-v9-compat"),
+    "swift-access-control": flagChanged("swift-access-control"),
+    "query-timeout": flagChanged("query-timeout"),
+  };
+  for (const group of GEN_TYPES_MUTEX_GROUPS) {
+    const set = group.filter((flagName) => changedMutexFlags[flagName]);
+    if (set.length > 1) {
+      return yield* Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, set)));
+    }
   }
 
   // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(legacyParseSchemaFlags)`
   // in types.command.ts — use it directly.
   const schemas = flags.schema;
-  const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
-  const usesPgMeta = flags.local || Option.isSome(flags.dbUrl) || flags.lang !== "typescript";
-
-  if (
-    hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "swift-access-control") &&
-    lang !== "swift"
-  ) {
-    return yield* Effect.fail(
-      new Error("--swift-access-control can only be used with --lang swift"),
-    );
-  }
-  if (flags.postgrestV9Compat && !usesPgMeta) {
-    return yield* Effect.fail(
-      new Error("--postgrest-v9-compat can only be used with pg-meta type generation"),
-    );
-  }
-  if (hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "query-timeout") && !usesPgMeta) {
-    if (flags.linked || Option.isSome(flags.projectId)) {
-      return yield* Effect.fail(
-        new Error("--query-timeout can only be used with pg-meta type generation"),
-      );
-    }
-    yield* output.raw(
-      "Warning: --query-timeout is ignored for remote TypeScript type generation.\n",
-      "stderr",
-    );
-  }
 
   const loadConfig = () => loadProjectConfig(cliConfig.workdir, { goViperCompat: true });
   const loadConfigForRef = (projectRef: string) =>

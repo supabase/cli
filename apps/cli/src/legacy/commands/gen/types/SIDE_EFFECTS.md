@@ -32,7 +32,8 @@ passed via container CLI `run --env KEY=VALUE` arguments, mirroring Go's
 
 The TypeScript endpoint is called for `--linked`, `--project-id`, and the implicit
 linked-project fallback when `--lang=typescript`. For other languages on those
-project-ref paths, the project endpoint is probed first: a `404` means the ref is a
+project-ref paths — a sanctioned intentional divergence from the Go CLI, see Notes
+(CLI-1988) — the project endpoint is probed first: a `404` means the ref is a
 preview branch (any 404 body), so the branch endpoint supplies the branch database
 host/port and credentials for pg-meta. Otherwise the database connection is resolved
 for the ref and the login-role endpoint supplies temporary credentials for pg-meta.
@@ -73,15 +74,15 @@ default 10s pg-delta probe timeout.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                   |
-| ---- | --------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — types printed to stdout                                                                                           |
-| `1`  | no target specified (must use one flag)                                                                                     |
-| `1`  | mutually exclusive flags combined                                                                                           |
-| `1`  | pg-meta-only flags used with remote TypeScript generation, except implicit TypeScript `--query-timeout` warns and continues |
-| `1`  | invalid `--query-timeout` duration or invalid `--db-url`                                                                    |
-| `1`  | `supabase start` not running (`--local`) or db inspection failed                                                            |
-| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit                                                            |
+| Code | Condition                                                        |
+| ---- | ---------------------------------------------------------------- |
+| `0`  | success — types printed to stdout                                |
+| `1`  | no target specified (must use one flag)                          |
+| `1`  | mutually exclusive flags combined (all four Go flag groups)      |
+| `1`  | `--postgrest-v9-compat` used without `--db-url`                  |
+| `1`  | invalid `--query-timeout` duration or invalid `--db-url`         |
+| `1`  | `supabase start` not running (`--local`) or db inspection failed |
+| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit |
 
 ## Output
 
@@ -101,20 +102,37 @@ Not applicable.
 ## Notes
 
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
+  All four of Go's mutually exclusive flag groups (`apps/cli-go/cmd/gen.go:153-162`) are
+  enforced with cobra's exact error text and sorted group order:
+  `local/linked/project-id/db-url`, plus `linked/project-id` against each of
+  `postgrest-v9-compat`, `query-timeout`, and `swift-access-control`.
 - With `--local`, a missing `supabase/config.toml` uses the embedded config defaults plus
   shell and nested dotenv overrides, matching the legacy CLI.
-- `--lang` flag accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref
-  paths use the Management API for TypeScript, and use a project database host +
-  temporary login role + pg-meta for other languages.
+- **Sanctioned intentional divergence from the Go CLI (CLI-1988 parity ruling):**
+  `--lang` accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref paths
+  (`--linked`, `--project-id`, and the implicit linked fallback) use the Management API
+  for TypeScript, and run pg-meta locally against the project database (temporary
+  login-role credentials, preview-branch fallback) for the other languages. The Go CLI
+  instead hard-errors with `Unable to generate <lang> types for selected project. Try
+using --db-url flag instead.` (`internal/gen/types/types.go:44-46`) and never runs
+  pg-meta for a project ref. This permissiveness is deliberate — it resolves the
+  user-filed CLI-1623 complaint — and was blessed in the CLI-1988 ruling. Do not
+  "fix" it back to Go's error. Because Go's mutex groups are enforced unchanged, the
+  pg-meta tuning flags (`--swift-access-control`, `--postgrest-v9-compat`,
+  `--query-timeout`) cannot be combined with `--linked`/`--project-id`, so this
+  project-ref pg-meta path always runs with pg-meta defaults (`internal` access
+  control, one-to-one detection on, 15s timeout); use `--db-url` to tune them.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
-- `--swift-access-control` accepts `internal` (default) or `public`, and requires
-  `--lang swift`.
-- `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below for pg-meta
-  generation (`--local`, `--db-url`, or non-TypeScript project-ref paths).
+- `--swift-access-control` accepts `internal` (default) or `public`. Matching Go, it is
+  mutually exclusive with `--linked`/`--project-id`; on the `--local` and `--db-url`
+  paths it is always forwarded to pg-meta regardless of `--lang`.
+- `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below.
+  Matching Go's PreRun guard, it must be used together with `--db-url` (error:
+  `--postgrest-v9-compat must used together with --db-url` — Go's typo included).
+  `--local` still forces v9 compat when the local PostgREST image tag contains `v9`.
 - `--query-timeout` sets the maximum timeout for pg-meta database queries (default 15s).
-  On remote TypeScript generation, explicit `--linked` or `--project-id` invocations
-  error because pg-meta is not used; the implicit linked TypeScript fallback prints a
-  warning and ignores the flag.
+  Matching Go, it is mutually exclusive with `--linked`/`--project-id`; on the implicit
+  linked TypeScript fallback it is accepted and silently unused.
 - The legacy positional language argument (`supabase gen types typescript`) is still accepted;
   any other positional language requires an explicit `--lang` flag.
 - The linked-project telemetry cache is written only when a project ref is resolved
