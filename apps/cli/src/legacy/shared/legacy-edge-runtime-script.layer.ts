@@ -107,7 +107,14 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
               env,
               binds: opts.binds,
               workingDir: Option.none(),
-              securityOpt: [],
+              // SELinux-enforcing hosts (e.g. Fedora + rootless Podman) block the
+              // container from reading CLI-generated files under the `/workspace`
+              // bind, like the pg-delta CA bundle (supabase/cli#5989). Disable label
+              // separation for this helper container instead of relabeling the
+              // user's project files — same as `db test`'s pg_prove run
+              // (`apps/cli-go/internal/db/test/test.go:81`); Bitbucket CI clears it
+              // via `legacyApplyBitbucketDockerFilter`.
+              securityOpt: ["label:disable"],
               extraHosts,
               network,
             })

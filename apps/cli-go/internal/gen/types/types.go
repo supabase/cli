@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -192,10 +191,8 @@ func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnCo
 		}
 		return false, err
 	}
-	// SSL is not supported in debug mode
-	require := !viper.GetBool("DEBUG")
-	debugf("isRequireSSL result require_ssl=%t debug_mode=%t", require, viper.GetBool("DEBUG"))
-	return require, conn.Close(ctx)
+	debugf("isRequireSSL result require_ssl=true")
+	return true, conn.Close(ctx)
 }
 
 func IsSSLDebugEnabled() bool {

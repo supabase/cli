@@ -6,6 +6,19 @@ const placeholder = {
   message: "Edge Functions are not configured for this local stack yet.",
 };
 
+export enum RequestErrors {
+  MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
+  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
+  InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
+  InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
+  UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
+}
+
+interface AuthFailure {
+  code: RequestErrors;
+  message?: string;
+}
+
 const configPath =
   typeof Deno === "undefined"
     ? new URL("./functions-runtime-config.json", import.meta.url)
@@ -36,6 +49,33 @@ function bytesEqual(left: Uint8Array, right: Uint8Array) {
   return result === 0;
 }
 
+function getAuthErrorResponse({ code, message = "Invalid JWT" }: AuthFailure) {
+  return Response.json(
+    {
+      code,
+      message,
+      // DEPRECATED: Retained for backward compatibility.
+      msg: message,
+    },
+    {
+      status: 401,
+      headers: {
+        "sb-error-code": code,
+        "Access-Control-Expose-Headers": "sb-error-code",
+      },
+    },
+  );
+}
+
+function decodeJwtAlgorithm(jwt: string): string | undefined {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Invalid JWT format");
+  }
+  const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(parts[0]!)));
+  return typeof decodedHeader.alg === "string" ? decodedHeader.alg : undefined;
+}
+
 async function isValidLocalJwt(secret: string, jwt: string) {
   const parts = jwt.split(".");
   if (parts.length !== 3) return false;
@@ -60,13 +100,16 @@ async function isValidLocalJwt(secret: string, jwt: string) {
   return bytesEqual(new Uint8Array(signed), base64UrlToBytes(signature!));
 }
 
-async function verifyRequest(req: Request, config: any, functionConfig: any) {
+export async function verifyRequest(req: Request, config: any, functionConfig: any) {
   if (!functionConfig.verifyJWT || req.method === "OPTIONS") return null;
   const bearerToken = req.headers.get("authorization")?.slice("Bearer ".length);
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")?.replace("Bearer", "")?.trim();
 
   if (!bearerToken && !sbApiKeyCompatibilityToken) {
-    return Response.json({ msg: "Missing authorization header" }, { status: 401 });
+    return getAuthErrorResponse({
+      code: RequestErrors.MissingAuthHeader,
+      message: "Missing authorization header",
+    });
   }
 
   // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
@@ -76,15 +119,47 @@ async function verifyRequest(req: Request, config: any, functionConfig: any) {
     !bearerToken || bearerToken.startsWith("sb_") ? sbApiKeyCompatibilityToken : bearerToken;
 
   if (!token) {
-    return Response.json({ msg: "Auth header is not 'Bearer {token}'" }, { status: 401 });
+    return getAuthErrorResponse({
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    });
   }
 
+  let algorithm: string | undefined;
   try {
-    if (await isValidLocalJwt(config.jwtSecret, token)) return null;
+    algorithm = decodeJwtAlgorithm(token);
   } catch (error) {
-    console.error("JWT verification failed", error);
+    console.error("JWT format error", error);
+    return getAuthErrorResponse({
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    });
   }
-  return Response.json({ msg: "Invalid JWT" }, { status: 401 });
+
+  if (!algorithm) {
+    return getAuthErrorResponse({
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    });
+  }
+
+  if (algorithm === "HS256") {
+    try {
+      if (await isValidLocalJwt(config.jwtSecret, token)) return null;
+    } catch (error) {
+      console.error("JWT verification failed", error);
+    }
+    return getAuthErrorResponse({ code: RequestErrors.InvalidLegacyJWT });
+  }
+
+  if (algorithm === "ES256" || algorithm === "RS256") {
+    return getAuthErrorResponse({ code: RequestErrors.InvalidAsymmetricJWT });
+  }
+
+  return getAuthErrorResponse({
+    code: RequestErrors.UnsupportedTokenAlgorithm,
+    message: `Unsupported JWT algorithm ${algorithm}`,
+  });
 }
 
 function dirname(path: string) {
