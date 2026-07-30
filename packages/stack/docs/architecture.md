@@ -267,10 +267,13 @@ flowchart TD
     A["resolve(spec)"] --> B["detectPlatform"]
     B --> C{"assetName?"}
     C -->|"null"| D["BinaryNotFoundError"]
-    C -->|"string"| E["construct cachePath"]
-    E --> F{"fs.exists(cacheDir)?"}
-    F -->|"yes"| G["return cacheDir"]
-    F -->|"no"| H["HttpClient.get tarball from GitHub"]
+    C -->|"string"| E["construct cacheDir"]
+    E --> F{"fs.exists(cacheDir/.supabase-cache-complete)?"}
+    F -->|"yes"| G["return cacheDir (cache hit)"]
+    F -->|"no, cacheDir exists w/o marker"| F1["remove broken cacheDir leftover"]
+    F -->|"no, cacheDir absent"| F2["sweep stale cacheDir.tmp-* siblings (best-effort)"]
+    F1 --> F2
+    F2 --> H["HttpClient.get tarball from GitHub"]
     H -->|"network error"| I["DownloadError"]
     H -->|"ok"| J{"checksumUrl?"}
     J -->|"null"| L["skip verification"]
@@ -278,17 +281,22 @@ flowchart TD
     K --> M["verifyChecksum (SHA-256)"]
     M -->|"mismatch"| N["ChecksumMismatchError"]
     M -->|"ok"| L
-    L --> O["fs.makeDirectory (recursive)"]
-    O --> P["write _download.tar"]
-    P --> Q["tar xzf/xf to cacheDir"]
+    L --> O["fs.makeDirectory tmpDir = cacheDir.tmp-«uuid»"]
+    O --> P["write _download-«uuid».tar/.zip into tmpDir"]
+    P --> Q["tar/unzip extract into tmpDir"]
     Q -->|"exitCode != 0"| R["DownloadError"]
-    Q -->|"ok"| S["fs.remove _download.tar"]
-    S --> G
+    Q -->|"ok"| T["chmod +x, (macOS) codesign, write completion marker — all in tmpDir"]
+    T --> U["fs.rename(tmpDir, cacheDir) — atomic publish"]
+    U -->|"ok"| G
+    U -->|"rename fails, cacheDir has marker"| V["another process won — discard tmpDir, return cacheDir"]
+    U -->|"rename fails, cacheDir has no marker"| W["reclaim: remove broken cacheDir, retry rename"]
+    V --> G
+    W --> G
 ```
 
 #### Cache layout
 
-The cache directory mirrors the logical identity of each binary: `<cacheDir>/<service>/<version>/<assetName>/`. Two versions of the same service coexist without conflict. The check is a simple `fs.exists` — if the directory is present, it was extracted successfully on a previous run.
+The cache directory mirrors the logical identity of each binary: `<cacheDir>/<service>/<version>/<assetName>/`. Two versions of the same service coexist without conflict. The check is for a version-agnostic completion marker file (`.supabase-cache-complete`) inside `cacheDir`, not mere directory existence — `cacheDir` only ever becomes non-empty via an atomic rename of a fully-staged directory that carries this marker, so a `cacheDir` that exists but lacks it can only be a broken leftover (e.g. from an older, pre-staging CLI version) and is removed rather than reused.
 
 ```
 ~/.supabase/bin/
@@ -316,7 +324,16 @@ Only postgres publishes SHA-256 checksums alongside its tarballs (as `<tarball-u
 
 #### Archive extraction
 
-The download is written to a temporary file (`_download.tar` or `_download.zip`) inside the cache directory. For tarballs (`.tar.gz`, `.tar.xz`), `tar` is used with `--strip-components=1` to remove the top-level directory. For zip archives (PostgREST on Windows), `unzip` is used on Unix or `tar xf` on Windows. The `tar`/`unzip` subprocess is spawned via `ChildProcessSpawner` from `effect/unstable/process`. After extraction, the temp file is removed (errors ignored — a leftover file is harmless).
+To avoid corrupting `cacheDir` under concurrent invocations of the same spec, the download and extraction are staged in a per-invocation-unique sibling directory, `<cacheDir>.tmp-<uuid>`, never inside `cacheDir` itself. The archive is downloaded to a uniquely-named temp file inside that staging directory. For tarballs (`.tar.gz`, `.tar.xz`), `tar` is used with `--strip-components=1` to remove the top-level directory. For zip archives (PostgREST on Windows), `unzip` is used on Unix or `tar xf` on Windows. The `tar`/`unzip` subprocess is spawned via `ChildProcessSpawner` from `effect/unstable/process`.
+
+After extraction, permissions are restored (`chmod`) and, on macOS, executables are ad-hoc code-signed — all still scoped to the staging directory. A completion marker file (`.supabase-cache-complete`) is written into the staging directory last, so it travels with the payload.
+
+The staging directory is then published by an atomic `fs.rename` into `cacheDir`:
+
+- If another process already published a complete `cacheDir` first (detected via the marker, not mere existence), the losing process discards its own staged copy and resolves to the winner's `cacheDir` instead of failing.
+- If `cacheDir` exists but isn't a complete, marker-carrying entry — a broken/incomplete leftover from an older, pre-staging CLI version, or the rename failing for an unrelated reason — the current process treats it as reclaimable: it removes the leftover and retries the rename. If a legitimate winner lands in the narrow gap between that reclaim and the retry, the retry's failure is treated the same way (re-checked against the marker) rather than surfacing as an error.
+
+The whole stage-and-publish sequence runs under a single `Effect.ensuring` finalizer that force-removes the staging directory on any exit path (success, failure, or interruption), and a best-effort sweep opportunistically reaps stale `.tmp-*` siblings older than 24 hours left behind by prior hard-killed processes. That sweep runs unconditionally before the cache-hit check, since once `cacheDir` becomes a complete cache hit, a sweep placed after the check would never run again for that entry's siblings.
 
 #### Layer wiring
 

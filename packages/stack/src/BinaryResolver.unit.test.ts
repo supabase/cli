@@ -145,6 +145,7 @@ function createFakeCacheFs() {
   const dirs = new Set<string>();
   const files = new Map<string, Uint8Array>();
   const mtimes = new Map<string, number>();
+  const removeInterceptors = new Map<string, () => void>();
 
   const isWithin = (candidatePath: string, rootPath: string): boolean =>
     candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
@@ -210,7 +211,28 @@ function createFakeCacheFs() {
           files.set(filePath, data);
           addAncestorDirs(filePath);
         }),
-      remove: (targetPath) => Effect.sync(() => removeSubtree(targetPath)),
+      remove: (targetPath, options) => {
+        const targetExists = files.has(targetPath) || dirs.has(targetPath);
+        if (!targetExists && !options?.force) {
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "remove",
+              description: "no such file or directory",
+              pathOrDescriptor: targetPath,
+            }),
+          );
+        }
+        return Effect.sync(() => {
+          removeSubtree(targetPath);
+          const intercept = removeInterceptors.get(targetPath);
+          if (intercept) {
+            removeInterceptors.delete(targetPath);
+            intercept();
+          }
+        });
+      },
       rename: (oldPath, newPath) => {
         if (hasContentAt(newPath)) {
           return Effect.fail(
@@ -276,6 +298,12 @@ function createFakeCacheFs() {
       const filePath = `${dirPath}/${relativeFilePath}`;
       files.set(filePath, new Uint8Array([9, 9, 9]));
       addAncestorDirs(filePath);
+    },
+    /** Registers a one-shot side effect to run the next time `targetPath` is
+     * removed — simulates a third party (a concurrent resolver, or a legacy
+     * writer) acting in the exact gap right after this process's own removal. */
+    onRemove: (targetPath: string, sideEffect: () => void): void => {
+      removeInterceptors.set(targetPath, sideEffect);
     },
   };
 }
@@ -469,6 +497,50 @@ describe("BinaryResolver.resolveWithMetadata stale staging cleanup", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.live(
+    "still reaps a stale staging sibling even when this resolve is itself a cache hit",
+    () => {
+      const fakeFs = createFakeCacheFs();
+      const spawner = mockExtractingSpawner(fakeFs);
+      const httpLayer = mockDownloadHttpClient({
+        archiveBytes: new Uint8Array([1, 2, 3]),
+        delayMs: 0,
+      });
+
+      const layer = BinaryResolver.make("/cache-root").pipe(
+        Layer.provide(fakeFs.layer),
+        Layer.provide(Path.layer),
+        Layer.provide(httpLayer),
+        Layer.provide(spawner.layer),
+      );
+
+      return Effect.gen(function* () {
+        const resolver = yield* BinaryResolver;
+        const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+        const cacheDir = yield* resolvePostgrestCacheDir;
+
+        // Populate a genuine, complete cache entry first.
+        const first = yield* resolver.resolveWithMetadata(spec);
+        expect(first.downloaded).toBe(true);
+
+        // Now a *different* invocation gets killed mid-download, abandoning
+        // a stale staging sibling next to the now-complete cacheDir.
+        const abandonedDir = `${cacheDir}.tmp-abandoned`;
+        fakeFs.seedDirWithFile(abandonedDir, "_download-abandoned.tar");
+        fakeFs.setMtime(abandonedDir, new Date(Date.now() - 25 * 60 * 60 * 1000));
+
+        // This resolve is a plain cache hit (marker already present) — the
+        // sweep must still run and reap the abandoned sibling, since once
+        // cacheDir is complete this spec will only ever take the hit path.
+        const second = yield* resolver.resolveWithMetadata(spec);
+        expect(second.downloaded).toBe(false);
+
+        expect(fakeFs.dirs.has(abandonedDir)).toBe(false);
+        expect([...fakeFs.files.keys()].some((p) => p.startsWith(abandonedDir))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
@@ -510,6 +582,49 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
       const second = yield* resolver.resolveWithMetadata(spec);
       expect(second.downloaded).toBe(false);
       expect(second.path).toBe(cacheDir);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("adopts a legitimate winner that lands mid-reclaim instead of retrying blindly", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockDownloadHttpClient({
+      archiveBytes: new Uint8Array([1, 2, 3]),
+      delayMs: 0,
+    });
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
+
+      // A markerless, broken cacheDir — our first renameOnce() attempt
+      // fails against this, entering the reclaim branch.
+      fakeFs.seedDirWithFile(cacheDir, "stray-legacy-file.txt");
+
+      // Simulate a legitimate winner (a third concurrent resolver, or a
+      // pre-atomic-rename legacy writer) publishing a complete,
+      // marker-carrying cacheDir in the exact gap between our reclaim's
+      // `fs.remove` and our retry rename.
+      fakeFs.onRemove(cacheDir, () => {
+        fakeFs.seedDirWithFile(cacheDir, "bin/postgrest");
+        fakeFs.seedDirWithFile(cacheDir, BinaryResolver.CACHE_COMPLETE_MARKER);
+      });
+
+      const result = yield* resolver.resolveWithMetadata(spec);
+
+      // Adopted the winner instead of throwing a spurious DownloadError
+      // from the retry's second rename failure.
+      expect(result.path).toBe(cacheDir);
+      expect(result.downloaded).toBe(false);
+      expect(fakeFs.files.has(`${cacheDir}/${BinaryResolver.CACHE_COMPLETE_MARKER}`)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 });

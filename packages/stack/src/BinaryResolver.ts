@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Effect, FileSystem, Layer, Path, Context, Option } from "effect";
+import { Effect, FileSystem, Layer, Path, Context, Option, PlatformError } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryNotFoundError, ChecksumMismatchError, DownloadError } from "./errors.ts";
@@ -141,6 +141,7 @@ export class BinaryResolver extends Context.Service<
   static downloadUrl = downloadUrl;
   static checksumUrl = checksumUrl;
   static cachePath = cachePath;
+  static CACHE_COMPLETE_MARKER = CACHE_COMPLETE_MARKER;
 
   static make(
     cacheRoot: string,
@@ -199,32 +200,18 @@ export class BinaryResolver extends Context.Service<
             const cacheDir = cachePath(baseDir, info);
             const url = downloadUrl(info);
 
-            // Check if already cached. The final cacheDir is only ever
-            // populated by an atomic rename of a fully-staged directory
-            // carrying a completion marker (see below), so we check for that
-            // marker rather than mere non-emptiness — a cacheDir that exists
-            // but lacks it can only be a broken leftover (e.g. from an older,
-            // pre-atomic-rename CLI version), never a valid cache entry.
-            const isComplete = yield* fs.exists(path.join(cacheDir, CACHE_COMPLETE_MARKER));
-            if (isComplete) {
-              return {
-                path: cacheDir,
-                downloaded: false,
-              } satisfies ResolveBinaryResult;
-            }
-            const isCached = yield* fs.exists(cacheDir);
-            if (isCached) {
-              yield* fs.remove(cacheDir, { recursive: true });
-            }
-
             // Opportunistically reap staging directories abandoned by a
             // prior invocation that was killed (SIGKILL/OOM) between
             // creating its tmpDir and the atomic rename — Effect.ensuring
             // can't run past a hard process kill, and every attempt mints a
             // fresh UUID, so nothing else ever revisits these siblings
-            // otherwise. Scoped to just this cacheDir's own tmp-* siblings
-            // (not a general cache-root scan), gated by a generous age
-            // threshold, and entirely best-effort.
+            // otherwise. Runs unconditionally, before the cache-hit check
+            // below: once cacheDir becomes a complete cache hit, every
+            // future resolve for this spec would otherwise return early and
+            // never reach a sweep placed after that check, for the rest of
+            // that cache entry's lifetime. Scoped to just this cacheDir's
+            // own tmp-* siblings (not a general cache-root scan), gated by a
+            // generous age threshold, and entirely best-effort.
             const tmpDirPrefix = `${path.basename(cacheDir)}.tmp-`;
             const parentDir = path.dirname(cacheDir);
             yield* fs.readDirectory(parentDir).pipe(
@@ -251,6 +238,31 @@ export class BinaryResolver extends Context.Service<
               ),
               Effect.ignore,
             );
+
+            // Check if already cached. The final cacheDir is only ever
+            // populated by an atomic rename of a fully-staged directory
+            // carrying a completion marker (see below), so we check for that
+            // marker rather than mere non-emptiness — a cacheDir that exists
+            // but lacks it can only be a broken leftover (e.g. from an older,
+            // pre-atomic-rename CLI version), never a valid cache entry.
+            const isComplete = yield* fs.exists(path.join(cacheDir, CACHE_COMPLETE_MARKER));
+            if (isComplete) {
+              return {
+                path: cacheDir,
+                downloaded: false,
+              } satisfies ResolveBinaryResult;
+            }
+            const isCached = yield* fs.exists(cacheDir);
+            if (isCached) {
+              // force: true — tolerate another process having already
+              // reclaimed and removed this same broken/markerless cacheDir
+              // concurrently (both processes can observe it before either
+              // removes it). Without force, the loser's remove would throw
+              // on the now-missing path and force an unnecessary Docker
+              // fallback even though the winner is about to publish a good
+              // native binary.
+              yield* fs.remove(cacheDir, { recursive: true, force: true });
+            }
 
             yield* options?.onDownloadStart ?? Effect.void;
 
@@ -368,11 +380,22 @@ export class BinaryResolver extends Context.Service<
             // complete, marker-carrying entry — a broken/incomplete leftover
             // from an older, pre-atomic-rename CLI version, or the rename
             // failed for some unrelated reason — our own staged build is the
-            // only known-good copy: reclaim the spot and retry the rename
-            // once. The whole stage-and-publish lifecycle is wrapped in a
-            // single `Effect.ensuring(cleanupTmpDir)` finalizer so every exit
-            // — stage failure, a genuine rename failure, or an interruption
-            // at any point — removes the staging directory. `cleanupTmpDir`
+            // only known-good copy: reclaim the spot and retry the rename.
+            // A legitimate winner can also land in the narrow gap between
+            // the marker check and our own reclaim-and-retry (e.g. a third
+            // resolver, or a pre-atomic-rename CLI version writing
+            // concurrently); rather than surfacing that retry's failure,
+            // attemptPublish loops back into the same check and adopts the
+            // new winner. The mirror case — clobbering a destination
+            // published in the sliver of time between the marker check and
+            // our `fs.remove` — is an accepted, narrow residual limitation:
+            // fully closing it needs real cross-process locking, which is
+            // disproportionate here since the outcome is bounded to a
+            // redundant rebuild of the same spec, not data loss. The whole
+            // stage-and-publish lifecycle is wrapped in a single
+            // `Effect.ensuring(cleanupTmpDir)` finalizer so every exit —
+            // stage failure, a genuine rename failure, or an interruption at
+            // any point — removes the staging directory. `cleanupTmpDir`
             // force-removes and ignores errors, so it's a safe no-op once
             // the rename has already moved tmpDir into place.
             const published = yield* Effect.gen(function* () {
@@ -380,21 +403,24 @@ export class BinaryResolver extends Context.Service<
 
               const renameOnce = () => fs.rename(tmpDir, cacheDir).pipe(Effect.as(true));
 
-              return yield* renameOnce().pipe(
-                Effect.catchTag("PlatformError", () =>
-                  fs
-                    .exists(path.join(cacheDir, CACHE_COMPLETE_MARKER))
-                    .pipe(
-                      Effect.flatMap((legitimateWinner) =>
-                        legitimateWinner
-                          ? Effect.succeed(false)
-                          : fs
-                              .remove(cacheDir, { recursive: true, force: true })
-                              .pipe(Effect.ignore, Effect.andThen(renameOnce())),
+              const attemptPublish = (): Effect.Effect<boolean, PlatformError.PlatformError> =>
+                renameOnce().pipe(
+                  Effect.catchTag("PlatformError", () =>
+                    fs
+                      .exists(path.join(cacheDir, CACHE_COMPLETE_MARKER))
+                      .pipe(
+                        Effect.flatMap((legitimateWinner) =>
+                          legitimateWinner
+                            ? Effect.succeed(false)
+                            : fs
+                                .remove(cacheDir, { recursive: true, force: true })
+                                .pipe(Effect.ignore, Effect.andThen(attemptPublish())),
+                        ),
                       ),
-                    ),
-                ),
-              );
+                  ),
+                );
+
+              return yield* attemptPublish();
             }).pipe(Effect.ensuring(cleanupTmpDir));
 
             return {
