@@ -110,12 +110,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * new `device_id`, new `session_id`. Notably, a corrupt file that still says
  * `"enabled": false` does NOT stay disabled.
  *
- * Two Go strictness corners are not reproducible here: `JSON.parse`
- * collapses `2.0` → `2`, so an integer-valued float `schema_version`/millis
- * passes where Go's unmarshal-into-int rejects it; and `enabled`'s type is
- * only checked on the non-consent path, where Go's single-shot
- * `json.Unmarshal` type-checks every field regardless. Both require a
- * hand-corrupted file the CLI never writes. (Unix millis beyond ECMAScript's
+ * One Go strictness corner is not reproducible here: `JSON.parse` collapses
+ * `2.0` → `2`, so an integer-valued float `schema_version`/millis passes
+ * where Go's unmarshal-into-int rejects it. It requires a hand-corrupted
+ * file the CLI never writes. (Unix millis beyond ECMAScript's
  * ±8.64e15 `Date` range no longer regenerate: the epoch is kept as a plain
  * number, so — like Go's `time.UnixMilli` — the state is preserved and the
  * far-future comparison simply never expires the session.)
@@ -125,6 +123,19 @@ function readExistingState(text: string): PriorState | undefined {
     const parsed: unknown = JSON.parse(text);
     if (!isRecord(parsed)) return undefined;
     const record = parsed;
+
+    // Go's single-shot `json.Unmarshal` type-checks `Enabled *bool`
+    // (`state.go:35`, `state.go:88-91`) even when consent takes precedence
+    // below: a present, non-boolean `enabled` is a field-level unmarshal
+    // error → the whole file is malformed. JSON `null` into the pointer
+    // field is valid (leaves it nil), so null passes through.
+    if (
+      record.enabled !== undefined &&
+      record.enabled !== null &&
+      typeof record.enabled !== "boolean"
+    ) {
+      return undefined;
+    }
 
     // Go's `parseConsent` (`state.go:52-67`): a non-null `consent` must be
     // `granted`/`denied` (and unlocks the unix-millis timestamp form);

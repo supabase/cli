@@ -253,6 +253,51 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
     },
   );
 
+  it.effect("a mistyped enabled on the consent form is malformed and is wholly regenerated", () => {
+    // Go's single-shot `json.Unmarshal` type-checks `Enabled *bool` even when
+    // `consent` decides the value (`state.go:35`, `state.go:88-91`):
+    // `"enabled":"invalid"` is an UnmarshalTypeError → errMalformedState →
+    // fresh state with telemetry re-enabled and new identities.
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        consent: "denied",
+        enabled: "invalid",
+        device_id: "d",
+        session_id: "s",
+        session_last_active: new Date().toISOString(),
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
+
+  it.effect("a null enabled on the consent form decodes and preserves the state", () => {
+    // JSON `null` unmarshals cleanly into Go's `Enabled *bool` (nil pointer,
+    // no error) and `parseConsent` then honors the consent value — only
+    // non-boolean, non-null types invalidate the file.
+    writeFileSync(
+      telemetryPath(),
+      JSON.stringify({
+        consent: "denied",
+        enabled: null,
+        device_id: "d",
+        session_id: "s",
+        session_last_active: new Date().toISOString(),
+      }),
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+      expect(state.session_id).toBe("s");
+    });
+  });
+
   it.effect("an unrecognized consent value is malformed and is wholly regenerated", () => {
     writeFileSync(
       telemetryPath(),
