@@ -314,6 +314,31 @@ describe("prefetch", () => {
     expect(spawner.spawned).toEqual([]);
   });
 
+  test("native mode resolves docker-only services to an image name without touching Docker", async () => {
+    // `prefetch({ mode: "native" })` may run on a machine with no Docker daemon
+    // to warm native assets — docker-only services must not trigger any pull.
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([]);
+
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["postgres", "edge-runtime"] }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(result["edge-runtime"]).toEqual({
+      type: "docker",
+      image: `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+    });
+    expect(result["postgres"]?.type).toBe("binary");
+    expect(spawner.spawned).toEqual([]);
+  });
+
   test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner([{ exitCode: 0 }]);

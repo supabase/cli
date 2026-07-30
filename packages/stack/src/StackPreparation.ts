@@ -8,6 +8,7 @@ import {
   DEFAULT_VERSIONS,
   SERVICE_NAMES,
   dockerImageCandidatesForService,
+  dockerImageForService,
   type ServiceName,
   type VersionManifest,
 } from "./versions.ts";
@@ -125,11 +126,18 @@ export const prepareAssetsWithDependencies = (
         );
       }
 
-      // Docker-only services resolve to Docker in every mode, including "native".
-      // The native+docker-only-service CONFIG contract is enforced one layer up
-      // (`StackBuilder.validateResolvedConfig`), not here: `prefetch()` defaults
-      // to ALL services, so failing here would break `prefetch({ mode: "native" })`.
+      // Docker-only services cannot run natively. The native+docker-only CONFIG
+      // contract is enforced one layer up (`StackBuilder.validateResolvedConfig`);
+      // this branch is only reachable in "native" mode via `prefetch()` (which
+      // defaults to ALL services), where warming native assets must not require
+      // a Docker daemon — resolve to the canonical image name without pulling.
       if (dockerOnlyServices.has(service)) {
+        if (mode === "native") {
+          return Effect.succeed<Entry>([
+            service,
+            { type: "docker", image: dockerImageForService(service, versions[service]) },
+          ]);
+        }
         return resolveDockerImageForService(spawner, service, versions[service], {
           onDownloadStart: markDownloadStart(),
         }).pipe(
