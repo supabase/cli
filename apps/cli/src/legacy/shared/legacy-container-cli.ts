@@ -34,7 +34,7 @@ class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
  * keeping the producer and the classifier from drifting apart if this ever gets
  * reworded.
  */
-export const LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE =
+export const legacyContainerRuntimeNotFoundMessage =
   "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
 
 /**
@@ -71,7 +71,7 @@ export const legacySpawnContainerCliWithRuntime = (
         Effect.catch(() =>
           Effect.fail(
             new LegacyContainerRuntimeNotFoundError({
-              message: LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
+              message: legacyContainerRuntimeNotFoundMessage,
             }),
           ),
         ),
@@ -114,7 +114,7 @@ export const containerCliExitCode = (
         Effect.catch(() =>
           Effect.fail(
             new LegacyContainerRuntimeNotFoundError({
-              message: LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
+              message: legacyContainerRuntimeNotFoundMessage,
             }),
           ),
         ),

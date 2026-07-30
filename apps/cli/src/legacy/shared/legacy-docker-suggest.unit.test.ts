@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE } from "./legacy-container-cli.ts";
+import { legacyContainerRuntimeNotFoundMessage } from "./legacy-container-cli.ts";
 import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
   legacyIsDockerDaemonUnreachable,
@@ -28,7 +28,7 @@ describe("legacyIsDockerDaemonUnreachable", () => {
     // runtime-not-found message) — the shell-out equivalent of Go's missing
     // daemon socket, which `IsErrConnectionFailed` also classifies as a
     // connection failure, so the install hint applies.
-    expect(legacyIsDockerDaemonUnreachable(LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE)).toBe(true);
+    expect(legacyIsDockerDaemonUnreachable(legacyContainerRuntimeNotFoundMessage)).toBe(true);
     // Windows daemon-down: a failed npipe open is wrapped "error during
     // connect" by the pinned SDK (`client/request.go:175-185`, v28.5.2) —
     // both the elevated and the non-elevated variants.

@@ -4,7 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   containerCliExitCode,
-  LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
+  legacyContainerRuntimeNotFoundMessage,
   legacyDescribeContainerCliFailure,
   legacyDockerSupportsVolumePruneAllFlag,
   spawnContainerCli,
@@ -121,7 +121,7 @@ describe("containerCliExitCode", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(legacyDescribeContainerCliFailure(error)).toBe(
-          LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
+          legacyContainerRuntimeNotFoundMessage,
         );
       }),
     );
@@ -206,7 +206,7 @@ describe("legacyDescribeContainerCliFailure", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(legacyDescribeContainerCliFailure(error)).toContain(
-          LEGACY_CONTAINER_RUNTIME_NOT_FOUND_MESSAGE,
+          legacyContainerRuntimeNotFoundMessage,
         );
       }),
     );
