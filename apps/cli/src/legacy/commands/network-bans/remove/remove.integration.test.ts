@@ -1,3 +1,4 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
@@ -12,7 +13,18 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { legacyNetworkBansRemoveDbUnbanIpFlag } from "./remove.command.ts";
 import { legacyNetworkBansRemove } from "./remove.handler.ts";
+
+// Runs the real `--db-unban-ip` flag pipeline (pflag StringSlice CSV parity —
+// `cmd/bans.go:48`) so these scenarios cover raw CLI values → request body.
+const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
+  legacyNetworkBansRemoveDbUnbanIpFlag
+    .parse({ flags: { "db-unban-ip": rawValues }, arguments: [] })
+    .pipe(
+      Effect.map(([, values]) => values),
+      Effect.provide(BunServices.layer),
+    );
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -85,6 +97,69 @@ describe("legacy network-bans remove integration", () => {
         ipv4_addresses: ["12.3.4.5", "2001:db8:abcd:0012::0"],
         requester_ip: false,
       });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("unbans every IP in a comma-separated --db-unban-ip value (pflag CSV parity)", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8"]);
+      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      expect(api.requests[0]?.body).toEqual({
+        ipv4_addresses: ["12.3.4.5", "5.6.7.8"],
+        requester_ip: false,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("appends IPs across repeated --db-unban-ip flags", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5", "5.6.7.8"]);
+      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      expect(api.requests[0]?.body).toEqual({
+        ipv4_addresses: ["12.3.4.5", "5.6.7.8"],
+        requester_ip: false,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("combines comma-separated and repeated --db-unban-ip occurrences", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8", "9.9.9.9"]);
+      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      expect(api.requests[0]?.body).toEqual({
+        ipv4_addresses: ["12.3.4.5", "5.6.7.8", "9.9.9.9"],
+        requester_ip: false,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still unbans a single --db-unban-ip value", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5"]);
+      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      expect(api.requests[0]?.body).toEqual({
+        ipv4_addresses: ["12.3.4.5"],
+        requester_ip: false,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects an invalid IP produced by a comma split before any API call", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,notanip"]);
+      const exit = yield* Effect.exit(
+        legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(api.requests).toHaveLength(0);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("invalid IP address: notanip");
+      }
     }).pipe(Effect.provide(layer));
   });
 

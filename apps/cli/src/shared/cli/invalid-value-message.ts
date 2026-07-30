@@ -36,12 +36,16 @@
 //   instead.
 const EXPECTED_PREFIX = "Expected ";
 
-// Complete pflag-style messages: legacy flags that reproduce Go's flag-parse
-// rejections (e.g. `storage cp --jobs`, via `Flag.mapTryCatch`) place pflag's
-// entire `invalid argument %q for %q flag: %v` string in `expected`. Those
-// must surface verbatim — wrapping them in Effect's `Invalid value for flag
-// --x: …` template would break byte-parity with the Go CLI's stderr.
-const PFLAG_MESSAGE_PREFIX = 'invalid argument "';
+// Go-parity passthrough (CLI-1983, CLI-1990): legacy flags that byte-match Go
+// pflag's parse-time diagnostics (`legacyStringSliceFlag`'s malformed-CSV
+// failure, `migration down --last`, and `storage cp --jobs` via
+// `Flag.mapTryCatch`) fail with the COMPLETE Go message as `expected` —
+// pflag's `invalid argument %q for %q flag: %v` (pflag v1.0.10
+// `errors.go:116`). Wrapping that in `CliError.InvalidValue`'s own
+// `Invalid value for flag --X: "V". Expected: ...` template would
+// double-frame it and break the legacy shell's stderr contract (byte-parity
+// with the Go CLI), so render it verbatim instead.
+const PFLAG_INVALID_ARGUMENT_PREFIX = "invalid argument ";
 
 export interface InvalidValueMessageFields {
   readonly option: string;
@@ -52,13 +56,13 @@ export interface InvalidValueMessageFields {
 
 /**
  * Rebuilds a `CliError.InvalidValue` message from its own template when
- * `expected` carries the doubled "Expected" prefix, or surfaces `expected`
- * verbatim when it is already a complete pflag-style message (Go flag-parse
- * parity). Returns `undefined` when `expected` is unaffected, so callers can
- * fall back to the error's own untouched `message`.
+ * `expected` carries the doubled "Expected" prefix, or passes `expected`
+ * through verbatim when it is a complete pflag-format diagnostic (Go
+ * flag-parse parity). Returns `undefined` when `expected` is unaffected, so
+ * callers can fall back to the error's own untouched `message`.
  */
 export function formatInvalidValueMessage(error: InvalidValueMessageFields): string | undefined {
-  if (error.expected.startsWith(PFLAG_MESSAGE_PREFIX)) return error.expected;
+  if (error.expected.startsWith(PFLAG_INVALID_ARGUMENT_PREFIX)) return error.expected;
   if (!error.expected.startsWith(EXPECTED_PREFIX)) return undefined;
   return error.kind === "argument"
     ? `Invalid value for argument <${error.option}>: "${error.value}". ${error.expected}`

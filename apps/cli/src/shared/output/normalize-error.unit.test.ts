@@ -114,6 +114,49 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("InvalidValue passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
+    // Legacy flags that byte-match Go pflag's parse-time diagnostics
+    // (`legacyStringSliceFlag`'s malformed-CSV failure, `migration down
+    // --last`) emit the COMPLETE Go message as `expected`. Wrapping it in
+    // Effect's `Invalid value for flag ...: Expected: ...` template would
+    // double-frame it — Go prints the bare pflag line.
+    const pflagMessage =
+      'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
+    const error = new CliError.InvalidValue({
+      option: "db-unban-ip",
+      value: '"1.2.3.4',
+      expected: pflagMessage,
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message: pflagMessage,
+    });
+  });
+
+  test("ShowHelp envelope unwraps a single InvalidValue carrying a pflag-format diagnostic verbatim", () => {
+    const pflagMessage =
+      'invalid argument "\\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field';
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["network-restrictions", "update"],
+      errors: [
+        new CliError.InvalidValue({
+          option: "db-allow-cidr",
+          value: '"1.2.3.0/24',
+          expected: pflagMessage,
+          kind: "flag",
+        }),
+      ],
+    };
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message: pflagMessage,
+    });
+  });
+
   test("InvalidValue leaves an already-clean 'expected' message untouched", () => {
     const error = new CliError.InvalidValue({
       option: "define",

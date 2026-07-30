@@ -275,8 +275,10 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
     if (existing.includes(INIT_GITIGNORE_TEMPLATE)) {
       return;
     }
-    const prefix = existing.length > 0 ? "\n" : "";
-    yield* fs.writeFileString(gitignorePath, `${existing}${prefix}${INIT_GITIGNORE_TEMPLATE}`);
+    // Go always prepends a line break when appending to an existing file, even
+    // an empty one (`apps/cli-go/internal/init/init.go:80-96`: the `err == nil`
+    // branch of `FileContainsBytes` covers empty files too).
+    yield* fs.writeFileString(gitignorePath, `${existing}\n${INIT_GITIGNORE_TEMPLATE}`);
     return;
   }
 

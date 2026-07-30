@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
+import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
@@ -118,4 +119,36 @@ describe("legacy network-restrictions experimental gate (Go PersistentPreRunE pa
       }).pipe(Effect.provide(layer));
     });
   }
+
+  it.live(
+    "update: malformed --db-allow-cidr CSV fails at parse time with pflag's exact diagnostic, before the gate",
+    () => {
+      // Go parity (CLI-1983): pflag's `readAsCSV` error aborts cobra's
+      // `ParseFlags` BEFORE `PersistentPreRunE`'s experimental-gate check, so
+      // the parse error must win even with `--experimental` unset. The
+      // rendered line — what `runCli`'s `handledProgram` writes to stderr via
+      // `normalizeCause` — byte-matches the real Go CLI (pflag v1.0.10
+      // `errors.go:116` wrapping `encoding/csv`; `"1.2.3.0/24` is 11 bytes →
+      // EOF at column 12).
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Command.runWith(testRoot, { version: "0.0.0-test" })([
+            "network-restrictions",
+            "update",
+            "--db-allow-cidr",
+            '"1.2.3.0/24',
+          ]),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).not.toContain("LegacyExperimentalRequiredError");
+          expect(normalizeCause(exit.cause).message).toBe(
+            'invalid argument "\\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field',
+          );
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
