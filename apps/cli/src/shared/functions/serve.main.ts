@@ -46,6 +46,18 @@ const DENO_SB_ERROR_MAP = new Map([
   [Deno.errors.WorkerRequestCancelled, SB_SPECIFIC_ERROR_CODE.WorkerLimit],
 ]);
 const GENERIC_FUNCTION_SERVE_MESSAGE = `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>`;
+export enum RequestErrors {
+  MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
+  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
+  InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
+  InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
+  UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
+}
+
+interface AuthFailure {
+  code: RequestErrors;
+  message?: string;
+}
 
 interface FunctionConfig {
   entrypointPath: string;
@@ -74,6 +86,22 @@ function getResponse(payload: any, status: number, customHeaders = {}) {
   return new Response(body, { status, headers });
 }
 
+function getAuthErrorResponse({ code, message = "Invalid JWT" }: AuthFailure) {
+  return getResponse(
+    {
+      code,
+      message,
+      // DEPRECATED: Retained for backward compatibility.
+      msg: message,
+    },
+    STATUS_CODE.Unauthorized,
+    {
+      "sb-error-code": code,
+      "Access-Control-Expose-Headers": "sb-error-code",
+    },
+  );
+}
+
 const functionsConfig: Record<string, FunctionConfig> = (() => {
   try {
     const functionsConfig = JSON.parse(FUNCTIONS_CONFIG_STRING);
@@ -99,7 +127,7 @@ export function extractBearerToken(rawToken: string) {
   return token;
 }
 
-function getAuthToken(req: Request) {
+function getAuthToken(req: Request): string | AuthFailure {
   const authHeader = req.headers.get("authorization");
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key");
 
@@ -107,7 +135,10 @@ function getAuthToken(req: Request) {
   const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken?.replace("Bearer", "")?.trim();
 
   if (!authHeader && !cleanSbApiKeyCompatibilityToken) {
-    throw new Error("Missing authorization header");
+    return {
+      code: RequestErrors.MissingAuthHeader,
+      message: "Missing authorization header",
+    };
   }
 
   // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
@@ -118,22 +149,25 @@ function getAuthToken(req: Request) {
     !bearerToken || bearerToken.startsWith("sb_") ? cleanSbApiKeyCompatibilityToken : bearerToken;
 
   if (!token) {
-    throw new Error(`Auth header is not 'Bearer {token}'`);
+    return {
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    };
   }
 
   return token;
 }
 
-async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<boolean> {
+async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<AuthFailure | null> {
   const encoder = new TextEncoder();
   const secretKey = encoder.encode(jwtSecret);
   try {
     await jose.jwtVerify(jwt, secretKey);
   } catch (e) {
     console.error("Symmetric Legacy JWT verification error", e);
-    return false;
+    return { code: RequestErrors.InvalidLegacyJWT };
   }
-  return true;
+  return null;
 }
 
 // Lazy-loading JWKs
@@ -146,7 +180,7 @@ let jwks = (() => {
   }
 })();
 
-async function isValidJWT(jwksUrl: URL, jwt: string): Promise<boolean> {
+async function isValidJWT(jwksUrl: URL, jwt: string): Promise<AuthFailure | null> {
   try {
     if (!jwks) {
       // Loading from remote-url on fly
@@ -155,9 +189,9 @@ async function isValidJWT(jwksUrl: URL, jwt: string): Promise<boolean> {
     await jose.jwtVerify(jwt, jwks);
   } catch (e) {
     console.error("Asymmetric JWT verification error", e);
-    return false;
+    return { code: RequestErrors.InvalidAsymmetricJWT };
   }
-  return true;
+  return null;
 }
 
 /**
@@ -168,8 +202,24 @@ export async function verifyHybridJWT(
   jwtSecret: string,
   jwksUrl: URL,
   jwt: string,
-): Promise<boolean> {
-  const { alg: jwtAlgorithm } = jose.decodeProtectedHeader(jwt);
+): Promise<AuthFailure | null> {
+  let jwtAlgorithm: string | undefined;
+  try {
+    jwtAlgorithm = jose.decodeProtectedHeader(jwt).alg;
+  } catch (e) {
+    console.error("JWT format error", e);
+    return {
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    };
+  }
+
+  if (!jwtAlgorithm) {
+    return {
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    };
+  }
 
   if (jwtAlgorithm === "HS256") {
     console.log(`Legacy token type detected, attempting ${jwtAlgorithm} verification.`);
@@ -181,7 +231,10 @@ export async function verifyHybridJWT(
     return await isValidJWT(jwksUrl, jwt);
   }
 
-  return false;
+  return {
+    code: RequestErrors.UnsupportedTokenAlgorithm,
+    message: `Unsupported JWT algorithm ${jwtAlgorithm}`,
+  };
 }
 
 // Ref: https://docs.deno.com/examples/checking_file_existence/
@@ -242,14 +295,19 @@ Deno.serve({
     if (req.method !== "OPTIONS" && functionsConfig[functionName].verifyJWT) {
       try {
         const token = getAuthToken(req);
-        const isValidJWT = await verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
-
-        if (!isValidJWT) {
-          return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
+        if (typeof token !== "string") {
+          return getAuthErrorResponse(token);
+        }
+        const authFailure = await verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
+        if (authFailure) {
+          return getAuthErrorResponse(authFailure);
         }
       } catch (e) {
         console.error(e);
-        return getResponse({ msg: e.toString() }, STATUS_CODE.Unauthorized);
+        return getAuthErrorResponse({
+          code: RequestErrors.InvalidTokenFormat,
+          message: "Invalid JWT format",
+        });
       }
     }
 
