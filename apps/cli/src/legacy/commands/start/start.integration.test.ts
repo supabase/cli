@@ -2764,6 +2764,51 @@ content_path = "./templates/custom_notice.html"
       },
       45_000,
     );
+
+    it.live(
+      "still fails on a pull error under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
+      () => {
+        // Go's `IsUnhealthyError` (`internal/db/start/start.go:227-231`) matches any
+        // `errors.Join`-shaped error, which accidentally includes `ensureImagesCached`'s
+        // joined pull errors — so Go with `--ignore-health-check` swallows a total pre-pull
+        // failure, prints "Started supabase local development setup." + the status table,
+        // and exits 0 with no container running. Ruled an unintended quirk (CLI-1987):
+        // this port keeps the failure fatal regardless of the flag — same
+        // `LegacyImagePrepullError` as the flagless test above, no success banner, no
+        // status table on stdout, and no rollback (nothing was created yet). The other
+        // documented trigger — the Docker daemon becoming unreachable mid-pre-pull —
+        // funnels through this exact same `LegacyImagePrepullError` path
+        // (`lib/image-prepull.ts` joins every resolver failure into the one tagged
+        // error), so this single scenario deliberately pins both. See
+        // `legacyIsUnhealthyStartError`'s doc comment (`start.rollback.ts`) and
+        // `SIDE_EFFECTS.md`'s "Notes" before "fixing" this toward Go.
+        const base = defaultRoute();
+        const route = (args: ReadonlyArray<string>): RouteResult => {
+          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+          if (args[0] === "pull") {
+            const image = args[1] ?? "";
+            if (image.includes("kong")) {
+              return { exitCode: 1, stderr: ["toomanyrequests: rate limit exceeded"] };
+            }
+            return { exitCode: 0 };
+          }
+          return base(args);
+        };
+        const { layer, out, child } = setup({ route });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ ignoreHealthCheck: true })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
+          }
+          expect(out.stderrText).not.toContain("Started");
+          expect(out.stdoutText).toBe("");
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+      45_000,
+    );
   });
 
   describe("rollback on bring-up failure", () => {

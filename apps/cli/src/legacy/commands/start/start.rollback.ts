@@ -11,14 +11,31 @@ type Spawner = ChildProcessSpawner["Service"];
 /**
  * Port of Go's `start.IsUnhealthyError` (`apps/cli-go/internal/db/start/
  * start.go:227-231`): Go tests whether the failure unwraps as a joined
- * multi-error, which is exactly the shape `WaitForHealthyService` produces on
- * timeout and nothing else in `run()` ever produces. This port's equivalent
- * "only the health-check timeout produces this shape" failure is
+ * multi-error (`Unwrap() []error`) — the shape `WaitForHealthyService`
+ * produces on timeout. This port's equivalent health-check-timeout failure is
  * {@link LegacyHealthCheckTimeoutError} (`lib/health-check.ts`), so the
  * classification collapses to an `instanceof` check against that one class —
  * the caller (`start.handler.ts`) uses this to decide whether
  * `--ignore-health-check` should downgrade a failure to a warning instead of
  * triggering rollback + a hard exit.
+ *
+ * INTENTIONAL DIVERGENCE (CLI-1987, ruled 2026-07-30): Go's shape-based check
+ * accidentally also matches `ensureImagesCached`'s `errors.Join(result...)`
+ * (`internal/start/start.go:257-260`) — under `--ignore-health-check`, Go
+ * therefore swallows a total image-pull failure (or a Docker daemon that
+ * becomes unreachable during the pre-pull): it prints the error, skips
+ * rollback, prints `Started supabase local development setup.` + the status
+ * table + the security notice, and exits 0 with no container running. That is
+ * an unintended quirk of the shape check, not designed behaviour — Go's own
+ * comment on `IsUnhealthyError` reads "Health check always returns a
+ * joinError". Per the CLI-1987 ruling, this port deliberately does NOT
+ * reproduce the quirk: `LegacyImagePrepullError` (`lib/image-prepull.ts`) is
+ * intentionally excluded from this match, so a pre-pull failure always fails
+ * the command with exit 1 and no status table, with or without the flag.
+ * (Rollback is not part of the divergence — the pre-pull runs before any
+ * container/network is created, so there is nothing to roll back in either
+ * CLI; the observable delta is exit code + banner + status table only.) Do
+ * not "fix" this by widening the match toward Go's shape check.
  */
 export function legacyIsUnhealthyStartError(
   error: unknown,
