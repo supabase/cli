@@ -386,8 +386,21 @@ describe("legacyIsPipelineIncompatible", () => {
       true,
     ],
     ["leading whitespace before concurrently", "   CREATE INDEX CONCURRENTLY a_idx ON a(id)", true],
+    ["bom before vacuum", "\uFEFFVACUUM", true],
     // Negatives — compatible statements that must keep running inside the batch transaction.
     ["plain create index", "CREATE INDEX widgets_id_idx ON public.widgets(id)", false],
+    [
+      "concurrently in string literal",
+      "SELECT 'CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)'",
+      false,
+    ],
+    [
+      "concurrently in leading comment only",
+      "-- CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)\nSELECT 1",
+      false,
+    ],
+    ["line comment without trailing newline", "-- CREATE INDEX CONCURRENTLY a_idx ON a(id)", false],
+    ["unclosed block comment", "/* unclosed CREATE INDEX CONCURRENTLY a_idx ON a(id)", false],
     ["create table", "create table public.widgets(id bigint primary key)", false],
     ["reindex without concurrently", "REINDEX TABLE public.widgets", false],
     ["vacuum-prefixed identifier", "VACUUMING analytics", false],
