@@ -163,7 +163,6 @@ describe("legacyDbConfigResolver (local + db-url)", () => {
             suggestionContext: {
               dashboardUrl: "https://supabase.com/dashboard",
               profileName: "supabase",
-              debug: false,
             },
           });
           expect(r.isLocal).toBe(true);
@@ -216,7 +215,6 @@ describe("legacyDbConfigResolver (local + db-url)", () => {
             suggestionContext: {
               dashboardUrl: "https://supabase.com/dashboard",
               profileName: "supabase",
-              debug: false,
             },
           });
           expect(r.isLocal).toBe(false);
@@ -510,7 +508,6 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
             suggestionContext: {
               dashboardUrl: "https://supabase.com/dashboard",
               profileName: "supabase",
-              debug: false,
             },
           });
           expect(r.ref).toEqual(Option.some(adHocRef));
@@ -668,7 +665,6 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
                 suggestionContext: {
                   dashboardUrl: "https://supabase.com/dashboard",
                   profileName: "supabase",
-                  debug: false,
                 },
               });
             }
@@ -810,7 +806,6 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
                 profileName: "supabase",
-                debug: false,
               },
             });
           }

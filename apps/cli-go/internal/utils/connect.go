@@ -321,8 +321,6 @@ func SetConnectSuggestion(err error) {
 			"Make sure your local IP is allowed in Network Restrictions and Network Bans.\n%s/project/_/database/settings",
 			CurrentProfile.DashboardURL,
 		)
-	} else if strings.Contains(msg, "SSL connection is required") && viper.GetBool("DEBUG") {
-		CmdSuggestion = "SSL connection is not supported with --debug flag"
 	} else if strings.Contains(msg, "SCRAM exchange: Wrong password") || strings.Contains(msg, "failed SASL auth") {
 		// password authentication failed for user / invalid SCRAM server-final-message received from server
 		CmdSuggestion = SuggestEnvVar
