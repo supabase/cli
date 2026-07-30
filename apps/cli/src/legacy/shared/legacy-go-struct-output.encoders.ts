@@ -298,7 +298,11 @@ function normalizeAny(value: unknown): GoValue {
  * as `Z`.
  */
 function normalizeGoTime(value: string): string {
-  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  // Go accepts `,` as the fractional separator on decode (`commaOrPeriod`,
+  // `time/format.go`; probed: `time.Time.UnmarshalJSON` parses
+  // `…00,123Z` and re-marshals it as `…00.123Z`), so both separators
+  // normalize to the dot Go emits (review r3684270625).
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([.,]\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (match === null) return value;
   const [, base, fraction, offset] = match;
   let frac = "";

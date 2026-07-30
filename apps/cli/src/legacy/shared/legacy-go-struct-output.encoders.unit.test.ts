@@ -399,6 +399,19 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
+  it("normalizes Go's accepted comma fractional separator to the dot Go re-emits", () => {
+    // Probed on go1.26: `time.Time.UnmarshalJSON` parses `…00,123Z`
+    // (`commaOrPeriod`, `time/format.go`) and `json.Marshal` re-emits
+    // `…00.123Z` — the encoders must match on both output formats.
+    const spec = legacyGoStruct([["t", legacyGoTime, "T"]]);
+    expect(encodeLegacyGoToml({ t: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
+      "T = 2026-01-01T00:00:00.123Z\n",
+    );
+    expect(encodeLegacyGoYaml({ t: "2026-01-01T00:00:00,1234567895Z" }, spec)).toBe(
+      "t: 2026-01-01T00:00:00.123456789Z\n",
+    );
+  });
+
   it("sorts map keys by UTF-8 byte order like Go's sort.Strings", () => {
     // Go orders U+E000/U+FF21 before the astral U+1D400/U+1F600 (UTF-8 byte
     // order); JS `<` on UTF-16 units would sort both astral keys first.

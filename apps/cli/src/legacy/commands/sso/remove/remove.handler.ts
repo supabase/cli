@@ -22,6 +22,7 @@ import {
   LegacySsoRemoveNetworkError,
   LegacySsoRemoveNotFoundError,
   LegacySsoRemoveUnexpectedStatusError,
+  LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { LegacySsoRemoveFlags } from "./remove.command.ts";
@@ -91,7 +92,16 @@ export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE));
+        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
+        // rejects the payload (review r3684270640) — same pattern as list/show.
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          catch: (cause) =>
+            new LegacySsoTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
         return;
       }
       if (goFmt === "env") {
