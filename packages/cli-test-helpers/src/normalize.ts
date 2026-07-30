@@ -143,6 +143,16 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
         /^[^\n]*The name org\.freedesktop\.secrets was not provided by any \.service files\n?/gm,
         "",
       )
+      //      Third shape of the same class: a session bus that is present but
+      //      unreachable surfaces godbus errors ("dbus: couldn't determine
+      //      address of session bus") inside the same store.go wrappers,
+      //      including DeleteAll's "failed to delete all credentials in
+      //      Supabase CLI: %w" (logout). Anchored on the credentials wrappers
+      //      so genuine command errors are never stripped.
+      .replace(
+        /^failed to (?:load|set|delete(?: all)?) credentials(?: in [^:\n]+)?: dbus:[^\n]*\n?/gm,
+        "",
+      )
       // 17c. Docker image-pull progress streamed to stderr. The Go CLI pre-pulls
       //      via the Docker API and renders progress with jsonmessage
       //      (`apps/cli-go/internal/utils/docker.go:206-214`), while the ts-legacy
