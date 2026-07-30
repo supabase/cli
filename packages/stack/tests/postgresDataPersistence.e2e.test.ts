@@ -60,7 +60,11 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
   });
 
   afterAll(() => {
-    rmSync(dataDir, { recursive: true, force: true });
+    // Best-effort — Bun's rmSync can intermittently throw EFAULT on Linux when
+    // removing a directory that was just released as a Docker bind mount.
+    try {
+      rmSync(dataDir, { recursive: true, force: true });
+    } catch {}
   });
 
   describe("phase 1: native postgres writes a marker row", () => {
