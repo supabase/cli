@@ -29,6 +29,11 @@ type MigrationFile struct {
 var (
 	migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
+	createIndexPattern = regexp.MustCompile(`^CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY(\s|\z)`)
+	reindexPattern     = regexp.MustCompile(`^REINDEX(\s|\().*\sCONCURRENTLY(\s|\z)`)
+	vacuumPattern      = regexp.MustCompile(`^VACUUM(\s|\(|\z)`)
+	alterSystemPattern = regexp.MustCompile(`^ALTER\s+SYSTEM(\s|\z)`)
+	clusterPattern     = regexp.MustCompile(`^CLUSTER(\s|\z)`)
 )
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
@@ -72,23 +77,46 @@ func NewMigrationFromReader(sql io.Reader) (*MigrationFile, error) {
 	return &MigrationFile{Statements: lines}, nil
 }
 
-func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
-	// Batch migration commands, without using statement cache
-	batch := &pgconn.Batch{}
-	for _, line := range m.Statements {
-		batch.ExecParams(line, nil, nil, nil, nil)
-	}
-	// Insert into migration history
-	if len(m.Version) > 0 {
-		if err := m.insertVersionSQL(conn, batch); err != nil {
-			return err
+func isPipelineIncompatible(sql string) bool {
+	upper := strings.ToUpper(trimLeadingSQLComments(sql))
+	return createIndexPattern.MatchString(upper) ||
+		reindexPattern.MatchString(upper) ||
+		vacuumPattern.MatchString(upper) ||
+		alterSystemPattern.MatchString(upper) ||
+		clusterPattern.MatchString(upper)
+}
+
+func trimLeadingSQLComments(sql string) string {
+	trimmed := strings.TrimLeftFunc(sql, func(r rune) bool {
+		return r == '\ufeff' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	for {
+		switch {
+		case strings.HasPrefix(trimmed, "--"):
+			if idx := strings.IndexByte(trimmed, '\n'); idx >= 0 {
+				trimmed = strings.TrimLeft(trimmed[idx+1:], " \t\n\r")
+				continue
+			}
+			return ""
+		case strings.HasPrefix(trimmed, "/*"):
+			if idx := strings.Index(trimmed, "*/"); idx >= 0 {
+				trimmed = strings.TrimLeft(trimmed[idx+2:], " \t\n\r")
+				continue
+			}
+			return trimmed
+		default:
+			return strings.TrimSpace(trimmed)
 		}
 	}
-	// ExecBatch is implicitly transactional
-	if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
-		// Defaults to printing the last statement on error
+}
+
+func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
+	batch := &pgconn.Batch{}
+	batchSize := 0
+	executed := 0
+
+	formatError := func(err error, i int) error {
 		stat := INSERT_MIGRATION_VERSION
-		i := len(result)
 		if i < len(m.Statements) {
 			stat = m.Statements[i]
 		}
@@ -99,7 +127,6 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 			if len(pgErr.Detail) > 0 {
 				msg = append(msg, pgErr.Detail)
 			}
-			// Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
 			if typeName := extractTypeName(pgErr.Message); len(typeName) > 0 && pgErr.Code == "42704" && !IsSchemaQualified(typeName) {
 				msg = append(msg, "")
 				msg = append(msg, "Hint: This type may be defined in a schema that's not in your search_path.")
@@ -111,7 +138,44 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		msg = append(msg, fmt.Sprintf("At statement: %d", i), stat)
 		return errors.Errorf("%w\n%s", err, strings.Join(msg, "\n"))
 	}
-	return nil
+
+	flushBatch := func() error {
+		if batchSize == 0 {
+			return nil
+		}
+		if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
+			return formatError(err, executed+len(result))
+		}
+		executed += batchSize
+		batch = &pgconn.Batch{}
+		batchSize = 0
+		return nil
+	}
+
+	for _, line := range m.Statements {
+		if isPipelineIncompatible(line) {
+			if err := flushBatch(); err != nil {
+				return err
+			}
+			if _, err := conn.PgConn().Exec(ctx, line).ReadAll(); err != nil {
+				return formatError(err, executed)
+			}
+			executed++
+		} else {
+			batch.ExecParams(line, nil, nil, nil, nil)
+			batchSize++
+		}
+	}
+
+	// Insert into migration history
+	if len(m.Version) > 0 {
+		if err := m.insertVersionSQL(conn, batch); err != nil {
+			return err
+		}
+		batchSize++
+	}
+
+	return flushBatch()
 }
 
 func markError(stat string, pos int) string {
