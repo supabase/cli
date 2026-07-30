@@ -112,6 +112,19 @@ export class LegacySsoWorkdirError extends Data.TaggedError("LegacySsoWorkdirErr
   readonly message: string;
 }> {}
 
+// Go's `LoadProfile` (`internal/utils/profile.go:94-118`), run from the root
+// `PersistentPreRunE` (`cmd/root.go:98-102`) immediately BEFORE
+// `ChangeWorkDir` — so a profile Go cannot load aborts before the workdir
+// check, `ValidateRequiredFlags`, `ValidateFlagGroups`, and `RunE`, with no
+// API call ever made. Emulated for the pflag/viper-effective `--profile`/
+// `SUPABASE_PROFILE` whenever it differs from the token the Effect config
+// layer resolved (PR #5974 review round 7). Shared across add + update;
+// message byte-matches Go for the deterministic failure classes (see
+// `sso.load-profile.ts`).
+export class LegacySsoProfileError extends Data.TaggedError("LegacySsoProfileError")<{
+  readonly message: string;
+}> {}
+
 // Shared across add + update — metadata URL validation.
 export class LegacySsoMetadataUrlInvalidError extends Data.TaggedError(
   "LegacySsoMetadataUrlInvalidError",

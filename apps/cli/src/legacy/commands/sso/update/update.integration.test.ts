@@ -15,6 +15,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
 import { legacySsoUpdate } from "./update.handler.ts";
 
@@ -53,6 +54,13 @@ interface SetupOpts {
    * (usually via `cliArgsFor`), exactly as the real parser guarantees.
    */
   cliArgs?: ReadonlyArray<string>;
+  /**
+   * The Effect-parsed `--profile` value (`LegacyProfileFlag`), which the real
+   * parser sets for any `--profile` it accepted. Tests whose `cliArgs` carry a
+   * `--profile` the parser would have consumed must provide it, exactly as the
+   * real CLI tree would.
+   */
+  profileFlag?: string;
 }
 
 function jsonResponse(
@@ -143,6 +151,9 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
     }),
+    opts.profileFlag === undefined
+      ? Layer.empty
+      : Layer.succeed(LegacyProfileFlag, opts.profileFlag),
   );
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -1439,5 +1450,235 @@ describe("legacy sso update integration", () => {
       // Go uses map iteration → unordered; sort before asserting.
       expect([...domains].sort()).toEqual(["new.com", "old2.com"]);
     }).pipe(Effect.provide(layer));
+  });
+
+  // -------------------------------------------------------------------------
+  // Profile emulation (PR #5974 review round 7): Go's `LoadProfile` runs from
+  // the root `PersistentPreRunE` (`cmd/root.go:98-102`) on the pflag/viper-
+  // effective `--profile`/`SUPABASE_PROFILE`, immediately before
+  // `ChangeWorkDir` — it decides which API host receives the GET *and* the
+  // PUT (Go targets the same host for both, `update.go:42`), and aborts the
+  // command when the profile cannot be loaded.
+  // -------------------------------------------------------------------------
+
+  const writeProfileYaml = (name: string, apiUrl: string): string => {
+    const path = join(tempRoot.current, name);
+    writeFileSync(
+      path,
+      [
+        `name: ${name.replace(/\.[^.]*$/, "")}`,
+        `api_url: ${apiUrl}`,
+        `dashboard_url: ${apiUrl}/dashboard`,
+        "project_host: supabase.co",
+      ].join("\n"),
+    );
+    return path;
+  };
+
+  const withProfileEnv = (value: string | undefined) => {
+    const previous = process.env["SUPABASE_PROFILE"];
+    if (value === undefined) {
+      delete process.env["SUPABASE_PROFILE"];
+    } else {
+      process.env["SUPABASE_PROFILE"] = value;
+    }
+    return Effect.sync(() => {
+      if (previous === undefined) {
+        delete process.env["SUPABASE_PROFILE"];
+      } else {
+        process.env["SUPABASE_PROFILE"] = previous;
+      }
+    });
+  };
+
+  it.live(
+    "profile emulation: repeated --profile resolves last-wins — GET and PUT both target the last file's host",
+    () => {
+      // `sso update <id> --profile first.yml --profile second.yml`: the
+      // Effect parser is first-wins (the config layer — and the typed client
+      // — resolved first.yml) while pflag Sets every occurrence and ends on
+      // second.yml. Go GETs and PUTs second.yml's api_url (`update.go:42`);
+      // first.yml's host receives nothing.
+      const first = writeProfileYaml("first.yml", "http://first.example");
+      const second = writeProfileYaml("second.yml", "http://second.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
+        profileFlag: first,
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoUpdate(defaultFlags);
+        const providerUrl = `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`;
+        const get = api.requests.find((r) => r.method === "GET");
+        const put = api.requests.find((r) => r.method === "PUT");
+        expect(get?.url).toBe(providerUrl);
+        expect(put?.url).toBe(providerUrl);
+        // The merge seeds from the reconciled host's GET response.
+        const domains = (put?.body as { domains?: string[] })?.domains ?? [];
+        expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
+        expect(api.requests.some((r) => r.url.startsWith("http://first.example"))).toBe(false);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: the reconciled-host GET maps a 404 exactly like the typed client",
+    () => {
+      const first = writeProfileYaml("first-404.yml", "http://first.example");
+      const second = writeProfileYaml("second-404.yml", "http://second.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        getStatus: 404,
+        getBody: {},
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
+        profileFlag: first,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateNotFoundError");
+          expect(dump).toContain(
+            `An identity provider with ID \\"${VALID_PROVIDER_ID}\\" could not be found.`,
+          );
+        }
+        expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: the reconciled-host GET maps a non-404 status exactly like the typed client",
+    () => {
+      const first = writeProfileYaml("first-500.yml", "http://first.example");
+      const second = writeProfileYaml("second-500.yml", "http://second.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        getStatus: 500,
+        getBody: { error: "boom" },
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
+        profileFlag: first,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoUpdateUnexpectedStatusError");
+          expect(dump).toContain("unexpected error fetching identity provider:");
+        }
+        expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: the reconciled GET narrows odd JSON shapes when merging domains",
+    () => {
+      // Covers the raw GET's JSON-narrowing fallbacks: a `domains` entry
+      // that isn't an object and one whose `domain` isn't a string are
+      // skipped, matching the typed client's schema behavior.
+      const first = writeProfileYaml("first-merge.yml", "http://first.example");
+      const second = writeProfileYaml("second-merge.yml", "http://second.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        getBody: {
+          id: VALID_PROVIDER_ID,
+          domains: [{ domain: "old1.com" }, "not-an-object", { domain: 42 }],
+        },
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--add-domains",
+          "new.com",
+          "--profile",
+          first,
+          "--profile",
+          second,
+        ],
+        profileFlag: first,
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
+        const put = api.requests.find((r) => r.method === "PUT");
+        expect(put?.url).toBe(
+          `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        );
+        const domains = (put?.body as { domains?: string[] })?.domains ?? [];
+        expect([...domains].sort()).toEqual(["new.com", "old1.com"]);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live("profile emulation: the reconciled GET tolerates a body without a domains array", () => {
+    const first = writeProfileYaml("first-nodom.yml", "http://first.example");
+    const second = writeProfileYaml("second-nodom.yml", "http://second.example");
+    const restoreEnv = withProfileEnv(undefined);
+    const { layer, api } = setup({
+      getBody: { id: VALID_PROVIDER_ID },
+      cliArgs: [
+        "sso",
+        "update",
+        VALID_PROVIDER_ID,
+        "--add-domains",
+        "new.com",
+        "--profile",
+        first,
+        "--profile",
+        second,
+      ],
+      profileFlag: first,
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
+      const put = api.requests.find((r) => r.method === "PUT");
+      expect((put?.body as { domains?: string[] })?.domains).toEqual(["new.com"]);
+    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+  });
+
+  it.live(
+    "profile emulation: --profile consuming a trailing flag token fails LoadProfile, never GETs",
+    () => {
+      // `sso update <id> --profile --add-domains`: pflag binds
+      // `"--add-domains"` as the profile value (positional count stays 1);
+      // viper's extension gate rejects it before any request.
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", "--add-domains"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoProfileError");
+          expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live("profile emulation: the LoadProfile failure loses to the arity check, like Go", () => {
+    // cobra: `ValidateArgs` runs before every hook (`command.go:968`), so a
+    // wrong arg count is reported even when the profile is also unloadable
+    // (binary-verified for workdir in round 6; LoadProfile sits in the same
+    // PersistentPreRunE, before ChangeWorkDir).
+    const restoreEnv = withProfileEnv(undefined);
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", "a", "b", "--profile", "--metadata-url", "u"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoUpdate({ ...defaultFlags, providerId: "a" }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoUpdateArityError");
+        expect(dump).not.toContain("LegacySsoProfileError");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
   });
 });

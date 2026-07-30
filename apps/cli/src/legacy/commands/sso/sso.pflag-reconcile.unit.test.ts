@@ -4,6 +4,7 @@ import { Option, Result } from "effect";
 import {
   legacySsoPflagBoolValue,
   legacySsoPflagEnumValue,
+  legacySsoPflagProfileValue,
   legacySsoPflagWorkdirValue,
 } from "./sso.pflag-reconcile.ts";
 import { LEGACY_SSO_NAME_ID_FORMATS } from "./sso.saml.ts";
@@ -188,5 +189,79 @@ describe("legacySsoPflagWorkdirValue", () => {
 
   it("treats an empty env var as unset", () => {
     expect(legacySsoPflagWorkdirValue(scan([]), Option.none(), "")).toEqual(Option.none());
+  });
+});
+
+describe("legacySsoPflagProfileValue", () => {
+  const scan = (
+    entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>,
+    consumed: ReadonlyArray<string> = [],
+  ) => ({ occurrences: occ(entries), consumedFlagNames: new Set(consumed) });
+
+  it("resolves nothing when no flag, parsed value, or env var is present (Go falls to the file/default)", () => {
+    expect(legacySsoPflagProfileValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
+  });
+
+  it("prefers the scan's occurrence over the parsed flag and the env var", () => {
+    // `--profile --metadata-url …`: pflag binds the flag-shaped token; the
+    // Effect parser refused it and left the flag at its default (PR #5974
+    // round 7).
+    expect(
+      legacySsoPflagProfileValue(scan([["profile", ["--metadata-url"]]]), Option.none(), "env.yml"),
+    ).toEqual(Option.some("--metadata-url"));
+  });
+
+  it("resolves repeats last-wins, matching pflag StringVar (the parser is first-wins)", () => {
+    expect(
+      legacySsoPflagProfileValue(
+        scan([["profile", ["a.yml", "b.yml"]]]),
+        Option.some("a.yml"),
+        undefined,
+      ),
+    ).toEqual(Option.some("b.yml"));
+  });
+
+  it("keeps an explicit scanned `supabase` — pflag marks it changed, shadowing the env var", () => {
+    // viper: a changed flag wins even at its default value; the config layer
+    // cannot see this (its parsed flag can't distinguish default from
+    // explicit), so the scan is authoritative post-command-path.
+    expect(
+      legacySsoPflagProfileValue(scan([["profile", ["supabase"]]]), Option.none(), "env.yml"),
+    ).toEqual(Option.some("supabase"));
+  });
+
+  it("keeps a changed-but-empty occurrence — Go fails LoadProfile on it, never falling to the env", () => {
+    expect(legacySsoPflagProfileValue(scan([["profile", [""]]]), Option.none(), "env.yml")).toEqual(
+      Option.some(""),
+    );
+  });
+
+  it("falls back to the parsed flag when the anchored scan saw no occurrence (pre-path --profile)", () => {
+    expect(legacySsoPflagProfileValue(scan([]), Option.some("pre.yml"), "env.yml")).toEqual(
+      Option.some("pre.yml"),
+    );
+  });
+
+  it("ignores the parsed flag when the --profile token was consumed by another flag, falling to the env var", () => {
+    // `--domains --profile alternate.yml`: pflag hands `--profile` to
+    // `--domains` and never marks profile changed, so viper falls to
+    // SUPABASE_PROFILE (binary-verified against apps/cli-go, PR #5974
+    // round 7 — the demonstrated divergent input).
+    expect(
+      legacySsoPflagProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), "env.yml"),
+    ).toEqual(Option.some("env.yml"));
+    expect(
+      legacySsoPflagProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), undefined),
+    ).toEqual(Option.none());
+  });
+
+  it("uses the env var when neither the scan nor the parser saw the flag", () => {
+    expect(legacySsoPflagProfileValue(scan([]), Option.none(), "env.yml")).toEqual(
+      Option.some("env.yml"),
+    );
+  });
+
+  it("treats an empty env var as unset", () => {
+    expect(legacySsoPflagProfileValue(scan([]), Option.none(), "")).toEqual(Option.none());
   });
 });

@@ -1,10 +1,13 @@
-import { Effect, FileSystem, Option, Result } from "effect";
+import { Effect, FileSystem, Option, Path, Result } from "effect";
 
 import type { PflagArgvScan } from "../../../shared/cli/cobra-flag-groups.ts";
-import { LegacyWorkdirFlag } from "../../../shared/legacy/global-flags.ts";
+import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { legacyProfileFilePath } from "../../config/legacy-profile-file.ts";
 import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
 import { LegacySsoWorkdirError } from "./sso.errors.ts";
+import { legacySsoLoadProfileApiUrl } from "./sso.load-profile.ts";
 
 /**
  * Reconciles an Effect-parsed option flag with pflag semantics
@@ -128,6 +131,135 @@ export const legacySsoValidatePflagWorkdir = Effect.fnUntraced(function* (
   yield* legacyValidateWorkdirIsDirectory(workdir.value, fs).pipe(
     Effect.mapError((cause) => new LegacySsoWorkdirError({ message: cause.message })),
   );
+});
+
+/**
+ * The explicit (flag-or-env) profile token viper's `GetString("PROFILE")` /
+ * `IsSet("PROFILE")` would resolve (`getProfileName`, `profile.go:121-136`).
+ * `Option.none` means Go would fall through to the persisted
+ * `~/.supabase/profile` file and then the `supabase` default.
+ *
+ * Resolution order mirrors {@link legacySsoPflagWorkdirValue} (same viper
+ * semantics, binary-verified for `--profile` in PR #5974 review round 7):
+ * - the scan's last `--profile` occurrence wins — pflag consumes flag-shaped
+ *   tokens the Effect parser refuses (`--profile --metadata-url` binds
+ *   `"--metadata-url"`), is last-wins where the parser is first-wins, and a
+ *   scanned occurrence marks the flag changed even when its value is the
+ *   `supabase` default or empty;
+ * - when the `--profile` token itself was consumed as another flag's value
+ *   (`--domains --profile alternate.yml`), pflag never marks it changed and
+ *   viper falls to `SUPABASE_PROFILE` — the parsed flag (which read the
+ *   following token as a normal value) must be ignored;
+ * - otherwise the Effect-parsed value covers pre-command-path placement
+ *   (`supabase --profile x sso add …`) the anchored scan cannot see. The
+ *   parsed flag cannot distinguish an explicit `--profile supabase` from the
+ *   flag's default, so that value is treated as unset — the same proxy the
+ *   config layer uses (`legacy-cli-config.layer.ts`).
+ */
+export function legacySsoPflagProfileValue(
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+  parsedProfile: Option.Option<string>,
+  envProfile: string | undefined,
+): Option.Option<string> {
+  const scanned = legacySsoPflagStringValue(scan.occurrences, "profile");
+  const flagValue = Option.isSome(scanned)
+    ? scanned
+    : scan.consumedFlagNames.has("profile")
+      ? Option.none<string>()
+      : Option.filter(parsedProfile, (value) => value !== "supabase");
+  if (Option.isSome(flagValue)) {
+    return flagValue;
+  }
+  return envProfile !== undefined && envProfile.length > 0
+    ? Option.some(envProfile)
+    : Option.none();
+}
+
+/**
+ * Emulates Go's `LoadProfile` (`cmd/root.go:98-102`, `profile.go:94-118`) for
+ * the pflag/viper-effective profile, returning the API URL the request must
+ * target when it differs from the one the Effect config layer resolved —
+ * `Option.none` means the layer's `LegacyCliConfig.apiUrl` already matches
+ * Go. Go loads the profile immediately BEFORE `ChangeWorkDir`, so a load
+ * failure here must precede the workdir check (and, like it, the
+ * required-flag check, the mutex check, and any API request).
+ *
+ * The emulation only takes over when the viper-effective token disagrees
+ * with the token the config layer resolved from the parsed flag — i.e.
+ * exactly where the Effect parser and pflag diverge (consumed tokens,
+ * flag-shaped values, repeat resolution, explicit `--profile supabase`
+ * shadowing the env, an untrimmed persisted-file token) — or when the token
+ * is empty, which Go deterministically rejects. Where the two agree (every
+ * normal invocation), the layer's resolution stands unchanged, including its
+ * pre-existing lenient missing/malformed-file fallback, which predates this
+ * PR and applies shell-wide (tracked separately from CLI-1982).
+ *
+ * `serviceOption` throughout: outside the real CLI tree (handler-level tests
+ * provide argv via `Stdio.layerTest`) the flag settings and `RuntimeInfo`
+ * may be absent; the emulation then only acts on what the scan itself shows.
+ */
+export const legacySsoResolvePflagProfileApiUrl = Effect.fnUntraced(function* (
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+) {
+  const parsedRaw = yield* Effect.serviceOption(LegacyProfileFlag);
+  const parsedProfile = Option.filter(parsedRaw, (value) => value !== "supabase");
+  const env = process.env["SUPABASE_PROFILE"];
+  const envProfile = env !== undefined && env.length > 0 ? env : undefined;
+
+  // viper-effective explicit token vs the config layer's explicit token
+  // (`resolveProfile`, `legacy-cli-config.layer.ts`: parsed flag ≠ default →
+  // env). When both agree on a non-empty explicit token, the layer resolved
+  // the exact same profile the Go binary would target.
+  const goExplicit = legacySsoPflagProfileValue(scan, parsedProfile, envProfile);
+  const layerExplicit = Option.isSome(parsedProfile)
+    ? parsedProfile
+    : envProfile !== undefined
+      ? Option.some(envProfile)
+      : Option.none<string>();
+  if (
+    Option.isSome(goExplicit) &&
+    Option.isSome(layerExplicit) &&
+    goExplicit.value === layerExplicit.value &&
+    goExplicit.value !== ""
+  ) {
+    return Option.none<string>();
+  }
+
+  const fs = yield* Effect.serviceOption(FileSystem.FileSystem);
+  const path = yield* Effect.serviceOption(Path.Path);
+  const runtimeInfo = yield* Effect.serviceOption(RuntimeInfo);
+  if (Option.isNone(fs) || Option.isNone(path) || Option.isNone(runtimeInfo)) {
+    return Option.none<string>();
+  }
+
+  // Lowest precedence: the persisted `~/.supabase/profile` file. Go uses the
+  // raw bytes (`string(content)`, `profile.go:130-131`); the config layer
+  // trims and maps empty to the default — a real divergence the token
+  // comparison below surfaces (e.g. a trailing newline makes the Go binary
+  // fail with `Unsupported Config Type ""`, binary-verified).
+  const fileRaw = yield* fs.value
+    .readFileString(legacyProfileFilePath(path.value, runtimeInfo.value.homeDir))
+    .pipe(Effect.option);
+
+  const goToken = Option.isSome(goExplicit)
+    ? goExplicit.value
+    : Option.isSome(fileRaw)
+      ? fileRaw.value
+      : "supabase";
+  const layerToken = Option.isSome(layerExplicit)
+    ? layerExplicit.value
+    : Option.match(fileRaw, {
+        onNone: () => "supabase",
+        onSome: (content) => {
+          const trimmed = content.trim();
+          return trimmed.length === 0 ? "supabase" : trimmed;
+        },
+      });
+
+  if (goToken === layerToken && goToken !== "") {
+    return Option.none<string>();
+  }
+  return Option.some(yield* legacySsoLoadProfileApiUrl(goToken, fs.value));
 });
 
 /** Go's `strconv.ParseBool` accepted literals (`strconv/atob.go:10-19`). */

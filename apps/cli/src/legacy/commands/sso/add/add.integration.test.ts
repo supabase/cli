@@ -8,6 +8,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
+  LEGACY_DEFAULT_API_URL,
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
@@ -15,6 +16,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
 import { legacySsoAdd } from "./add.handler.ts";
 
@@ -47,6 +49,13 @@ interface SetupOpts {
    * (usually via `cliArgsFor`), exactly as the real parser guarantees.
    */
   cliArgs?: ReadonlyArray<string>;
+  /**
+   * The Effect-parsed `--profile` value (`LegacyProfileFlag`), which the real
+   * parser sets for any `--profile` it accepted. Tests whose `cliArgs` carry a
+   * `--profile` the parser would have consumed must provide it, exactly as the
+   * real CLI tree would.
+   */
+  profileFlag?: string;
 }
 
 function jsonResponse(
@@ -153,6 +162,9 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
     }),
+    opts.profileFlag === undefined
+      ? Layer.empty
+      : Layer.succeed(LegacyProfileFlag, opts.profileFlag),
   );
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -1114,4 +1126,198 @@ describe("legacy sso add integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  // -------------------------------------------------------------------------
+  // Profile emulation (PR #5974 review round 7): Go's `LoadProfile` runs from
+  // the root `PersistentPreRunE` (`cmd/root.go:98-102`) on the pflag/viper-
+  // effective `--profile`/`SUPABASE_PROFILE`, immediately before
+  // `ChangeWorkDir` — it decides which API host receives the POST and aborts
+  // the command when the profile cannot be loaded.
+  // -------------------------------------------------------------------------
+
+  const writeProfileYaml = (name: string, apiUrl: string): string => {
+    const path = join(tempRoot.current, name);
+    writeFileSync(
+      path,
+      [
+        `name: ${name.replace(/\.[^.]*$/, "")}`,
+        `api_url: ${apiUrl}`,
+        `dashboard_url: ${apiUrl}/dashboard`,
+        "project_host: supabase.co",
+      ].join("\n"),
+    );
+    return path;
+  };
+
+  const withProfileEnv = (value: string | undefined) => {
+    const previous = process.env["SUPABASE_PROFILE"];
+    if (value === undefined) {
+      delete process.env["SUPABASE_PROFILE"];
+    } else {
+      process.env["SUPABASE_PROFILE"] = value;
+    }
+    return Effect.sync(() => {
+      if (previous === undefined) {
+        delete process.env["SUPABASE_PROFILE"];
+      } else {
+        process.env["SUPABASE_PROFILE"] = previous;
+      }
+    });
+  };
+
+  it.live(
+    "profile emulation: --domains consuming --profile POSTs to the env profile's host, not the parsed file's",
+    () => {
+      // `sso add --type saml --domains --profile alternate.yml`: pflag hands
+      // `--profile` to `--domains` and never marks profile changed, so viper
+      // falls to SUPABASE_PROFILE — while the Effect parser read
+      // `alternate.yml` as the profile and built `LegacyCliConfig` from it.
+      // Binary-verified (the demonstrated divergent input, PR #5974 round 7):
+      // Go POSTs `{"domains":["--profile"],"type":"saml"}` to the env
+      // profile's api_url; the parsed file's host receives nothing.
+      const envProfile = writeProfileYaml("env-profile.yml", "http://reconciled.example");
+      const alternate = writeProfileYaml("alternate.yml", "http://alternate.example");
+      const restoreEnv = withProfileEnv(envProfile);
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--domains", "--profile", alternate],
+        profileFlag: alternate,
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoAdd(defaultFlags);
+        const posts = api.requests.filter((r) => r.method === "POST");
+        expect(posts.length).toBe(1);
+        expect(posts[0]?.url).toBe(
+          `http://reconciled.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
+        );
+        expect((posts[0]?.body as { domains?: ReadonlyArray<string> })?.domains).toEqual([
+          "--profile",
+        ]);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: --profile consuming a flag-shaped token fails LoadProfile, never POSTs",
+    () => {
+      // `sso add --type saml --profile --metadata-url u`: pflag binds
+      // `"--metadata-url"` as the profile value; viper's extension gate
+      // rejects it before any request (binary-verified: `failed to read
+      // profile: Unsupported Config Type ""`).
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--type",
+          "saml",
+          "--profile",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoAdd({
+            ...defaultFlags,
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoProfileError");
+          expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live("profile emulation: repeated --profile resolves last-wins, matching pflag", () => {
+    // `--profile a.yml --profile b.yml`: the Effect parser is first-wins (the
+    // config layer resolved a.yml) while pflag Sets every occurrence and ends
+    // on b.yml — binary-verified: Go POSTs to b.yml's api_url.
+    const first = writeProfileYaml("first.yml", "http://first.example");
+    const second = writeProfileYaml("second.yml", "http://second.example");
+    const restoreEnv = withProfileEnv(undefined);
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", "--profile", first, "--profile", second],
+      profileFlag: first,
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoAdd(defaultFlags);
+      const posts = api.requests.filter((r) => r.method === "POST");
+      expect(posts.length).toBe(1);
+      expect(posts[0]?.url).toBe(
+        `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
+      );
+    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+  });
+
+  it.live(
+    "profile emulation: the LoadProfile failure wins over the workdir, required-type, and mutex checks",
+    () => {
+      // Go loads the profile BEFORE ChangeWorkDir (`cmd/root.go:98-105` —
+      // "Load profile before changing workdir"), and both run before
+      // `ValidateRequiredFlags` and `ValidateFlagGroups`.
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--profile",
+          "--metadata-url",
+          "https://idp.example.com/m",
+          "--metadata-file",
+          "a.xml",
+          "--workdir",
+          "/nonexistent-sso-add-workdir",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoAdd({
+            ...defaultFlags,
+            metadataUrl: Option.some("https://idp.example.com/m"),
+            metadataFile: Option.some("a.xml"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoProfileError");
+          expect(dump).not.toContain("LegacySsoWorkdirError");
+          expect(dump).not.toContain("LegacySsoAddRequiredFlagError");
+          expect(dump).not.toContain("LegacySsoMutexFlagError");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "profile emulation: an agreeing --profile keeps the config layer's resolution (no override)",
+    () => {
+      // When the scan and the parser saw the same token (every normal
+      // invocation), the reconciliation resolves to `none` and the POST
+      // targets `LegacyCliConfig.apiUrl` — the layer already loaded exactly
+      // the profile Go would.
+      const agreed = writeProfileYaml("agreed.yml", "http://agreed.example");
+      const restoreEnv = withProfileEnv(undefined);
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--profile", agreed],
+        profileFlag: agreed,
+      });
+      return Effect.gen(function* () {
+        yield* legacySsoAdd(defaultFlags);
+        const posts = api.requests.filter((r) => r.method === "POST");
+        expect(posts.length).toBe(1);
+        // The mock layer's apiUrl, NOT agreed.yml's — the layer is authoritative
+        // when there is no scan/parser disagreement.
+        expect(posts[0]?.url).toBe(
+          `${LEGACY_DEFAULT_API_URL}/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
+        );
+      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    },
+  );
 });

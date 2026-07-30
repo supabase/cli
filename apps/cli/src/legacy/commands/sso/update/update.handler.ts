@@ -46,6 +46,7 @@ import {
   legacySsoPflagEnumValue,
   legacySsoPflagSliceValue,
   legacySsoPflagStringValue,
+  legacySsoResolvePflagProfileApiUrl,
   legacySsoValidatePflagWorkdir,
 } from "../sso.pflag-reconcile.ts";
 import {
@@ -135,6 +136,28 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
 
 interface ExistingDomainItem {
   readonly domain?: string;
+}
+
+/**
+ * Narrows a raw GET-provider JSON body to the `domains` shape `mergeDomains`
+ * consumes — the untyped counterpart of the generated client's provider
+ * schema, for the reconciled-profile GET path.
+ */
+function extractDomainItems(parsed: unknown): ReadonlyArray<ExistingDomainItem> | undefined {
+  if (parsed === null || typeof parsed !== "object") {
+    return undefined;
+  }
+  const domains = (parsed as Record<string, unknown>)["domains"];
+  if (!Array.isArray(domains)) {
+    return undefined;
+  }
+  return domains.map((item): ExistingDomainItem => {
+    if (item === null || typeof item !== "object") {
+      return {};
+    }
+    const domain = (item as Record<string, unknown>)["domain"];
+    return typeof domain === "string" ? { domain } : {};
+  });
 }
 
 function mergeDomains(
@@ -258,6 +281,17 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       );
     }
 
+    // Go's root `PersistentPreRunE` loads the pflag/viper-effective
+    // `--profile`/`SUPABASE_PROFILE` (`LoadProfile`, `cmd/root.go:98-102`)
+    // immediately BEFORE `ChangeWorkDir`, so an unloadable profile loses to
+    // an arity violation but beats the workdir check, the mutex checks, and
+    // any GET/PUT — and a loadable one decides which API host receives them.
+    // Reachable exactly where the scan and the parser disagree (see
+    // `add.handler.ts` and `legacySsoResolvePflagProfileApiUrl` — PR #5974
+    // review round 7); where they agree this is `none` and the config
+    // layer's client/apiUrl below are already pflag-effective.
+    const profileApiUrl = yield* legacySsoResolvePflagProfileApiUrl(scan);
+
     // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
     // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
     // `internal/utils/misc.go:238-257`) after `ValidateArgs` and before
@@ -305,15 +339,74 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
 
     const ref = yield* resolver.resolve(projectRefFlag);
 
+    // Effective API base URL: the pflag-reconciled profile's when the scan
+    // and the parser disagreed on `--profile`, the config layer's otherwise.
+    const apiUrl = Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl);
+
     yield* Effect.gen(function* () {
       const fetching =
         output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
 
+      // The typed client bakes the layer's apiUrl in at construction
+      // (`legacy-platform-api.layer.ts:73`), so when the reconciled profile
+      // differs the GET must be issued raw against the effective host — Go
+      // GETs and PUTs the same viper-effective profile host (`update.go:42`),
+      // and a GET to the layer's host would be a request Go never makes. The
+      // error mapping and the spinner-fail/suggestion stderr ordering mirror
+      // the typed path (`handleGetError`) exactly.
+      const rawGetProvider = Effect.gen(function* () {
+        const tokenOpt = yield* resolveLegacyAccessToken;
+        const request = HttpClientRequest.get(
+          `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+        ).pipe(
+          Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
+          HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+        );
+        const response = yield* httpClient.execute(request).pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.mapError(
+            (cause) =>
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${String(cause)}`,
+              }),
+          ),
+        );
+        if (response.status !== 200) {
+          yield* fetching?.fail() ?? Effect.void;
+          const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+          const bodyText = sanitizeLegacyErrorBody(rawBody);
+          yield* legacySuggestUpgrade({
+            projectRef: ref,
+            featureKey: "auth.saml_2",
+            statusCode: response.status,
+            response,
+          });
+          if (response.status === 404) {
+            return yield* Effect.fail(
+              new LegacySsoUpdateNotFoundError({
+                message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+              }),
+            );
+          }
+          return yield* Effect.fail(
+            new LegacySsoUpdateUnexpectedStatusError({
+              status: response.status,
+              body: bodyText,
+              message: `unexpected error fetching identity provider: ${bodyText}`,
+            }),
+          );
+        }
+        const parsed = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
+        return { domains: extractDomainItems(parsed) };
+      });
+
       // Go's `update.go:42` always GETs first, regardless of which flags are set.
-      const existing = yield* api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch((cause) => handleGetError(ref, providerId, cause)),
-      );
+      const existing = yield* Option.isSome(profileApiUrl)
+        ? rawGetProvider
+        : api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
+            Effect.tapError(() => fetching?.fail() ?? Effect.void),
+            Effect.catch((cause) => handleGetError(ref, providerId, cause)),
+          );
 
       const body: Record<string, unknown> = {};
 
@@ -366,7 +459,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
 
       // See `add.handler.ts` for the rationale behind `bearerToken(Redacted)`.
       const request = HttpClientRequest.put(
-        `${cliConfig.apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+        `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
       ).pipe(
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
         HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),

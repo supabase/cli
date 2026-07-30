@@ -41,6 +41,7 @@ import {
   legacySsoPflagEnumValue,
   legacySsoPflagSliceValue,
   legacySsoPflagStringValue,
+  legacySsoResolvePflagProfileApiUrl,
   legacySsoValidatePflagWorkdir,
 } from "../sso.pflag-reconcile.ts";
 import {
@@ -173,6 +174,22 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       );
     }
 
+    // Go's root `PersistentPreRunE` loads the pflag/viper-effective
+    // `--profile`/`SUPABASE_PROFILE` (`LoadProfile`, `cmd/root.go:98-102`,
+    // `internal/utils/profile.go:94-118`) immediately BEFORE `ChangeWorkDir`,
+    // so an unloadable profile aborts before the workdir check, the
+    // required-type check, the mutex check, and any POST — and a loadable one
+    // decides which API host receives the POST. Reachable exactly where the
+    // scan and the parser disagree: in `sso add --type saml --domains
+    // --profile alternate.yml` pflag hands `--profile` to `--domains` and Go
+    // targets the env/default profile, while the Effect parser read
+    // `alternate.yml` as the profile and built `LegacyCliConfig` from it —
+    // without this reconciliation the POST goes to an API host Go never
+    // contacts (binary-verified, PR #5974 review round 7). Where the scan
+    // and the parser agree, this resolves to `none` and the config layer's
+    // apiUrl below is already pflag-effective.
+    const profileApiUrl = yield* legacySsoResolvePflagProfileApiUrl(scan);
+
     // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
     // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
     // `internal/utils/misc.go:238-257`) after `ParseFlags` and before
@@ -283,7 +300,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       // redaction marker on the Authorization header so that any future debug
       // serialisation of the request stays opaque about the bearer token value.
       const request = HttpClientRequest.post(
-        `${cliConfig.apiUrl}/v1/projects/${ref}/config/auth/sso/providers`,
+        `${Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl)}/v1/projects/${ref}/config/auth/sso/providers`,
       ).pipe(
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
         HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
