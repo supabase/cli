@@ -99,22 +99,84 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Stage-3 `JSON.parse` source-access reviver shape (implemented by Bun's JSC). */
+type ReviverWithSource = (
+  this: unknown,
+  key: string,
+  value: unknown,
+  context?: { readonly source?: string },
+) => unknown;
+
+// Typed view of `JSON.parse` exposing the reviver's third `context` parameter,
+// which TypeScript's lib.d.ts does not declare yet. A plain assignment (not a
+// cast): a reviver taking an extra OPTIONAL parameter is assignable to the
+// lib's two-parameter reviver type.
+const jsonParseWithSource: (text: string, reviver: ReviverWithSource) => unknown = JSON.parse;
+
+/**
+ * `JSON.parse` that also captures the RAW source token of every number sitting
+ * directly on the root object (stage-3 "source access" reviver context,
+ * supported by Bun — the only runtime the CLI ships on). Holder identity
+ * (`this` in the reviver) scopes the capture to the root: a nested
+ * `{"x":{"session_last_active":1.5}}` never shadows a top-level key. A key
+ * duplicated in the text keeps the LAST token, matching both `JSON.parse`
+ * value semantics and Go's `encoding/json` overwrite behaviour.
+ */
+function parseWithRootNumberTokens(text: string): {
+  readonly parsed: unknown;
+  readonly rootNumberTokens: ReadonlyMap<string, string>;
+} {
+  const tokensByHolder = new Map<object, Map<string, string>>();
+  const parsed = jsonParseWithSource(text, function (key, value, context) {
+    if (
+      typeof value === "number" &&
+      typeof this === "object" &&
+      this !== null &&
+      context?.source !== undefined
+    ) {
+      let tokens = tokensByHolder.get(this);
+      if (tokens === undefined) {
+        tokens = new Map();
+        tokensByHolder.set(this, tokens);
+      }
+      tokens.set(key, context.source);
+    }
+    return value;
+  });
+  const rootNumberTokens =
+    typeof parsed === "object" && parsed !== null ? tokensByHolder.get(parsed) : undefined;
+  return { parsed, rootNumberTokens: rootNumberTokens ?? new Map() };
+}
+
+const GO_INT64_MIN = -(2n ** 63n);
+const GO_INT64_MAX = 2n ** 63n - 1n;
+const INT64_TOKEN_RE = /^-?\d+$/;
+
 /**
  * Go decodes both the consent-form unix millis (`int64`, `state.go:69-85`)
  * and `schema_version` (`int`, 64-bit on every supported platform,
- * `state.go:41`) with `json.Unmarshal` into a signed 64-bit integer, so a
- * non-integer or a magnitude outside that range fails the decode and the
- * whole file is malformed → regenerated (`state.go:87-90`). The upper bound
- * is `2 ** 63` INCLUSIVE: `JSON.parse` rounds Go's max valid value
- * 9223372036854775807 up to exactly 2^63 (doubles at that magnitude are
- * 1024 apart), so an exclusive bound would regenerate a file Go accepts.
- * Go-invalid 9223372036854775808 collapses to the same double — that single
- * post-parse value is inherently ambiguous, and inclusive is the closest
- * achievable parity. (int64 min, -(2^63), is exactly representable.)
+ * `state.go:41`) by unmarshaling the RAW JSON number token into a signed
+ * 64-bit integer, which accepts only lexically-integer decimal tokens within
+ * the int64 range: integer-VALUED tokens like `1.0`, `2.0`, and `1e3` are
+ * UnmarshalTypeErrors, as are integer tokens outside
+ * [-2^63, 2^63-1] (verified against go1.26: `json.Unmarshal` into `int64`
+ * rejects `1.0`/`1e3`/`1e100`/`9223372036854775808`, and the repo's own
+ * `decodeState` maps each to `errMalformedState` → full regeneration,
+ * `state.go:87-90`). `JSON.parse` collapses those tokens to plain integer
+ * Numbers, so the parsed VALUE alone cannot reproduce Go — this check
+ * therefore validates the raw token text, with exact BigInt bounds (the
+ * doubles for int64-max and int64-max+1 are indistinguishable; the tokens are
+ * not). If the runtime ever fails to expose the reviver's `context.source`
+ * (never the case under Bun), it degrades to the closest value-level
+ * approximation rather than regenerating files Go accepts.
  */
-function isGoInt64(value: unknown): value is number {
+function isGoInt64Token(source: string | undefined, value: unknown): value is number {
+  if (typeof value !== "number") return false;
+  if (source === undefined) {
+    return Number.isInteger(value) && value >= -(2 ** 63) && value <= 2 ** 63;
+  }
   return (
-    typeof value === "number" && Number.isInteger(value) && value >= -(2 ** 63) && value <= 2 ** 63
+    INT64_TOKEN_RE.test(source) && BigInt(source) >= GO_INT64_MIN && BigInt(source) <= GO_INT64_MAX
   );
 }
 
@@ -129,19 +191,21 @@ function isGoInt64(value: unknown): value is number {
  * new `device_id`, new `session_id`. Notably, a corrupt file that still says
  * `"enabled": false` does NOT stay disabled.
  *
- * One Go strictness corner is not reproducible here: `JSON.parse` collapses
- * `2.0` → `2` and `1e3` → `1000`, so an integer-valued float / in-range
- * exponent-form `schema_version`/millis passes where Go's unmarshal-into-int
- * rejects it. It requires a hand-corrupted file the CLI never writes.
- * Magnitudes outside Go's int64 range DO regenerate like Go (see
- * {@link isGoInt64}). (Unix millis in-range but beyond ECMAScript's
- * ±8.64e15 `Date` range no longer regenerate: the epoch is kept as a plain
- * number, so — like Go's `time.UnixMilli` — the state is preserved and the
- * far-future comparison simply never expires the session.)
+ * Go's unmarshal-into-int strictness is reproduced at the TOKEN level:
+ * `JSON.parse` collapses `2.0` → `2` and `1e3` → `1000`, so the parsed value
+ * alone would preserve integer-valued float / exponent-form
+ * `schema_version`/millis that Go rejects as wholly malformed. The raw
+ * tokens captured by {@link parseWithRootNumberTokens} let
+ * {@link isGoInt64Token} reject exactly what Go rejects — non-integer
+ * lexical forms and magnitudes outside the int64 range alike. (Unix millis
+ * in-range but beyond ECMAScript's ±8.64e15 `Date` range do NOT regenerate:
+ * the epoch is kept as a plain number, so — like Go's `time.UnixMilli` — the
+ * state is preserved and the far-future comparison simply never expires the
+ * session.)
  */
 function readExistingState(text: string): PriorState | undefined {
   try {
-    const parsed: unknown = JSON.parse(text);
+    const { parsed, rootNumberTokens } = parseWithRootNumberTokens(text);
     if (!isRecord(parsed)) return undefined;
     const record = parsed;
 
@@ -191,7 +255,9 @@ function readExistingState(text: string): PriorState | undefined {
       }
       sessionLastActiveMs = parsedMs;
     } else if (allowUnixMillis && typeof rawLastActive === "number") {
-      if (!isGoInt64(rawLastActive)) return undefined;
+      if (!isGoInt64Token(rootNumberTokens.get("session_last_active"), rawLastActive)) {
+        return undefined;
+      }
       sessionLastActiveMs = rawLastActive;
     } else {
       return undefined;
@@ -213,7 +279,7 @@ function readExistingState(text: string): PriorState | undefined {
     if (
       record.schema_version !== undefined &&
       record.schema_version !== null &&
-      !isGoInt64(record.schema_version)
+      !isGoInt64Token(rootNumberTokens.get("schema_version"), record.schema_version)
     ) {
       return undefined;
     }

@@ -531,9 +531,10 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
   });
 
   it.effect("consent-form unix millis beyond the int64 range regenerate everything like Go", () => {
-    // Go's `json.Unmarshal` into `int64` rejects 1e100 (overflows the signed
-    // 64-bit range) → `errMalformedState` → wholesale regeneration: telemetry
-    // re-enabled, fresh identities — even though the file said "denied".
+    // Go's `json.Unmarshal` into `int64` rejects the exponent token 1e+100
+    // outright (any float/exponent token is an UnmarshalTypeError for int64)
+    // → `errMalformedState` → wholesale regeneration: telemetry re-enabled,
+    // fresh identities — even though the file said "denied".
     writeFileSync(
       telemetryPath(),
       JSON.stringify({
@@ -553,10 +554,10 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
 
   it.effect("consent-form unix millis at Go's int64 bounds preserve the state", () => {
     // Hand-built JSON so the raw text pins Go's exact max valid literal
-    // 9223372036854775807 (JSON.stringify of the rounded double would emit
-    // 9223372036854775808 e-notation-free but a different literal). After
-    // JSON.parse it becomes exactly 2^63, which the inclusive bound accepts —
-    // an exclusive bound would regenerate a file Go decodes fine.
+    // 9223372036854775807 (JSON.stringify of the rounded double would emit a
+    // different literal). The raw-token check accepts it via exact BigInt
+    // bounds — the parsed double rounds to 2^63 and could not distinguish it
+    // from Go-invalid 9223372036854775808 (see the companion test below).
     writeFileSync(
       telemetryPath(),
       '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":9223372036854775807}',
@@ -583,6 +584,88 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
       const state = yield* runLoad();
       expect(state.enabled).toBe(false);
       expect(state.device_id).toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
+
+  // Go's `json.Unmarshal` into `int64` validates the raw TOKEN, not the
+  // value: `1e3` and `…0.0` are UnmarshalTypeErrors even though `JSON.parse`
+  // collapses them to integer Numbers that pass `Number.isInteger` (verified
+  // against go1.26 via the repo's own `decodeState`). A value-level check
+  // would preserve `consent: "denied"` and the identities where Go
+  // regenerates a fresh telemetry-enabled state.
+  it.effect("consent-form unix millis written as an exponent token regenerate like Go", () => {
+    writeFileSync(
+      telemetryPath(),
+      '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":1e3}',
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
+
+  it.effect(
+    "consent-form unix millis written as an integer-valued float regenerate like Go",
+    () => {
+      writeFileSync(
+        telemetryPath(),
+        '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":1750000000000.0}',
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(true);
+        expect(state.device_id).not.toBe("d");
+        expect(state.session_id).not.toBe("s");
+      });
+    },
+  );
+
+  it.effect("consent-form unix millis one past int64 max regenerate exactly like Go", () => {
+    // 9223372036854775808 parses to the SAME double as Go's max valid literal
+    // 9223372036854775807 (both round to 2^63), so only the raw token can
+    // tell them apart — Go rejects this one with an UnmarshalTypeError.
+    writeFileSync(
+      telemetryPath(),
+      '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":9223372036854775808}',
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
+      expect(state.session_id).not.toBe("s");
+    });
+  });
+
+  it.effect("a non-integer number token nested under an unknown key stays out of scope", () => {
+    // The raw-token capture is scoped to the ROOT object by holder identity.
+    // Go ignores unknown fields entirely, so a nested `session_last_active`
+    // must neither shadow nor invalidate the valid top-level millis.
+    writeFileSync(
+      telemetryPath(),
+      '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":1750000000000,"extra":{"session_last_active":1.5}}',
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(false);
+      expect(state.device_id).toBe("d");
+    });
+  });
+
+  it.effect("a schema_version written as an integer-valued float regenerates like Go", () => {
+    // `SchemaVersion int` sits in the single-shot unmarshal (`state.go:41`),
+    // where the token `1.0` is an UnmarshalTypeError → the WHOLE file is
+    // malformed and regenerated, even though `JSON.parse` reads it as 1.
+    writeFileSync(
+      telemetryPath(),
+      '{"enabled":false,"device_id":"d","session_id":"s","session_last_active":"2026-01-01T00:00:00Z","schema_version":1.0}',
+    );
+    return Effect.gen(function* () {
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     });
   });
