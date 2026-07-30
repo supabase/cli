@@ -356,6 +356,49 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
+  it("renders map elements of mixed interface{} arrays as inline tables like BurntSushi", () => {
+    const spec = legacyGoStruct([["default", legacyGoAny, "Default"]]);
+    // Sorted byte order, non-table values before table values.
+    expect(encodeLegacyGoToml({ default: [{ b: 2, a: 1, C: 3 }, "x"] }, spec)).toBe(
+      'Default = [{C = 3.0, a = 1.0, b = 2.0}, "x"]\n',
+    );
+    expect(encodeLegacyGoToml({ default: [{ a: { b: 1 }, z: 2 }, "x"] }, spec)).toBe(
+      'Default = [{z = 2.0, a = {b = 1.0}}, "x"]\n',
+    );
+    expect(encodeLegacyGoToml({ default: [{ a: [{ b: 1 }], z: 2 }, "x"] }, spec)).toBe(
+      'Default = [{z = 2.0, a = [{b = 1.0}]}, "x"]\n',
+    );
+    // Non-bare keys are quoted; empty and all-nil tables collapse to {}.
+    expect(encodeLegacyGoToml({ default: [{ "a b": 1 }, "x"] }, spec)).toBe(
+      'Default = [{"a b" = 1.0}, "x"]\n',
+    );
+    expect(encodeLegacyGoToml({ default: [{}, "x"] }, spec)).toBe('Default = [{}, "x"]\n');
+    expect(encodeLegacyGoToml({ default: [{ a: null }, "x"] }, spec)).toBe('Default = [{}, "x"]\n');
+    // eMap decides the ", " separator by group position before skipping nil
+    // entries, so a nil in the final position leaves a dangling separator.
+    expect(encodeLegacyGoToml({ default: [{ "10": 78797, b: null }, false] }, spec)).toBe(
+      "Default = [{10 = 78797.0, }, false]\n",
+    );
+  });
+
+  it("fails like Go on nil elements inside interface{} arrays", () => {
+    const spec = legacyGoStruct([["default", legacyGoAny, "Default"]]);
+    const message = "toml: cannot encode array with nil element";
+    expect(() => encodeLegacyGoToml({ default: [null, "x"] }, spec)).toThrow(message);
+    expect(() => encodeLegacyGoToml({ default: [null] }, spec)).toThrow(message);
+    expect(() => encodeLegacyGoToml({ default: [[null], "x"] }, spec)).toThrow(message);
+  });
+
+  it("truncates time fractions to nanoseconds like time.Time's decoder", () => {
+    const spec = legacyGoStruct([["t", legacyGoTime, "T"]]);
+    expect(encodeLegacyGoToml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
+      "T = 2026-01-01T00:00:00.123456789Z\n",
+    );
+    expect(encodeLegacyGoToml({ t: "2026-01-01T00:00:00.1000000005Z" }, spec)).toBe(
+      "T = 2026-01-01T00:00:00.1Z\n",
+    );
+  });
+
   it("sorts map keys by UTF-8 byte order like Go's sort.Strings", () => {
     // Go orders U+E000/U+FF21 before the astral U+1D400/U+1F600 (UTF-8 byte
     // order); JS `<` on UTF-16 units would sort both astral keys first.
@@ -780,6 +823,27 @@ t12: 1900-02-29
     );
   });
 
+  it("truncates time fractions to nanoseconds like time.Time's decoder", () => {
+    const spec = legacyGoStruct([["t", legacyGoTime, "T"]]);
+    // time's `parseNanoseconds` keeps at most 9 fractional digits (truncation,
+    // not rounding), then RFC3339Nano trims trailing zeros.
+    expect(encodeLegacyGoYaml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
+      "t: 2026-01-01T00:00:00.123456789Z\n",
+    );
+    expect(encodeLegacyGoYaml({ t: "2026-01-01T00:00:00.12345678901234Z" }, spec)).toBe(
+      "t: 2026-01-01T00:00:00.123456789Z\n",
+    );
+    expect(encodeLegacyGoYaml({ t: "2026-01-01T00:00:00.9999999999Z" }, spec)).toBe(
+      "t: 2026-01-01T00:00:00.999999999Z\n",
+    );
+    expect(encodeLegacyGoYaml({ t: "2026-01-01T00:00:00.1000000005Z" }, spec)).toBe(
+      "t: 2026-01-01T00:00:00.1Z\n",
+    );
+    expect(encodeLegacyGoYaml({ t: "2026-01-01T00:00:00.1234567895+07:00" }, spec)).toBe(
+      "t: 2026-01-01T00:00:00.123456789+07:00\n",
+    );
+  });
+
   it("escapes non-printable scalars with \\x/\\u/\\U like yaml.v3's emitter", () => {
     const spec = legacyGoMap(legacyGoString);
     expect(
@@ -834,5 +898,20 @@ describe("legacyGoFormatFloat", () => {
     expect(legacyGoFormatFloat(16777217, 32)).toBe("1.6777216e+07");
     expect(legacyGoFormatFloat(78125, 32)).toBe("78125");
     expect(legacyGoFormatFloat(0.5, 32)).toBe("0.5");
+  });
+
+  it("breaks exact shortest-digit ties to even like Ryu, not half-up", () => {
+    // 4249.03125 sits exactly between the two shortest 8-digit candidates;
+    // strconv keeps the even final digit both downward and upward.
+    expect(legacyGoFormatFloat(4249.03125, 32)).toBe("4249.0312");
+    expect(legacyGoFormatFloat(4249.09375, 32)).toBe("4249.0938");
+    expect(legacyGoFormatFloat(123456789, 32)).toBe("1.2345679e+08");
+    expect(legacyGoFormatFloat(1048575.5, 32)).toBe("1.0485755e+06");
+    expect(legacyGoFormatFloat(8388607.5, 32)).toBe("8.3886075e+06");
+    // Boundaries: smallest subnormal, subnormal→normal edge, and max finite.
+    expect(legacyGoFormatFloat(1.401298464324817e-45, 32)).toBe("1e-45");
+    expect(legacyGoFormatFloat(1.1754943508222875e-38, 32)).toBe("1.1754944e-38");
+    expect(legacyGoFormatFloat(3.4028234663852886e38, 32)).toBe("3.4028235e+38");
+    expect(legacyGoFormatFloat(-4249.03125, 32)).toBe("-4249.0312");
   });
 });

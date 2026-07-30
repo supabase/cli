@@ -22,6 +22,7 @@ import {
   LegacySsoListNetworkError,
   LegacySsoListSamlDisabledError,
   LegacySsoListUnexpectedStatusError,
+  LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderListProviders } from "../sso.format.ts";
 import type { LegacySsoListFlags } from "./list.command.ts";
@@ -87,7 +88,17 @@ export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: Lega
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeLegacyGoToml(payload, LEGACY_GO_SSO_PROVIDERS_WRAPPER));
+        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
+        // rejects the payload (e.g. a nil element in an attribute-mapping
+        // `default` array).
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(payload, LEGACY_GO_SSO_PROVIDERS_WRAPPER),
+          catch: (cause) =>
+            new LegacySsoTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
         return;
       }
       if (goFmt === "env") {

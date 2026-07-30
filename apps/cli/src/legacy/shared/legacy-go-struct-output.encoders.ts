@@ -291,8 +291,11 @@ function normalizeAny(value: unknown): GoValue {
 
 /**
  * Render an RFC3339 input the way Go formats a decoded `time.Time` with
- * `time.RFC3339Nano`: trailing zeros trimmed from the fraction (the dot is
- * dropped when the fraction is all zeros) and a zero offset rendered as `Z`.
+ * `time.RFC3339Nano`: the fraction truncated (not rounded) to nanoseconds —
+ * `time`'s `parseNanoseconds` keeps at most 9 fractional digits, so
+ * `.1234567895` decodes as `.123456789` — then trailing zeros trimmed (the
+ * dot is dropped when the fraction is all zeros) and a zero offset rendered
+ * as `Z`.
  */
 function normalizeGoTime(value: string): string {
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
@@ -300,7 +303,7 @@ function normalizeGoTime(value: string): string {
   const [, base, fraction, offset] = match;
   let frac = "";
   if (fraction !== undefined) {
-    const digits = fraction.slice(1).replace(/0+$/, "");
+    const digits = fraction.slice(1, 10).replace(/0+$/, "");
     if (digits.length > 0) frac = `.${digits}`;
   }
   const zone = offset === "Z" || offset === "+00:00" || offset === "-00:00" ? "Z" : offset;
@@ -311,14 +314,79 @@ function normalizeGoTime(value: string): string {
 // Go float formatting (strconv.FormatFloat(f, 'g', -1, bits))
 // ---------------------------------------------------------------------------
 
-/** Shortest round-trip digits for a float32 value (Go marshals via the typed field). */
+/**
+ * Shortest round-trip digits for a float32 value (Go marshals via the typed
+ * field), matching Ryu as used by `strconv.FormatFloat(f, 'g', -1, 32)`: the
+ * fewest significant digits that parse back to the same float32, taking the
+ * candidate correctly rounded from the exact binary value — an exact decimal
+ * tie goes to the even final digit, where JS `toPrecision` would round half
+ * up (verified against Go: 4249.03125 → `4249.0312`, 4249.09375 →
+ * `4249.0938`). Returns `<digits>e<±exp>` for {@link legacyGoFormatFloat}.
+ */
 function shortestFloat32(value: number): string {
   const rounded = Math.fround(value);
-  for (let precision = 1; precision <= 9; precision++) {
-    const candidate = rounded.toPrecision(precision);
-    if (Math.fround(Number(candidate)) === rounded) return String(Number(candidate));
+  if (rounded === 0) return "0";
+  const sign = rounded < 0 ? "-" : "";
+  // Exact float32 decomposition: |rounded| = mantissa * 2^exp2.
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, Math.abs(rounded));
+  const bits = view.getUint32(0);
+  const biased = (bits >>> 23) & 0xff;
+  const frac = BigInt(bits & 0x7fffff);
+  const mantissa = biased === 0 ? frac : frac | 0x800000n;
+  const exp2 = (biased === 0 ? 1 : biased) - 127 - 23;
+  // Exact decimal expansion: |rounded| = 0.<digits> * 10^dp (binary fractions
+  // terminate in decimal, via m * 2^-k = m * 5^k * 10^-k).
+  let digits: string;
+  let dp: number;
+  if (exp2 >= 0) {
+    digits = (mantissa << BigInt(exp2)).toString();
+    dp = digits.length;
+  } else {
+    digits = (mantissa * 5n ** BigInt(-exp2)).toString();
+    dp = digits.length + exp2;
   }
-  return String(rounded);
+  const significant = digits.replace(/0+$/, "");
+  // 9 significant digits always round-trip a float32, so the loop exits.
+  for (let precision = 1; precision <= significant.length; precision++) {
+    const [candidate, candidateDp] = roundDecimalDigits(digits, dp, precision);
+    if (
+      Math.fround(Number(`${candidate}e${candidateDp - candidate.length}`)) === Math.abs(rounded)
+    ) {
+      return `${sign}${candidate}e${candidateDp - candidate.length >= 0 ? "+" : ""}${candidateDp - candidate.length}`;
+    }
+  }
+  return `${sign}${significant}e${dp - significant.length >= 0 ? "+" : ""}${dp - significant.length}`;
+}
+
+/**
+ * Round an exact decimal expansion `0.<digits> * 10^dp` to `precision`
+ * significant digits — nearest, with exact halves to the even final digit
+ * (Ryu's tie rule) — returning the rounded digits (trailing zeros stripped)
+ * and their decimal-point position.
+ */
+function roundDecimalDigits(
+  digits: string,
+  dp: number,
+  precision: number,
+): readonly [digits: string, dp: number] {
+  let head = digits.slice(0, precision);
+  const rest = digits.slice(precision);
+  const restHalf = rest.length > 0 ? "5".padEnd(rest.length, "0") : "";
+  const roundUp =
+    rest > restHalf ||
+    (rest === restHalf && rest !== "" && "13579".includes(head[head.length - 1] as string));
+  let candidateDp = dp;
+  if (roundUp) {
+    head = (BigInt(head) + 1n).toString();
+    if (head.length > precision) {
+      // 999… carried over into 100…: one more digit before the point.
+      candidateDp += 1;
+      head = head.slice(0, precision);
+    }
+  }
+  const stripped = head.replace(/0+$/, "");
+  return [stripped.length > 0 ? stripped : "0", candidateDp];
 }
 
 /**
@@ -949,13 +1017,13 @@ function yamlBlockLiteral(s: string, indent: number): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown when the payload contains a populated `nullable.Nullable` field —
- * BurntSushi refuses `map[bool]T` and the Go CLI fails with this message
- * (observed on `snippets list -o toml`).
+ * Thrown when BurntSushi would refuse the payload: a populated
+ * `nullable.Nullable` field (`map[bool]T` has a non-string key type — observed
+ * on `snippets list -o toml`) or a `nil` element inside an inline array.
  */
 export class LegacyGoTomlEncodeError extends Error {
-  constructor() {
-    super("toml: cannot encode a map with non-string key type");
+  constructor(message = "toml: cannot encode a map with non-string key type") {
+    super(message);
     this.name = "LegacyGoTomlEncodeError";
   }
 }
@@ -1129,11 +1197,61 @@ function tomlElement(value: GoValue): string {
       return value.v;
     case "slice":
       return `[${value.items.map(tomlElement).join(", ")}]`;
+    case "struct":
+    case "map":
+      return tomlInlineTable(value);
     case "nullable":
       throw new LegacyGoTomlEncodeError();
-    default:
-      return "";
+    case "nil":
+      // BurntSushi's `eElement` rejects nil inline-array elements (verified:
+      // `[null, "x"]` fails, while nil *map values* are silently skipped).
+      throw new LegacyGoTomlEncodeError("toml: cannot encode array with nil element");
   }
+}
+
+/**
+ * BurntSushi's inline-table form, used for map/struct elements of arrays that
+ * are not arrays-of-tables (e.g. `interface{}` values holding
+ * `[{"a":1},"x"]`): `{k = v, ...}` with nil entries skipped and, like block
+ * tables, non-table values before table values — map keys byte-sorted within
+ * each group (verified: `[{"a":{"b":1},"z":2},"x"]` → `[{z = 2.0, a = {b =
+ * 1.0}}, "x"]`).
+ *
+ * The `", "` separator replicates `eMap`/`eStruct` exactly: it is decided by
+ * the entry's *position* — for maps, group index with a trailing comma after
+ * the direct group when sub-tables follow; for structs, declaration index —
+ * so a skipped nil entry in the final position leaves a dangling `", "`
+ * (verified: `[{"10":1,"b":null},false]` → `[{10 = 1.0, }, false]`).
+ */
+function tomlInlineTable(value: Extract<GoValue, { k: "struct" | "map" }>): string {
+  let out = "{";
+  if (value.k === "map") {
+    const sorted = [...value.entries].sort(([a], [b]) => goStringCompare(a, b));
+    const direct = sorted.filter(([, v]) => !tomlIsTable(v));
+    const sub = sorted.filter(([, v]) => tomlIsTable(v));
+    const writeGroup = (
+      group: ReadonlyArray<readonly [string, GoValue]>,
+      trailingComma: boolean,
+    ): void => {
+      for (const [index, [name, v]] of group.entries()) {
+        if (tomlIsNil(v)) continue;
+        out += `${tomlKeyName(name)} = ${tomlElement(v)}`;
+        if (trailingComma || index !== group.length - 1) out += ", ";
+      }
+    };
+    writeGroup(direct, sub.length > 0);
+    writeGroup(sub, false);
+  } else {
+    const fields = value.entries.map(([name, v], index) => [name, v, index] as const);
+    const direct = fields.filter(([, v]) => !tomlIsTable(v));
+    const sub = fields.filter(([, v]) => tomlIsTable(v));
+    for (const [name, v, index] of [...direct, ...sub]) {
+      if (tomlIsNil(v)) continue;
+      out += `${tomlKeyName(name)} = ${tomlElement(v)}`;
+      if (index !== value.entries.length - 1) out += ", ";
+    }
+  }
+  return `${out}}`;
 }
 
 /** BurntSushi's `dblQuotedReplacer` escape set. */
