@@ -25,6 +25,16 @@ const BOM_CODE_POINT = 0xfeff;
 // Statements that PostgreSQL refuses to run inside a transaction block / extended-query
 // pipeline (SQLSTATE 25001). Ports of Go's pattern set in `pkg/migration/file.go`
 // (supabase/cli#5156). Matched against the upper-cased, comment-stripped statement.
+//
+// Provenance (CLI-1989, parity ruling 2026-07-30): the intended reference for this
+// behaviour is the Go fix proposed for supabase/cli#5139 in PR supabase/cli#5156
+// (`isPipelineIncompatible` / `trimLeadingSQLComments` in `pkg/migration/file.go`).
+// That PR was closed WITHOUT merging — its design was adopted directly into this TS
+// apply instead in PR supabase/cli#5671 (squash-merged to develop as b48fad60; the
+// #5156 closing comment cites the PR-branch commit 29d3fb0e) because the Go path was
+// being retired for the migration commands. The pinned Go oracle (`apps/cli-go`) therefore
+// predated the fix; it now carries the same port of the closed PR (applied alongside
+// this note) so TS-vs-Go parity audits compare like for like.
 const CREATE_INDEX_CONCURRENTLY_PATTERN = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/u;
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
