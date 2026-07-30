@@ -46,6 +46,7 @@ import {
   legacySsoPflagEnumValue,
   legacySsoPflagSliceValue,
   legacySsoPflagStringValue,
+  legacySsoValidatePflagWorkdir,
 } from "../sso.pflag-reconcile.ts";
 import {
   LEGACY_SSO_NAME_ID_FORMATS,
@@ -256,6 +257,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         }),
       );
     }
+
+    // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
+    // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
+    // `internal/utils/misc.go:238-257`) after `ValidateArgs` and before
+    // `ValidateFlagGroups` (`command.go:1010`), so a missing directory loses
+    // to an arity violation but beats a mutex violation and any GET/PUT
+    // (binary-verified: `sso update a b --workdir /missing` reports the
+    // arity error; `sso update <id> --workdir /missing --domains a
+    // --add-domains b` reports the chdir failure — PR #5974 review round 6).
+    yield* legacySsoValidatePflagWorkdir(scan);
 
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
       const changed = group.filter((flagName) => occurrences.has(flagName));

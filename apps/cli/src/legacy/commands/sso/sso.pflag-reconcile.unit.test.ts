@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Option, Result } from "effect";
 
-import { legacySsoPflagBoolValue, legacySsoPflagEnumValue } from "./sso.pflag-reconcile.ts";
+import {
+  legacySsoPflagBoolValue,
+  legacySsoPflagEnumValue,
+  legacySsoPflagWorkdirValue,
+} from "./sso.pflag-reconcile.ts";
 import { LEGACY_SSO_NAME_ID_FORMATS } from "./sso.saml.ts";
 
 const occ = (entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>) =>
@@ -121,5 +125,68 @@ describe("legacySsoPflagEnumValue", () => {
     ).toEqual(
       Result.fail(`invalid argument "bogus" for "-t, --type" flag: must be one of [ saml ]`),
     );
+  });
+});
+
+describe("legacySsoPflagWorkdirValue", () => {
+  const scan = (
+    entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>,
+    consumed: ReadonlyArray<string> = [],
+  ) => ({ occurrences: occ(entries), consumedFlagNames: new Set(consumed) });
+
+  it("resolves nothing when no flag, parsed value, or env var is present (Go walks up)", () => {
+    expect(legacySsoPflagWorkdirValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
+  });
+
+  it("prefers the scan's occurrence over the parsed flag and the env var", () => {
+    // `--workdir --metadata-file …`: pflag binds the flag-shaped token; the
+    // Effect parser refused it and left the flag unset (PR #5974 round 6).
+    expect(
+      legacySsoPflagWorkdirValue(scan([["workdir", ["--metadata-file"]]]), Option.none(), "/env"),
+    ).toEqual(Option.some("--metadata-file"));
+  });
+
+  it("resolves repeats last-wins, matching pflag StringVar", () => {
+    expect(
+      legacySsoPflagWorkdirValue(scan([["workdir", ["/a", "/b"]]]), Option.some("/a"), undefined),
+    ).toEqual(Option.some("/b"));
+  });
+
+  it("falls back to the parsed flag when the anchored scan saw no occurrence (pre-path --workdir)", () => {
+    expect(legacySsoPflagWorkdirValue(scan([]), Option.some("/pre-path"), "/env")).toEqual(
+      Option.some("/pre-path"),
+    );
+  });
+
+  it("ignores the parsed flag when the --workdir token was consumed by another flag, falling to the env var", () => {
+    // `--domains --workdir /x`: pflag hands `--workdir` to `--domains` and
+    // never marks workdir changed, so viper falls to SUPABASE_WORKDIR
+    // (binary-verified against apps/cli-go, PR #5974 round 6).
+    expect(legacySsoPflagWorkdirValue(scan([], ["workdir"]), Option.some("/x"), "/env")).toEqual(
+      Option.some("/env"),
+    );
+    expect(legacySsoPflagWorkdirValue(scan([], ["workdir"]), Option.some("/x"), undefined)).toEqual(
+      Option.none(),
+    );
+  });
+
+  it("uses the env var when neither the scan nor the parser saw the flag", () => {
+    expect(legacySsoPflagWorkdirValue(scan([]), Option.none(), "/env")).toEqual(
+      Option.some("/env"),
+    );
+  });
+
+  it("treats a changed-but-empty flag as the walk-up default, shadowing the env var (viper precedence)", () => {
+    // `--workdir=`: viper returns the changed flag's empty value and Go falls
+    // through to the always-existing project root, never to SUPABASE_WORKDIR
+    // (binary-verified: the command proceeds to POST).
+    expect(legacySsoPflagWorkdirValue(scan([["workdir", [""]]]), Option.none(), "/env")).toEqual(
+      Option.none(),
+    );
+    expect(legacySsoPflagWorkdirValue(scan([]), Option.some(""), "/env")).toEqual(Option.none());
+  });
+
+  it("treats an empty env var as unset", () => {
+    expect(legacySsoPflagWorkdirValue(scan([]), Option.none(), "")).toEqual(Option.none());
   });
 });

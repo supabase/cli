@@ -665,6 +665,101 @@ describe("legacy sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "workdir emulation: --workdir consuming a trailing --metadata-file fails at Go's chdir, no GET/PUT",
+    () => {
+      // `sso update <id> --project-ref <ref> --workdir --metadata-file`:
+      // pflag binds `"--metadata-file"` to the persistent `--workdir` (the
+      // positional count stays 1) and Go's `ChangeWorkDir`
+      // (`cmd/root.go:104`, `misc.go:238-257`) exits before `RunE` with zero
+      // HTTP traffic. The Effect parser refused the flag-shaped value and
+      // left both flags unset — without the workdir emulation the handler
+      // proceeded to GET + PUT (binary-verified, PR #5974 review round 6).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--project-ref",
+          LEGACY_VALID_REF,
+          "--workdir",
+          "--metadata-file",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({ ...defaultFlags, projectRef: Option.some(LEGACY_VALID_REF) }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain(
+            "failed to change workdir: chdir --metadata-file: no such file or directory",
+          );
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "workdir emulation: the chdir failure loses to an arity violation but wins over a mutex violation",
+    () => {
+      // Go's `ChangeWorkDir` runs from `PersistentPreRunE` (`command.go:986`)
+      // — after `ValidateArgs` (`command.go:968`), before
+      // `ValidateFlagGroups` (`command.go:1010`). Binary-verified: `sso
+      // update a b --workdir /missing` reports the arity error, while `sso
+      // update <id> --workdir /missing --domains a --add-domains b` reports
+      // the chdir failure (PR #5974 review round 6).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--workdir",
+          "/nonexistent-sso-update-workdir",
+          "--domains",
+          "a.com",
+          "--add-domains",
+          "b.com",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["b.com"] }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain(
+            "failed to change workdir: chdir /nonexistent-sso-update-workdir: no such file or directory",
+          );
+          expect(dump).not.toContain("LegacySsoMutexFlagError");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("workdir emulation: the arity error wins over the chdir failure", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", "a", "b", "--workdir", "/nonexistent-sso-update-workdir"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoUpdate({ ...defaultFlags, providerId: "a" }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoUpdateArityError");
+        expect(dump).toContain("accepts 1 arg(s), received 2");
+        expect(dump).not.toContain("LegacySsoWorkdirError");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("arity emulation: the arity error wins over an invalid provider ID", () => {
     // Go's provider-ID format check lives inside `RunE` (`cmd/sso.go:90-91`),
     // long after `ValidateArgs` — a bad UUID must not mask the arg-count

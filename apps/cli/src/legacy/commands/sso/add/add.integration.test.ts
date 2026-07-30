@@ -431,6 +431,107 @@ describe("legacy sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "workdir emulation: --workdir consuming --metadata-file fails at Go's chdir, never POSTs",
+    () => {
+      // `sso add --type saml --project-ref <ref> --workdir --metadata-file
+      // missing.xml`: pflag binds `"--metadata-file"` to the persistent
+      // `--workdir` and Go's `ChangeWorkDir` (`cmd/root.go:104`,
+      // `misc.go:238-257`) exits before `RunE` with zero HTTP traffic. The
+      // Effect parser refused the flag-shaped value (workdir stayed unset)
+      // and read `missing.xml` as metadata — without the workdir emulation
+      // the reconciliation discarded that metadata and POSTed a provider Go
+      // never creates (binary-verified, PR #5974 review round 6).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--type",
+          "saml",
+          "--project-ref",
+          LEGACY_VALID_REF,
+          "--workdir",
+          "--metadata-file",
+          "missing.xml",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoAdd({
+            ...defaultFlags,
+            projectRef: Option.some(LEGACY_VALID_REF),
+            metadataFile: Option.some("missing.xml"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain(
+            "failed to change workdir: chdir --metadata-file: no such file or directory",
+          );
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "workdir emulation: the chdir failure wins over required-type and mutex violations",
+    () => {
+      // Go's `ChangeWorkDir` runs from `PersistentPreRunE` (`command.go:986`)
+      // — before `ValidateRequiredFlags` (`command.go:1007`) and
+      // `ValidateFlagGroups` (`command.go:1010`) — so a missing workdir beats
+      // both the missing required `--type` and the metadata mutex
+      // (binary-verified against apps/cli-go, PR #5974 review round 6).
+      const { layer, api } = setup({
+        cliArgs: [
+          "sso",
+          "add",
+          "--workdir",
+          "/nonexistent-sso-add-workdir",
+          "--metadata-file",
+          "a.xml",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoAdd({
+            ...defaultFlags,
+            metadataFile: Option.some("a.xml"),
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain(
+            "failed to change workdir: chdir /nonexistent-sso-add-workdir: no such file or directory",
+          );
+          expect(dump).not.toContain("LegacySsoAddRequiredFlagError");
+          expect(dump).not.toContain("LegacySsoMutexFlagError");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("workdir emulation: an existing --workdir directory proceeds to the POST", () => {
+    // Go chdir's into an existing workdir and continues to `RunE` — the
+    // emulation must only reject what `os.Chdir` would reject.
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", "--workdir", tempRoot.current],
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoAdd(defaultFlags);
+      const req = api.requests.find((r) => r.method === "POST");
+      expect((req?.body as { type?: string })?.type).toBe("saml");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("required emulation: a -t shorthand invocation POSTs normally", () => {
     // The scan resolves `-t saml` to a `type` occurrence via the shorthand
     // map (`cmd/sso.go:157` registers `VarP`), so a genuine shorthand

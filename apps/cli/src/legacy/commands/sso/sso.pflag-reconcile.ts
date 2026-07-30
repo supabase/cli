@@ -1,6 +1,10 @@
-import { Option, Result } from "effect";
+import { Effect, FileSystem, Option, Result } from "effect";
 
+import type { PflagArgvScan } from "../../../shared/cli/cobra-flag-groups.ts";
+import { LegacyWorkdirFlag } from "../../../shared/legacy/global-flags.ts";
 import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
+import { LegacySsoWorkdirError } from "./sso.errors.ts";
 
 /**
  * Reconciles an Effect-parsed option flag with pflag semantics
@@ -52,6 +56,79 @@ export function legacySsoPflagSliceValue(
     return parsedFallback;
   }
 }
+
+/**
+ * The workdir Go's `ChangeWorkDir` (`internal/utils/misc.go:238-257`) would
+ * `os.Chdir` to: `viper.GetString("WORKDIR")` resolves the pflag-effective
+ * `--workdir` first (a changed flag wins even when its value is empty —
+ * `--workdir=` falls through to the always-existing project-root walk-up,
+ * never to the env var) and `SUPABASE_WORKDIR` otherwise. `Option.none`
+ * means Go would chdir to the walk-up default, which cannot fail.
+ *
+ * Resolution order (binary-verified against `apps/cli-go`, PR #5974 review
+ * round 6):
+ * - the scan's last `--workdir` occurrence wins — pflag consumes flag-shaped
+ *   tokens the Effect parser refuses (`--workdir --metadata-file` binds
+ *   `"--metadata-file"`), so the parsed flag cannot be trusted;
+ * - when the `--workdir` token itself was consumed as another flag's value
+ *   (`--domains --workdir`), pflag never marks it changed and viper falls to
+ *   the env var — the parsed flag (which read the following token as a
+ *   normal value) must be ignored;
+ * - otherwise the Effect-parsed value covers what the anchored scan cannot
+ *   see: `--workdir` placed before the command path (`supabase --workdir x
+ *   sso add …`), which cobra's `Find`/`stripFlags` routes to the same
+ *   persistent flag.
+ */
+export function legacySsoPflagWorkdirValue(
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+  parsedWorkdir: Option.Option<string>,
+  envWorkdir: string | undefined,
+): Option.Option<string> {
+  const scanned = legacySsoPflagStringValue(scan.occurrences, "workdir");
+  const flagValue = Option.isSome(scanned)
+    ? scanned
+    : scan.consumedFlagNames.has("workdir")
+      ? Option.none<string>()
+      : parsedWorkdir;
+  if (Option.isSome(flagValue)) {
+    return flagValue.value.length > 0 ? flagValue : Option.none();
+  }
+  return envWorkdir !== undefined && envWorkdir.length > 0
+    ? Option.some(envWorkdir)
+    : Option.none();
+}
+
+/**
+ * Emulates Go's `ChangeWorkDir` (`cmd/root.go:104`, `internal/utils/
+ * misc.go:238-257`) for the workdir {@link legacySsoPflagWorkdirValue}
+ * resolves: `os.Chdir` on a missing path or a non-directory aborts the
+ * command from the root `PersistentPreRunE` — after `ParseFlags` and
+ * `ValidateArgs`, before `ValidateRequiredFlags`, `ValidateFlagGroups`, and
+ * `RunE` — so no API call is ever made. The Effect layer neither validates
+ * the resolved workdir (`legacy-cli-config.layer.ts` only path-resolves it)
+ * nor sees the value at all when `--workdir` consumed a flag-shaped token,
+ * hence the emulation here (PR #5974 review round 6).
+ *
+ * Accepted micro-divergence: when the pflag-bound workdir names a directory
+ * that EXISTS, Go chdir's into it (printing `Using workdir …`) while the
+ * config layer keeps the workdir it resolved from the parsed flag — both
+ * sides then issue the identical request for these inputs.
+ */
+export const legacySsoValidatePflagWorkdir = Effect.fnUntraced(function* (
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+) {
+  // `serviceOption`: absent outside the real CLI tree (handler-level tests
+  // provide argv via `Stdio.layerTest`, not the global flag settings).
+  const parsedWorkdir = Option.flatten(yield* Effect.serviceOption(LegacyWorkdirFlag));
+  const workdir = legacySsoPflagWorkdirValue(scan, parsedWorkdir, process.env["SUPABASE_WORKDIR"]);
+  if (Option.isNone(workdir)) {
+    return;
+  }
+  const fs = yield* FileSystem.FileSystem;
+  yield* legacyValidateWorkdirIsDirectory(workdir.value, fs).pipe(
+    Effect.mapError((cause) => new LegacySsoWorkdirError({ message: cause.message })),
+  );
+});
 
 /** Go's `strconv.ParseBool` accepted literals (`strconv/atob.go:10-19`). */
 const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([

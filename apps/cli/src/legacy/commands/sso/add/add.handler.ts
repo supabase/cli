@@ -41,6 +41,7 @@ import {
   legacySsoPflagEnumValue,
   legacySsoPflagSliceValue,
   legacySsoPflagStringValue,
+  legacySsoValidatePflagWorkdir,
 } from "../sso.pflag-reconcile.ts";
 import {
   LEGACY_SSO_NAME_ID_FORMATS,
@@ -171,6 +172,21 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
       );
     }
+
+    // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
+    // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
+    // `internal/utils/misc.go:238-257`) after `ParseFlags` and before
+    // `ValidateRequiredFlags` (`command.go:1007`) and `ValidateFlagGroups`
+    // (`command.go:1010`), so a missing directory aborts before the
+    // required-type check, the mutex check, and any POST. Reachable exactly
+    // where the scan and the parser disagree: in `sso add --type saml
+    // --project-ref <ref> --workdir --metadata-file missing.xml` pflag binds
+    // `"--metadata-file"` to `--workdir` and Go exits at chdir, while the
+    // Effect parser refused that flag-shaped value and read `missing.xml` as
+    // metadata — without this check the reconciliation below would silently
+    // drop the metadata source and POST a provider Go never creates
+    // (binary-verified, PR #5974 review round 6).
+    yield* legacySsoValidatePflagWorkdir(scan);
 
     // `MarkFlagRequired("type")` (`cmd/sso.go:165`): when pflag consumed the
     // `--type` or `-t` token as another flag's value (e.g. `--domains --type

@@ -100,6 +100,18 @@ export class LegacySsoAddRequiredFlagError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
+// Go's `ChangeWorkDir` (`internal/utils/misc.go:238-257`), run from the root
+// `PersistentPreRunE` (`cmd/root.go:104`) — after `ParseFlags` and
+// `ValidateArgs`, before `ValidateRequiredFlags`, `ValidateFlagGroups`, and
+// `RunE` — so a missing workdir directory aborts with no API call ever made.
+// Emulated for the pflag/viper-effective `--workdir`/`SUPABASE_WORKDIR` the
+// Effect layer never validates (and, when `--workdir` consumed a flag-shaped
+// token, never even saw — PR #5974 review round 6). Shared across add +
+// update; message byte-matches Go's template.
+export class LegacySsoWorkdirError extends Data.TaggedError("LegacySsoWorkdirError")<{
+  readonly message: string;
+}> {}
+
 // Shared across add + update — metadata URL validation.
 export class LegacySsoMetadataUrlInvalidError extends Data.TaggedError(
   "LegacySsoMetadataUrlInvalidError",
