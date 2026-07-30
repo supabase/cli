@@ -1337,7 +1337,7 @@ export const runChildProcess = Effect.fnUntraced(function* (
   return { exitCode, stdout, stderr };
 });
 
-export const isDockerRunning = Effect.fnUntraced(function* () {
+const isDockerRunning = Effect.fnUntraced(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",

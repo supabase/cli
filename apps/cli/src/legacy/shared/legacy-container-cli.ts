@@ -28,7 +28,13 @@ class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
-const RUNTIME_NOT_FOUND_MESSAGE =
+/**
+ * Exported so `legacy-docker-suggest.ts`'s daemon-unreachable matcher can test
+ * against this literal directly instead of a hardcoded copy of the substring —
+ * keeping the producer and the classifier from drifting apart if this ever gets
+ * reworded.
+ */
+export const legacyContainerRuntimeNotFoundMessage =
   "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
 
 /**
@@ -64,7 +70,9 @@ export const legacySpawnContainerCliWithRuntime = (
         Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
         Effect.catch(() =>
           Effect.fail(
-            new LegacyContainerRuntimeNotFoundError({ message: RUNTIME_NOT_FOUND_MESSAGE }),
+            new LegacyContainerRuntimeNotFoundError({
+              message: legacyContainerRuntimeNotFoundMessage,
+            }),
           ),
         ),
       ),
@@ -100,21 +108,19 @@ export const containerCliExitCode = (
   options?: ChildProcess.CommandOptions,
   podmanArgs?: ReadonlyArray<string>,
 ) =>
-  spawner
-    .exitCode(ChildProcess.make("docker", args, options))
-    .pipe(
-      Effect.catch(() =>
-        spawner
-          .exitCode(ChildProcess.make("podman", podmanArgs ?? args, options))
-          .pipe(
-            Effect.catch(() =>
-              Effect.fail(
-                new LegacyContainerRuntimeNotFoundError({ message: RUNTIME_NOT_FOUND_MESSAGE }),
-              ),
-            ),
+  spawner.exitCode(ChildProcess.make("docker", args, options)).pipe(
+    Effect.catch(() =>
+      spawner.exitCode(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
+        Effect.catch(() =>
+          Effect.fail(
+            new LegacyContainerRuntimeNotFoundError({
+              message: legacyContainerRuntimeNotFoundMessage,
+            }),
           ),
+        ),
       ),
-    );
+    ),
+  );
 
 function collectDockerCliText(stream: Stream.Stream<Uint8Array, unknown>) {
   const decoder = new TextDecoder();
@@ -146,21 +152,19 @@ export const legacyContainerCliExitCodeAndStdout = (
         stdout: "pipe",
         stderr: "ignore",
       } satisfies ChildProcess.CommandOptions;
-      const handle = yield* spawner
-        .spawn(ChildProcess.make("docker", args, options))
-        .pipe(
-          Effect.catch(() =>
-            spawner
-              .spawn(ChildProcess.make("podman", podmanArgs ?? args, options))
-              .pipe(
-                Effect.catch(() =>
-                  Effect.fail(
-                    new LegacyContainerRuntimeNotFoundError({ message: RUNTIME_NOT_FOUND_MESSAGE }),
-                  ),
-                ),
+      const handle = yield* spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+        Effect.catch(() =>
+          spawner.spawn(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
+            Effect.catch(() =>
+              Effect.fail(
+                new LegacyContainerRuntimeNotFoundError({
+                  message: legacyContainerRuntimeNotFoundMessage,
+                }),
               ),
+            ),
           ),
-        );
+        ),
+      );
       // Subscribe to stdout concurrently with awaiting the exit code — Node's
       // "exit" event can fire before a fast process's stdio pipes are drained,
       // so a late subscriber would see an already-ended, empty stream (same
