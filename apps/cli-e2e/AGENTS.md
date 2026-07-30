@@ -212,7 +212,7 @@ is a single-job operation; parallel shards would race on the shared
 
 ## Go binary version requirement
 
-The ts-legacy CLI proxies commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`). If you are testing commands that were added to the Go CLI after your system `supabase` binary was installed, `testBehaviour` tests for those commands will fail with "unknown command".
+The ts-legacy CLI still proxies a small number of unported commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`). If your system `supabase` binary is older than the behavior a proxied command's test expects, `testBehaviour` tests for that command can fail (for example with "unknown command").
 
 Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
@@ -230,4 +230,4 @@ SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
 
 `SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.
 
-Commands currently requiring this: `telemetry enable`, `telemetry disable`, `telemetry status`.
+The Go → TS port is complete and `apps/cli-go/` is frozen, so no new Go-only commands will appear — the set of proxied commands only shrinks as the remaining ones are ported natively. (The `telemetry` commands that originally motivated this section are now native TypeScript.)

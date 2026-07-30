@@ -4,6 +4,16 @@ This file applies to the `apps/cli` workspace. Read it fully before touching any
 
 ---
 
+## PRs Are TypeScript-Only
+
+The Go → TypeScript port is complete: every command in the old Go CLI is defined in the TS command tree, and almost all handlers are native TypeScript. All remaining and future work happens in TypeScript — for stable-channel behavior, in `src/legacy/`.
+
+- **Do not modify `apps/cli-go/`.** The Go source tree is frozen and kept only as a read-only reference for parity questions.
+- The old dual-PR flow — landing a change in both the Go CLI and the TS CLI — is retired. Bug fixes and features land once, in TypeScript.
+- A small number of legacy handlers still delegate to the bundled Go binary via `LegacyGoProxy` — see "Go Binary Proxy" below. Do not add new ones.
+
+---
+
 ## Shell Architecture
 
 There are three source trees under `src/`:
@@ -101,16 +111,16 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 ---
 
-## Phase 0: Go Binary Wrapper
+## Go Binary Proxy (Phase 0 — complete)
 
-Before any command is natively implemented in TypeScript, the first step for each command is to **wrap** it: define the command in the TS command tree and proxy all invocations to the bundled Go binary via subprocess.
+During Phase 0 of the migration, every Go command was **wrapped**: defined in the TS command tree with a handler that proxied all invocations to the bundled Go binary via subprocess. That phase is finished — no command is ever wrapped again. Most handlers are now native TypeScript; a small number (for example the `completion` shells and parts of `bootstrap` and `db`) still delegate fully or partially to the Go binary through the shared `LegacyGoProxy` service.
 
-### Proxy handler pattern
+### Proxy handler pattern (maintenance only)
 
-A proxy handler passes argv through to the Go binary, forwarding stdin/stdout/stderr and propagating the exit code. Use the shared `LegacyGoProxy` service:
+A proxy handler passes argv through to the Go binary, forwarding stdin/stdout/stderr and propagating the exit code:
 
 ```ts
-// src/legacy/commands/orgs/list/list.handler.ts (Phase 0 proxy)
+// Phase 0 proxy shape — only the remaining unported handlers look like this
 export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
   _flags: LegacyOrgsListFlags,
 ) {
@@ -119,17 +129,11 @@ export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
 });
 ```
 
-### When wrapping a command
+Do **not** add new proxy handlers. New commands and new behavior are implemented natively in TypeScript.
 
-For each command added to the Phase 0 wrapper, complete all three steps:
+### When porting a command
 
-1. **Reconstruct the command definition** — flags, subcommands, and argument types must exactly match the Go CLI (use `apps/cli-go/` as the reference).
-2. **Write a proxy handler** — forward invocations to the Go binary via `LegacyGoProxy`.
-3. **Update `docs/go-cli-porting-status.md`** — mark the command as `wrapped`.
-
-### When porting a command (Phase 1+)
-
-When replacing a proxy handler with a native TS implementation:
+When replacing one of the remaining proxy handlers with a native TS implementation:
 
 1. Implement the business logic in `<command>.handler.ts` using Effect services (see Legacy Port sections below).
 2. Update `docs/go-cli-porting-status.md` — mark the command as `ported`.
@@ -145,8 +149,8 @@ One directory per top-level command under `src/legacy/commands/`:
 ```
 src/legacy/commands/<command>/
   <command>.command.ts   # Effect CLI Command definition, flag wiring, layer provision
-  <command>.handler.ts   # Phase 0: proxy handler. Phase 1+: native Effect implementation
-  <command>.errors.ts    # Domain error types (Data.TaggedError) — add when porting
+  <command>.handler.ts   # Native Effect implementation (a few unported commands still proxy to the Go binary)
+  <command>.errors.ts    # Domain error types (Data.TaggedError)
   SIDE_EFFECTS.md        # Required for every legacy command — see section below
 ```
 
@@ -281,7 +285,7 @@ When porting a Management-API-style command, verify each item before marking the
 
 The legacy shell sends the same PostHog events to the same product analytics pipeline as the Go CLI. Drift is silent (no test will catch it) and breaks dashboards. The rules:
 
-- **The canonical catalog is `shared/telemetry/event-catalog.ts`** — a 1:1 mirror of `apps/cli-go/internal/telemetry/events.go`. Reference its exported constants (`EventCommandExecuted`, `PropFlags`, `EnvSignalPresenceKeys`, …) instead of writing bare strings. When the Go catalog changes, update the TS catalog in the same PR.
+- **The canonical catalog is `shared/telemetry/event-catalog.ts`** — a 1:1 mirror of the frozen Go catalog (`apps/cli-go/internal/telemetry/events.go`). Reference its exported constants (`EventCommandExecuted`, `PropFlags`, `EnvSignalPresenceKeys`, …) instead of writing bare strings. The Go tree no longer changes, so new events are added on the TS side only.
 - **Native legacy commands wrap with `withLegacyCommandInstrumentation`** (from `legacy/telemetry/legacy-command-instrumentation.ts`) — _not_ the shared `withCommandInstrumentation`. The legacy variant emits Go-shape properties: a single `flags` map (vs `flags_used`/`flag_values`), `is_agent: boolean` (vs `ai_tool: string`), and `env_signals`.
 - **Pass `flags` to the wrapper** so boolean flag values can be detected and logged verbatim: `handler(flags).pipe(withLegacyCommandInstrumentation({ flags }), ...)`. Sensitive values become the literal string `"<redacted>"` to match Go.
 - **Use `safeFlags: ["flag-name"]`** to whitelist flags that Go marks with `markFlagTelemetrySafe` (grep `apps/cli-go/cmd/*.go`). Today these are `--project-ref` (sso, branches, link, functions, projects/api-keys), `--project-id` (gen/types), `--org-id` (projects/create), and `--version` (migration/squash).
@@ -479,4 +483,6 @@ bun run --parallel "*:check"
 
 ### `apps/cli-go/`
 
-The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly.
+The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting or fixing a command in the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly.
+
+The tree is **frozen** — treat it as read-only. Never include `apps/cli-go/` changes in a PR; all CLI work is TypeScript-only.
