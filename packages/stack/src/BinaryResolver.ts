@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Effect, FileSystem, Layer, Path, Context } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -181,7 +181,11 @@ export class BinaryResolver extends Context.Service<
             const cacheDir = cachePath(baseDir, info);
             const url = downloadUrl(info);
 
-            // Check if already cached (directory exists AND has files)
+            // Check if already cached (directory exists AND has files). The
+            // final cacheDir is only ever created via an atomic rename of a
+            // fully-populated staging directory (see below), so a non-empty
+            // cacheDir is always a complete, valid cache hit — including when
+            // a concurrent process races to resolve the same spec.
             const isCached = yield* fs.exists(cacheDir);
             if (isCached) {
               const entries = yield* fs.readDirectory(cacheDir);
@@ -191,103 +195,143 @@ export class BinaryResolver extends Context.Service<
                   downloaded: false,
                 } satisfies ResolveBinaryResult;
               }
-              // Empty directory from a failed extraction — remove and re-download
+              // An empty cacheDir can no longer be produced by this resolver
+              // itself; it can only come from external interference (e.g. a
+              // pre-atomic-rename cache from an older CLI version). Remove
+              // and re-download defensively.
               yield* fs.remove(cacheDir, { recursive: true });
             }
 
             yield* options?.onDownloadStart ?? Effect.void;
 
-            // Download tarball via HttpClient
-            const tarballResponse = yield* httpClient
-              .get(url)
-              .pipe(
+            // Stage the download + extraction in a per-invocation-unique
+            // directory sibling to cacheDir, so cacheDir itself only ever
+            // becomes visible once fully populated. This prevents concurrent
+            // processes resolving the same spec from corrupting each other's
+            // downloads/extractions.
+            const tmpDir = `${cacheDir}.tmp-${randomUUID()}`;
+            const cleanupTmpDir = fs
+              .remove(tmpDir, { recursive: true, force: true })
+              .pipe(Effect.ignore);
+
+            const stage = Effect.gen(function* () {
+              // Download tarball via HttpClient
+              const tarballResponse = yield* httpClient
+                .get(url)
+                .pipe(
+                  Effect.catchTag("HttpClientError", (e) =>
+                    Effect.fail(new DownloadError({ url, cause: e })),
+                  ),
+                );
+              const tarball = yield* tarballResponse.arrayBuffer.pipe(
                 Effect.catchTag("HttpClientError", (e) =>
                   Effect.fail(new DownloadError({ url, cause: e })),
                 ),
               );
-            const tarball = yield* tarballResponse.arrayBuffer.pipe(
-              Effect.catchTag("HttpClientError", (e) =>
-                Effect.fail(new DownloadError({ url, cause: e })),
-              ),
-            );
 
-            // Verify checksum if available
-            const csUrl = checksumUrl(info);
-            if (csUrl !== null) {
-              const csResponse = yield* httpClient
-                .get(csUrl)
-                .pipe(
+              // Verify checksum if available
+              const csUrl = checksumUrl(info);
+              if (csUrl !== null) {
+                const csResponse = yield* httpClient
+                  .get(csUrl)
+                  .pipe(
+                    Effect.catchTag("HttpClientError", (e) =>
+                      Effect.fail(new DownloadError({ url: csUrl, cause: e })),
+                    ),
+                  );
+                const checksumText = yield* csResponse.text.pipe(
                   Effect.catchTag("HttpClientError", (e) =>
                     Effect.fail(new DownloadError({ url: csUrl, cause: e })),
                   ),
                 );
-              const checksumText = yield* csResponse.text.pipe(
-                Effect.catchTag("HttpClientError", (e) =>
-                  Effect.fail(new DownloadError({ url: csUrl, cause: e })),
-                ),
+                yield* verifyChecksum(tarball, checksumText, csUrl);
+              }
+
+              // Create staging directory
+              yield* fs.makeDirectory(tmpDir, { recursive: true });
+
+              // Write archive to a per-invocation-unique temp file
+              const ext = url.endsWith(".zip") ? ".zip" : ".tar";
+              const tmpFile = path.join(tmpDir, `_download-${randomUUID()}${ext}`);
+              yield* fs.writeFile(tmpFile, new Uint8Array(tarball));
+
+              // Extract archive via ChildProcessSpawner
+              // Only postgres archives have a wrapping directory that needs stripping
+              const stripComponents = spec.service === "postgres";
+              const [cmd, ...args] = extractCommand(
+                url,
+                tmpFile,
+                tmpDir,
+                platform.os,
+                stripComponents,
               );
-              yield* verifyChecksum(tarball, checksumText, csUrl);
-            }
+              const command = ChildProcess.make(cmd!, args);
+              const exitCode = yield* spawner
+                .exitCode(command)
+                .pipe(
+                  Effect.catchTag("PlatformError", (cause) =>
+                    Effect.fail(new DownloadError({ url, cause })),
+                  ),
+                );
 
-            // Create cache directory
-            yield* fs.makeDirectory(cacheDir, { recursive: true });
+              if (exitCode !== 0) {
+                return yield* Effect.fail(
+                  new DownloadError({
+                    url,
+                    cause: new Error(`extraction exited with code ${exitCode}`),
+                  }),
+                );
+              }
 
-            // Write archive to temp file
-            const ext = url.endsWith(".zip") ? ".zip" : ".tar";
-            const tmpFile = path.join(cacheDir, `_download${ext}`);
-            yield* fs.writeFile(tmpFile, new Uint8Array(tarball));
+              // Remove temp archive
+              yield* fs.remove(tmpFile).pipe(Effect.ignore);
 
-            // Extract archive via ChildProcessSpawner
-            // Only postgres archives have a wrapping directory that needs stripping
-            const stripComponents = spec.service === "postgres";
-            const [cmd, ...args] = extractCommand(
-              url,
-              tmpFile,
-              cacheDir,
-              platform.os,
-              stripComponents,
-            );
-            const command = ChildProcess.make(cmd!, args);
-            const exitCode = yield* spawner
-              .exitCode(command)
-              .pipe(
-                Effect.catchTag("PlatformError", (cause) =>
-                  Effect.fail(new DownloadError({ url, cause })),
-                ),
-              );
-
-            if (exitCode !== 0) {
-              return yield* Effect.fail(
-                new DownloadError({
-                  url,
-                  cause: new Error(`extraction exited with code ${exitCode}`),
-                }),
-              );
-            }
-
-            // Remove temp archive
-            yield* fs.remove(tmpFile).pipe(Effect.ignore);
-
-            // Restore execute permissions (tar may strip them depending on umask/platform)
-            const chmodCmd = ChildProcess.make("bash", [
-              "-c",
-              `find "${cacheDir}" -type f \\( -name "*.sh" -o -name "*.dylib" -o -path "*/bin/*" \\) -exec chmod +x {} + && chmod -R u+x "${cacheDir}"`,
-            ]);
-            yield* spawner.exitCode(chmodCmd).pipe(Effect.ignore);
-
-            // On macOS, ad-hoc code sign all executables and dylibs (defensive).
-            // The Go CLI does this after extraction (internal/sandbox/binary.go).
-            if (platform.os === "darwin") {
-              const codesignCmd = ChildProcess.make("bash", [
+              // Restore execute permissions (tar may strip them depending on umask/platform)
+              const chmodCmd = ChildProcess.make("bash", [
                 "-c",
-                `find "${cacheDir}" -type f \\( -perm +111 -o -name "*.dylib" \\) -exec codesign -f -s - {} + 2>/dev/null || true`,
+                `find "${tmpDir}" -type f \\( -name "*.sh" -o -name "*.dylib" -o -path "*/bin/*" \\) -exec chmod +x {} + && chmod -R u+x "${tmpDir}"`,
               ]);
-              yield* spawner.exitCode(codesignCmd).pipe(Effect.ignore);
+              yield* spawner.exitCode(chmodCmd).pipe(Effect.ignore);
+
+              // On macOS, ad-hoc code sign all executables and dylibs (defensive).
+              // The Go CLI does this after extraction (internal/sandbox/binary.go).
+              if (platform.os === "darwin") {
+                const codesignCmd = ChildProcess.make("bash", [
+                  "-c",
+                  `find "${tmpDir}" -type f \\( -perm +111 -o -name "*.dylib" \\) -exec codesign -f -s - {} + 2>/dev/null || true`,
+                ]);
+                yield* spawner.exitCode(codesignCmd).pipe(Effect.ignore);
+              }
+            });
+
+            // Clean up the staging directory on any failure (download error,
+            // checksum mismatch, extraction failure, or interruption) so no
+            // `.tmp-*` directories are left behind in the cache root.
+            yield* stage.pipe(Effect.onError(() => cleanupTmpDir));
+
+            // Publish the completed staging directory by atomically renaming
+            // it into place. If another process already published cacheDir
+            // first, discard our own copy and resolve to theirs instead of
+            // failing.
+            const published = yield* fs.rename(tmpDir, cacheDir).pipe(
+              Effect.as(true),
+              Effect.catchTag("PlatformError", (renameError) =>
+                fs
+                  .exists(cacheDir)
+                  .pipe(
+                    Effect.flatMap((alreadyPresent) =>
+                      alreadyPresent ? Effect.succeed(false) : Effect.fail(renameError),
+                    ),
+                  ),
+              ),
+            );
+            if (!published) {
+              yield* cleanupTmpDir;
             }
 
             return {
               path: cacheDir,
-              downloaded: true,
+              downloaded: published,
             } satisfies ResolveBinaryResult;
           });
 
