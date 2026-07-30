@@ -101,7 +101,10 @@ export function legacyMakeDockerImageResolver(
 
   const pullImage = (
     image: string,
-  ): Effect.Effect<{ readonly exitCode: number; readonly stderr: string }, Error> =>
+  ): Effect.Effect<
+    { readonly exitCode: number; readonly stderr: string; readonly endedWithNewline: boolean },
+    Error
+  > =>
     Effect.gen(function* () {
       const handle = yield* spawnContainerCli(spawner, ["pull", image], {
         stdin: "inherit",
@@ -117,20 +120,27 @@ export function legacyMakeDockerImageResolver(
       // buffered copies are kept only to report the error message on a
       // non-zero exit. Decode each stream separately so a multi-byte UTF-8
       // sequence is never split across interleaved chunks.
+      // `endedWithNewline` records whether the last byte teed to the parent's
+      // stderr was `\n` (both streams share it — last write wins, which is
+      // what the terminal shows), so the retry loop can start its banner on a
+      // fresh line when the child's final output wasn't newline-terminated.
       const stdoutChunks: Array<Uint8Array> = [];
       const stderrChunks: Array<Uint8Array> = [];
+      let endedWithNewline = true;
       yield* Effect.all(
         [
           Stream.runForEach(handle.stdout, (chunk) =>
             Effect.sync(() => {
               stdoutChunks.push(chunk);
               globalThis.process.stderr.write(chunk);
+              if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
           Stream.runForEach(handle.stderr, (chunk) =>
             Effect.sync(() => {
               stderrChunks.push(chunk);
               globalThis.process.stderr.write(chunk);
+              if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
         ],
@@ -142,6 +152,7 @@ export function legacyMakeDockerImageResolver(
       return {
         exitCode,
         stderr: `${stdout}${stderr}`.trim(),
+        endedWithNewline,
       };
     }).pipe(Effect.scoped);
 
@@ -196,8 +207,14 @@ export function legacyMakeDockerImageResolver(
           // Go also `Fprintln`s the failed attempt's error just before the
           // banner (`docker.go:312`); here the `docker pull` child's own
           // stderr — already teed live to the parent's stderr above — plays
-          // that role, so only the banner itself is added.
+          // that role. `Fprintln` always newline-terminates, so when the
+          // child's final output didn't, add the `\n` ourselves — otherwise
+          // the banner would glue onto the error text where Go prints two
+          // lines.
           yield* Effect.sync(() => {
+            if (!result.value.endedWithNewline) {
+              globalThis.process.stderr.write("\n");
+            }
             globalThis.process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);
           });
           yield* Effect.sleep(`${delay} millis`);

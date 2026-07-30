@@ -85,6 +85,23 @@ function mockSpawner(
   };
 }
 
+/**
+ * Joins everything written to stderr — the tee's `Uint8Array` chunks and the
+ * resolver's own `string` writes — into one transcript, so tests can assert
+ * on the byte sequence a terminal would actually display (e.g. that a retry
+ * banner starts on a fresh line after an unterminated child error).
+ */
+function stderrTranscript(chunks: ReadonlyArray<unknown>): string {
+  const decoder = new TextDecoder();
+  return chunks
+    .map((chunk) => {
+      if (typeof chunk === "string") return chunk;
+      if (chunk instanceof Uint8Array) return decoder.decode(chunk);
+      return "";
+    })
+    .join("");
+}
+
 describe("legacyMakeDockerImageResolver", () => {
   it.effect(
     "retries a pull failure unconditionally through messages that wouldn't have matched the old retryable-pattern allowlist, giving up after 3 total attempts",
@@ -98,8 +115,9 @@ describe("legacyMakeDockerImageResolver", () => {
         process.env[REGISTRY_ENV] = "docker.io";
         // Records every chunk written to stderr, including the `docker pull` child's own
         // stdout/stderr, which `pullImage` tees live to the parent's stderr as `Uint8Array`
-        // chunks — only the `Retrying after …` banner is ever written as a plain `string`, so
-        // filtering by `typeof chunk === "string"` isolates the banner from the tee below.
+        // chunks — only the `Retrying after …` banner (and its fresh-line `"\n"` separator)
+        // is ever written as a plain `string`, so filtering by `startsWith("Retrying after")`
+        // isolates the banner from the tee below.
         const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
         globalThis.process.stderr.write = ((chunk: unknown) => {
@@ -152,6 +170,15 @@ describe("legacyMakeDockerImageResolver", () => {
             "Retrying after 4s: supabase/postgres:17.6.1.138\n",
             "Retrying after 8s: supabase/postgres:17.6.1.138\n",
           ]);
+          // Go `Fprintln`s the failed error before the banner (`docker.go:312`),
+          // so the banner always starts on a fresh line. The child's error here
+          // has no trailing newline, so the resolver must add one — never the
+          // glued `…deviceRetrying after …`.
+          const transcript = stderrTranscript(stderrChunks);
+          expect(transcript).toContain(
+            "no space left on device\nRetrying after 4s: supabase/postgres:17.6.1.138\n",
+          );
+          expect(transcript).not.toContain("deviceRetrying");
         } finally {
           globalThis.process.stderr.write = originalWrite;
           if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
@@ -196,6 +223,49 @@ describe("legacyMakeDockerImageResolver", () => {
               typeof chunk === "string" && chunk.startsWith("Retrying after"),
           );
           expect(retryBanners).toEqual(["Retrying after 4s: supabase/postgres:17.6.1.138\n"]);
+        } finally {
+          globalThis.process.stderr.write = originalWrite;
+          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+          else process.env[REGISTRY_ENV] = previousRegistry;
+        }
+      }),
+  );
+
+  it.effect(
+    "does not inject a blank line before the banner when the child error is newline-terminated",
+    () =>
+      Effect.gen(function* () {
+        const previousRegistry = process.env[REGISTRY_ENV];
+        process.env[REGISTRY_ENV] = "docker.io";
+        const stderrChunks: Array<unknown> = [];
+        const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
+        globalThis.process.stderr.write = ((chunk: unknown) => {
+          stderrChunks.push(chunk);
+          return true;
+        }) as typeof globalThis.process.stderr.write;
+
+        try {
+          const mock = mockSpawner([
+            { exitCode: 1, stderr: "no space left on device\n" },
+            { exitCode: 0 },
+          ]);
+          const resolve = legacyMakeDockerImageResolver(mock.spawner);
+          const fiber = yield* resolve("supabase/postgres:17.6.1.138").pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* TestClock.adjust("4 seconds");
+          const image = yield* Fiber.join(fiber);
+
+          expect(image).toBe("supabase/postgres:17.6.1.138");
+          // The child already terminated its own line — Go's `Fprintln`
+          // output shape is exactly one newline between error and banner, so
+          // the resolver must not add a second one.
+          const transcript = stderrTranscript(stderrChunks);
+          expect(transcript).toContain(
+            "no space left on device\nRetrying after 4s: supabase/postgres:17.6.1.138\n",
+          );
+          expect(transcript).not.toContain("\n\nRetrying");
         } finally {
           globalThis.process.stderr.write = originalWrite;
           if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
