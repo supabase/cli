@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createStack, type StackHandle } from "../src/node.ts";
+import { toPlainRows } from "./helpers/e2e.ts";
 import { hasDockerDaemon } from "./helpers/warmup.ts";
 
 const DEV_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
@@ -40,12 +41,10 @@ const runningContainerIds = (apiPort: string): string =>
 async function queryMarkerRows(dbPort: number): Promise<ReadonlyArray<{ note: string }>> {
   const sql = new Bun.SQL(`postgresql://supabase_admin:postgres@127.0.0.1:${dbPort}/postgres`);
   try {
-    const result = await sql.unsafe(`SELECT note FROM public.persistence_marker ORDER BY id`);
-    // Bun's SQL result is a decorated Array subclass carrying extra own properties
-    // (count, command, lastInsertRowid, affectedRows) alongside the real rows, which
-    // makes it fail toEqual against a plain array literal even when the rows match.
-    // Copy into a plain array of plain objects so the assertion below is meaningful.
-    return Array.from(result, (row) => ({ note: (row as { note: string }).note }));
+    const result = await sql.unsafe<{ note: string }[]>(
+      `SELECT note FROM public.persistence_marker ORDER BY id`,
+    );
+    return toPlainRows(result);
   } finally {
     sql.close();
   }
