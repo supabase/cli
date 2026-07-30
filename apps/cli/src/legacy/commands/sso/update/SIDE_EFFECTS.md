@@ -41,16 +41,17 @@ GET still uses the typed client.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                              |
-| `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID                                                                    |
-| `1`  | `LegacySsoMutexFlagError` — flag combinations: `--domains` with `--add/--remove-domains`, or `--metadata-file` with `--metadata-url` |
-| `1`  | `LegacySsoUpdateMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8              |
-| `1`  | `LegacySsoUpdateAttributeMappingFileError` — JSON file unreadable or malformed                                                       |
-| `1`  | `LegacySsoUpdateNotFoundError` — 404 from GET                                                                                        |
-| `1`  | `LegacySsoUpdateUnexpectedStatusError` — non-2xx from GET or PUT                                                                     |
-| `1`  | `LegacySsoUpdateNetworkError` — transport-level failure                                                                              |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                         |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                                                                                                                           |
+| `1`  | malformed CSV in a `--domains`/`--add-domains`/`--remove-domains` value — fails during flag parsing, before the handler and telemetry, with pflag's exact diagnostic on stderr (e.g. `invalid argument "a\"b" for "--domains" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
+| `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                                                                                                                                                                                                 |
+| `1`  | `LegacySsoMutexFlagError` — flag combinations: `--domains` with `--add/--remove-domains`, or `--metadata-file` with `--metadata-url`                                                                                                                                                                                                              |
+| `1`  | `LegacySsoUpdateMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                                                                                                                                                                                           |
+| `1`  | `LegacySsoUpdateAttributeMappingFileError` — JSON file unreadable or malformed                                                                                                                                                                                                                                                                    |
+| `1`  | `LegacySsoUpdateNotFoundError` — 404 from GET                                                                                                                                                                                                                                                                                                     |
+| `1`  | `LegacySsoUpdateUnexpectedStatusError` — non-2xx from GET or PUT                                                                                                                                                                                                                                                                                  |
+| `1`  | `LegacySsoUpdateNetworkError` — transport-level failure                                                                                                                                                                                                                                                                                           |
 
 ## Telemetry Events Fired
 

@@ -40,15 +40,16 @@ same shape via an inline anonymous struct with `Default *any`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                              |
-| `1`  | `LegacySsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                          |
-| `1`  | `LegacySsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8 |
-| `1`  | `LegacySsoAddAttributeMappingFileError` — JSON file unreadable or malformed                                          |
-| `1`  | `LegacySsoAddSamlDisabledError` — 404 from POST                                                                      |
-| `1`  | `LegacySsoAddUnexpectedStatusError` — other non-2xx                                                                  |
-| `1`  | `LegacySsoAddNetworkError` — transport-level failure                                                                 |
+| Code | Condition                                                                                                                                                                                                                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                                                                                        |
+| `1`  | malformed CSV in a `--domains` value — fails during flag parsing, before the handler and telemetry, with pflag's exact diagnostic on stderr (e.g. `invalid argument "a\"b" for "--domains" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
+| `1`  | `LegacySsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                                                                                                                                                                                                                    |
+| `1`  | `LegacySsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                                                                                                                                                           |
+| `1`  | `LegacySsoAddAttributeMappingFileError` — JSON file unreadable or malformed                                                                                                                                                                                                                                    |
+| `1`  | `LegacySsoAddSamlDisabledError` — 404 from POST                                                                                                                                                                                                                                                                |
+| `1`  | `LegacySsoAddUnexpectedStatusError` — other non-2xx                                                                                                                                                                                                                                                            |
+| `1`  | `LegacySsoAddNetworkError` — transport-level failure                                                                                                                                                                                                                                                           |
 
 ## Telemetry Events Fired
 

@@ -62,8 +62,10 @@ export interface LegacyDbTargetSelection {
  * represented here, so a new command that adds a value-consuming flag and
  * forgets to register it fails CI. That scan cannot see flag names built
  * through a helper indirection (`issue.command.ts`'s
- * `legacyIssueOptionalTextFlag`, `status.command.ts`'s `csvStringSliceFlag`)
- * — those flags are listed below by hand and excluded from the scan.
+ * `legacyIssueOptionalTextFlag`, and the shared `legacyStringSliceFlag`
+ * builder used by the sso/postgres-config/start/status/network-bans/
+ * network-restrictions slice flags — CLI-2005) — those flags are listed
+ * below by hand.
  */
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
@@ -143,8 +145,9 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "version",
   // Declared through a name-parameterized helper, invisible to the static
   // scan (see the doc comment above): `issue.command.ts`'s
-  // `legacyIssueOptionalTextFlag` and `status.command.ts`'s
-  // `csvStringSliceFlag`.
+  // `legacyIssueOptionalTextFlag`. (The `legacyStringSliceFlag`-built names —
+  // domains, add-domains, remove-domains, config, exclude, override-name,
+  // db-unban-ip, db-allow-cidr — are already listed in the sections above.)
   "additional-context",
   "area",
   "command",

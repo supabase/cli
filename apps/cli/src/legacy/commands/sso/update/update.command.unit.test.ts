@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
+import { normalizeCause } from "../../../../shared/output/normalize-error.ts";
 import {
   legacySsoUpdateAddDomainsFlag,
   legacySsoUpdateDomainsFlag,
@@ -64,7 +65,23 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
     expect(domains).toEqual([]);
   });
 
-  test("rejects malformed CSV (bare quote)", async () => {
+  test("keeps only the first CSV record of a multiline value (pflag reads ONE record)", async () => {
+    // Go-verified (CLI-2005): `sso update <id> --domains $'a.com\nb"c'` raises
+    // no parse error — pflag calls `csv.Reader.Read()` once, so the malformed
+    // second line is silently dropped.
+    const [, domains] = await Effect.runPromise(
+      legacySsoUpdateDomainsFlag
+        .parse({
+          flags: { domains: ['a.com\nb"c'] },
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(domains).toEqual(["a.com"]);
+  });
+
+  test("--domains rejects malformed CSV (bare quote) with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
       legacySsoUpdateDomainsFlag
         .parse({
@@ -76,5 +93,71 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      // Byte-matches the Go CLI (bare quote at byte 8 of `example"com`).
+      expect(normalizeCause(exit.cause).message).toBe(
+        'invalid argument "example\\"com" for "--domains" flag: parse error on line 1, column 8: bare " in non-quoted-field',
+      );
+    }
+  });
+
+  test("--add-domains rejects malformed CSV with pflag's exact diagnostic", async () => {
+    const exit = await Effect.runPromise(
+      legacySsoUpdateAddDomainsFlag
+        .parse({
+          flags: { "add-domains": ['"x'] },
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer))
+        .pipe(Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      // Go-verified (CLI-2005): `"x` is 2 bytes → EOF at column 3.
+      expect(normalizeCause(exit.cause).message).toBe(
+        'invalid argument "\\"x" for "--add-domains" flag: parse error on line 1, column 3: extraneous or missing " in quoted-field',
+      );
+    }
+  });
+
+  test("--remove-domains rejects malformed CSV with pflag's exact diagnostic", async () => {
+    const exit = await Effect.runPromise(
+      legacySsoUpdateRemoveDomainsFlag
+        .parse({
+          flags: { "remove-domains": ['"x'] },
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer))
+        .pipe(Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(normalizeCause(exit.cause).message).toBe(
+        'invalid argument "\\"x" for "--remove-domains" flag: parse error on line 1, column 3: extraneous or missing " in quoted-field',
+      );
+    }
+  });
+
+  test("rejects a blank-only value with pflag's EOF diagnostic", async () => {
+    // Go-verified (CLI-2005): `sso update <id> --add-domains $'\n\n'` →
+    // `invalid argument "\n\n" for "--add-domains" flag: EOF`.
+    const exit = await Effect.runPromise(
+      legacySsoUpdateAddDomainsFlag
+        .parse({
+          flags: { "add-domains": ["\n\n"] },
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer))
+        .pipe(Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(normalizeCause(exit.cause).message).toBe(
+        'invalid argument "\\n\\n" for "--add-domains" flag: EOF',
+      );
+    }
   });
 });
