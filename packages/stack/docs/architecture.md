@@ -10,7 +10,7 @@ Manages a local Supabase development stack — resolving native binaries, wiring
   - [errors — typed error hierarchy](#errors--typed-error-hierarchy)
   - [Platform — OS and architecture detection](#platform--os-and-architecture-detection)
   - [BinaryResolver — download and cache binaries](#binaryresolver--download-and-cache-binaries)
-  - [resolveService — binary-first Docker fallback](#resolveservice--binary-first-docker-fallback)
+  - [resolveService — binary-first, mode-aware Docker fallback](#resolveservice--binary-first-mode-aware-docker-fallback)
   - [JwtGenerator — JWT token generation and opaque keys](#jwtgenerator--jwt-token-generation-and-opaque-keys)
   - [PortAllocator — dynamic port assignment](#portallocator--dynamic-port-assignment)
   - [prefetch — pre-download binaries and images](#prefetch--pre-download-binaries-and-images)
