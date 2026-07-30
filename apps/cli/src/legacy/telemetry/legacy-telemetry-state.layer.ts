@@ -99,85 +99,188 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Stage-3 `JSON.parse` source-access reviver shape (implemented by Bun's JSC). */
-type ReviverWithSource = (
-  this: unknown,
-  key: string,
-  value: unknown,
-  context?: { readonly source?: string },
-) => unknown;
-
-// Typed view of `JSON.parse` exposing the reviver's third `context` parameter,
-// which TypeScript's lib.d.ts does not declare yet. A plain assignment (not a
-// cast): a reviver taking an extra OPTIONAL parameter is assignable to the
-// lib's two-parameter reviver type.
-const jsonParseWithSource: (text: string, reviver: ReviverWithSource) => unknown = JSON.parse;
-
-/**
- * `JSON.parse` that also captures the RAW source token of every number sitting
- * directly on the root object (stage-3 "source access" reviver context,
- * supported by Bun — the only runtime the CLI ships on). Holder identity
- * (`this` in the reviver) scopes the capture to the root: a nested
- * `{"x":{"session_last_active":1.5}}` never shadows a top-level key. A key
- * duplicated in the text keeps the LAST token, matching both `JSON.parse`
- * value semantics and Go's `encoding/json` overwrite behaviour.
- */
-function parseWithRootNumberTokens(text: string): {
-  readonly parsed: unknown;
-  readonly rootNumberTokens: ReadonlyMap<string, string>;
-} {
-  const tokensByHolder = new Map<object, Map<string, string>>();
-  const parsed = jsonParseWithSource(text, function (key, value, context) {
-    if (
-      typeof value === "number" &&
-      typeof this === "object" &&
-      this !== null &&
-      context?.source !== undefined
-    ) {
-      let tokens = tokensByHolder.get(this);
-      if (tokens === undefined) {
-        tokens = new Map();
-        tokensByHolder.set(this, tokens);
-      }
-      tokens.set(key, context.source);
-    }
-    return value;
-  });
-  const rootNumberTokens =
-    typeof parsed === "object" && parsed !== null ? tokensByHolder.get(parsed) : undefined;
-  return { parsed, rootNumberTokens: rootNumberTokens ?? new Map() };
-}
-
 const GO_INT64_MIN = -(2n ** 63n);
 const GO_INT64_MAX = 2n ** 63n - 1n;
 const INT64_TOKEN_RE = /^-?\d+$/;
 
 /**
- * Go decodes both the consent-form unix millis (`int64`, `state.go:69-85`)
- * and `schema_version` (`int`, 64-bit on every supported platform,
- * `state.go:41`) by unmarshaling the RAW JSON number token into a signed
- * 64-bit integer, which accepts only lexically-integer decimal tokens within
- * the int64 range: integer-VALUED tokens like `1.0`, `2.0`, and `1e3` are
- * UnmarshalTypeErrors, as are integer tokens outside
- * [-2^63, 2^63-1] (verified against go1.26: `json.Unmarshal` into `int64`
- * rejects `1.0`/`1e3`/`1e100`/`9223372036854775808`, and the repo's own
- * `decodeState` maps each to `errMalformedState` → full regeneration,
- * `state.go:87-90`). `JSON.parse` collapses those tokens to plain integer
- * Numbers, so the parsed VALUE alone cannot reproduce Go — this check
- * therefore validates the raw token text, with exact BigInt bounds (the
- * doubles for int64-max and int64-max+1 are indistinguishable; the tokens are
- * not). If the runtime ever fails to expose the reviver's `context.source`
- * (never the case under Bun), it degrades to the closest value-level
- * approximation rather than regenerating files Go accepts.
+ * Whether a raw JSON number token would decode into a Go signed 64-bit
+ * integer. Go decodes both the consent-form unix millis (`int64`,
+ * `state.go:69-85`) and `schema_version` (`int`, 64-bit on every supported
+ * platform, `state.go:41`) by unmarshaling the RAW JSON number token, which
+ * accepts only lexically-integer decimal tokens within the int64 range:
+ * integer-VALUED tokens like `1.0`, `2.0`, and `1e3` are UnmarshalTypeErrors,
+ * as are integer tokens outside [-2^63, 2^63-1] (verified against go1.26:
+ * `json.Unmarshal` into `int64` rejects `1.0`/`1e3`/`1e100`/
+ * `9223372036854775808`, and the repo's own `decodeState` maps each to
+ * `errMalformedState` → full regeneration, `state.go:87-90`). `JSON.parse`
+ * collapses those tokens to plain integer Numbers, so parsed VALUES alone
+ * cannot reproduce Go — validation runs on the raw token text, with exact
+ * BigInt bounds (the doubles for int64-max and int64-max+1 are
+ * indistinguishable; the tokens are not).
  */
-function isGoInt64Token(source: string | undefined, value: unknown): value is number {
-  if (typeof value !== "number") return false;
-  if (source === undefined) {
-    return Number.isInteger(value) && value >= -(2 ** 63) && value <= 2 ** 63;
-  }
+function isInt64Token(token: string): boolean {
   return (
-    INT64_TOKEN_RE.test(source) && BigInt(source) >= GO_INT64_MIN && BigInt(source) <= GO_INT64_MAX
+    INT64_TOKEN_RE.test(token) && BigInt(token) >= GO_INT64_MIN && BigInt(token) <= GO_INT64_MAX
   );
+}
+
+const JSON_WS = new Set([" ", "\t", "\n", "\r"]);
+
+/**
+ * Scans the ROOT object of an already-syntax-validated JSON text (it runs
+ * only after `JSON.parse(text)` has succeeded) and returns every
+ * `[key, raw value token]` pair in source order — INCLUDING duplicate keys.
+ * `JSON.parse` collapses duplicates to the final occurrence before any user
+ * code runs (even a stage-3 source-access reviver only ever sees the final
+ * token), but Go's `encoding/json` decodes every occurrence in order, so
+ * reproducing its behaviour needs the full occurrence list. Keys are
+ * unescaped (Go matches the escaped key `"\u0063onsent"` to the `consent`
+ * field). Only depth-1 pairs are emitted: a nested `{"x":{"enabled":"bad"}}` never shadows
+ * a root field, matching Go's struct decoding. Returns `undefined` when the
+ * root is not an object.
+ */
+function scanRootJsonEntries(
+  text: string,
+): ReadonlyArray<readonly [key: string, token: string]> | undefined {
+  let i = 0;
+  const skipWs = (): void => {
+    while (i < text.length && JSON_WS.has(text[i] ?? "")) i += 1;
+  };
+  // The `i < text.length` bounds below are purely defensive — the text is
+  // known-valid JSON, so every string and value is well-terminated.
+  const skipString = (): void => {
+    i += 1; // opening quote
+    while (i < text.length && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
+    i += 1; // closing quote
+  };
+  const scanValueToken = (): string => {
+    const start = i;
+    const first = text[i];
+    if (first === '"') {
+      skipString();
+    } else if (first === "{" || first === "[") {
+      let depth = 0;
+      while (i < text.length) {
+        const ch = text[i];
+        if (ch === '"') {
+          skipString();
+          continue;
+        }
+        if (ch === "{" || ch === "[") depth += 1;
+        else if (ch === "}" || ch === "]") depth -= 1;
+        i += 1;
+        if (depth === 0) break;
+      }
+    } else {
+      // Primitive: true / false / null / number.
+      while (i < text.length) {
+        const ch = text[i] ?? "";
+        if (ch === "," || ch === "}" || JSON_WS.has(ch)) break;
+        i += 1;
+      }
+    }
+    return text.slice(start, i);
+  };
+
+  skipWs();
+  if (text[i] !== "{") return undefined;
+  i += 1;
+  const entries: Array<readonly [string, string]> = [];
+  skipWs();
+  if (text[i] === "}") return entries;
+  while (i < text.length) {
+    skipWs();
+    const keyStart = i;
+    skipString();
+    const key: unknown = JSON.parse(text.slice(keyStart, i));
+    skipWs();
+    i += 1; // ':'
+    skipWs();
+    const token = scanValueToken();
+    if (typeof key === "string") entries.push([key, token]);
+    skipWs();
+    if (text[i] !== ",") break; // closing '}'
+    i += 1;
+  }
+  return entries;
+}
+
+/**
+ * Go's single `json.Unmarshal` into `rawState` (`state.go:34-42`) records an
+ * `UnmarshalTypeError` for EVERY wrong-typed occurrence of a known field —
+ * even when a later duplicate is valid and overwrites the value — and any
+ * such error classifies the whole file as malformed (verified against the
+ * repo's own `decodeState` on go1.26:
+ * `{"consent":false,"consent":"denied",…}` fails to decode while
+ * `{"enabled":true,"enabled":false,…}` decodes cleanly with `Enabled=false`).
+ * JSON `null` decodes into every field without error (nil for the pointer
+ * fields, no-op for the rest); `session_last_active` is `json.RawMessage` and
+ * unknown keys are skipped untyped — any token is fine for those.
+ */
+function hasGoDecodableFieldTokens(
+  entries: ReadonlyArray<readonly [key: string, token: string]>,
+): boolean {
+  for (const [key, token] of entries) {
+    switch (key) {
+      case "enabled": // *bool
+        if (token !== "true" && token !== "false" && token !== "null") return false;
+        break;
+      case "consent": // *string
+      case "device_id": // string
+      case "session_id": // string
+      case "distinct_id": // string
+        if (!token.startsWith('"') && token !== "null") return false;
+        break;
+      case "schema_version": // int — Go parses the raw token as base-10 int64
+        if (token !== "null" && !isInt64Token(token)) return false;
+        break;
+      default:
+        break;
+    }
+  }
+  return true;
+}
+
+/** Raw token of the LAST occurrence of `key` (plain overwrite semantics). */
+function lastToken(
+  entries: ReadonlyArray<readonly [key: string, token: string]>,
+  key: string,
+): string | undefined {
+  let result: string | undefined;
+  for (const [k, token] of entries) {
+    if (k === key) result = token;
+  }
+  return result;
+}
+
+/**
+ * Raw token of the last NON-NULL occurrence of `key`. This is Go's effective
+ * value for the non-pointer `rawState` fields: JSON `null` is a decode no-op
+ * (the field keeps its previous value), so `{"device_id":"a","device_id":null}`
+ * keeps `"a"` where `JSON.parse` surfaces `null` (verified against go1.26).
+ */
+function lastNonNullToken(
+  entries: ReadonlyArray<readonly [key: string, token: string]>,
+  key: string,
+): string | undefined {
+  let result: string | undefined;
+  for (const [k, token] of entries) {
+    if (k === key && token !== "null") result = token;
+  }
+  return result;
+}
+
+function lastNonNullString(
+  entries: ReadonlyArray<readonly [key: string, token: string]>,
+  key: string,
+): string | undefined {
+  const token = lastNonNullToken(entries, key);
+  if (token === undefined) return undefined;
+  // The token was validated as a JSON string by `hasGoDecodableFieldTokens`;
+  // the typeof narrow keeps the typing honest without a cast.
+  const value: unknown = JSON.parse(token);
+  return typeof value === "string" ? value : undefined;
 }
 
 /**
@@ -191,40 +294,35 @@ function isGoInt64Token(source: string | undefined, value: unknown): value is nu
  * new `device_id`, new `session_id`. Notably, a corrupt file that still says
  * `"enabled": false` does NOT stay disabled.
  *
- * Go's unmarshal-into-int strictness is reproduced at the TOKEN level:
- * `JSON.parse` collapses `2.0` → `2` and `1e3` → `1000`, so the parsed value
- * alone would preserve integer-valued float / exponent-form
- * `schema_version`/millis that Go rejects as wholly malformed. The raw
- * tokens captured by {@link parseWithRootNumberTokens} let
- * {@link isGoInt64Token} reject exactly what Go rejects — non-integer
- * lexical forms and magnitudes outside the int64 range alike. (Unix millis
- * in-range but beyond ECMAScript's ±8.64e15 `Date` range do NOT regenerate:
- * the epoch is kept as a plain number, so — like Go's `time.UnixMilli` — the
- * state is preserved and the far-future comparison simply never expires the
- * session.)
+ * Go's unmarshal strictness is reproduced at the TOKEN level, over EVERY
+ * occurrence of every root field ({@link scanRootJsonEntries} +
+ * {@link hasGoDecodableFieldTokens}): `JSON.parse` collapses `2.0` → `2`,
+ * `1e3` → `1000`, and duplicated keys down to their final occurrence, so
+ * parsed values alone would preserve files Go rejects as wholly malformed —
+ * non-integer number tokens, magnitudes outside the int64 range, and
+ * wrong-typed non-final duplicates (`{"consent":false,"consent":"denied"}`)
+ * alike. (Unix millis in-range but beyond ECMAScript's ±8.64e15 `Date` range
+ * do NOT regenerate: the epoch is kept as a plain number, so — like Go's
+ * `time.UnixMilli` — the state is preserved and the far-future comparison
+ * simply never expires the session.)
  */
 function readExistingState(text: string): PriorState | undefined {
   try {
-    const { parsed, rootNumberTokens } = parseWithRootNumberTokens(text);
+    const parsed: unknown = JSON.parse(text);
     if (!isRecord(parsed)) return undefined;
     const record = parsed;
 
-    // Go's single-shot `json.Unmarshal` type-checks `Enabled *bool`
-    // (`state.go:35`, `state.go:88-91`) even when consent takes precedence
-    // below: a present, non-boolean `enabled` is a field-level unmarshal
-    // error → the whole file is malformed. JSON `null` into the pointer
-    // field is valid (leaves it nil), so null passes through.
-    if (
-      record.enabled !== undefined &&
-      record.enabled !== null &&
-      typeof record.enabled !== "boolean"
-    ) {
-      return undefined;
-    }
+    // Per-OCCURRENCE typing first: Go's single-shot unmarshal fails on any
+    // wrong-typed occurrence — including one shadowed by a later valid
+    // duplicate that `JSON.parse` would surface (`state.go:88-91`).
+    const entries = scanRootJsonEntries(text);
+    if (entries === undefined || !hasGoDecodableFieldTokens(entries)) return undefined;
 
     // Go's `parseConsent` (`state.go:52-67`): a non-null `consent` must be
     // `granted`/`denied` (and unlocks the unix-millis timestamp form);
-    // otherwise a bool `enabled` is required.
+    // otherwise a bool `enabled` is required. Field TYPING — a non-boolean
+    // `enabled`, a non-string `consent`, on any occurrence — was already
+    // validated above.
     let enabled: boolean;
     let allowUnixMillis = false;
     const consent = record.consent;
@@ -246,6 +344,8 @@ function readExistingState(text: string): PriorState | undefined {
 
     // Go's `parseSessionLastActive` (`state.go:69-85`): an RFC3339Nano string,
     // or — only on the consent form — integer unix millis (`time.UnixMilli`).
+    // The field is `json.RawMessage`, so plain last-occurrence overwrite
+    // applies (nulls included) and only the FINAL token is ever parsed.
     const rawLastActive = record.session_last_active;
     let sessionLastActiveMs: number;
     if (typeof rawLastActive === "string") {
@@ -255,7 +355,8 @@ function readExistingState(text: string): PriorState | undefined {
       }
       sessionLastActiveMs = parsedMs;
     } else if (allowUnixMillis && typeof rawLastActive === "number") {
-      if (!isGoInt64Token(rootNumberTokens.get("session_last_active"), rawLastActive)) {
+      const millisToken = lastToken(entries, "session_last_active");
+      if (millisToken === undefined || !isInt64Token(millisToken)) {
         return undefined;
       }
       sessionLastActiveMs = rawLastActive;
@@ -264,39 +365,27 @@ function readExistingState(text: string): PriorState | undefined {
     }
 
     // Go: `if raw.DeviceID == "" || raw.SessionID == ""` → "missing identity".
-    if (typeof record.device_id !== "string" || record.device_id === "") return undefined;
-    if (typeof record.session_id !== "string" || record.session_id === "") return undefined;
+    // Effective values are the last NON-NULL occurrences — `null` decodes as
+    // a no-op into these non-pointer string fields.
+    const deviceId = lastNonNullString(entries, "device_id");
+    if (deviceId === undefined || deviceId === "") return undefined;
+    const sessionId = lastNonNullString(entries, "session_id");
+    if (sessionId === undefined || sessionId === "") return undefined;
 
-    // `DistinctID string` / `SchemaVersion int`: absent → zero value; a wrong
-    // JSON type is a field-level unmarshal error → malformed.
-    if (
-      record.distinct_id !== undefined &&
-      record.distinct_id !== null &&
-      typeof record.distinct_id !== "string"
-    ) {
-      return undefined;
-    }
-    if (
-      record.schema_version !== undefined &&
-      record.schema_version !== null &&
-      !isGoInt64Token(rootNumberTokens.get("schema_version"), record.schema_version)
-    ) {
-      return undefined;
-    }
-    const schemaVersion =
-      typeof record.schema_version === "number" && record.schema_version !== 0
-        ? record.schema_version
-        : SCHEMA_VERSION;
+    const distinctId = lastNonNullString(entries, "distinct_id");
+
+    // `SchemaVersion int`: absent (or only null occurrences) → zero value;
+    // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
+    const schemaVersionToken = lastNonNullToken(entries, "schema_version");
+    const schemaVersionValue = schemaVersionToken !== undefined ? Number(schemaVersionToken) : 0;
 
     return {
       enabled,
-      device_id: record.device_id,
-      session_id: record.session_id,
+      device_id: deviceId,
+      session_id: sessionId,
       sessionLastActiveMs,
-      ...(typeof record.distinct_id === "string" && record.distinct_id.length > 0
-        ? { distinct_id: record.distinct_id }
-        : {}),
-      schema_version: schemaVersion,
+      ...(distinctId !== undefined && distinctId.length > 0 ? { distinct_id: distinctId } : {}),
+      schema_version: schemaVersionValue !== 0 ? schemaVersionValue : SCHEMA_VERSION,
     };
   } catch {
     return undefined;

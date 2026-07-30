@@ -691,4 +691,165 @@ describe("loadOrCreateLegacyTelemetryState (Go decodeState parity: all-or-nothin
       expect(state.session_id).not.toBe("s");
     });
   });
+
+  // Go's single `json.Unmarshal` decodes EVERY occurrence of a duplicated
+  // key: values overwrite last-wins, but a wrong-typed occurrence records an
+  // UnmarshalTypeError even when a later duplicate is valid — and any error
+  // malforms the whole file (`state.go:34-42`, `state.go:88-91`). `JSON.parse`
+  // only surfaces the final occurrence, so these matrices are pinned against
+  // the repo's own `decodeState` on go1.26.
+  describe("duplicate root keys (Go per-occurrence decoding)", () => {
+    it.effect("a wrong-typed earlier consent regenerates even when the final one is valid", () => {
+      // Go: `cannot unmarshal bool into … rawState.consent of type string` —
+      // the file must NOT stay disabled off the surviving `"denied"`.
+      writeFileSync(
+        telemetryPath(),
+        '{"consent":false,"consent":"denied","session_last_active":1750000000000,"device_id":"d","session_id":"s"}',
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(true);
+        expect(state.device_id).not.toBe("d");
+      });
+    });
+
+    it.effect("a wrong-typed FINAL consent regenerates too", () => {
+      writeFileSync(
+        telemetryPath(),
+        '{"consent":"denied","consent":false,"session_last_active":1750000000000,"device_id":"d","session_id":"s"}',
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(true);
+        expect(state.device_id).not.toBe("d");
+      });
+    });
+
+    it.effect("well-typed duplicate enabled decodes cleanly with last-value-wins", () => {
+      writeFileSync(
+        telemetryPath(),
+        `{"enabled":true,"enabled":false,"session_last_active":${JSON.stringify(new Date().toISOString())},"device_id":"d","session_id":"s"}`,
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.device_id).toBe("d");
+        expect(state.session_id).toBe("s");
+      });
+    });
+
+    it.effect("a non-integer earlier schema_version token regenerates like Go", () => {
+      // `1e3` into `SchemaVersion int` is an UnmarshalTypeError on the first
+      // occurrence; the valid `2` after it cannot save the file.
+      writeFileSync(
+        telemetryPath(),
+        '{"consent":"granted","session_last_active":1750000000000,"device_id":"d","session_id":"s","schema_version":1e3,"schema_version":2}',
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.device_id).not.toBe("d");
+        expect(state.schema_version).toBe(1);
+      });
+    });
+
+    it.effect("duplicate session_last_active takes the last token (json.RawMessage)", () => {
+      // The RawMessage field is never type-checked per occurrence — only the
+      // FINAL token is parsed (`state.go:69-85`), so junk before it is fine.
+      writeFileSync(
+        telemetryPath(),
+        '{"consent":"denied","session_last_active":true,"session_last_active":1750000000000,"device_id":"d","session_id":"s"}',
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.device_id).toBe("d");
+      });
+    });
+
+    it.effect(
+      "a wrong-typed earlier device_id regenerates even when the final one is valid",
+      () => {
+        writeFileSync(
+          telemetryPath(),
+          `{"enabled":false,"device_id":0,"device_id":"d","session_id":"s","session_last_active":${JSON.stringify(new Date().toISOString())}}`,
+        );
+        return Effect.gen(function* () {
+          const state = yield* runLoad();
+          expect(state.enabled).toBe(true);
+          expect(state.device_id).not.toBe("d");
+        });
+      },
+    );
+
+    it.effect("null occurrences are decode-valid for pointer and string fields alike", () => {
+      // `null` → nil for `Enabled *bool` (later duplicate overwrites) and a
+      // no-op for `DeviceID string` — no UnmarshalTypeError anywhere.
+      writeFileSync(
+        telemetryPath(),
+        `{"enabled":null,"enabled":false,"device_id":null,"device_id":"d","session_id":"s","session_last_active":${JSON.stringify(new Date().toISOString())}}`,
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.device_id).toBe("d");
+        expect(state.session_id).toBe("s");
+      });
+    });
+
+    it.effect("a null FINAL device_id keeps the earlier value (null is a decode no-op)", () => {
+      // Go keeps `DeviceID:"d"` — unmarshaling `null` into a non-pointer
+      // string leaves the previous occurrence's value in place, where
+      // `JSON.parse`'s last-value-wins would surface `null` and wrongly
+      // regenerate.
+      writeFileSync(
+        telemetryPath(),
+        `{"enabled":false,"device_id":"d","device_id":null,"session_id":"s","session_last_active":${JSON.stringify(new Date().toISOString())}}`,
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.device_id).toBe("d");
+        expect(state.session_id).toBe("s");
+      });
+    });
+
+    it.effect("a null FINAL schema_version keeps the earlier non-zero value", () => {
+      writeFileSync(
+        telemetryPath(),
+        `{"enabled":false,"device_id":"d","session_id":"s","session_last_active":${JSON.stringify(new Date().toISOString())},"schema_version":7,"schema_version":null}`,
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.schema_version).toBe(7);
+      });
+    });
+
+    it.effect("wrong-typed duplicates of UNKNOWN keys never invalidate the file", () => {
+      // Go skips unknown fields untyped — no occurrence of `junk` can error.
+      writeFileSync(
+        telemetryPath(),
+        `{"enabled":false,"junk":false,"junk":"x","device_id":"d","session_id":"s","session_last_active":${JSON.stringify(new Date().toISOString())}}`,
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(false);
+        expect(state.device_id).toBe("d");
+      });
+    });
+
+    it.effect("an escaped duplicate key is unescaped before field matching, like Go", () => {
+      // encoding/json unescapes key tokens before struct-field matching, so
+      // `"consent":false` is a wrong-typed `consent` occurrence.
+      writeFileSync(
+        telemetryPath(),
+        '{"\\u0063onsent":false,"consent":"denied","session_last_active":1750000000000,"device_id":"d","session_id":"s"}',
+      );
+      return Effect.gen(function* () {
+        const state = yield* runLoad();
+        expect(state.enabled).toBe(true);
+        expect(state.device_id).not.toBe("d");
+      });
+    });
+  });
 });
