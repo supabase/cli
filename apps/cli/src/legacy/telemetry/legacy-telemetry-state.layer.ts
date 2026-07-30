@@ -114,10 +114,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function isGoInt64(value: unknown): value is number {
   return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= -(2 ** 63) &&
-    value <= 2 ** 63
+    typeof value === "number" && Number.isInteger(value) && value >= -(2 ** 63) && value <= 2 ** 63
   );
 }
 
