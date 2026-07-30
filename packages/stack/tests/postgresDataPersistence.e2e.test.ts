@@ -132,11 +132,24 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
       try {
         await stack.start();
       } catch (startError) {
-        let logs: string;
+        // `docker logs` is best-effort: `makePostgresServiceDocker` runs the
+        // container with `--rm`, so a crash removes the container before this
+        // catch block runs and `docker logs` finds nothing. `logHistory` is
+        // the reliable source — it's fed from the child process's live
+        // stdout/stderr as it runs, so it survives the container disappearing.
+        let bufferedLogs: string;
         try {
-          logs = execSync(`docker logs ${containerName}`, { encoding: "utf8" });
+          const entries = await stack.logHistory("postgres");
+          bufferedLogs = entries.map((entry) => `[${entry.stream}] ${entry.line}`).join("\n");
+        } catch (logHistoryError) {
+          bufferedLogs = `(failed to capture logHistory: ${String(logHistoryError)})`;
+        }
+
+        let dockerLogs: string;
+        try {
+          dockerLogs = execSync(`docker logs ${containerName}`, { encoding: "utf8" });
         } catch (logError) {
-          logs = `(failed to capture docker logs: ${String(logError)})`;
+          dockerLogs = `(failed to capture docker logs: ${String(logError)})`;
         }
 
         let status: string;
@@ -150,8 +163,10 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
           "stack2.start() failed while reusing the native dataDir in docker mode.",
           `Original error: ${startError instanceof Error ? (startError.stack ?? startError.message) : String(startError)}`,
           `getStatus(): ${status}`,
+          `stack.logHistory("postgres"):`,
+          bufferedLogs,
           `docker logs ${containerName}:`,
-          logs,
+          dockerLogs,
         ].join("\n");
 
         await stack.dispose().catch(() => {});
