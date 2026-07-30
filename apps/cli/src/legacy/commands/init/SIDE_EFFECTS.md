@@ -53,10 +53,19 @@ In interactive mode (`-i`/`--interactive`), may prompt for IDE settings preferen
 
 Success is emitted as raw text even when the legacy shell is invoked with non-text output modes.
 
-When `supabase/config.toml` already exists and `--force` is not set (stderr, byte-matching Go's wrapped `O_EXCL` open error and `CmdSuggestion` on Linux/macOS; on Windows the Go CLI surfaces the OS path separator and errno text instead, which this port does not reproduce):
+When `supabase/config.toml` already exists and `--force` is not set (stderr, byte-matching Go's wrapped `O_EXCL` open error and `CmdSuggestion`; the platform check selects Go's exact per-OS path separator and errno text):
+
+On Linux/macOS:
 
 ```
 failed to create config file: open supabase/config.toml: file exists
+Run supabase init --force to overwrite existing config file.
+```
+
+On Windows:
+
+```
+failed to create config file: open supabase\config.toml: The file exists.
 Run supabase init --force to overwrite existing config file.
 ```
 
