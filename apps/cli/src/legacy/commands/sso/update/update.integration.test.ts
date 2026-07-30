@@ -1631,7 +1631,7 @@ describe("legacy sso update integration", () => {
       const first = writeProfileYaml("first-merge.yml", "http://first.example");
       const second = writeProfileYaml("second-merge.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
-      const { layer, api } = setup({
+      const { layer, api, cache } = setup({
         getBody: {
           id: VALID_PROVIDER_ID,
           domains: [{ domain: "old1.com" }, "not-an-object", { domain: 42 }],
@@ -1657,6 +1657,12 @@ describe("legacy sso update integration", () => {
         );
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["new.com", "old1.com"]);
+        // The linked-project cache fill receives the RECONCILED profile's
+        // token explicitly (here the profile-independent env token) — the
+        // stale profile's keyring token must never follow the reconciled URL
+        // (review r3684524241). `undefined` would fall back to the config
+        // layer's credentials service.
+        expect(cache.cachedAccessToken).toBeDefined();
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );

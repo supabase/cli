@@ -1,7 +1,7 @@
 import { styleText } from "node:util";
 
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Effect, Option, type Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -100,6 +100,17 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
    */
   readonly apiUrl?: string;
   /**
+   * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
+   * Go resolves credentials for the process-wide reconciled `CurrentProfile`
+   * (`access_token.go:43`), so callers that pass a reconciled `apiUrl` must
+   * pass the reconciled profile's token too — otherwise the stale profile's
+   * bearer token would be sent to the reconciled host (review r3684524241).
+   * `Some` uses that token, `None` sends unauthenticated (the reconciled
+   * profile has no token — matching Go, which fails its token lookup and
+   * never attaches the stale one), `undefined` resolves from the service.
+   */
+  readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
+  /**
    * Set false where the Go twin fires no `TrackUpgradeSuggested` (vanity
    * check-availability), keeping telemetry 1:1.
    */
@@ -135,7 +146,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       return;
     }
 
-    const tokenOpt = yield* resolveLegacyAccessToken;
+    const tokenOpt = opts.accessToken ?? (yield* resolveLegacyAccessToken);
     const authHeader: (
       req: HttpClientRequest.HttpClientRequest,
     ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
