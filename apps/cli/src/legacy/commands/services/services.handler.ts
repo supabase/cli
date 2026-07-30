@@ -13,9 +13,16 @@ import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-
 import { legacyReadServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeLegacyTomlRows,
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+  legacyGoTomlListWrapper,
+} from "../../shared/legacy-go-struct-output.encoders.ts";
+import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
   listLocalServiceVersions,
@@ -26,6 +33,25 @@ import {
 } from "../../../shared/services/services.shared.ts";
 import type { LegacyServicesFlags } from "./services.command.ts";
 import { LegacyServicesEnvNotSupportedError } from "./services.errors.ts";
+
+/**
+ * Mirror of Go's hand-written `imageVersion`
+ * (`apps/cli-go/internal/services/services.go`) — declaration order is
+ * Name, Local, Remote (not alphabetical), and `Remote` is always emitted
+ * even when empty (CLI-1975).
+ */
+const LEGACY_GO_IMAGE_VERSION = legacyGoStruct([
+  ["name", legacyGoString],
+  ["local", legacyGoString],
+  ["remote", legacyGoString],
+]);
+
+const LEGACY_GO_SERVICES_LIST = legacyGoSlice(LEGACY_GO_IMAGE_VERSION);
+
+const LEGACY_GO_SERVICES_TOML_WRAPPER = legacyGoTomlListWrapper(
+  "services",
+  LEGACY_GO_IMAGE_VERSION,
+);
 
 export const legacyServices = Effect.fn("legacy.services")(function* (_flags: LegacyServicesFlags) {
   const output = yield* Output;
@@ -158,12 +184,12 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     }
 
     if (goOutput === "yaml") {
-      yield* output.raw(encodeYaml(rows));
+      yield* output.raw(encodeLegacyGoYaml(rows, LEGACY_GO_SERVICES_LIST));
       return;
     }
 
     if (goOutput === "toml") {
-      yield* output.raw(encodeToml(encodeLegacyTomlRows(rows)));
+      yield* output.raw(encodeLegacyGoToml({ services: rows }, LEGACY_GO_SERVICES_TOML_WRAPPER));
       return;
     }
 

@@ -192,7 +192,8 @@ describe("legacy vanity-subdomains get", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status: custom-domain-used");
-      expect(out.stdoutText).toContain("custom_domain: example.com");
+      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
 
@@ -203,9 +204,9 @@ describe("legacy vanity-subdomains get", () => {
 
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsGet({ projectRef: Option.none() });
-      expect(out.stdoutText).toBe(
-        'Status = "custom-domain-used"\nCustomDomain = "example.com"\n\n',
-      );
+      // Go declaration order (CustomDomain before Status) and a single
+      // trailing newline, matching BurntSushi (CLI-1975).
+      expect(out.stdoutText).toBe('CustomDomain = "example.com"\nStatus = "custom-domain-used"\n');
     }).pipe(Effect.provide(layer));
   });
 
@@ -216,7 +217,7 @@ describe("legacy vanity-subdomains get", () => {
 
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsGet({ projectRef: Option.none() });
-      expect(out.stdoutText).toBe('Status = "not-used"\n\n');
+      expect(out.stdoutText).toBe('Status = "not-used"\n');
     }).pipe(Effect.provide(layer));
   });
 
@@ -348,7 +349,7 @@ describe("legacy vanity-subdomains check-availability", () => {
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
-      expect(out.stdoutText).toBe("Available = true\n\n");
+      expect(out.stdoutText).toBe("Available = true\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -505,7 +506,8 @@ describe("legacy vanity-subdomains activate", () => {
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
-      expect(out.stdoutText).toContain("custom_domain: example.com");
+      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
 
@@ -519,7 +521,7 @@ describe("legacy vanity-subdomains activate", () => {
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
-      expect(out.stdoutText).toBe('CustomDomain = "example.com"\n\n');
+      expect(out.stdoutText).toBe('CustomDomain = "example.com"\n');
     }).pipe(Effect.provide(layer));
   });
 

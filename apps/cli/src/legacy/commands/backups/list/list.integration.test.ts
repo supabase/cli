@@ -165,7 +165,8 @@ describe("legacy backups list integration", () => {
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("region: ap-southeast-1");
-      expect(out.stdoutText).toContain("walg_enabled: true");
+      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      expect(out.stdoutText).toContain("walgenabled: true");
     }).pipe(Effect.provide(layer));
   });
 
@@ -173,8 +174,30 @@ describe("legacy backups list integration", () => {
     const { layer, out } = setup({ goOutput: "toml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain('region = "ap-southeast-1"');
-      expect(out.stdoutText).toContain("walg_enabled = true");
+      // BurntSushi emits PascalCase Go field names (CLI-1975).
+      expect(out.stdoutText).toContain('Region = "ap-southeast-1"');
+      expect(out.stdoutText).toContain("WalgEnabled = true");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits [[Backups]] array-of-tables for --output toml with logical backups", () => {
+    const { layer, out } = setup({ goOutput: "toml", response: LOGICAL_RESPONSE });
+    return Effect.gen(function* () {
+      yield* legacyBackupsList({ projectRef: Option.none() });
+      // Byte-exact Go parity (CLI-1975): primitives first, then the Backups
+      // array-of-tables and the (empty) PhysicalBackupData table.
+      expect(out.stdoutText).toBe(`PitrEnabled = true
+Region = "ap-southeast-1"
+WalgEnabled = true
+
+[[Backups]]
+  Id = 1
+  InsertedAt = "2026-02-08T16:44:07Z"
+  IsPhysicalBackup = true
+  Status = "COMPLETED"
+
+[PhysicalBackupData]
+`);
     }).pipe(Effect.provide(layer));
   });
 

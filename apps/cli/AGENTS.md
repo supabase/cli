@@ -160,6 +160,7 @@ src/legacy/commands/<command>/
   <command>.layers.ts         # runtime layer composition for the command family
   <command>.format.ts         # text formatters (timestamps, regions, booleans)
   <command>.encoders.ts       # Go-compatible JSON / YAML / TOML / env encoders
+  <command>.go-payload.ts     # Go struct specs mirroring types.gen.go — drive `-o yaml|toml` key casing (CLI-1975)
   SIDE_EFFECTS.md
 ```
 

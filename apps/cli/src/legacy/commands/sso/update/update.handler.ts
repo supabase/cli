@@ -12,12 +12,12 @@ import {
   hasExplicitValueFlag,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeGoJson, encodeGoStructJsonBody } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeGoJson,
-  encodeGoStructJsonBody,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
+import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -305,11 +305,11 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(parsedJson));
+        yield* output.raw(encodeLegacyGoYaml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeToml(parsedJson) + "\n");
+        yield* output.raw(encodeLegacyGoToml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "env") {
