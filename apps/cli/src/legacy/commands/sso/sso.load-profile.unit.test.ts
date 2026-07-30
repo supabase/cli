@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 
 import type { LegacySsoProfileError } from "./sso.errors.ts";
-import { legacyPadGoErrorBlock, legacySsoLoadProfileApiUrl } from "./sso.load-profile.ts";
+import { legacyPadGoErrorBlock, legacySsoLoadProfile } from "./sso.load-profile.ts";
 
 const tempRoot = mkdtempSync(join(tmpdir(), "supabase-sso-load-profile-"));
 afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
@@ -15,7 +15,7 @@ afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 const load = (token: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    return yield* legacySsoLoadProfileApiUrl(token, fs);
+    return (yield* legacySsoLoadProfile(token, fs)).apiUrl;
   }).pipe(Effect.provide(BunServices.layer));
 
 const loadError = (token: string) =>
@@ -30,7 +30,7 @@ const writeProfile = (name: string, content: string): string => {
   return filePath;
 };
 
-describe("legacySsoLoadProfileApiUrl", () => {
+describe("legacySsoLoadProfile", () => {
   it.effect("resolves built-in profile names case-insensitively (Go strings.EqualFold)", () =>
     Effect.gen(function* () {
       // Binary-verified: `--profile SUPABASE-LOCAL` targets localhost:8080.
@@ -101,6 +101,29 @@ describe("legacySsoLoadProfileApiUrl", () => {
       );
       expect(yield* load(file)).toBe("http://127.0.0.1:44444");
     }),
+  );
+
+  it.effect(
+    "returns Go's CurrentProfile.Name — the canonical built-in or the file's name field",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        // Built-in: EqualFold match resolves to the canonical (lower-case)
+        // table name — the keyring account Go reads (`access_token.go:43`).
+        expect((yield* legacySsoLoadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
+        // File profile: `UnmarshalExact` populates Name from the required
+        // `name:` key, NOT from the file path.
+        const file = writeProfile(
+          "named.yml",
+          [
+            "name: harness",
+            "api_url: http://127.0.0.1:44444",
+            "dashboard_url: http://127.0.0.1:44444/dashboard",
+            "project_host: supabase.co",
+          ].join("\n"),
+        );
+        expect((yield* legacySsoLoadProfile(file, fs)).name).toBe("harness");
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("rejects unknown keys with mapstructure's padded UnmarshalExact block", () =>

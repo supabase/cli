@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result, Stdio } from "effect";
+import { Effect, Option, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -23,6 +23,7 @@ import {
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
+import { legacyAccessTokenForProfile } from "../../../auth/legacy-credentials.layer.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -47,7 +48,7 @@ import {
   legacySsoPflagEnumValue,
   legacySsoPflagSliceValue,
   legacySsoPflagStringValue,
-  legacySsoResolvePflagProfileApiUrl,
+  legacySsoResolvePflagProfile,
   legacySsoValidatePflagWorkdir,
 } from "../sso.pflag-reconcile.ts";
 import {
@@ -289,10 +290,11 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // an arity violation but beats the workdir check, the mutex checks, and
     // any GET/PUT — and a loadable one decides which API host receives them.
     // Reachable exactly where the scan and the parser disagree (see
-    // `add.handler.ts` and `legacySsoResolvePflagProfileApiUrl` — PR #5974
+    // `add.handler.ts` and `legacySsoResolvePflagProfile` — PR #5974
     // review round 7); where they agree this is `none` and the config
     // layer's client/apiUrl below are already pflag-effective.
-    const profileApiUrl = yield* legacySsoResolvePflagProfileApiUrl(scan);
+    const reconciledProfile = yield* legacySsoResolvePflagProfile(scan);
+    const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
 
     // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
     // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
@@ -357,7 +359,18 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       // error mapping and the spinner-fail/suggestion stderr ordering mirror
       // the typed path (`handleGetError`) exactly.
       const rawGetProvider = Effect.gen(function* () {
-        const tokenOpt = yield* resolveLegacyAccessToken;
+        const tokenOpt = yield* Option.match(reconciledProfile, {
+          // Go resolves credentials AFTER LoadProfile, so the keyring account is
+          // the RECONCILED profile's name (`CurrentProfile.Name`,
+          // `access_token.go:43`) — the service captured the config layer's
+          // profile at construction (review r3684153345). Same absorb-to-None
+          // semantics as `resolveLegacyAccessToken`.
+          onNone: () => resolveLegacyAccessToken,
+          onSome: (profile) =>
+            legacyAccessTokenForProfile(profile.name).pipe(
+              Effect.catch(() => Effect.succeed(Option.none<Redacted.Redacted<string>>())),
+            ),
+        });
         const request = HttpClientRequest.get(
           `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
         ).pipe(
@@ -497,7 +510,18 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         body["name_id_format"] = nameIdFormat.value;
       }
 
-      const tokenOpt = yield* resolveLegacyAccessToken;
+      const tokenOpt = yield* Option.match(reconciledProfile, {
+        // Go resolves credentials AFTER LoadProfile, so the keyring account is
+        // the RECONCILED profile's name (`CurrentProfile.Name`,
+        // `access_token.go:43`) — the service captured the config layer's
+        // profile at construction (review r3684153345). Same absorb-to-None
+        // semantics as `resolveLegacyAccessToken`.
+        onNone: () => resolveLegacyAccessToken,
+        onSome: (profile) =>
+          legacyAccessTokenForProfile(profile.name).pipe(
+            Effect.catch(() => Effect.succeed(Option.none<Redacted.Redacted<string>>())),
+          ),
+      });
 
       // See `add.handler.ts` for the rationale behind `bearerToken(Redacted)`.
       const request = HttpClientRequest.put(

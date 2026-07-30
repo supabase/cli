@@ -7,7 +7,7 @@ import { legacyProfileFilePath } from "../../config/legacy-profile-file.ts";
 import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
 import { LegacySsoWorkdirError } from "./sso.errors.ts";
-import { legacySsoLoadProfileApiUrl } from "./sso.load-profile.ts";
+import { legacySsoLoadProfile, type LegacySsoLoadedProfile } from "./sso.load-profile.ts";
 
 /**
  * Reconciles an Effect-parsed option flag with pflag semantics
@@ -198,7 +198,7 @@ export function legacySsoPflagProfileValue(
  * provide argv via `Stdio.layerTest`) the flag settings and `RuntimeInfo`
  * may be absent; the emulation then only acts on what the scan itself shows.
  */
-export const legacySsoResolvePflagProfileApiUrl = Effect.fnUntraced(function* (
+export const legacySsoResolvePflagProfile = Effect.fnUntraced(function* (
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
 ) {
   const parsedRaw = yield* Effect.serviceOption(LegacyProfileFlag);
@@ -222,14 +222,14 @@ export const legacySsoResolvePflagProfileApiUrl = Effect.fnUntraced(function* (
     goExplicit.value === layerExplicit.value &&
     goExplicit.value !== ""
   ) {
-    return Option.none<string>();
+    return Option.none<LegacySsoLoadedProfile>();
   }
 
   const fs = yield* Effect.serviceOption(FileSystem.FileSystem);
   const path = yield* Effect.serviceOption(Path.Path);
   const runtimeInfo = yield* Effect.serviceOption(RuntimeInfo);
   if (Option.isNone(fs) || Option.isNone(path) || Option.isNone(runtimeInfo)) {
-    return Option.none<string>();
+    return Option.none<LegacySsoLoadedProfile>();
   }
 
   // Lowest precedence: the persisted `~/.supabase/profile` file. Go uses the
@@ -257,9 +257,9 @@ export const legacySsoResolvePflagProfileApiUrl = Effect.fnUntraced(function* (
       });
 
   if (goToken === layerToken && goToken !== "") {
-    return Option.none<string>();
+    return Option.none<LegacySsoLoadedProfile>();
   }
-  return Option.some(yield* legacySsoLoadProfileApiUrl(goToken, fs.value));
+  return Option.some(yield* legacySsoLoadProfile(goToken, fs.value));
 });
 
 /** Go's `strconv.ParseBool` accepted literals (`strconv/atob.go:10-19`). */

@@ -1,4 +1,4 @@
-import { Effect, Option, Result, Stdio } from "effect";
+import { Effect, Option, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -20,6 +20,7 @@ import {
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
+import { legacyAccessTokenForProfile } from "../../../auth/legacy-credentials.layer.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
@@ -41,7 +42,7 @@ import {
   legacySsoPflagEnumValue,
   legacySsoPflagSliceValue,
   legacySsoPflagStringValue,
-  legacySsoResolvePflagProfileApiUrl,
+  legacySsoResolvePflagProfile,
   legacySsoValidatePflagWorkdir,
 } from "../sso.pflag-reconcile.ts";
 import {
@@ -188,7 +189,8 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // contacts (binary-verified, PR #5974 review round 7). Where the scan
     // and the parser agree, this resolves to `none` and the config layer's
     // apiUrl below is already pflag-effective.
-    const profileApiUrl = yield* legacySsoResolvePflagProfileApiUrl(scan);
+    const reconciledProfile = yield* legacySsoResolvePflagProfile(scan);
+    const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
 
     // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
     // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
@@ -300,7 +302,18 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       const creating =
         output.format === "text" ? yield* output.task("Adding SSO provider...") : undefined;
 
-      const tokenOpt = yield* resolveLegacyAccessToken;
+      const tokenOpt = yield* Option.match(reconciledProfile, {
+        // Go resolves credentials AFTER LoadProfile, so the keyring account is
+        // the RECONCILED profile's name (`CurrentProfile.Name`,
+        // `access_token.go:43`) — the service captured the config layer's
+        // profile at construction (review r3684153345). Same absorb-to-None
+        // semantics as `resolveLegacyAccessToken`.
+        onNone: () => resolveLegacyAccessToken,
+        onSome: (profile) =>
+          legacyAccessTokenForProfile(profile.name).pipe(
+            Effect.catch(() => Effect.succeed(Option.none<Redacted.Redacted<string>>())),
+          ),
+      });
 
       // Use `HttpClientRequest.bearerToken(Redacted)` rather than unwrapping the
       // redacted token into a plain string ourselves — this preserves the

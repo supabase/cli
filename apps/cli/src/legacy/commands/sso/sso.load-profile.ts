@@ -60,16 +60,28 @@ import { LegacySsoProfileError } from "./sso.errors.ts";
  *   go-playground/validator with WHATWG `URL` parsing and the validator's own
  *   published regexes.
  */
-export function legacySsoLoadProfileApiUrl(
+export interface LegacySsoLoadedProfile {
+  readonly apiUrl: string;
+  /**
+   * Go's `CurrentProfile.Name` — the canonical built-in name (EqualFold
+   * match) or the file's required `name:` field. Credential resolution keys
+   * the keyring account on this name (`access_token.go:43`), so the
+   * reconciled request must read the reconciled profile's token, not the
+   * config layer's (review r3684153345).
+   */
+  readonly name: string;
+}
+
+export function legacySsoLoadProfile(
   token: string,
   fs: FileSystem.FileSystem,
-): Effect.Effect<string, LegacySsoProfileError> {
+): Effect.Effect<LegacySsoLoadedProfile, LegacySsoProfileError> {
   return Effect.gen(function* () {
     // Go: `strings.EqualFold(p.Name, prof)` — the built-in names are all
     // ASCII lower-case, so folding is plain lower-casing here.
     const folded = token.toLowerCase();
     if (legacyIsBuiltinProfileName(folded)) {
-      return legacyApiUrl(folded);
+      return { apiUrl: legacyApiUrl(folded), name: folded };
     }
 
     // viper `SetConfigFile("")` is a no-op, so `ReadInConfig` falls back to
@@ -157,8 +169,9 @@ export function legacySsoLoadProfileApiUrl(
       return yield* fail(legacyPadGoErrorBlock(`invalid profile: ${validationErrors.join("\n")}`));
     }
 
-    // `api_url` passed the `required` tag above, so it is present and non-empty.
-    return values.get("api_url") ?? "";
+    // `api_url` and `name` both passed the `required` tag above, so they are
+    // present and non-empty.
+    return { apiUrl: values.get("api_url") ?? "", name: values.get("name") ?? "" };
   });
 }
 
