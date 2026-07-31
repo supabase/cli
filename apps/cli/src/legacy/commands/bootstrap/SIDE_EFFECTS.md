@@ -8,16 +8,17 @@ command — see Notes).
 
 ## Files Read
 
-| Path                                  | Format     | When                                                                                                                                                                                                                                                                 |
-| ------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/access-token`            | plain text | ensure-login token miss (env unset and keyring unavailable)                                                                                                                                                                                                          |
-| `<workdir>/.env.example`              | dotenv     | optional; merged into the generated `.env`                                                                                                                                                                                                                           |
-| `<workdir>/supabase/config.toml`      | TOML       | native push step (embedded defaults used when absent)                                                                                                                                                                                                                |
-| `<workdir>/supabase/.temp/pooler-url` | plain text | native push step's connection resolution, only when the direct `db.<ref>.<projectHost>:5432` host is unreachable (IPv4-only network) — `legacyResolveLinkedConn` falls back through the saved pooler URL `link.LinkServices` wrote in the earlier link-services step |
-| `<workdir>/supabase/migrations/`      | directory  | native push step, when `[db.migrations].enabled` (default true)                                                                                                                                                                                                      |
-| `<workdir>/supabase/migrations/*.sql` | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                 |
-| seed files from `[db.seed].sql_paths` | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                      |
-| `<workdir>/supabase/roles.sql`        | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                          |
+| Path                                            | Format     | When                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                      | plain text | ensure-login token miss (env unset and keyring unavailable)                                                                                                                                                                                                          |
+| `<workdir>/.env.example`                        | dotenv     | optional; merged into the generated `.env`                                                                                                                                                                                                                           |
+| `<workdir>/supabase/config.toml`                | TOML       | native push step (embedded defaults used when absent)                                                                                                                                                                                                                |
+| `<workdir>/supabase/.temp/pooler-url`           | plain text | native push step's connection resolution, only when the direct `db.<ref>.<projectHost>:5432` host is unreachable (IPv4-only network) — `legacyResolveLinkedConn` falls back through the saved pooler URL `link.LinkServices` wrote in the earlier link-services step |
+| `<workdir>/supabase/migrations/`                | directory  | native push step, when `[db.migrations].enabled` (default true)                                                                                                                                                                                                      |
+| `<workdir>/supabase/migrations/*.sql`           | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                 |
+| seed files from `[db.seed].sql_paths`           | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                      |
+| `<workdir>/supabase/roles.sql`                  | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                          |
+| `<workdir>/supabase/.temp/edge-runtime-version` | plain text | native push step's migrations-catalog cache (pg-delta), when a pinned edge-runtime image tag exists — resolved against the bootstrap workdir explicitly, not `cliConfig.workdir` (which is stale after this handler's own `process.chdir`)                           |
 
 ## Files Written
 
@@ -151,6 +152,13 @@ suppressed; a single structured result is emitted for the whole command:
   the active profile's `suggestionContext` (dashboard URL + profile name), so a connect failure
   during the push still renders Go's `SetConnectSuggestion` hint (Network Restrictions / wrong
   password / IPv6 / wrong profile) instead of falling back to the generic `--debug` suggestion.
+  When resolution itself fails because the direct host is unreachable and no pooler URL was ever
+  saved (`LegacyDbConfigIpv6Error`), Go's `NewDbConfigWithPassword` (`db_url.go:161-163`) logs the
+  error and presses on with its best-effort direct-host config rather than aborting
+  (`bootstrap.go:115-118`); this is matched by catching that one error, logging it to stderr, and
+  falling back to the same direct-host shape already computed for `.env` (step K's `dbConfig`) so
+  the retry-wrapped push below still gets real reconnect attempts across the backoff window instead
+  of failing bootstrap immediately.
 - **Password**: Go's bootstrap never forwards a password to its internal push call on a separate
   channel — it always reuses the create-resolved password (`created.dbPassword`). There is no
   flag-vs-env distinction to preserve once the call is in-process (unlike the former Go-subprocess
