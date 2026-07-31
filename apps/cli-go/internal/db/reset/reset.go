@@ -1,6 +1,7 @@
 package reset
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
@@ -287,16 +288,32 @@ func reloadKong(ctx context.Context) error {
 		// Kong may be excluded from the stack.
 		return nil
 	} else if err != nil {
-		return errors.Errorf("failed to inspect kong: %w", err)
+		return suggestKongRecovery(errors.Errorf("failed to inspect kong: %w", err))
 	}
 	if !resp.State.Running {
 		// A stopped gateway has no stale cache to flush.
 		return nil
 	}
-	if _, err := utils.DockerExecOnce(ctx, utils.KongId, nil, []string{"kong", "reload"}); err != nil {
-		return errors.Errorf("failed to reload kong: %w", err)
+	var out bytes.Buffer
+	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload"}, &out, &out); err != nil {
+		if msg := strings.TrimSpace(out.String()); len(msg) > 0 {
+			return suggestKongRecovery(errors.Errorf("failed to reload kong: %w:\n%s", err, msg))
+		}
+		return suggestKongRecovery(errors.Errorf("failed to reload kong: %w", err))
 	}
 	return nil
+}
+
+// suggestKongRecovery decorates a gateway-left-unconfirmed failure with the
+// advisory next step; the caller-neutral wording also covers branch switch,
+// which shares RestartDatabase.
+func suggestKongRecovery(err error) error {
+	utils.CmdSuggestion = fmt.Sprintf(
+		"Local services restarted, but API routes may return 502 until the gateway reloads.\nTry restarting it with %s, and check %s if the failure persists.",
+		utils.Aqua("docker restart "+utils.KongId),
+		utils.Aqua("docker logs "+utils.KongId),
+	)
+	return err
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

@@ -453,6 +453,9 @@ func TestRestartDatabase(t *testing.T) {
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "failed to inspect kong")
+		assert.Contains(t, utils.CmdSuggestion, "API routes may return 502")
+		assert.Contains(t, utils.CmdSuggestion, "docker restart test-kong")
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -499,6 +502,9 @@ func TestRestartDatabase(t *testing.T) {
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "failed to reload kong")
+		assert.Contains(t, utils.CmdSuggestion, "API routes may return 502")
+		assert.Contains(t, utils.CmdSuggestion, "docker restart test-kong")
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
