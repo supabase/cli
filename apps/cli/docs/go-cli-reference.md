@@ -1,7 +1,7 @@
 # Old Go CLI Reference
 
-> Complete help output for the old Go-based `supabase` CLI.
-> Use this document as the raw parity reference when tracking the TypeScript CLI port in [`go-cli-porting-status.md`](./go-cli-porting-status.md).
+> Complete help output for the old, **deprecated** Go-based `supabase` CLI.
+> Use this document as the raw surface reference when tracking the remaining Go-backed commands in [`go-cli-porting-status.md`](./go-cli-porting-status.md).
 
 ## Global Flags
 

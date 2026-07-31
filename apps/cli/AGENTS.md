@@ -11,9 +11,17 @@ There are three source trees under `src/`:
 ```
 src/
 ├── next/     # New CLI experience (v3 / alpha channel) — do not modify when porting legacy commands
-├── legacy/   # Strict 1:1 TypeScript port of the Go CLI (stable channel)
+├── legacy/   # TypeScript implementation of the stable-channel CLI (originally ported from the Go CLI)
 └── shared/   # Cross-cutting primitives used by both shells
 ```
+
+### Go CLI deprecation status
+
+The Go CLI (`apps/cli-go/`) is **deprecated**. The TypeScript implementation in this workspace is the authoritative CLI. What that means in practice:
+
+- **For natively-implemented legacy commands, the TS code — together with its tests and the command's `SIDE_EFFECTS.md` — is the source of truth.** Byte-for-byte parity with Go output is no longer a goal. The compatibility contract that remains is behavioral, not textual — see "Legacy Shell Compatibility Contract" below.
+- **The Go binary is still bundled** and still executes the commands (and sub-steps) that route through `LegacyGoProxy`. That surface is shrinking, not growing: the goal is to natively port what remains and eventually drop the binary. Track it in [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md).
+- **`apps/cli-go/` remains useful as a reference** — for expected flags, exit codes, file paths, and behavior when porting a still-proxied command — but it is a reference, not a contract. When the Go source and a deliberate TS decision disagree, the TS decision wins.
 
 ### Isolation rules
 
@@ -101,16 +109,16 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 ---
 
-## Phase 0: Go Binary Wrapper
+## Go Binary Proxy (`LegacyGoProxy`)
 
-Before any command is natively implemented in TypeScript, the first step for each command is to **wrap** it: define the command in the TS command tree and proxy all invocations to the bundled Go binary via subprocess.
+A shrinking set of legacy commands (and sub-steps of otherwise-native commands) is still executed by the bundled Go binary: the TS command tree defines the command and proxies the invocation via subprocess. No new proxy-backed surface should be added — the remaining proxied commands are queued to be ported natively.
 
 ### Proxy handler pattern
 
 A proxy handler passes argv through to the Go binary, forwarding stdin/stdout/stderr and propagating the exit code. Use the shared `LegacyGoProxy` service:
 
 ```ts
-// src/legacy/commands/orgs/list/list.handler.ts (Phase 0 proxy)
+// example proxy handler
 export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
   _flags: LegacyOrgsListFlags,
 ) {
@@ -119,19 +127,14 @@ export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
 });
 ```
 
-### When wrapping a command
+### Rules for the remaining proxied commands
 
-For each command added to the Phase 0 wrapper, complete all three steps:
+- **The TS flag definitions must line up with what the Go binary parses** — the proxy forwards argv verbatim, so a mismatched flag name or argument type breaks the subprocess call. Use `apps/cli-go/` to check what the binary accepts.
+- **Do not change a proxied command's user-facing behavior in the TS wrapper layer.** If a proxied command needs behavior changes, port it natively first.
 
-1. **Reconstruct the command definition** — flags, subcommands, and argument types must exactly match the Go CLI (use `apps/cli-go/` as the reference).
-2. **Write a proxy handler** — forward invocations to the Go binary via `LegacyGoProxy`.
-3. **Update `docs/go-cli-porting-status.md`** — mark the command as `wrapped`.
+### When porting a proxied command to native TS
 
-### When porting a command (Phase 1+)
-
-When replacing a proxy handler with a native TS implementation:
-
-1. Implement the business logic in `<command>.handler.ts` using Effect services (see Legacy Port sections below).
+1. Implement the business logic in `<command>.handler.ts` using Effect services (see Legacy Port sections below). Use the Go source as a reference for expected behavior, but apply the compatibility contract below — not byte-parity — when deciding what must be preserved.
 2. Update `docs/go-cli-porting-status.md` — mark the command as `ported`.
 
 ---
@@ -159,11 +162,11 @@ src/legacy/commands/<command>/
   <command>.errors.ts         # Data.TaggedError types
   <command>.layers.ts         # runtime layer composition for the command family
   <command>.format.ts         # text formatters (timestamps, regions, booleans)
-  <command>.encoders.ts       # Go-compatible JSON / YAML / TOML / env encoders
+  <command>.encoders.ts       # machine-output encoders (JSON / YAML / TOML / env)
   SIDE_EFFECTS.md
 ```
 
-The `.format.ts` and `.encoders.ts` files should be pure functions with no Effect or service dependencies — that keeps them unit-testable and makes Go-parity rules explicit (e.g. JSON key sort order, env-var SCREAMING_SNAKE_CASE flattening, empty arrays coerced to null).
+The `.format.ts` and `.encoders.ts` files should be pure functions with no Effect or service dependencies — that keeps them unit-testable and makes machine-output format rules explicit (e.g. JSON key sort order, env-var SCREAMING_SNAKE_CASE flattening, empty arrays coerced to null). Machine-output formats are part of the compatibility contract — existing scripts parse them — so changes to encoders need deliberate justification.
 
 Commands with subcommands use nested directories:
 
@@ -231,60 +234,62 @@ Decision rule:
 Concrete examples worth watching for as more commands land:
 
 - HTTP-error → tagged-error mapping (`backups.errors.ts:mapLegacyBackupHttpError`) — almost every Management API command will need this shape.
-- Go-compatible JSON / YAML / TOML / env encoders (`backups.encoders.ts`) — the flag `--output {json,yaml,toml,env}` is supported by many Go subcommands.
+- JSON / YAML / TOML / env encoders (`backups.encoders.ts`) — the flag `--output {json,yaml,toml,env}` is supported by many legacy subcommands.
 - Glamour-table rendering helpers and column padding — currently in `legacy/output/legacy-glamour-table.ts`, already correctly hoisted.
 - Timestamp / region / boolean formatters (`backups.format.ts`) — likely shared the moment a second command renders a backup/project/region field.
 
 This rule is consistent with the repo-wide **Refactoring Policy** ("delete obsolete helpers, shims, and parallel code paths as part of the refactor") — it just makes the policy concrete for the legacy-port workflow.
 
-### `Config.Validate` parity has one home
+### Config validation has one home
 
-Go's `Config.Validate` (`apps/cli-go/pkg/config/config.go:989-1190`) is ported exactly once: `src/legacy/shared/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a Go validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share.
-
----
-
-## Legacy Port: Go CLI Output Parity
-
-The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility contract covers:
-
-- Same command paths and flag names
-- Same stdout/stderr text, including spacing, casing, and newlines
-- Same filesystem side effects (files read and written)
-- Same API routes and request shapes
-- Same exit codes
-
-When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `apps/cli-go/` and match it exactly.
+Config validation (originally ported from Go's `Config.Validate`) lives exactly once: `src/legacy/shared/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a validation branch or message needs to change, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share.
 
 ---
 
-## Legacy Port: Go Parity Checklist
+## Legacy Shell Compatibility Contract
+
+The legacy shell is the stable channel: existing users' scripts, CI pipelines, and tooling depend on it. The compatibility contract is **behavioral**, not textual. It covers:
+
+- **Stable command paths and flag names** — do not rename or remove surface that shipped.
+- **Stable exit codes** — including error conditions.
+- **Stable filesystem side effects** — the file locations documented in each command's `SIDE_EFFECTS.md` (see "File Location Compatibility" below).
+- **Stable machine-output formats** — `-o json|yaml|toml|env` payloads and `--output-format json|stream-json` envelopes are parsed by scripts; treat their shape as frozen unless deliberately versioned.
+- **Equivalent API interactions** — same routes and request shapes for the same user intent.
+
+Explicitly **not** covered: byte-for-byte stdout/stderr text. Human-facing wording, spacing, spinners, and formatting may diverge from the Go CLI and may be improved. Since the Go CLI is deprecated, byte-parity with its output is no longer a goal for natively-implemented commands.
+
+**Source of truth:** for a natively-implemented command, the TS implementation, its tests, and its `SIDE_EFFECTS.md` define correct behavior. `apps/cli-go/` is a reference for what a still-proxied command does today — useful when porting it — but it is not an authority to match exactly.
+
+---
+
+## Legacy Port: Command Checklist
 
 When porting a Management-API-style command, verify each item before marking the command as `ported`:
 
-1. **Telemetry + linked-project writes run on every invocation** — Go uses `PersistentPostRun` (see `apps/cli-go/cmd/root.go:176`). Wrap the handler body in `.pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush))` so both files are written on success **and** failure. See `backups/list/list.handler.ts:74-114` as the canonical pattern.
+1. **Telemetry + linked-project writes run on every invocation** — wrap the handler body in `.pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush))` so both files are written on success **and** failure. See `backups/list/list.handler.ts:74-114` as the canonical pattern.
 
-2. **Errors go to stderr in text mode, byte-matching Go's template** — `Output.fail` now writes a frame-free message to stderr followed by the "Try rerunning the command with --debug to get more details." suggestion when `--debug` is unset. Don't reintroduce clack's `■ … │` frame. Reference: commits `ee041834`, `cf4f574b`.
+2. **Errors go to stderr in text mode** — `Output.fail` writes a frame-free message to stderr followed by the "Try rerunning the command with --debug to get more details." suggestion when `--debug` is unset. Don't reintroduce clack's `■ … │` frame. Reference: commits `ee041834`, `cf4f574b`.
 
-3. **`--debug` logs every HTTP request on stderr** — Format `"HTTP YYYY/MM/DD HH:MM:SS <METHOD>: <URL>\n"` (Go's `log.LstdFlags|log.Lmsgprefix`). Provided automatically by `legacyHttpClientLayer`; ensure that layer (not the raw `HttpClient.layer`) is what every legacy command's runtime composes. Reference: commit `39cfec20`.
+3. **`--debug` logs every HTTP request on stderr** — Format `"HTTP YYYY/MM/DD HH:MM:SS <METHOD>: <URL>\n"`. Provided automatically by `legacyHttpClientLayer`; ensure that layer (not the raw `HttpClient.layer`) is what every legacy command's runtime composes. Reference: commit `39cfec20`.
 
 4. **`SUPABASE_PROFILE` is dual-mode** — accept either a built-in name (`supabase`, `supabase-staging`, `supabase-local`) **or** a filesystem path to a YAML file with `api_url:` / `gotrue_url:` / `db_url:` keys. cli-e2e harness relies on the file-path mode. Reference: commit `288c2937`.
 
 5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `LegacyCliConfig`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
 
-6. **Both `--output` (Go) and `--output-format` (TS) must be honored** — Go's `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on `goOutputFlag` first, then fall through to TS `--output-format` text/json/stream-json.
+6. **Both `--output` (legacy) and `--output-format` (TS) must be honored** — the legacy `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on `goOutputFlag` first, then fall through to TS `--output-format` text/json/stream-json.
 
-7. **PostHog telemetry payload matches Go 1:1** — see the next section.
+7. **Telemetry follows the canonical TS event catalog** — see the next section.
 
 ---
 
-## Legacy Port: Telemetry Parity
+## Legacy Port: Telemetry
 
-The legacy shell sends the same PostHog events to the same product analytics pipeline as the Go CLI. Drift is silent (no test will catch it) and breaks dashboards. The rules:
+The legacy shell sends PostHog events to the product analytics pipeline. **The single source of truth for event names and property shapes is `shared/telemetry/event-catalog.ts`.** It originated as a mirror of the Go CLI's telemetry catalog, but with the Go CLI deprecated it is no longer required to track Go — the TS catalog is canonical and free to evolve. Drift between command code and the catalog is silent (no test will catch it) and breaks dashboards, so:
 
-- **The canonical catalog is `shared/telemetry/event-catalog.ts`** — a 1:1 mirror of `apps/cli-go/internal/telemetry/events.go`. Reference its exported constants (`EventCommandExecuted`, `PropFlags`, `EnvSignalPresenceKeys`, …) instead of writing bare strings. When the Go catalog changes, update the TS catalog in the same PR.
-- **Native legacy commands wrap with `withLegacyCommandInstrumentation`** (from `legacy/telemetry/legacy-command-instrumentation.ts`) — _not_ the shared `withCommandInstrumentation`. The legacy variant emits Go-shape properties: a single `flags` map (vs `flags_used`/`flag_values`), `is_agent: boolean` (vs `ai_tool: string`), and `env_signals`.
+- **Reference the catalog's exported constants** (`EventCommandExecuted`, `PropFlags`, `EnvSignalPresenceKeys`, …) instead of writing bare strings. Changes to event names or property shapes are product-analytics decisions — make them deliberately in the catalog, never ad hoc in a handler.
+- **Native legacy commands wrap with `withLegacyCommandInstrumentation`** (from `legacy/telemetry/legacy-command-instrumentation.ts`) — _not_ the shared `withCommandInstrumentation`. The legacy variant emits the legacy property shape: a single `flags` map (vs `flags_used`/`flag_values`), `is_agent: boolean` (vs `ai_tool: string`), and `env_signals`.
 - **Pass `flags` to the wrapper** so boolean flag values can be detected and logged verbatim: `handler(flags).pipe(withLegacyCommandInstrumentation({ flags }), ...)`. Sensitive values become the literal string `"<redacted>"` to match Go.
-- **Use `safeFlags: ["flag-name"]`** to whitelist flags that Go marks with `markFlagTelemetrySafe` (grep `apps/cli-go/cmd/*.go`). Today these are `--project-ref` (sso, branches, link, functions, projects/api-keys), `--project-id` (gen/types), `--org-id` (projects/create), and `--version` (migration/squash).
+- **Use `safeFlags: ["flag-name"]`** to whitelist flags whose values are safe to log verbatim. Today these are `--project-ref` (sso, branches, link, functions, projects/api-keys), `--project-id` (gen/types), `--org-id` (projects/create), and `--version` (migration/squash) — the set the Go CLI marked with `markFlagTelemetrySafe`.
 - **Pass `config` (the command's own flag config record) to the wrapper** if it has any `Flag.choice`/`Flag.choiceWithValue` flags: `withLegacyCommandInstrumentation({ flags, config })`. Every choice flag declared in that command's own `config` is auto-detected and treated as safe, mirroring Go's `isEnumFlag` (`cmd/root_analytics.go:110-116`), which checks `flag.Value.(*utils.EnumFlag)` unconditionally — no per-flag `safeFlags` entry needed, and it stays correct as choices are added or removed. A command's own `config` only ever contains its own locally-declared flags, so this cannot cover the 3 global choice flags (`--output`, `--dns-resolver`, `--agent` in `shared/legacy/global-flags.ts`) — those are handled separately, see below.
 - **Global/persistent flags (`shared/legacy/global-flags.ts`) resolve automatically** — the wrapper reads `legacyGlobalFlagValues` (via `Effect.serviceOption`, so it's a no-op outside the real CLI tree) and falls back to it whenever a changed flag name isn't in the handler's own `flags` record, mirroring Go's `changedFlags()` walking `cmd.Parent()`'s `PersistentFlags()` (`cmd/root_analytics.go:53-76`). No per-command wiring needed. This gives two flag families their real value automatically, via the existing boolean-is-safe rule and a new choice-is-safe rule (`GLOBAL_CHOICE_FLAG_NAMES` — CLI-1904) respectively:
   - Boolean globals: `--debug`, `--yes`, `--experimental`, `--create-ticket`.
@@ -293,7 +298,7 @@ The legacy shell sends the same PostHog events to the same product analytics pip
   Both rules apply ONLY when a command's own `flags` record doesn't already declare that CLI name — a command's own flag always wins. Example: `db diff` declares its own local `output: Flag.string("output")` (a file path, not a choice) in its `flags` record, so `db diff --output diff.sql` stays redacted — matching Go, where `isEnumFlag` type-asserts `db diff`'s own non-enum local flag object instead of root's persistent `*utils.EnumFlag`.
 
 - **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
-- **When promoting a command from proxy to native, reproduce every `phtelemetry.*` call in the Go counterpart.** Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested`. The current Go custom events that legacy ports must reproduce when natively ported:
+- **When promoting a command from proxy to native, carry over every event the Go implementation fires today** so analytics continuity is preserved across the port. Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested`. Once ported, the TS implementation owns those events and they evolve with the catalog. The Go custom events that native ports carry over:
 
   | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                               |
   | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -304,17 +309,17 @@ The legacy shell sends the same PostHog events to the same product analytics pip
 
   Reference pattern for login: `next/commands/login/login.handler.ts:38-62`.
 
-- **Tracing layer is local-only observability**, not PostHog. Span names (`legacy.<command>.<sub>`) and the NDJSON exporter never leave the user's machine. No parity implication.
+- **Tracing layer is local-only observability**, not PostHog. Span names (`legacy.<command>.<sub>`) and the NDJSON exporter never leave the user's machine. No analytics implication.
 
 ---
 
 ## Legacy Port: File Location Compatibility
 
-The legacy shell bridges two worlds: it must behave exactly like the Go CLI for existing users, and it must lay the groundwork for a seamless upgrade to the next shell.
+The legacy shell bridges two worlds: it must keep the on-disk state locations existing users and scripts depend on, and it must lay the groundwork for a seamless upgrade to the next shell.
 
 **Dual write requirement:** Where a legacy command writes state to disk, it must write to **both**:
 
-1. **The Go CLI paths** — the exact file locations the Go CLI already uses, so existing scripts, dotfiles, and tooling that depend on those paths continue to work.
+1. **The established (Go-era) paths** — the exact file locations the Go CLI used and the legacy shell shipped with, so existing scripts, dotfiles, and tooling that depend on those paths continue to work.
 2. **The `next/` paths** — the file locations that `next/` services and layers expect to read, so a user who upgrades to the next experience finds their state already in place.
 
 When these two sets of paths are the same (they often are via shared services), no extra work is needed. When they differ, the legacy handler must write to both.
@@ -382,7 +387,7 @@ yield * creating.succeed("Branch created");
 
 The Go-compat `-o`/`--output` flag (`LegacyOutputFlag`, values `env|pretty|json|toml|yaml`) is **independent** of `--output-format`. It does not change `output.format`, so a command run with `-o json` (and no `--output-format`) keeps `output.format === "text"` and the spinner gate `output.format === "text"` stays `true`. If the plain `textOutputLayer` is active, clack writes spinner ANSI (e.g. the hide-cursor `\x1b[?25l`) to **stdout** and corrupts the machine payload the handler emits via `output.raw` — exactly the CLI-1546 regression (`branches list -o json` → broken `JSON.parse`).
 
-`legacy/cli/root.ts` therefore selects **`legacyQuietProgressTextOutputLayer`** (in `legacy/output/`) for any Go machine format (`json|yaml|toml|env`). It is a legacy-only wrapper over the shared `textOutputLayer` that no-ops only `task` and `progress`; everything else — `format: "text"`, `raw`, logs, and error rendering (red text on **stderr**) — delegates unchanged, so Go output parity is preserved exactly.
+`legacy/cli/root.ts` therefore selects **`legacyQuietProgressTextOutputLayer`** (in `legacy/output/`) for any Go machine format (`json|yaml|toml|env`). It is a legacy-only wrapper over the shared `textOutputLayer` that no-ops only `task` and `progress`; everything else — `format: "text"`, `raw`, logs, and error rendering (red text on **stderr**) — delegates unchanged, so existing output behavior is preserved exactly.
 
 Rules:
 
@@ -445,12 +450,14 @@ Live tests are black-box CLI subprocess tests — like `*.e2e.test.ts`, but run 
 
 ---
 
-## Go CLI Parity Tracking
+## Go CLI Migration Tracking
 
-When you add or change CLI commands, subcommands, flags, or parameters in the **legacy shell**, always update [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md).
+[`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md) tracks how much of the CLI surface still depends on the deprecated Go implementation (proxied or unported) versus being natively implemented in TS. It is a migration tracker, not a parity scorecard — its purpose is to show what remains before the bundled Go binary can be dropped.
+
+When you add or change CLI commands, subcommands, flags, or parameters in the **legacy shell**, always update it:
 
 - Update status when a Go leaf command moves between `missing`, `partial`, and `ported`.
-- Update missing or extra flag/parameter notes when the command surface changes — including when you add or remove a flag on an already-ported TS command.
+- Update missing or extra flag/parameter notes when the command surface changes — including when you add or remove a flag on an already-ported TS command. Divergence from the Go surface is allowed for natively-implemented commands; the tracker records it, it doesn't forbid it.
 - Keep the tracker focused on final leaf commands, not command groups.
 - If you add a TS-native command with no direct Go equivalent (for example `dev`), record it in the TS-only section instead of marking a Go command as ported.
 
@@ -479,4 +486,4 @@ bun run --parallel "*:check"
 
 ### `apps/cli-go/`
 
-The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly.
+The **deprecated** [old Supabase CLI](https://github.com/supabase/cli) written in Go. It still ships as the bundled binary behind `LegacyGoProxy` for the remaining unported commands. Use it as a reference for expected flags, exit codes, file paths, and behavior when porting one of those commands — but it is a reference, not a contract: the TS implementation is authoritative, and byte-parity with Go output is not a goal. Do not add new features to it.

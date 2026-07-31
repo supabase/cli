@@ -1,6 +1,6 @@
 # Go CLI Porting Status
 
-Manual parity tracker for the TypeScript CLI port. Update this file whenever a command is added or parity changes.
+Manual migration tracker for the TypeScript CLI. The Go CLI (`apps/cli-go/`) is **deprecated**: the TS implementation is authoritative, and this file tracks how much of the command surface still depends on the Go implementation (proxied via `LegacyGoProxy` or not yet represented in TS) versus being natively implemented — i.e. what remains before the bundled Go binary can be dropped. It is not a parity scorecard: divergence from the Go surface is allowed for natively-implemented commands; this file records it rather than forbidding it. Update this file whenever a command is added or its status/flag surface changes.
 
 Reference:
 
