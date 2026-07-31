@@ -641,6 +641,51 @@ describe("legacy db start", () => {
     },
   );
 
+  // Go's `Config.Load` (`flags.LoadConfig`) decodes every `time.Duration` field unconditionally,
+  // for every command including `db start` — even though `db start` never starts GoTrue itself.
+  // Mirrors `commands/start/start.handler.ts`'s own identical eager-validation tests.
+  it.live.each([
+    ["auth.email.max_frequency", '[auth.email]\nmax_frequency = "not-a-duration"\n'],
+    ["auth.sms.max_frequency", '[auth.sms]\nmax_frequency = "not-a-duration"\n'],
+    ["auth.sessions.timebox", '[auth.sessions]\ntimebox = "not-a-duration"\n'],
+    [
+      "auth.sessions.inactivity_timeout",
+      '[auth.sessions]\ninactivity_timeout = "not-a-duration"\n',
+    ],
+    ["auth.mfa.phone.max_frequency", '[auth.mfa.phone]\nmax_frequency = "not-a-duration"\n'],
+  ] as const)(
+    "fails with a typed config error on a malformed %s, before any container is created",
+    ([dottedFieldPath, tomlFragment]) => {
+      const { layer, child } = setup({
+        configContents: `project_id = "test"\n${tomlFragment}`,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "warns when auth.sms.enable_signup is true but no SMS provider is enabled, matching Go's (s *sms) validate()",
+    () => {
+      const { layer, out } = setup({
+        configContents: 'project_id = "test"\n[auth.sms]\nenable_signup = true\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
+      });
+    },
+  );
+
   it.live(
     "does not add the Linux-only host.docker.internal extra host on a non-Linux platform",
     () => {

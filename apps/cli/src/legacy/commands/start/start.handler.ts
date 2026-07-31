@@ -83,6 +83,7 @@ import {
   legacyResolveConfiguredSigningKeys,
   legacyResolveAuthExternalUrl,
   legacyResolveDbSettingsEnvOverrides,
+  legacyResolveGotrueSessions as resolveGotrueSessions,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
   legacyStrToArr,
@@ -313,37 +314,6 @@ function resolveGotruePasskeyWebauthn(
         }
       : undefined;
   return { passkeyEnabled, webauthn };
-}
-
-/**
- * Go's `Auth.Sessions` (`pkg/config/auth.go:330-333`) is a value-typed struct,
- * always merged with a Viper default (empty durations) regardless of
- * `[auth.sessions]` presence in config.toml — so
- * `SUPABASE_AUTH_SESSIONS_{TIMEBOX,INACTIVITY_TIMEOUT}` overrides always apply
- * before `start.go` builds `GOTRUE_SESSIONS_*`, no raw-document presence gate
- * needed (same reasoning as {@link resolveGotrueRateLimit}/mfa below).
- * `@supabase/config`'s `sessions` schema is `Schema.optionalKey` at the
- * `auth` level though (`config.auth.sessions` can be `undefined`), unlike
- * Go's always-present struct — an env override must still be able to
- * introduce a value even when the section was never in config.toml at all,
- * matching Go's real behavior.
- */
-function resolveGotrueSessions(
-  sessions: ProjectConfig["auth"]["sessions"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["sessions"] {
-  const timebox = legacyEnvOverride(
-    "SUPABASE_AUTH_SESSIONS_TIMEBOX",
-    sessions?.timebox,
-    projectEnvValues,
-  );
-  const inactivityTimeout = legacyEnvOverride(
-    "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
-    sessions?.inactivity_timeout,
-    projectEnvValues,
-  );
-  if (timebox === undefined && inactivityTimeout === undefined) return sessions;
-  return { timebox, inactivity_timeout: inactivityTimeout };
 }
 
 /**

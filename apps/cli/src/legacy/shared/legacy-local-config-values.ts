@@ -1656,6 +1656,43 @@ export function legacyResolveAuthMfa(
   };
 }
 
+/**
+ * Go's `Auth.Sessions` (`pkg/config/auth.go:330-333`) is a value-typed struct,
+ * always merged with a Viper default (empty durations) regardless of
+ * `[auth.sessions]` presence in config.toml — so
+ * `SUPABASE_AUTH_SESSIONS_{TIMEBOX,INACTIVITY_TIMEOUT}` overrides always apply
+ * before `start.go` builds `GOTRUE_SESSIONS_*`, no raw-document presence gate
+ * needed (same reasoning as {@link legacyResolveAuthMfa} above).
+ * `@supabase/config`'s `sessions` schema is `Schema.optionalKey` at the
+ * `auth` level though (`config.auth.sessions` can be `undefined`), unlike
+ * Go's always-present struct — an env override must still be able to
+ * introduce a value even when the section was never in config.toml at all,
+ * matching Go's real behavior.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.sessions.{timebox,inactivity_timeout}` resolution to
+ * reproduce Go's unconditional `Config.Load` duration decode, per
+ * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
+ */
+export function legacyResolveGotrueSessions(
+  sessions: ProjectConfig["auth"]["sessions"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["sessions"] {
+  const timebox = legacyEnvOverride(
+    "SUPABASE_AUTH_SESSIONS_TIMEBOX",
+    sessions?.timebox,
+    projectEnvValues,
+  );
+  const inactivityTimeout = legacyEnvOverride(
+    "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
+    sessions?.inactivity_timeout,
+    projectEnvValues,
+  );
+  if (timebox === undefined && inactivityTimeout === undefined) return sessions;
+  return { timebox, inactivity_timeout: inactivityTimeout };
+}
+
 /** Go's `(s *sms) validate()` fixed provider priority (`pkg/config/config.go:1348-1410`) — a
  * `switch` that validates ONLY the first enabled provider in this order. */
 const LEGACY_SMS_PROVIDER_ORDER = [

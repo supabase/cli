@@ -18,11 +18,17 @@ import {
   localNetworkId,
 } from "../../../shared/legacy-docker-ids.ts";
 import {
+  legacyEnvOverrideBool,
+  legacyResolveAuthEmail,
   legacyResolveAuthExternalUrl,
+  legacyResolveAuthMfa,
+  legacyResolveAuthSms,
   legacyResolveDbSettingsEnvOverrides,
+  legacyResolveGotrueSessions,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
 } from "../../../shared/legacy-local-config-values.ts";
+import { legacyParseGoDuration } from "../../../shared/legacy-go-duration.ts";
 import { legacyLoadLocalProjectContext } from "../../../shared/legacy-local-project-context.ts";
 import { legacyResolveDbBootstrapConfig } from "../../../shared/db-bootstrap/bootstrap-config.ts";
 import { legacyEnsureImagesCached } from "../../../shared/db-bootstrap/image-prepull.ts";
@@ -31,6 +37,31 @@ import { legacyRollbackStart } from "../../../shared/db-bootstrap/rollback.ts";
 import { legacyStartDatabase } from "../../../shared/db-bootstrap/start-database.ts";
 import type { LegacyStartContainerOpts } from "../../../shared/db-bootstrap/container-lifecycle.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Wraps a synchronous resolver/parser that throws on a malformed config value into a typed
+ * `LegacyDbConfigLoadError` failure — mirrors `commands/start/start.handler.ts`'s identical
+ * `wrapConfigOverride`, matching Go's `Config.Load` hard-failing on a bad Viper decode
+ * (`pkg/config/config.go:749-756`) before any Docker work runs.
+ */
+function wrapDbConfigOverride<T>(
+  dottedFieldPath: string,
+  thunk: () => T,
+): Effect.Effect<T, LegacyDbConfigLoadError> {
+  return Effect.try({
+    try: thunk,
+    catch: (cause) =>
+      new LegacyDbConfigLoadError({
+        message: `invalid config for ${dottedFieldPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+  });
+}
 
 /**
  * `supabase db start` — start the local Postgres database.
@@ -148,6 +179,69 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       path,
       { config, projectEnvValues, workdir: cliConfig.workdir },
       (message) => new LegacyDbConfigLoadError({ message }),
+    );
+
+    // Go decodes every `time.Duration` config field — including these 5 — in the same single,
+    // unconditional `Config.Load` pass (`mapstructure.StringToTimeDurationHookFunc()`,
+    // `pkg/config/config.go:749-756,777`), before `db start` touches Docker at all
+    // (`internal/db/start/start.go:45`) — regardless of whether `db start` itself ever reads
+    // the field. `db start` never starts GoTrue (only `supabase start` does, whose OWN identical
+    // eager-validation block this mirrors — see `commands/start/start.handler.ts`'s
+    // `wrapConfigOverride` call sites), so nothing else in this handler ever parses
+    // `auth.email`/`auth.sms`/`auth.sessions`/`auth.mfa`'s duration fields — without this, a
+    // malformed value would be silently accepted here instead of failing the command, unlike
+    // Go. Discarding the parsed values: only the fail-fast behavior matters for this command.
+    const authDocForValidation = asRecord(loaded?.document?.["auth"]);
+    const resolvedEmailForValidation = yield* wrapDbConfigOverride("auth.email", () =>
+      legacyResolveAuthEmail(config.auth.email, authDocForValidation, projectEnvValues),
+    );
+    yield* wrapDbConfigOverride("auth.email.max_frequency", () =>
+      legacyParseGoDuration(resolvedEmailForValidation.max_frequency),
+    );
+    const smsForValidation = yield* wrapDbConfigOverride("auth.sms", () =>
+      legacyResolveAuthSms(authDocForValidation, config.auth.sms, projectEnvValues),
+    );
+    yield* wrapDbConfigOverride("auth.sms.max_frequency", () =>
+      legacyParseGoDuration(smsForValidation.max_frequency),
+    );
+    // Go's `(s *sms) validate()` (`config.go:1412-1415`) prints this and downgrades
+    // `EnableSignup` to `false` when no provider is enabled — `legacyResolveAuthSms` already
+    // applies the downgrade itself, so this only needs to detect whether that branch fired (the
+    // user configured `enable_signup = true` with every provider disabled) to reproduce the
+    // matching warning, same as `commands/start/start.handler.ts`'s identical check.
+    if (
+      !smsForValidation.twilio.enabled &&
+      !smsForValidation.twilio_verify.enabled &&
+      !smsForValidation.messagebird.enabled &&
+      !smsForValidation.textlocal.enabled &&
+      !smsForValidation.vonage.enabled &&
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
+        config.auth.sms.enable_signup,
+        "auth.sms.enable_signup",
+        projectEnvValues,
+      )
+    ) {
+      yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
+    }
+    const gotrueSessionsForValidation = legacyResolveGotrueSessions(
+      config.auth.sessions,
+      projectEnvValues,
+    );
+    if (gotrueSessionsForValidation?.timebox !== undefined) {
+      yield* wrapDbConfigOverride("auth.sessions.timebox", () =>
+        legacyParseGoDuration(gotrueSessionsForValidation.timebox!),
+      );
+    }
+    if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
+      yield* wrapDbConfigOverride("auth.sessions.inactivity_timeout", () =>
+        legacyParseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+      );
+    }
+    yield* wrapDbConfigOverride("auth.mfa.phone.max_frequency", () =>
+      legacyParseGoDuration(
+        legacyResolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency,
+      ),
     );
 
     // Go's `DockerStart` forces every container's network mode (and the network it creates)
