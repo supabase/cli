@@ -38,10 +38,6 @@ export interface LegacyGenTypesDbTarget {
   readonly networkMode: "host" | string;
 }
 
-export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
-  return [...new Set(["public", ...extraSchemas])];
-}
-
 export function parseQueryTimeoutSeconds(
   raw: string,
 ): Effect.Effect<number, LegacyInvalidGenTypesDurationError> {

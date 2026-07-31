@@ -1,8 +1,10 @@
+import { Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import {
   cobraMutuallyExclusiveErrorMessage,
   hasExplicitLongFlag,
   hasExplicitValueFlag,
+  ensureMutuallyExclusive,
 } from "./cobra-flag-groups.ts";
 
 const COMMAND_PATH = ["functions", "deploy"] as const;
@@ -151,5 +153,29 @@ describe("cobraMutuallyExclusiveErrorMessage", () => {
     ).toBe(
       "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [legacy-bundle use-api] were all set",
     );
+  });
+});
+
+describe("ensureMutuallyExclusive", () => {
+  test("succeeds when zero flags in the group are set", () => {
+    const exit = Effect.runSyncExit(ensureMutuallyExclusive(["local", "linked"], []));
+    expect(Exit.isSuccess(exit)).toBe(true);
+  });
+
+  test("succeeds when exactly one flag in the group is set", () => {
+    const exit = Effect.runSyncExit(ensureMutuallyExclusive(["local", "linked"], ["local"]));
+    expect(Exit.isSuccess(exit)).toBe(true);
+  });
+
+  test("fails with cobra's message when more than one flag is set", () => {
+    const exit = Effect.runSyncExit(
+      ensureMutuallyExclusive(["local", "linked", "project-id"], ["linked", "local"]),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(String(exit.cause)).toContain(
+        "if any flags in the group [local linked project-id] are set none of the others can be; [linked local] were all set",
+      );
+    }
   });
 });
