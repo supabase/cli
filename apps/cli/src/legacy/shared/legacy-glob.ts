@@ -45,15 +45,25 @@ export const legacyGlobPattern = (
   pattern: string,
 ): Effect.Effect<ReadonlyArray<string>> =>
   Effect.gen(function* () {
-    if (!legacyHasGlobMeta(pattern)) {
+    // Go's `Glob.files` calls `fs.Glob(fsys, filepath.ToSlash(pattern))` (`config.go:143-145`,
+    // comment: "Glob expects / as path separator on windows") — a no-op on POSIX, where
+    // `path.sep` is already `/`, but on Windows it replaces every `\` with `/` BEFORE any
+    // meta-detection or directory-splitting happens. Without this, a Windows entry with
+    // backslashes — an absolute one is preserved verbatim by `legacyResolveSeedSqlPath`, but
+    // even a relative one can carry them — never matches the `/`-only split below and
+    // `legacyHasGlobMeta` misreads a plain backslash as glob syntax, so a literal path like
+    // `schemas\foo.sql` or a real pattern like `schemas\*.sql` would silently resolve to
+    // nothing instead of the configured file.
+    const normalized = path.sep === "/" ? pattern : pattern.replaceAll("\\", "/");
+    if (!legacyHasGlobMeta(normalized)) {
       const exists = yield* fs
-        .exists(legacyResolveUnderWorkdir(path, workdir, pattern))
+        .exists(legacyResolveUnderWorkdir(path, workdir, normalized))
         .pipe(Effect.orElseSucceed(() => false));
-      return exists ? [pattern] : [];
+      return exists ? [normalized] : [];
     }
-    const slash = pattern.lastIndexOf("/");
-    const dirPattern = slash === -1 ? "" : pattern.slice(0, slash);
-    const filePattern = slash === -1 ? pattern : pattern.slice(slash + 1);
+    const slash = normalized.lastIndexOf("/");
+    const dirPattern = slash === -1 ? "" : normalized.slice(0, slash);
+    const filePattern = slash === -1 ? normalized : normalized.slice(slash + 1);
     const dirs = legacyHasGlobMeta(dirPattern)
       ? yield* legacyGlobPattern(fs, path, workdir, dirPattern)
       : [dirPattern];
