@@ -635,14 +635,16 @@ export const legacyStartSetupLocalDatabase = (
     // migration, matching `SetupLocalDatabase`'s own call in the `start` context
     // (start.go:368). `experimental`/`pgDeltaEnabled`/`schemaPaths` gate
     // `legacyMigrateAndSeed`'s own declarative-schema-files branch (apply.go:19) — see its
-    // doc comment; `toml.pgDelta.enabled` is this module's own already-loaded config, not
-    // re-read from the caller.
+    // doc comment; `toml.pgDelta.enabled` and `toml.schemaPaths` are this module's own
+    // already-loaded config (the latter already resolved + `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`
+    // env-overridden by `legacyCheckDbToml`, `legacy-db-config.toml-read.ts`), not re-read from
+    // the caller's raw, unresolved `ProjectConfig`.
     yield* legacyMigrateAndSeed(session, fs, path, workdir, "", {
       migrationsEnabled: toml.migrationsEnabled,
       seed: toml.seed,
       experimental: input.experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
-      schemaPaths: input.config.db.migrations.schema_paths,
+      schemaPaths: toml.schemaPaths,
     });
 
     // Go's best-effort pgcache catalog warning (`pgcache.TryCacheMigrationsCatalog`,

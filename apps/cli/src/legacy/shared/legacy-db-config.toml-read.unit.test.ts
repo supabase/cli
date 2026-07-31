@@ -398,6 +398,100 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("collapses . and .. in relative db.migrations.schema_paths like Go's path.Join", () => {
+    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`
+    // (`config.go:976-978`), which runs `path.Clean` — same helper `db.seed.sql_paths`
+    // uses above (`legacyResolveSeedSqlPath`), so `./schemas/a.sql` and `schemas/a.sql`
+    // resolve to the identical string instead of aliasing as two different glob patterns.
+    const dir = withConfig(
+      [
+        "[db.migrations]",
+        'schema_paths = ["../schema.sql", "sub/../other.sql", "./schemas/a.sql"]',
+        "",
+      ].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.schemaPaths).toEqual([
+            "schema.sql",
+            "supabase/other.sql",
+            "supabase/schemas/a.sql",
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
+    () => {
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "a.sql, b.sql";
+      const dir = withConfig(["[db.migrations]", 'schema_paths = ["ignored.sql"]', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("defaults db.migrations.schema_paths to [] when absent (Go's Glob zero value)", () => {
+    const dir = withConfig(["[db]", "port = 54322", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.schemaPaths).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+    () => {
+      // Same override-tier precedence as db.migrations.enabled above (config.go:635-637).
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-wins.sql";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.db.migrations]",
+          'schema_paths = ["remote-wins.sql"]',
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/remote-wins.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
     // Go's mergeRemoteConfig applies EVERY matched-block key via v.Set (above AutomaticEnv,
     // config.go:635-637), not just db/seed — so a remote experimental.pgdelta.enabled wins

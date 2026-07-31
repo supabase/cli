@@ -37,16 +37,22 @@ export interface LegacyMigrateAndSeedConfig {
  * called with zero `GlobOption`s exactly like `applySchemaFiles`'s own call
  * (`internal/migration/apply/apply.go:52`): each `schemaPaths` pattern is glob-matched, in
  * declared order, via {@link legacyGlobPattern} — the same `fs.Glob` port `[db.seed]
- * sql_paths` already uses. A matched directory is expanded to its `.sql` regular files,
- * recursively, sorted; a matched plain file is kept as-is — even a non-`.sql` one, since
- * Go's `expandDir` callback only ever runs on `IsDir()` matches, never on an
- * explicitly-matched file. Results are deduplicated across ALL patterns (first occurrence
- * wins), preserving pattern declaration order.
+ * sql_paths` already uses. Patterns arrive already resolved to Go's config-load form
+ * (supabase-prefixed and `path.Clean`-ed when relative) — `legacyCheckDbToml`
+ * (`legacy-db-config.toml-read.ts`) does that once, at config-load time, the same place
+ * `db.seed.sql_paths` is resolved, so this function (unlike an earlier version of this
+ * comment) does no path-shape work of its own. A matched directory is expanded to its
+ * `.sql` regular files, recursively, sorted; a matched plain file is kept as-is — even a
+ * non-`.sql` one, since Go's `expandDir` callback only ever runs on `IsDir()` matches,
+ * never on an explicitly-matched file. Results are deduplicated across ALL patterns
+ * (first occurrence wins), preserving pattern declaration order.
  *
- * A pattern matching nothing is an error, but — mirroring `applySchemaFiles`'s `if
- * len(declared) == 0 { return err }` — that error (and any stat/walk failure) is discarded
- * outright whenever the combined result ends up non-empty regardless; it only surfaces when
- * NO pattern matched anything at all.
+ * A pattern matching nothing, a stat failure, or a directory-walk failure is an error,
+ * but — mirroring `applySchemaFiles`'s `if len(declared) == 0 { return err }` (the error
+ * `Glob.SQLFiles` returns alongside a non-empty `declared` is joined from every
+ * problem, including `walkMatchedDir`'s) — every such problem is discarded outright
+ * whenever the combined result ends up non-empty regardless; they only surface when NO
+ * pattern matched anything at all.
  */
 const legacyResolveSchemaPathFiles = (
   fs: FileSystem.FileSystem,
@@ -59,20 +65,14 @@ const legacyResolveSchemaPathFiles = (
     const result: Array<string> = [];
     const problems: Array<string> = [];
 
-    for (const rawPattern of patterns) {
-      // Go's config loader resolves a relative `schema_paths` entry against the
-      // `supabase/` directory, not the project root (`pkg/config/config.go:976-978`,
-      // `path.Join(builder.SupabaseDirPath, pattern)`) — `@supabase/config`'s decoder
-      // doesn't perform this itself (unlike Go's own loader), so it happens here, the
-      // only current TS reader of this field that needs real filesystem paths.
-      const pattern = path.isAbsolute(rawPattern) ? rawPattern : `supabase/${rawPattern}`;
+    for (const pattern of patterns) {
       if (legacyPathMatch(pattern, "").badPattern) {
         problems.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
         continue;
       }
       const matches = [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort();
       if (matches.length === 0) {
-        problems.push(`no files matched pattern: ${rawPattern}`);
+        problems.push(`no files matched pattern: ${pattern}`);
         continue;
       }
       for (const match of matches) {
@@ -92,10 +92,17 @@ const legacyResolveSchemaPathFiles = (
         // Go's `walkMatchedDir`: recursively list the matched directory, keep only regular
         // `.sql` files, sorted (a global sort over the full relative-to-fsys-root path, not
         // per-directory — matches `sort.Strings(files)` running once after the whole walk).
-        const names = yield* fs
+        // A read/walk failure is Go's `failed to walk matched directory: %w` — recorded as a
+        // problem (not silently treated as an empty directory) so it surfaces exactly like
+        // Go's joined error does whenever nothing else matched anything either.
+        const namesResult = yield* fs
           .readDirectory(absMatch, { recursive: true })
-          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
-        const sqlRelative = names
+          .pipe(Effect.result);
+        if (Result.isFailure(namesResult)) {
+          problems.push(`failed to walk matched directory: ${match}`);
+          continue;
+        }
+        const sqlRelative = namesResult.success
           .map((name) => name.replaceAll("\\", "/"))
           .filter((name) => name.endsWith(".sql"))
           .sort();

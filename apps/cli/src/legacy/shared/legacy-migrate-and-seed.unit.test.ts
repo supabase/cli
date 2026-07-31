@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
@@ -11,6 +11,9 @@ import {
   legacyMigrateAndSeed,
   type LegacyMigrateAndSeedConfig,
 } from "./legacy-migrate-and-seed.ts";
+
+// Root bypasses POSIX permission bits, so chmod 000 wouldn't block readdir() there.
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 function fakeSession() {
   const execs: Array<string> = [];
@@ -78,7 +81,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
           ...baseConfig,
           experimental: true,
           pgDeltaEnabled: false,
-          schemaPaths: ["schemas/a.sql"],
+          schemaPaths: ["supabase/schemas/a.sql"],
         },
         session,
         out,
@@ -116,7 +119,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
           ...baseConfig,
           experimental: true,
           pgDeltaEnabled: true,
-          schemaPaths: ["schemas/a.sql"],
+          schemaPaths: ["supabase/schemas/a.sql"],
         },
         session,
         out,
@@ -149,7 +152,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
         ...baseConfig,
         experimental: false,
         pgDeltaEnabled: false,
-        schemaPaths: ["schemas/a.sql"],
+        schemaPaths: ["supabase/schemas/a.sql"],
       },
       session,
       out,
@@ -183,7 +186,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
           ...baseConfig,
           experimental: true,
           pgDeltaEnabled: false,
-          schemaPaths: ["schemas/a.sql"],
+          schemaPaths: ["supabase/schemas/a.sql"],
         },
         session,
         out,
@@ -212,10 +215,10 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
         ...baseConfig,
         experimental: true,
         pgDeltaEnabled: false,
-        schemaPaths: ["schemas/a.sql"],
-        // Unlike `schemaPaths` (resolved against `supabase/` inside `legacyMigrateAndSeed`
-        // itself), `LegacySeedConfig.sqlPaths` is already `supabase/`-prefixed by its real
-        // caller (`legacy-db-config.toml-read.ts`) — see its own doc comment.
+        schemaPaths: ["supabase/schemas/a.sql"],
+        // Both `schemaPaths` and `LegacySeedConfig.sqlPaths` arrive already
+        // `supabase/`-prefixed by their real caller (`legacy-db-config.toml-read.ts`) — see
+        // its own doc comment. Neither field does its own path-shape work anymore.
         seed: { enabled: true, sqlPaths: ["supabase/seed.sql"] },
       },
       session,
@@ -248,7 +251,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
         {
           ...baseConfig,
           experimental: true,
-          schemaPaths: ["schemas/z_function.sql", "schemas/tables"],
+          schemaPaths: ["supabase/schemas/z_function.sql", "supabase/schemas/tables"],
         },
         session,
         out,
@@ -276,7 +279,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
       {
         ...baseConfig,
         experimental: true,
-        schemaPaths: ["database/a.sql", "database", "database/*.sql"],
+        schemaPaths: ["supabase/database/a.sql", "supabase/database", "supabase/database/*.sql"],
       },
       session,
       out,
@@ -291,4 +294,43 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
       ),
     );
   });
+
+  it.effect.skipIf(isRoot)(
+    "fails a matched schema_paths directory that cannot be traversed, instead of treating it as empty",
+    () => {
+      // Go's `walkMatchedDir` returns `failed to walk matched directory: %w` on a read
+      // error; `applySchemaFiles` propagates it when nothing else matched either. Mode
+      // 000 makes `stat` (parent-directory lookup) succeed but `readdir` fail with EACCES.
+      const workdir = makeWorkdir();
+      const lockedDir = join(workdir, "supabase", "schemas", "locked");
+      mkdirSync(lockedDir, { recursive: true });
+      writeFileSync(join(lockedDir, "b.sql"), "select 1;");
+      chmodSync(lockedDir, 0o000);
+      const { session } = fakeSession();
+      const out = mockOutput();
+      return run(
+        workdir,
+        "",
+        {
+          ...baseConfig,
+          experimental: true,
+          schemaPaths: ["supabase/schemas/locked"],
+        },
+        session,
+        out,
+      ).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("failed to walk matched directory");
+            }
+            chmodSync(lockedDir, 0o755);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });
