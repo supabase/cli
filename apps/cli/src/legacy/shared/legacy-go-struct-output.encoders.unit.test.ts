@@ -399,6 +399,39 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
+  it("quotes comma-fraction timestamp-shaped STRINGS like yaml.v3's resolver", () => {
+    // Probed on go1.26: the string field "2026-01-01T00:00:00,123Z" is
+    // double-quoted exactly like the dot form — yaml.v3 resolves timestamps
+    // through time.Parse, which accepts either separator (review r3685767963).
+    const spec = legacyGoStruct([["s", legacyGoString, "S"]]);
+    expect(encodeLegacyGoYaml({ s: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
+      's: "2026-01-01T00:00:00,123Z"\n',
+    );
+  });
+
+  it("leaves overflowing float-shaped strings plain like yaml.v3's ParseFloat gate", () => {
+    // Probed on go1.26: resolve()'s strconv.ParseFloat ERRORS on overflow
+    // (±Inf), so the value stays string-tagged and needs no quoting; an
+    // underflowing exponent (1e-999 → 0) parses successfully and IS quoted
+    // (review r3685767974).
+    const spec = legacyGoStruct([["s", legacyGoString, "S"]]);
+    expect(encodeLegacyGoYaml({ s: "1e999" }, spec)).toBe("s: 1e999\n");
+    expect(encodeLegacyGoYaml({ s: "-1e999" }, spec)).toBe("s: -1e999\n");
+    expect(encodeLegacyGoYaml({ s: ".5e999" }, spec)).toBe("s: .5e999\n");
+    expect(encodeLegacyGoYaml({ s: "1e-999" }, spec)).toBe('s: "1e-999"\n');
+    expect(encodeLegacyGoYaml({ s: "1e10" }, spec)).toBe('s: "1e10"\n');
+  });
+
+  it("orders Unicode-digit map keys with yaml.v3's naive rune arithmetic", () => {
+    // Probed on go1.26: keyList.Less finds digit runs with unicode.IsDigit
+    // but accumulates values as `rune - '0'`, so the Arabic-Indic key `a٢`
+    // (U+0662) sorts AFTER a10, not as the number 2 (review r3685767973).
+    const spec = legacyGoStruct([["default", legacyGoAny, "Default"]]);
+    expect(encodeLegacyGoYaml({ default: { a٢: 1, a3: 2, a10: 3, a9: 4 } }, spec)).toBe(
+      "default:\n    a3: 2\n    a9: 4\n    a10: 3\n    a٢: 1\n",
+    );
+  });
+
   it("normalizes Go's accepted comma fractional separator to the dot Go re-emits", () => {
     // Probed on go1.26: `time.Time.UnmarshalJSON` parses `…00,123Z`
     // (`commaOrPeriod`, `time/format.go`) and `json.Marshal` re-emits

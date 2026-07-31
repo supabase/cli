@@ -516,7 +516,13 @@ function goStringCompare(a: string, b: string): number {
   return a.length - b.length;
 }
 
-/** Port of yaml.v3's `keyList.Less` natural string ordering (sorter.go). */
+/**
+ * Port of yaml.v3's `keyList.Less` natural string ordering (sorter.go).
+ * Digit runs use `unicode.IsDigit` (any Unicode `Nd` digit — probed: Go
+ * orders `a3, a9, a10, a٢`, the Arabic-Indic key LAST, because the naive
+ * `rune - '0'` arithmetic yields a huge value for non-ASCII digits; review
+ * r3685767973). The ASCII-only {@link isDigit} stays for the scalar parser.
+ */
 function yamlKeyLess(a: string, b: string): boolean {
   const ar = [...a];
   const br = [...b];
@@ -525,7 +531,7 @@ function yamlKeyLess(a: string, b: string): boolean {
     const ac = ar[i] as string;
     const bc = br[i] as string;
     if (ac === bc) {
-      digits = isDigit(ac);
+      digits = isSortDigit(ac);
       continue;
     }
     const al = isLetter(ac);
@@ -536,7 +542,7 @@ function yamlKeyLess(a: string, b: string): boolean {
     let an = 0n;
     let bn = 0n;
     if (ac === "0" || bc === "0") {
-      for (let j = i - 1; j >= 0 && isDigit(ar[j] as string); j--) {
+      for (let j = i - 1; j >= 0 && isSortDigit(ar[j] as string); j--) {
         if (ar[j] !== "0") {
           an = 1n;
           bn = 1n;
@@ -546,17 +552,22 @@ function yamlKeyLess(a: string, b: string): boolean {
     }
     let ai = i;
     let bi = i;
-    for (; ai < ar.length && isDigit(ar[ai] as string); ai++) {
-      an = an * 10n + BigInt((ar[ai] as string).charCodeAt(0) - 48);
+    for (; ai < ar.length && isSortDigit(ar[ai] as string); ai++) {
+      an = an * 10n + BigInt(((ar[ai] as string).codePointAt(0) as number) - 48);
     }
-    for (; bi < br.length && isDigit(br[bi] as string); bi++) {
-      bn = bn * 10n + BigInt((br[bi] as string).charCodeAt(0) - 48);
+    for (; bi < br.length && isSortDigit(br[bi] as string); bi++) {
+      bn = bn * 10n + BigInt(((br[bi] as string).codePointAt(0) as number) - 48);
     }
     if (an !== bn) return an < bn;
     if (ai !== bi) return ai < bi;
     return (ac.codePointAt(0) as number) < (bc.codePointAt(0) as number);
   }
   return ar.length < br.length;
+}
+
+/** yaml.v3 sorter's `unicode.IsDigit` — any Unicode decimal digit (`Nd`). */
+function isSortDigit(c: string): boolean {
+  return /\p{Nd}/u.test(c);
 }
 
 function isDigit(c: string): boolean {
@@ -774,14 +785,21 @@ function yamlResolvesToString(s: string): boolean {
   if (YAML_BASE60.test(s)) return false;
   const first = s[0] as string;
   if (first === ".") {
-    // resolve()'s '.'-hint branch: strconv.ParseFloat.
-    return !/^\.\d+(?:[eE][+-]?\d+)?$/.test(s);
+    // resolve()'s '.'-hint branch: strconv.ParseFloat — which ERRORS on
+    // overflow (±Inf), so an overflowing spelling stays a string and needs
+    // no quoting (probed: Go emits `1e999` plain; review r3685767974).
+    return !(/^\.\d+(?:[eE][+-]?\d+)?$/.test(s) && Number.isFinite(Number(s)));
   }
   if (first === "+" || first === "-" || isDigit(first)) {
     if (yamlIsTimestamp(s)) return false;
     const plain = s.replaceAll("_", "");
     if (goParseIntBase0(plain)) return false;
-    if (YAML_STYLE_FLOAT.test(plain)) return false;
+    // strconv.ParseFloat overflow (→ ±Inf) is an error in resolve(), so the
+    // value resolves as a string and is emitted plain; underflow (1e-999 → 0)
+    // succeeds and stays float-tagged, hence quoted (probed both against Go,
+    // review r3685767974). `Number` mirrors the accepted shapes here because
+    // YAML_STYLE_FLOAT gates the syntax first.
+    if (YAML_STYLE_FLOAT.test(plain) && Number.isFinite(Number(plain))) return false;
     return true;
   }
   // 'M'-hint characters (yYnNtTfFoO~) resolve via the exact map only.
@@ -882,8 +900,12 @@ function goParseIntBase0(plain: string): boolean {
  * `2025-02-31` and `2100-02-29` stay plain, `2024-02-29` is a timestamp).
  */
 function yamlIsTimestamp(s: string): boolean {
+  // Fraction separator is `.` OR `,` — yaml.v3 resolves timestamps through
+  // Go's `time.Parse`, which accepts either (`commaOrPeriod`; probed: Go
+  // double-quotes the comma form exactly like the dot form,
+  // review r3685767963).
   const match =
-    /^(\d{4})-(\d{1,2})-(\d{1,2})(?:([Tt ])(\d{1,2}):(\d{1,2}):(\d{1,2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/.exec(
+    /^(\d{4})-(\d{1,2})-(\d{1,2})(?:([Tt ])(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[.,]\d+)?(Z|[+-]\d{2}:\d{2})?)?$/.exec(
       s,
     );
   if (match === null) return false;
