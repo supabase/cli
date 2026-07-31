@@ -20,6 +20,7 @@ import { legacyAqua, legacyBold } from "../../shared/legacy-colors.ts";
 import { legacyEnsureLogin } from "../../shared/legacy-ensure-login.ts";
 import { legacyGetProjectApiKeys } from "../../shared/legacy-get-api-keys.ts";
 import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import type { LegacyConnectSuggestionContext } from "../../shared/legacy-connect-errors.ts";
 import { legacyResolveLinkedConn } from "../../shared/legacy-db-config.layer.ts";
 import {
   legacyApplyProjectEnv,
@@ -328,15 +329,30 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // No instrumentation wrap: `legacyDbPushCore` is the bare handler function,
     // not `push.command.ts`'s wrapped command, so it never fires its own
     // `cli_command_executed` — no double-count risk.
-    const conn = yield* legacyResolveLinkedConn(
-      projectRef,
-      workdir,
-      cliConfig.projectHost,
-      cliConfig.poolerHost,
-      dnsResolver,
-      Option.some(created.dbPassword),
-      false,
-    );
+    //
+    // `legacyResolveLinkedConn` (unlike `LegacyDbConfigResolver.resolve`) returns a
+    // bare connection with no `suggestionContext` attached — that context is normally
+    // stapled on by the resolver layer bootstrap deliberately bypasses (see this
+    // call's own doc comment above). Attach it here too, so a connect failure inside
+    // the native push (refused/auth/IPv6/wrong-profile) still renders Go's
+    // `SetConnectSuggestion` hint instead of silently falling back to the generic
+    // "--debug" suggestion.
+    const suggestionContext: LegacyConnectSuggestionContext = {
+      dashboardUrl: cliConfig.dashboardUrl,
+      profileName: cliConfig.profile,
+    };
+    const conn = {
+      ...(yield* legacyResolveLinkedConn(
+        projectRef,
+        workdir,
+        cliConfig.projectHost,
+        cliConfig.poolerHost,
+        dnsResolver,
+        Option.some(created.dbPassword),
+        false,
+      )),
+      suggestionContext,
+    };
     const pushNotify = legacyBootstrapRetryNotify();
     yield* legacyDbPushCore({
       workdir,
