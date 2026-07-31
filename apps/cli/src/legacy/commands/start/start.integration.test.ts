@@ -26,6 +26,7 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
+  LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../shared/legacy/global-flags.ts";
@@ -355,6 +356,8 @@ interface SetupOpts {
   readonly workdir?: string;
   /** `--network-id` override. Defaults to unset (the generated `supabase_network_<project>` name applies). */
   readonly networkId?: Option.Option<string>;
+  /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
+  readonly experimental?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -405,6 +408,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["start"] }),
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyYesFlag, false),
+    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     mockTty({ stdinIsTty: false }),
     mockStdin(false),

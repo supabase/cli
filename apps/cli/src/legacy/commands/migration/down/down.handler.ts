@@ -150,6 +150,13 @@ const runDown = Effect.fnUntraced(function* (
         yield* legacyMigrateAndSeed(session, fs, path, cliConfig.workdir, version, {
           migrationsEnabled: toml.migrationsEnabled,
           seed: toml.seed,
+          // `version` is always non-empty here (`migration down` reverts to a concrete
+          // target) — Go's `len(version) == 0` half of `legacyMigrateAndSeed`'s declarative
+          // branch gate is therefore always false on this call site regardless of these
+          // three values, matching the file's own doc comment.
+          experimental: false,
+          pgDeltaEnabled: false,
+          schemaPaths: [],
         });
 
         if (output.format !== "text") {

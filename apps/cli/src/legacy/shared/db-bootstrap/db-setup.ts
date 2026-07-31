@@ -163,6 +163,13 @@ export interface LegacyStartSetupLocalDatabaseInput {
   readonly majorVersion: number;
   /** Go's `Config.ProjectId`, already sanitized (`legacySanitizeProjectId`) — derives the `db` container's internal Docker name for the PG15+ one-shot jobs (`legacyServiceContainerName("db", projectId)`, Go's `utils.DbId`). */
   readonly projectId: string;
+  /**
+   * `--experimental`/`SUPABASE_EXPERIMENTAL`, resolved by the caller (Go's
+   * `viper.GetBool("EXPERIMENTAL")`) — threaded straight into
+   * {@link legacyMigrateAndSeed}'s own `experimental` gate (`internal/migration/apply/
+   * apply.go:19`); this module has no other use for it.
+   */
+  readonly experimental: boolean;
   /** The `start` run's Docker network id (Go's `utils.NetId` or the `--network-id` override) — every PG15+ one-shot job joins it, matching `DockerStart`'s own default (`docker.go:379-383`). */
   readonly networkId: string;
   /** `LegacyLocalConfigValues.dbUrl` — reused (not recomputed) to derive the internal DB password via `legacyStartInternalDbPassword`, matching every other `start/services/*.service.ts` builder. */
@@ -626,10 +633,16 @@ export const legacyStartSetupLocalDatabase = (
 
     // apply.MigrateAndSeed(ctx, "", conn, fsys) — empty version = every pending
     // migration, matching `SetupLocalDatabase`'s own call in the `start` context
-    // (start.go:368).
+    // (start.go:368). `experimental`/`pgDeltaEnabled`/`schemaPaths` gate
+    // `legacyMigrateAndSeed`'s own declarative-schema-files branch (apply.go:19) — see its
+    // doc comment; `toml.pgDelta.enabled` is this module's own already-loaded config, not
+    // re-read from the caller.
     yield* legacyMigrateAndSeed(session, fs, path, workdir, "", {
       migrationsEnabled: toml.migrationsEnabled,
       seed: toml.seed,
+      experimental: input.experimental,
+      pgDeltaEnabled: toml.pgDelta.enabled,
+      schemaPaths: input.config.db.migrations.schema_paths,
     });
 
     // Go's best-effort pgcache catalog warning (`pgcache.TryCacheMigrationsCatalog`,

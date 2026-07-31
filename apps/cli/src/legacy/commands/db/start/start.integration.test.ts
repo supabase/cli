@@ -18,7 +18,11 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import {
+  LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import {
   LegacyDbConnection,
@@ -256,6 +260,8 @@ interface SetupOpts {
   readonly cwd?: string;
   readonly platform?: NodeJS.Platform;
   readonly networkId?: string;
+  /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
+  readonly experimental?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -294,6 +300,8 @@ function setup(opts: SetupOpts = {}) {
       LegacyNetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
+    Layer.succeed(CliArgs, { args: ["db", "start"] }),
+    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
   );
   return { layer, out, telemetry, child, dbSession };
 }

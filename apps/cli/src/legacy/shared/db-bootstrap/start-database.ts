@@ -132,6 +132,8 @@ interface LegacyStartDatabaseSetupInput<E> {
   readonly majorVersion: number;
   /** Already spliced with the caller's own realtime/storage/auth enabled-for-setup + ip_version/max_header_length/file_size_limit overrides — see `bootstrap-config.ts`'s `LegacyDbBootstrapConfig`. */
   readonly config: LegacyStartSetupLocalDatabaseInput["config"];
+  /** Threaded straight through to {@link LegacyStartSetupLocalDatabaseInput.experimental} — see its own doc comment. */
+  readonly experimental: boolean;
   readonly dbUrl: string;
   readonly jwtSecret: string;
   /** Lazy — evaluated only when reached (fresh volume, `fromBackup` unset) AND `realtimeEnabledForSetup`. See this module's header for why this is caller-supplied rather than resolved here unconditionally. */
@@ -326,6 +328,7 @@ export const legacyStartDatabase = <E>(
             path: input.path,
             workdir: input.workdir,
             config: setup.config,
+            experimental: setup.experimental,
             majorVersion: setup.majorVersion,
             projectId: input.projectId,
             networkId: input.networkId,

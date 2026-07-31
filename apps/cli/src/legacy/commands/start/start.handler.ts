@@ -16,7 +16,11 @@ import {
   toPlainFunctionRecord,
   type StartedRuntime,
 } from "../../../shared/functions/serve.ts";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyNetworkIdFlag,
+  legacyResolveExperimentalWithProjectEnv,
+} from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
@@ -683,6 +687,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }),
     });
     const { config, projectId, projectEnvValues } = context;
+    // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
+    // inside `legacyStartDatabase`'s fresh-volume setup pipeline — resolved here (project
+    // `.env` aware, like `db reset`'s identical gate) so it can be threaded straight through
+    // to `legacyStartDatabase`'s own `setup.experimental` below.
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link legacyResolveAuthEmail}'s doc comment.
     const resolvedEmail = yield* Effect.try({
@@ -1828,6 +1837,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         dbHealthTimeoutSeconds,
         setup: {
           majorVersion,
+          experimental,
           // Go's `initSchema15`'s per-job gates read `utils.Config.{Realtime,Storage,Auth}.
           // Enabled` — the EFFECTIVE, env-overridden value (Viper's `AutomaticEnv` already
           // folds any `SUPABASE_*_ENABLED` override into the single global `Config`), NOT

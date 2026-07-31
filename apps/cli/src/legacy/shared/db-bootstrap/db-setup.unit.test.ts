@@ -107,6 +107,7 @@ function baseInput(
     session,
     workdir,
     config: defaultConfig,
+    experimental: false,
     majorVersion: 17,
     projectId: "proj",
     networkId: "supabase_network_proj",

@@ -3,7 +3,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyNetworkIdFlag,
+  legacyResolveExperimentalWithProjectEnv,
+} from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyIsBitbucketPipeline } from "../../../shared/legacy-bitbucket-pipeline.ts";
@@ -120,6 +123,10 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       (message) => new LegacyDbConfigLoadError({ message }),
     );
     const { config, projectEnvValues, loaded, hostname, projectId } = context;
+    // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
+    // inside `legacyStartDatabase`'s fresh-volume setup pipeline — resolved here (project `.env`
+    // aware, like `db reset`'s identical gate) so it can be threaded straight through.
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
 
     const values = yield* Effect.try({
       try: () =>
@@ -229,6 +236,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
       setup: {
         majorVersion: bootstrapConfig.majorVersion,
+        experimental,
         config: {
           ...config,
           realtime: {

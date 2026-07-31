@@ -3,6 +3,7 @@ import { Data, Effect, FileSystem, Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { legacyGlobPattern, legacyResolveUnderWorkdir } from "./legacy-glob.ts";
 import {
   legacyCreateSeedTable,
   legacyReadSeedTable,
@@ -33,64 +34,6 @@ interface LegacyPendingSeed {
   readonly dirty: boolean;
 }
 
-// Go's `io/fs.hasMeta` magic-character set is `*`, `?`, `[`, and `\` (escape) —
-// `glob.go` `hasMeta`. `\` must count so a pattern whose only meta syntax is a
-// backslash escape (e.g. `foo\.sql`, `seed\*.sql`) is globbed via `legacyPathMatch`
-// (which handles the escape) instead of being treated as a literal filename and
-// missing the real file. Go applies `filepath.ToSlash` before globbing, so a `\`
-// here is always a glob escape, never a path separator.
-const hasMeta = (pattern: string): boolean => /[*?[\\]/u.test(pattern);
-
-// Go globs/reads seed paths through an OS-root-rooted `afero.NewOsFs`, where the
-// CLI's "workdir" is just `os.Chdir(workdir)` (`internal/utils/misc.go`) — which
-// only affects RELATIVE paths. An absolute `[db.seed].sql_paths` entry, preserved
-// verbatim by the config loader (`pkg/config/config.go`, gated on `!filepath.IsAbs`),
-// therefore resolves at the OS root, never under the workdir. Mirror that: only
-// join under the workdir when the path is relative (`path.join` would otherwise
-// collapse `/repo` + `/tmp/seed.sql` to `/repo/tmp/seed.sql`).
-const resolveUnderWorkdir = (path: Path.Path, workdir: string, p: string): string =>
-  path.isAbsolute(p) ? p : path.join(workdir, p);
-
-/**
- * Resolves a single glob pattern against the workdir, returning the matched
- * paths RELATIVE to the workdir (so `seed_files.path` stays Go-compatible).
- * Mirrors Go's `fs.Glob`: a literal pattern returns itself iff it exists; a
- * pattern with metacharacters lists each parent directory and matches per
- * segment via `legacyPathMatch` (Go's `path.Match`). The caller validates the
- * whole pattern up front, so a malformed class never reaches here.
- */
-const globPattern = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  pattern: string,
-): Effect.Effect<ReadonlyArray<string>> =>
-  Effect.gen(function* () {
-    if (!hasMeta(pattern)) {
-      const exists = yield* fs
-        .exists(resolveUnderWorkdir(path, workdir, pattern))
-        .pipe(Effect.orElseSucceed(() => false));
-      return exists ? [pattern] : [];
-    }
-    const slash = pattern.lastIndexOf("/");
-    const dirPattern = slash === -1 ? "" : pattern.slice(0, slash);
-    const filePattern = slash === -1 ? pattern : pattern.slice(slash + 1);
-    const dirs = hasMeta(dirPattern)
-      ? yield* globPattern(fs, path, workdir, dirPattern)
-      : [dirPattern];
-    const result: Array<string> = [];
-    for (const dir of dirs) {
-      const absDir = dir.length === 0 ? workdir : resolveUnderWorkdir(path, workdir, dir);
-      const names = yield* fs.readDirectory(absDir).pipe(Effect.orElseSucceed(() => []));
-      for (const name of names) {
-        if (legacyPathMatch(filePattern, name).matched) {
-          result.push(dir.length === 0 ? name : `${dir}/${name}`);
-        }
-      }
-    }
-    return result;
-  });
-
 /** Go's `config.Glob.Files`: glob each pattern, sort, dedup; warn on bad/no-match. */
 const resolveSeedFiles = (
   fs: FileSystem.FileSystem,
@@ -111,7 +54,7 @@ const resolveSeedFiles = (
         unmatched.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
         continue;
       }
-      const matches = [...(yield* globPattern(fs, path, workdir, pattern))].sort();
+      const matches = [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort();
       if (matches.length === 0) unmatched.push(`no files matched pattern: ${pattern}`);
       for (const match of matches) {
         if (!seen.has(match)) {
@@ -155,14 +98,16 @@ export const legacyApplySeedFiles = (
 
     const pending: Array<LegacyPendingSeed> = [];
     for (const relativePath of locals) {
-      const content = yield* fs.readFile(resolveUnderWorkdir(path, workdir, relativePath)).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyMigrationSeedError({
-              message: `failed to open seed file: ${cause.message}`,
-            }),
-        ),
-      );
+      const content = yield* fs
+        .readFile(legacyResolveUnderWorkdir(path, workdir, relativePath))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyMigrationSeedError({
+                message: `failed to open seed file: ${cause.message}`,
+              }),
+          ),
+        );
       const hash = createHash("sha256").update(content).digest("hex");
       const previous = applied.get(relativePath);
       if (previous === hash) continue; // unchanged → skip entirely
@@ -201,7 +146,7 @@ export const legacyApplySeedFiles = (
         ? []
         : legacySplitAndTrim(
             new TextDecoder().decode(
-              yield* fs.readFile(resolveUnderWorkdir(path, workdir, seed.path)).pipe(
+              yield* fs.readFile(legacyResolveUnderWorkdir(path, workdir, seed.path)).pipe(
                 Effect.mapError(
                   (cause) =>
                     new LegacyMigrationSeedError({
