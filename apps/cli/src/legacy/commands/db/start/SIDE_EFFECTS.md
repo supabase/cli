@@ -42,8 +42,11 @@ primitives (the same ones `supabase start` uses for its own Postgres bring-up):
    pipeline (`legacy/shared/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
    direct `LegacyDbConnection`; PG>=15: up to three one-shot `docker run --rm` migrate jobs
    for realtime/storage/auth, each gated on its own `enabled` flag), API-privilege
-   revocation, `[db.vault]` secret upsert, `supabase/roles.sql` seed, and every pending
-   migration + seed. Skipped IN FULL when `--from-backup` is set (not merely reduced).
+   revocation, `[db.vault]` secret upsert, `supabase/roles.sql` seed, and finally either every
+   pending migration + seed, OR — when `--experimental`/`SUPABASE_EXPERIMENTAL` is set AND
+   `[experimental.pgdelta] enabled` is false — every `db.migrations.schema_paths` file
+   (declarative schema files) instead of migrations, followed by seed either way (Go's
+   `apply.MigrateAndSeed`). Skipped IN FULL when `--from-backup` is set (not merely reduced).
 8. Write `supabase/.branches/_current_branch` = `"main"` if absent — runs on EVERY path
    that reaches this point (fresh volume, existing volume, and a swallowed
    `--from-backup` health-check timeout), but NOT on the already-running short-circuit or
@@ -67,6 +70,7 @@ on any `StartDatabase` failure.
 | `<workdir>/supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,pooler}-version` | text   | always read; only the `gotrue`/`storage`/`realtime` pins are actually consulted (the fresh-volume setup jobs' images)         |
 | `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume with no `--from-backup` — the "Seeding globals..." message always prints first; a missing file is tolerated |
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume with no `--from-backup`, via the standard migration-apply + seed pipeline                                   |
+| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)              | SQL    | on a fresh volume with no `--from-backup`, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text   | always, existence check before writing (see "Files Written")                                                                  |
 | `~/.docker/config.json`                                                                         | JSON   | via the `docker`/`podman` CLI itself, for registry auth — never read directly by this process                                 |
 
@@ -122,6 +126,7 @@ native container command in this codebase — never `supabase-go`.
 | `SUPABASE_AUTH_ENABLED`                                        | gates the fresh-volume auth migrate job                       | no        |
 | `SUPABASE_AUTH_EXTERNAL_URL` / `SUPABASE_AUTH_SITE_URL`        | auth migrate job env overrides                                | no        |
 | `SUPABASE_AUTH_JWT_EXPIRY`                                     | Postgres's `JWT_EXP` env / signing                            | no        |
+| `SUPABASE_EXPERIMENTAL` (or `--experimental`)                  | fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` | no        |
 
 `--network-id` (a global CLI flag, not an environment variable — `shared/legacy/global-flags.ts`)
 forces every created container/network onto that Docker network instead of the generated

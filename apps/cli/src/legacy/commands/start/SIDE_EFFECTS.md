@@ -42,7 +42,11 @@ session; PG>=15: runs three one-shot `LegacyDockerRun` jobs instead, gated indep
 seeds `supabase/roles.sql`: matching Go's own print-before-read ordering
 (`pkg/migration/seed.go:88`), the `Seeding globals from roles.sql...` stderr line always
 prints, whether or not the file exists — a missing file is silently tolerated (no SQL runs),
-any other read/exec error still fails the run. Finally runs every pending migration + seed.
+any other read/exec error still fails the run. Finally runs every pending migration + seed —
+UNLESS `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled`
+is false, in which case `db.migrations.schema_paths` files are applied INSTEAD of
+`migrations/*.sql` (Go's `apply.MigrateAndSeed`, `internal/migration/apply/apply.go:19-26`);
+seed still runs either way.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
 
 `legacyStartInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
@@ -88,6 +92,7 @@ command (Go's `return seedErr` instead of the downgraded `return err`).
 | GCP JWT credentials file                                                                        | JSON   | when `analytics.backend = "bigquery"`                                                                                                                                            |
 | `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume (custom-roles seed) — the "Seeding globals..." message always prints first; the file itself is only read if it exists, tolerating a missing file               |
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume, via the standard migration-apply + seed pipeline                                                                                                              |
+| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)              | SQL    | on a fresh volume, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false                            |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text   | on every start, existence check before writing (see "Files Written")                                                                                                             |
 | `<workdir>/supabase/functions/**`                                                               | —      | when Edge Runtime starts, and independently when Studio starts (function discovery/config resolution + Docker bind mounts, regardless of whether Edge Runtime itself is enabled) |
 | `<workdir>/supabase/.temp/storage-migration`                                                    | text   | always — linked-project Storage migration pin (`DB_MIGRATIONS_FREEZE_AT`), written by `supabase link`; absent/unreadable resolves to no pin                                      |
@@ -159,6 +164,7 @@ not implemented.
 | Variable                               | Purpose                                                                                                                                                         | Required? |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `SUPABASE_*` (any dotted config field) | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                      | no        |
+| `SUPABASE_EXPERIMENTAL` (or `--experimental`) | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                  | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`     | Overrides the image registry used to resolve every service's image                                                                                              | no        |
 | `SUPABASE_PROJECT_ID`                  | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                  | no        |
 | `SUPABASE_WORKDIR`                     | Resolves `LegacyCliConfig.workdir`                                                                                                                              | no        |
