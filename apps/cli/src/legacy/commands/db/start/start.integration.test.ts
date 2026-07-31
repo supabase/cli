@@ -672,6 +672,28 @@ describe("legacy db start", () => {
     },
   );
 
+  it.live("fails on a malformed auth duration field even when the db is already running", () => {
+    // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before
+    // `AssertSupabaseDbIsRunning` in `start.Run` (`internal/db/start/start.go:45-47`) — a
+    // malformed `auth.*` duration field must fail the command even when Postgres is already
+    // up, not be masked by the already-running short-circuit. Mirrors the sibling
+    // "undecryptable secret" already-running test above.
+    const { layer, out } = setup({
+      configContents: 'project_id = "test"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = JSON.stringify(exit.cause);
+        expect(message).toContain("LegacyDbConfigLoadError");
+        expect(message).toContain("auth.email.max_frequency");
+      }
+      expect(out.stderrText).not.toContain("already running");
+    });
+  });
+
   it.live(
     "warns when auth.sms.enable_signup is true but no SMS provider is enabled, matching Go's (s *sms) validate()",
     () => {

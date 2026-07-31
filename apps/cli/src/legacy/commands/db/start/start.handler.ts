@@ -110,87 +110,31 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // broken config.
     yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
 
-    // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
-    // stderr and return nil (exit 0). Already native — see this module's header.
-    const running = yield* legacyIsLocalDbRunning(
-      spawner,
-      fs,
-      path,
-      cliConfig.workdir,
-      Option.getOrUndefined(cliConfig.projectId),
-    );
-    if (running) {
-      if (output.format === "text") {
-        yield* output.raw("Postgres database is already running.\n", "stderr");
-      } else {
-        yield* output.success("Postgres database is already running.", {
-          status: "already-running",
-        });
-      }
-      return;
-    }
-
-    // Resolve a relative `--from-backup` against the CALLER's cwd, mirroring Go's
-    // `StartDatabase` (`filepath.Join(utils.CurrentDirAbs, fromBackup)`, start.go:160-161)
-    // where `CurrentDirAbs` is captured before `ChangeWorkDir`.
-    const fromBackupFlag = Option.getOrUndefined(flags.fromBackup);
-    // An empty `--from-backup ""` is a normal no-backup start in Go (`len(fromBackup) == 0`),
-    // so treat it as absent rather than joining it to a directory path.
-    const fromBackup =
-      fromBackupFlag === undefined || fromBackupFlag === ""
-        ? undefined
-        : path.isAbsolute(fromBackupFlag)
-          ? fromBackupFlag
-          : path.join(runtimeInfo.cwd, fromBackupFlag);
-
-    // Not running → bring up the container natively. `db start`'s OWN lean prelude:
-    // config values (via `legacyResolveLocalConfigValues`, matching `stop`/`status`'s own
-    // resolver) plus the shared `legacyResolveDbBootstrapConfig` derivation `supabase
-    // start` also uses — deliberately narrower than `supabase start`'s own prelude: no
-    // `--exclude`, no image pre-pull for any other service, no JWT/JWKS/image resolution
-    // beyond what Postgres and its own fresh-volume setup jobs need.
+    // The rest of Go's `flags.LoadConfig` — full config decode/resolution
+    // (`legacyLoadLocalProjectContext`) plus the eager `time.Duration` field validation right
+    // below — ALSO runs before `AssertSupabaseDbIsRunning` in Go's `start.Run`
+    // (`internal/db/start/start.go:45-47`), so a malformed `auth.*` duration field must fail
+    // `db start` even when Postgres is already running, not just on a fresh start. Load it here,
+    // ahead of the already-running short-circuit below, instead of deferring it to the
+    // not-running branch (previously this ran after the short-circuit, so an "already running"
+    // db would mask the config error).
     const context = yield* legacyLoadLocalProjectContext(
       cliConfig.workdir,
       (message) => new LegacyDbConfigLoadError({ message }),
     );
     const { config, projectEnvValues, loaded, hostname, projectId } = context;
-    // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
-    // inside `legacyStartDatabase`'s fresh-volume setup pipeline — resolved here (project `.env`
-    // aware, like `db reset`'s identical gate) so it can be threaded straight through.
-    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
-
-    const values = yield* Effect.try({
-      try: () =>
-        legacyResolveLocalConfigValues(
-          config,
-          hostname,
-          cliConfig.workdir,
-          projectEnvValues,
-          loaded?.document,
-        ),
-      catch: (cause) =>
-        new LegacyDbConfigLoadError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-
-    const bootstrapConfig = yield* legacyResolveDbBootstrapConfig(
-      fs,
-      path,
-      { config, projectEnvValues, workdir: cliConfig.workdir },
-      (message) => new LegacyDbConfigLoadError({ message }),
-    );
 
     // Go decodes every `time.Duration` config field — including these 5 — in the same single,
     // unconditional `Config.Load` pass (`mapstructure.StringToTimeDurationHookFunc()`,
-    // `pkg/config/config.go:749-756,777`), before `db start` touches Docker at all
-    // (`internal/db/start/start.go:45`) — regardless of whether `db start` itself ever reads
-    // the field. `db start` never starts GoTrue (only `supabase start` does, whose OWN identical
-    // eager-validation block this mirrors — see `commands/start/start.handler.ts`'s
-    // `wrapConfigOverride` call sites), so nothing else in this handler ever parses
-    // `auth.email`/`auth.sms`/`auth.sessions`/`auth.mfa`'s duration fields — without this, a
-    // malformed value would be silently accepted here instead of failing the command, unlike
-    // Go. Discarding the parsed values: only the fail-fast behavior matters for this command.
+    // `pkg/config/config.go:749-756,777`), before `db start` touches Docker (or even checks
+    // whether Postgres is already running) at all (`internal/db/start/start.go:45-47`) —
+    // regardless of whether `db start` itself ever reads the field. `db start` never starts
+    // GoTrue (only `supabase start` does, whose OWN identical eager-validation block this
+    // mirrors — see `commands/start/start.handler.ts`'s `wrapConfigOverride` call sites), so
+    // nothing else in this handler ever parses `auth.email`/`auth.sms`/`auth.sessions`/
+    // `auth.mfa`'s duration fields — without this, a malformed value would be silently accepted
+    // here instead of failing the command, unlike Go. Discarding the parsed values: only the
+    // fail-fast behavior matters for this command.
     const authDocForValidation = asRecord(loaded?.document?.["auth"]);
     const resolvedEmailForValidation = yield* wrapDbConfigOverride("auth.email", () =>
       legacyResolveAuthEmail(config.auth.email, authDocForValidation, projectEnvValues),
@@ -242,6 +186,74 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       legacyParseGoDuration(
         legacyResolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency,
       ),
+    );
+
+    // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
+    // stderr and return nil (exit 0). Already native — see this module's header. Runs AFTER
+    // the config load/validation above, matching Go's `start.Run` (`flags.LoadConfig` before
+    // `AssertSupabaseDbIsRunning`, `internal/db/start/start.go:45-47`).
+    const running = yield* legacyIsLocalDbRunning(
+      spawner,
+      fs,
+      path,
+      cliConfig.workdir,
+      Option.getOrUndefined(cliConfig.projectId),
+    );
+    if (running) {
+      if (output.format === "text") {
+        yield* output.raw("Postgres database is already running.\n", "stderr");
+      } else {
+        yield* output.success("Postgres database is already running.", {
+          status: "already-running",
+        });
+      }
+      return;
+    }
+
+    // Resolve a relative `--from-backup` against the CALLER's cwd, mirroring Go's
+    // `StartDatabase` (`filepath.Join(utils.CurrentDirAbs, fromBackup)`, start.go:160-161)
+    // where `CurrentDirAbs` is captured before `ChangeWorkDir`.
+    const fromBackupFlag = Option.getOrUndefined(flags.fromBackup);
+    // An empty `--from-backup ""` is a normal no-backup start in Go (`len(fromBackup) == 0`),
+    // so treat it as absent rather than joining it to a directory path.
+    const fromBackup =
+      fromBackupFlag === undefined || fromBackupFlag === ""
+        ? undefined
+        : path.isAbsolute(fromBackupFlag)
+          ? fromBackupFlag
+          : path.join(runtimeInfo.cwd, fromBackupFlag);
+
+    // Not running → bring up the container natively. `db start`'s OWN lean prelude:
+    // config values (via `legacyResolveLocalConfigValues`, matching `stop`/`status`'s own
+    // resolver) plus the shared `legacyResolveDbBootstrapConfig` derivation `supabase
+    // start` also uses — deliberately narrower than `supabase start`'s own prelude: no
+    // `--exclude`, no image pre-pull for any other service, no JWT/JWKS/image resolution
+    // beyond what Postgres and its own fresh-volume setup jobs need.
+    // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
+    // inside `legacyStartDatabase`'s fresh-volume setup pipeline — resolved here (project `.env`
+    // aware, like `db reset`'s identical gate) so it can be threaded straight through.
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
+
+    const values = yield* Effect.try({
+      try: () =>
+        legacyResolveLocalConfigValues(
+          config,
+          hostname,
+          cliConfig.workdir,
+          projectEnvValues,
+          loaded?.document,
+        ),
+      catch: (cause) =>
+        new LegacyDbConfigLoadError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
+    const bootstrapConfig = yield* legacyResolveDbBootstrapConfig(
+      fs,
+      path,
+      { config, projectEnvValues, workdir: cliConfig.workdir },
+      (message) => new LegacyDbConfigLoadError({ message }),
     );
 
     // Go's `DockerStart` forces every container's network mode (and the network it creates)
