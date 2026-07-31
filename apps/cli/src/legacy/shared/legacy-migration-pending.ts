@@ -1,4 +1,4 @@
-import { legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacyBold } from "./legacy-colors.ts";
 
 /**
  * `pkg/migration/file.go` — local migration filenames are `<digits>_<name>.sql`.

@@ -44,7 +44,7 @@ type EnvLookup = (name: string) => string | undefined;
  * defaults, but a **malformed** file is a hard error (Go returns the decode error
  * and aborts the command rather than running against the default local database).
  */
-interface LegacyDbTomlValues {
+export interface LegacyDbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
   /**
    * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)

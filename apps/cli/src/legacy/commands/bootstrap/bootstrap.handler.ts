@@ -5,17 +5,28 @@ import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyWorkdirFlag, legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  LegacyWorkdirFlag,
+  legacyResolveYes,
+  legacyResolveYesWithProjectEnv,
+} from "../../../shared/legacy/global-flags.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { legacyAqua, legacyBold } from "../../shared/legacy-colors.ts";
 import { legacyEnsureLogin } from "../../shared/legacy-ensure-login.ts";
 import { legacyGetProjectApiKeys } from "../../shared/legacy-get-api-keys.ts";
 import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { legacyResolveLinkedConn } from "../../shared/legacy-db-config.layer.ts";
+import {
+  legacyApplyProjectEnv,
+  legacyCheckDbToml,
+  legacyLoadProjectEnv,
+} from "../../shared/legacy-db-config.toml-read.ts";
+import { legacyDbPushCore } from "../../shared/legacy-db-push-core.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyProjectCreateCore } from "../../shared/legacy-project-create-core.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
@@ -58,11 +69,11 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const templateService = yield* LegacyTemplateService;
-  const proxy = yield* LegacyGoProxy;
   const api = yield* LegacyPlatformApi;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const workdirFlag = yield* LegacyWorkdirFlag;
+  const dnsResolver = yield* LegacyDnsResolverFlag;
   // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
   const yesFlag = yield* legacyResolveYes;
 
@@ -70,8 +81,9 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   const retry = { schedule: retrySchedule, times: LEGACY_BOOTSTRAP_MAX_RETRIES } as const;
 
   // `process.chdir` mirrors Go's `ChangeWorkDir`; restore the original cwd in a
-  // finalizer so the (mocked) proxy step still inherits the bootstrap workdir
-  // while leaving the surrounding process untouched.
+  // finalizer so the surrounding process is left untouched once this command
+  // returns (every step below reads its own explicit `workdir` var, never
+  // `process.cwd()`, so nothing else depends on the chdir staying in effect).
   const originalCwd = process.cwd();
   let createdRef: string | undefined;
   // Resolved bootstrap workdir, hoisted so the linked-project-cache finalizer writes
@@ -203,8 +215,23 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     }).pipe(apiKeysNotify, Effect.retry(retry));
     const { anon } = legacyExtractServiceKeys(keys);
 
-    // I. Link services (best-effort, anon key) + mandatory project-ref write.
-    // `bootstrap.go:98-105`. Go calls `link.LinkServices` (no telemetry / status).
+    // I. Load config.toml + link services (best-effort, anon key) + mandatory
+    // project-ref write. `bootstrap.go:98-105`: Go's `flags.LoadConfig(fsys)`
+    // (`bootstrap.go:99`) runs FIRST — right before `link.LinkServices` — and a
+    // malformed config.toml aborts bootstrap here (a hard `return err`), before
+    // `link.LinkServices`, the health poll, or the `.env` write ever run. This
+    // also fixes the "Loading config override: [remotes.x]" print's position to
+    // match Go. `legacyApplyProjectEnv`'s scope (mirroring Go's process-lifetime
+    // `os.Setenv`) is opened here and stays open for the rest of the handler —
+    // see the `Effect.scoped` on this function's own outer pipe below.
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+    yield* legacyApplyProjectEnv(projectEnv);
+    const pushYes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+    const toml = yield* legacyCheckDbToml(fs, path, workdir, projectRef);
+    if (toml.appliedRemote !== undefined) {
+      yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
+    }
+
     yield* legacyLinkServicesCore({
       ref: projectRef,
       serviceKey: anon,
@@ -231,7 +258,11 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       }
     }).pipe(healthNotify, Effect.retry(retry));
 
-    // K. Derive db config + write .env (non-fatal). `bootstrap.go:114-121`.
+    // K. Derive db config + write .env (non-fatal). `bootstrap.go:114-121`. Kept
+    // as the naive direct-host connection (matching Go's `NewDbConfigWithPassword`
+    // shape, minus its own IPv6/pooler-fallback — a pre-existing, out-of-scope
+    // `.env` divergence: unlike step L below, `.env` is never used to actually
+    // connect, so it doesn't need the real probe+fallback resolution).
     const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliConfig.projectHost);
     const supabaseUrl = `https://${projectRef}.${cliConfig.projectHost}`;
     const envFilePath = path.join(workdir, ".env");
@@ -261,37 +292,68 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       ),
     );
 
-    // L. Push migrations — DELEGATED to the Go binary (interim; see SIDE_EFFECTS.md).
-    // No instrumentation wrap: the subprocess fires its own push telemetry.
-    // `bootstrap.go:122-127` -> push.Run(..., includeRoles, includeSeed) =>
-    // `--include-roles --include-seed` (no `--include-all`).
+    // L. Push migrations — native call to `legacyDbPushCore` (CLI-1953). Mirrors
+    // Go's `push.Run(ctx, false, false, true, true, config, fsys)`
+    // (`bootstrap.go:122-127`) => `includeAll: false, includeRoles: true,
+    // includeSeed: true, dryRun: false`.
     //
-    // Channel parity (CLI-1617): the proxy must be called 1:1 with the user's
-    // input — a flag stays a flag, an env var stays an env var. Go binds
-    // bootstrap's `-p` to viper `DB_PASSWORD` and `db push` reads it from viper
-    // (== the `SUPABASE_DB_PASSWORD` env var for the subprocess), so only a
-    // flag-sourced password travels as `--password`; an env-/prompt-sourced one
-    // travels as the env var.
+    // The connection itself is resolved via `legacyResolveLinkedConn` — the same
+    // dial-direct-host / fall-back-to-IPv4-pooler logic Go's
+    // `flags.NewDbConfigWithPassword` uses (`db_url.go:132-172`), not the naive
+    // `deriveDbConfig` used for `.env` above. New Supabase projects commonly have
+    // an IPv6-only direct DB host, so without this fallback the push would burn
+    // all 9 retries and fail on IPv4-only networks — the exact regression this
+    // fix closes. `created.dbPassword` is always non-empty by this point (the
+    // create step already prompted for/generated one), so — matching Go — the
+    // temp-login-role branches are never actually reached; only the TCP probe
+    // and a read of the `<workdir>/supabase/.temp/pooler-url` file `link.LinkServices`
+    // already wrote in step I. Unlike Go (which logs a resolution failure and
+    // presses on with a doomed config, only to fail identically 9 retries later
+    // inside `push.Run`), a resolution failure here fails bootstrap immediately —
+    // a deliberate, simpler divergence from Go's odd leniency.
     //
-    // The flag branch keys on a *non-empty* flag value: an explicit `--password ""`
-    // (e.g. an unset `$SUPABASE_DB_PASSWORD` expanded by the shell) leaves viper
-    // `DB_PASSWORD` empty in Go too, so `create.promptMissingParams` prompts and
-    // `viper.Set`s the resolved value — which in-process `db push` then reads.
-    // Forwarding the literal empty flag would lose that prompted password, so an
-    // empty flag falls through to the resolved `created.dbPassword` (which carries
-    // the env- or prompt-sourced value) on the env channel.
-    const pushArgs = ["db", "push", "--include-roles", "--include-seed"];
-    if (Option.isSome(flags.password) && flags.password.value.length > 0) {
-      pushArgs.push("--password", flags.password.value);
-      yield* proxy.exec(pushArgs);
-    } else {
-      yield* proxy.exec(
-        pushArgs,
-        created.dbPassword.length > 0
-          ? { env: { SUPABASE_DB_PASSWORD: created.dbPassword } }
-          : undefined,
-      );
-    }
+    // Go never re-resolves the project ref or config.toml for push (reuses what
+    // step I already loaded above) — so this passes `workdir`/`projectRef`/`toml`
+    // straight through as plain values instead of calling `legacyDbPush` (the
+    // full flags-based command), which would re-resolve them via
+    // `LegacyProjectRefResolver`/`LegacyDbConfigResolver` — both keyed off
+    // `LegacyCliConfig.workdir`, stale after this handler's own `process.chdir`
+    // above (step D) since that layer is built once, before the handler runs.
+    //
+    // `legacyBootstrapRetryNotify`/`Effect.retry(retry)` reproduce Go's
+    // `policy.Reset()` + `backoff.RetryNotify` wrap around the push call
+    // (`bootstrap.go:122-127`), matching the api-keys/health-poll retries above —
+    // matching Go, only `push.Run` itself is retried, not the connection
+    // resolution (Go's `NewDbConfigWithPassword` runs once, outside the loop).
+    // No instrumentation wrap: `legacyDbPushCore` is the bare handler function,
+    // not `push.command.ts`'s wrapped command, so it never fires its own
+    // `cli_command_executed` — no double-count risk.
+    const conn = yield* legacyResolveLinkedConn(
+      projectRef,
+      workdir,
+      cliConfig.projectHost,
+      cliConfig.poolerHost,
+      dnsResolver,
+      Option.some(created.dbPassword),
+      false,
+    );
+    const pushNotify = legacyBootstrapRetryNotify();
+    yield* legacyDbPushCore({
+      workdir,
+      projectRef,
+      conn,
+      isLocal: false,
+      repairSuggestsLocalFlag: false,
+      dryRun: false,
+      includeAll: false,
+      includeRoles: true,
+      includeSeed: true,
+      dnsResolver,
+      projectId: cliConfig.projectId,
+      toml,
+      yes: pushYes,
+      emitStructuredResult: false,
+    }).pipe(pushNotify, Effect.retry(retry));
 
     // M. Start suggestion. `bootstrap.go:128-130`.
     if (isText) {
@@ -324,6 +386,13 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    // Load-bearing: `legacyApplyProjectEnv` (step I) uses `Effect.acquireRelease`
+    // to revert `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes. Its
+    // lifetime must span the rest of this handler (link services, health poll,
+    // `.env` write, and the push step's own edge-runtime/pg-delta cache use of
+    // that env var) — matching Go's process-lifetime `os.Setenv` — so the scope
+    // is closed here, at the outermost pipe, not narrowly around a single step.
+    Effect.scoped,
   );
 });
 
