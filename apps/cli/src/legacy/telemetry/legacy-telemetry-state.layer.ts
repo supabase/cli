@@ -243,6 +243,15 @@ function scanRootJsonEntries(
  * JSON `null` decodes into every field without error (nil for the pointer
  * fields, no-op for the rest); `session_last_active` is `json.RawMessage` and
  * unknown keys are skipped untyped — any token is fine for those.
+ *
+ * DOCUMENTED BOUND (review r3689624837): `encoding/json` also matches field
+ * names case-INsensitively when no exact match exists, so Go would treat a
+ * hand-edited `"Enabled": …` as the `enabled` field where this port (here and
+ * in `lastToken`/`lastNonNullToken`) treats it as unknown. Both CLIs only
+ * ever WRITE canonical lowercase keys, so case-variant keys require a
+ * hand-edited file; this emulation intentionally stops at exact tag names —
+ * do not extend it to fold casing (that path ends at reproducing
+ * `strings.EqualFold`'s Unicode simple folding).
  */
 function hasGoDecodableFieldTokens(
   entries: ReadonlyArray<readonly [key: string, token: string]>,
