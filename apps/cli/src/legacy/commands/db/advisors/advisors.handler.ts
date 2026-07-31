@@ -7,6 +7,7 @@ import { ProcessControl } from "../../../../shared/runtime/process-control.servi
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
+import { legacyMissingAccessTokenMessage } from "../../../auth/legacy-access-token.ts";
 import { legacyFailsOn } from "../../../shared/legacy-fail-on.ts";
 import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -35,10 +36,6 @@ import {
 } from "./advisors.format.ts";
 import { legacyFetchPerformanceAdvisors, legacyFetchSecurityAdvisors } from "./advisors.linked.ts";
 import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
-
-/** Go's `utils.ErrMissingToken` (`internal/utils/access_token.go:18`). */
-const missingTokenMessage = (): string =>
-  `Access token not provided. Supply an access token by running ${legacyAqua("supabase login")} or setting the SUPABASE_ACCESS_TOKEN environment variable.`;
 
 /** Go's advisors PreRunE `utils.CmdSuggestion` (`cmd/db.go`). */
 const loginSuggestion = (): string => `Run ${legacyAqua("supabase login")} first.`;
@@ -164,7 +161,7 @@ const runLinked = Effect.fnUntraced(function* (
     if (Option.isNone(tokenOpt)) {
       return yield* Effect.fail(
         new LegacyDbAdvisorsNotLoggedInError({
-          message: missingTokenMessage(),
+          message: legacyMissingAccessTokenMessage(),
           suggestion: loginSuggestion(),
         }),
       );

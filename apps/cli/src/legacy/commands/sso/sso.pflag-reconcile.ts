@@ -212,7 +212,7 @@ export function legacySsoPflagProfileValue(
  * may be absent; the emulation then only acts on what the scan itself shows.
  */
 export const legacySsoResolvePflagProfile = Effect.fnUntraced(function* (
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
 ) {
   const parsedRaw = yield* Effect.serviceOption(LegacyProfileFlag);
   const parsedProfile = Option.filter(parsedRaw, (value) => value !== "supabase");

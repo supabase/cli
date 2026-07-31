@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
+import { Effect, Exit, Layer, Option, Redacted, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -68,6 +68,12 @@ interface SetupOpts {
    * real CLI tree would.
    */
   profileFlag?: string;
+  /**
+   * Overrides the config layer's env-shaped access token. `Option.none()`
+   * models a machine with no SUPABASE_ACCESS_TOKEN — with a reconciled
+   * profile and no keyring/file token, Go's `GetSupabase` gate aborts.
+   */
+  accessToken?: Option.Option<Redacted.Redacted<string>>;
 }
 
 function jsonResponse(
@@ -168,7 +174,10 @@ function setup(opts: SetupOpts = {}) {
     stitchedDistinctId: () => undefined,
   });
 
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliConfig = mockLegacyCliConfig({
+    workdir: tempRoot.current,
+    ...(opts.accessToken !== undefined ? { accessToken: opts.accessToken } : {}),
+  });
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
@@ -1666,6 +1675,81 @@ describe("legacy sso update integration", () => {
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );
+
+  it.live("profile emulation: a reconciled profile with no resolvable token aborts like Go", () => {
+    // Go's `GetSupabase` gate (`api.go:119-124`) `log.Fatalln`s ErrMissingToken
+    // at first client use when the RECONCILED profile's lookup finds nothing —
+    // the stale profile's token must never be substituted, and no request may
+    // be issued (PR #5974 review round 10, r3686720488).
+    const first = writeProfileYaml("first-notoken.yml", "http://first.example");
+    const second = writeProfileYaml("second-notoken.yml", "http://second.example");
+    const restoreEnv = withProfileEnv(undefined);
+    const { layer, api } = setup({
+      accessToken: Option.none(),
+      cliArgs: [
+        "sso",
+        "update",
+        VALID_PROVIDER_ID,
+        "--add-domains",
+        "new.com",
+        "--profile",
+        first,
+        "--profile",
+        second,
+      ],
+      profileFlag: first,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoUpdate({ ...defaultFlags, addDomains: ["new.com"] }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoAccessTokenError");
+        expect(dump).toContain("Access token not provided. Supply an access token by running");
+      }
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+  });
+
+  it.live("profile emulation: the missing-token gate fires AFTER the mutex check, like Go", () => {
+    // cobra: ParseFlags → PreRunE → required → GROUPS → RunE(GetSupabase) —
+    // the token gate lives in RunE, so a mutex violation must win even when
+    // the reconciled profile has no token (validation-order parity).
+    const first = writeProfileYaml("first-order.yml", "http://first.example");
+    const second = writeProfileYaml("second-order.yml", "http://second.example");
+    const restoreEnv = withProfileEnv(undefined);
+    const { layer, api } = setup({
+      accessToken: Option.none(),
+      cliArgs: [
+        "sso",
+        "update",
+        VALID_PROVIDER_ID,
+        "--domains",
+        "a.com",
+        "--add-domains",
+        "new.com",
+        "--profile",
+        first,
+        "--profile",
+        second,
+      ],
+      profileFlag: first,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["new.com"] }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("[add-domains domains] were all set");
+        expect(dump).not.toContain("Access token not provided");
+      }
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+  });
 
   it.live("profile emulation: the reconciled GET tolerates a body without a domains array", () => {
     const first = writeProfileYaml("first-nodom.yml", "http://first.example");

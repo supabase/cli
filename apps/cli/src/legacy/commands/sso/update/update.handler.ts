@@ -24,6 +24,7 @@ import {
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { legacyAccessTokenForProfile } from "../../../auth/legacy-credentials.layer.ts";
+import { legacyMissingAccessTokenMessage } from "../../../auth/legacy-access-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -40,6 +41,7 @@ import {
   LegacySsoUpdateNetworkError,
   LegacySsoUpdateNotFoundError,
   LegacySsoUpdateUnexpectedStatusError,
+  LegacySsoAccessTokenError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
@@ -301,13 +303,23 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // process-wide (`access_token.go:43`, review r3684524241). `undefined`
     // when the scan and the parser agree — every consumer then resolves from
     // the config-layer services as before.
-    const reconciledToken = yield* Option.match(reconciledProfile, {
-      onNone: () => Effect.succeed(undefined),
-      onSome: (profile) =>
-        legacyAccessTokenForProfile(profile.name).pipe(
-          Effect.catch(() => Effect.succeed(Option.none<Redacted.Redacted<string>>())),
-        ),
-    });
+    // Reconciled-profile credentials, resolved LAZILY (memoized) so the first
+    // read happens at the request site — Go's token gate is `GetSupabase`
+    // inside RunE (`api.go:119-124`), AFTER required/mutex/workdir
+    // validation, so a missing or invalid reconciled token must not pre-empt
+    // those errors (review r3686720488). Missing → Go's ErrMissingToken;
+    // invalid → ErrInvalidToken (the validation failure propagates). The
+    // auxiliary calls (cache fill, upgrade-gate GETs) use the absorbed
+    // variant: failures skip like Go's best-effort `ensureProjectGroupsCached`.
+    const reconciledTokenCached = Option.isSome(reconciledProfile)
+      ? yield* Effect.cached(legacyAccessTokenForProfile(reconciledProfile.value.name))
+      : undefined;
+    const reconciledTokenForAux =
+      reconciledTokenCached === undefined
+        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
+        : Effect.catch(reconciledTokenCached, () =>
+            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+          );
 
     // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
     // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
@@ -372,7 +384,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       // error mapping and the spinner-fail/suggestion stderr ordering mirror
       // the typed path (`handleGetError`) exactly.
       const rawGetProvider = Effect.gen(function* () {
-        const tokenOpt = reconciledToken ?? (yield* resolveLegacyAccessToken);
+        const tokenOpt =
+          reconciledTokenCached !== undefined
+            ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
+                Option.isSome(resolved)
+                  ? Effect.succeed(resolved)
+                  : Effect.fail(
+                      new LegacySsoAccessTokenError({ message: legacyMissingAccessTokenMessage() }),
+                    ),
+              )
+            : yield* resolveLegacyAccessToken;
         const request = HttpClientRequest.get(
           `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
         ).pipe(
@@ -440,7 +461,9 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           statusCode: response.status,
           response,
           apiUrl,
-          ...(reconciledToken !== undefined ? { accessToken: reconciledToken } : {}),
+          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
         });
         if (response.status === 404) {
           return yield* Effect.fail(
@@ -513,7 +536,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         body["name_id_format"] = nameIdFormat.value;
       }
 
-      const tokenOpt = reconciledToken ?? (yield* resolveLegacyAccessToken);
+      const tokenOpt =
+        reconciledTokenCached !== undefined
+          ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
+              Option.isSome(resolved)
+                ? Effect.succeed(resolved)
+                : Effect.fail(
+                    new LegacySsoAccessTokenError({ message: legacyMissingAccessTokenMessage() }),
+                  ),
+            )
+          : yield* resolveLegacyAccessToken;
 
       // See `add.handler.ts` for the rationale behind `bearerToken(Redacted)`.
       const request = HttpClientRequest.put(
@@ -546,7 +578,9 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           statusCode: response.status,
           response,
           apiUrl,
-          ...(reconciledToken !== undefined ? { accessToken: reconciledToken } : {}),
+          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
         });
         yield* fetching?.fail() ?? Effect.void;
         return yield* Effect.fail(
@@ -595,11 +629,10 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through the
       // process-wide `CurrentProfile` — the reconciled host, never the layer's.
       Effect.ensuring(
-        linkedProjectCache.cache(
-          ref,
-          undefined,
-          Option.getOrUndefined(profileApiUrl),
-          reconciledToken,
+        // Resolved INSIDE the ensuring effect — the memoized token read must
+        // not run before the handler body (Go's gate order, see above).
+        Effect.flatMap(reconciledTokenForAux, (token) =>
+          linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl), token),
         ),
       ),
     );

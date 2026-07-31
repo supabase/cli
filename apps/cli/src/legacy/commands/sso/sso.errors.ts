@@ -221,3 +221,13 @@ export class LegacySsoRemoveUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
 }> {}
+
+/**
+ * Go's `GetSupabase` token gate (`internal/utils/api.go:119-124`):
+ * `log.Fatalln(utils.ErrMissingToken)` when the reconciled profile's token
+ * lookup finds nothing — fired at first client use inside `RunE`, AFTER
+ * required/mutex/workdir validation (PR #5974 review round 10).
+ */
+export class LegacySsoAccessTokenError extends Data.TaggedError("LegacySsoAccessTokenError")<{
+  readonly message: string;
+}> {}
