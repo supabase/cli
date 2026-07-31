@@ -19,6 +19,16 @@ import { legacyPathMatch } from "./legacy-path-match.ts";
 // before globbing, so a `\` here is always a glob escape, never a path separator.
 const legacyHasGlobMeta = (pattern: string): boolean => /[*?[\\]/u.test(pattern);
 
+// Go's split (`path.Split` + `cleanGlobPath`, `io/fs/glob.go`) reduces a Windows drive-root
+// pattern like `C:/*.sql` (post `filepath.ToSlash`) to a bare `C:` directory component — one
+// level up from `legacyGlobPattern`'s own slash-split below — which is still part of the SAME
+// already-absolute pattern's root, never something to join under the workdir, even though
+// `path.isAbsolute("C:")` is `false` (Node's win32 rules require the trailing separator,
+// `C:\`/`C:/`, to call a path absolute; a bare `C:` alone is technically "drive-relative").
+// Recognize that exact shape so it reaches `fs.readDirectory`/`fs.exists` verbatim, mirroring
+// Go passing it straight through to `ReadDir`/`Stat` on the same real, unrooted `afero.NewOsFs`.
+const legacyIsWindowsDriveRoot = (p: string): boolean => /^[A-Za-z]:$/.test(p);
+
 // Go globs/reads glob-config paths through an OS-root-rooted `afero.NewOsFs`, where the
 // CLI's "workdir" is just `os.Chdir(workdir)` (`internal/utils/misc.go`) — which only
 // affects RELATIVE paths. An absolute glob-config entry, preserved verbatim by the config
@@ -27,7 +37,7 @@ const legacyHasGlobMeta = (pattern: string): boolean => /[*?[\\]/u.test(pattern)
 // relative (`path.join` would otherwise collapse `/repo` + `/tmp/seed.sql` to
 // `/repo/tmp/seed.sql`).
 export const legacyResolveUnderWorkdir = (path: Path.Path, workdir: string, p: string): string =>
-  path.isAbsolute(p) ? p : path.join(workdir, p);
+  path.isAbsolute(p) || legacyIsWindowsDriveRoot(p) ? p : path.join(workdir, p);
 
 /**
  * Resolves a single glob pattern against the workdir, returning the matched paths RELATIVE
@@ -62,7 +72,17 @@ export const legacyGlobPattern = (
       return exists ? [normalized] : [];
     }
     const slash = normalized.lastIndexOf("/");
-    const dirPattern = slash === -1 ? "" : normalized.slice(0, slash);
+    // Go's `path.Split`/`cleanGlobPath` (`io/fs/glob.go`) keep a root-only directory distinct
+    // from "no directory at all": splitting a POSIX-root pattern like `/*.sql` yields a bare
+    // `/`, which Go still globs as the fsys root — NOT the workdir `afero.NewOsFs()` happens to
+    // have `chdir`-ed into — and every match it returns stays `/`-prefixed. Collapsing that to
+    // `""` here (indistinguishable from the truly relative no-slash case below, where `""`
+    // correctly means "resolve under workdir") would silently glob the workdir instead of the
+    // real root for a pattern whose ONLY slash is the leading one. Confirmed empirically
+    // against the real, unrooted `afero.NewOsFs()` Go itself globs through: `Glob{"/*"}.
+    // Files(fsys)` lists the actual filesystem root's entries, each still `/`-prefixed, not
+    // Go's cwd.
+    const dirPattern = slash === -1 ? "" : slash === 0 ? "/" : normalized.slice(0, slash);
     const filePattern = slash === -1 ? normalized : normalized.slice(slash + 1);
     const dirs = legacyHasGlobMeta(dirPattern)
       ? yield* legacyGlobPattern(fs, path, workdir, dirPattern)
@@ -73,7 +93,11 @@ export const legacyGlobPattern = (
       const names = yield* fs.readDirectory(absDir).pipe(Effect.orElseSucceed(() => []));
       for (const name of names) {
         if (legacyPathMatch(filePattern, name).matched) {
-          result.push(dir.length === 0 ? name : `${dir}/${name}`);
+          // `dir` is already `/` for the bare-root case above — appending `/${name}` the same
+          // way every other (non-root) `dir` value does below would double the separator.
+          result.push(
+            dir.length === 0 ? name : dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`,
+          );
         }
       }
     }
