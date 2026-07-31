@@ -88,6 +88,14 @@ interface SetupOpts {
   readonly samples?: ReadonlyArray<LegacyStarterTemplate>;
   readonly apiKeysFailTimes?: number;
   readonly pushConnectFailTimes?: number;
+  /**
+   * When `false`, the pooler-config route reports no PRIMARY pooler (Go's
+   * `utils.GetPoolerConfig` returning nil) — `legacyLinkServicesCore`'s
+   * best-effort `linkPooler` step then never writes `<workdir>/supabase/.temp/
+   * pooler-url`, so `legacyResolveLinkedConn`'s push-connection resolution has
+   * neither a reachable direct host nor a saved pooler URL to fall back to.
+   */
+  readonly poolerAvailable?: boolean;
   readonly health?: { readonly status: number; readonly body: unknown };
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
@@ -135,6 +143,10 @@ function setup(opts: SetupOpts = {}) {
     // `linkPooler` step (step I) fetches this same route and saves it to
     // `<workdir>/supabase/.temp/pooler-url`, which the fallback then reads.
     if (recorded.method === "GET" && url.includes("/config/database/pooler")) {
+      if (opts.poolerAvailable === false) {
+        // No PRIMARY entry — mirrors Go's `utils.GetPoolerConfig` returning nil.
+        return Effect.succeed(legacyJsonResponse(request, 200, []));
+      }
       return Effect.succeed(
         legacyJsonResponse(request, 200, [
           {
@@ -502,6 +514,34 @@ describe("legacy bootstrap integration", () => {
         expect(s.pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(s.pushConnectCalls[0]?.user).toBe(`postgres.${LEGACY_VALID_REF}`);
         expect(s.out.stderrText).toContain("Connecting to remote database...");
+        expect(s.out.stdoutText).toContain("Remote database is up to date.");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.live(
+    "falls back to the direct-host config and keeps retrying push when connection resolution itself fails",
+    () => {
+      // Regression coverage (review thread on CLI-1953): when the direct host is
+      // unreachable AND no pooler URL was ever saved, `legacyResolveLinkedConn`
+      // fails with `LegacyDbConfigIpv6Error`. Go's `NewDbConfigWithPassword`
+      // (`db_url.go:161-163`) logs that same error and presses on with its
+      // best-effort direct-host config, letting the retry-wrapped `push.Run`
+      // (`bootstrap.go:115-127`) get real reconnect attempts instead of aborting
+      // bootstrap outright. This asserts the native flow does the same instead of
+      // failing before `legacyDbPushCore` ever runs.
+      const s = setup({ poolerAvailable: false, pushConnectFailTimes: 1 });
+      return Effect.gen(function* () {
+        yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+        expect(s.out.stderrText).toContain("IPv6 is not supported on your current network");
+        // Falls back to the same direct-host shape as the `.env` config (step K),
+        // not the pooler — and still reaches/retries the native push.
+        expect(s.pushConnectCalls).toHaveLength(2);
+        expect(s.pushConnectCalls[0]?.host).toBe(`db.${LEGACY_VALID_REF}.supabase.co`);
+        expect(s.pushConnectCalls[0]?.port).toBe(5432);
+        expect(s.pushConnectCalls[0]?.user).toBe("postgres");
+        expect(s.pushConnectCalls[0]?.database).toBe("postgres");
+        expect(s.pushConnectCalls[0]?.password).toBe("s3cret");
         expect(s.out.stdoutText).toContain("Remote database is up to date.");
       }).pipe(Effect.provide(s.layer));
     },

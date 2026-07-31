@@ -308,10 +308,19 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // create step already prompted for/generated one), so — matching Go — the
     // temp-login-role branches are never actually reached; only the TCP probe
     // and a read of the `<workdir>/supabase/.temp/pooler-url` file `link.LinkServices`
-    // already wrote in step I. Unlike Go (which logs a resolution failure and
-    // presses on with a doomed config, only to fail identically 9 retries later
-    // inside `push.Run`), a resolution failure here fails bootstrap immediately —
-    // a deliberate, simpler divergence from Go's odd leniency.
+    // already wrote in step I. Matching Go's own leniency here: given a non-empty
+    // password, the only reachable failure is the direct host being unreachable
+    // with no saved pooler URL yet (`LegacyDbConfigIpv6Error`) — Go's
+    // `NewDbConfigWithPassword` still returns its best-effort direct-host config
+    // alongside that error (`db_url.go:161-163`), and `bootstrap.go:115-118` logs
+    // the error to stderr and presses on with it rather than aborting. `push.Run`
+    // dials fresh on every call (`push.go:29`) and bootstrap retries `push.Run`
+    // itself (`bootstrap.go:122-127`), so this leniency buys real reconnect
+    // attempts across the backoff window — e.g. while a freshly created
+    // project's link/pooler metadata is still propagating — not a guaranteed
+    // repeat failure. Reproduced below: catch that one error tag, log it, and
+    // fall back to the same direct-host shape already computed for `.env` above
+    // (step K's `dbConfig`) instead of failing bootstrap outright.
     //
     // Go never re-resolves the project ref or config.toml for push (reuses what
     // step I already loaded above) — so this passes `workdir`/`projectRef`/`toml`
@@ -341,18 +350,20 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       dashboardUrl: cliConfig.dashboardUrl,
       profileName: cliConfig.profile,
     };
-    const conn = {
-      ...(yield* legacyResolveLinkedConn(
-        projectRef,
-        workdir,
-        cliConfig.projectHost,
-        cliConfig.poolerHost,
-        dnsResolver,
-        Option.some(created.dbPassword),
-        false,
-      )),
-      suggestionContext,
-    };
+    const resolvedConn = yield* legacyResolveLinkedConn(
+      projectRef,
+      workdir,
+      cliConfig.projectHost,
+      cliConfig.poolerHost,
+      dnsResolver,
+      Option.some(created.dbPassword),
+      false,
+    ).pipe(
+      Effect.catchTag("LegacyDbConfigIpv6Error", (error) =>
+        output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
+      ),
+    );
+    const conn = { ...resolvedConn, suggestionContext };
     const pushNotify = legacyBootstrapRetryNotify();
     yield* legacyDbPushCore({
       workdir,
