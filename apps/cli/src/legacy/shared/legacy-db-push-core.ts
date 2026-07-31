@@ -28,6 +28,7 @@ import { legacyAqua, legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbTomlValues } from "./legacy-db-config.toml-read.ts";
 import { redactLegacyConnectionString } from "./legacy-db-config.parse.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
+import { legacyResolveLocalProjectId } from "./legacy-docker-ids.ts";
 import { legacyApplyMigrations, legacySeedGlobals } from "./legacy-migration-apply.ts";
 import {
   legacyListRemoteMigrations,
@@ -105,7 +106,17 @@ export interface LegacyDbPushCoreInput {
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
   readonly dnsResolver: "native" | "https";
-  /** `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID`) — feeds the pg-delta cache key. */
+  /**
+   * `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
+   * top precedence tier of the pg-delta Docker-volume id. Combined internally
+   * with `toml.projectId` and a workdir-basename default via
+   * {@link legacyResolveLocalProjectId}, mirroring Go's `Config.ProjectId`
+   * resolution (env override → config.toml `project_id` → workdir basename) —
+   * passing this env-only tier straight through as the id (as bootstrap's own
+   * `config.toml` is scaffolded fresh mid-handler, after `LegacyCliConfig` was
+   * already built) would bind the pg-delta edge-runtime cache volume to the
+   * generic `supabase_edge_runtime_` name shared by every unrelated project.
+   */
   readonly projectId: Option.Option<string>;
   /** Already loaded + validated `config.toml`, e.g. via `legacyCheckDbToml`. */
   readonly toml: LegacyDbTomlValues;
@@ -293,7 +304,11 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             toml.pgDelta.enabled ||
             legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
           const pgDeltaCtx: LegacyPgDeltaContext = {
-            projectId: Option.getOrElse(projectId, () => ""),
+            projectId: legacyResolveLocalProjectId(
+              Option.getOrUndefined(projectId),
+              Option.getOrUndefined(toml.projectId),
+              workdir,
+            ),
             cwd: workdir,
             npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
             denoVersion: toml.denoVersion,

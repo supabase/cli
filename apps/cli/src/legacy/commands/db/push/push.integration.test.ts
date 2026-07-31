@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -385,20 +385,49 @@ describe("legacy db push", () => {
     });
   });
 
-  it.live("caches the migrations catalog with an empty projectId when none is resolved", () => {
-    const { layer, out, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-      files: migrationFile("20240101000000"),
-      confirm: [true],
-      catalogStdout: '{"snapshot":"ok"}',
-      noProjectId: true,
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-      expect(edgeRunCalls).toHaveLength(1);
-    });
-  });
+  it.live(
+    "falls back to config.toml's project_id for the pg-delta volume when SUPABASE_PROJECT_ID is unset",
+    () => {
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        // Go's `Config.ProjectId` resolves config.toml's `project_id` (here "test")
+        // once no `SUPABASE_PROJECT_ID` env override wins — the pg-delta Deno-cache
+        // volume must key off that same id, not fall through to an empty/shared name.
+        expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_test:/root/.cache/deno:rw");
+      });
+    },
+  );
+
+  it.live(
+    "falls back to the workdir basename for the pg-delta volume when config.toml has no project_id",
+    () => {
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: "[experimental.pgdelta]\nenabled = true\n",
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        const expectedId = basename(tmp.current);
+        expect(edgeRunCalls[0]?.binds).toContain(
+          `supabase_edge_runtime_${expectedId}:/root/.cache/deno:rw`,
+        );
+      });
+    },
+  );
 
   it.live("warns without failing the push when the catalog export fails", () => {
     const { layer, out } = setup(tmp.current, {
