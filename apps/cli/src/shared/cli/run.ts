@@ -64,8 +64,16 @@ const globalFlagsWithValues = new Set([
 // (a completely different command tree that happens to share the literal path `["start"]`)
 // needs its OWN exemption, passed via `RunCliOptions.additionalSelfManagedSignalCommands` from
 // `next/cli/main.ts` — see that call site's comment for why.
+//
+// `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
+// same reason as `start` above: it used to proxy container bootstrap to the hidden Go
+// `db __db-bootstrap --mode start` seam, which held SIGINT/SIGTERM itself, but CLI-1954's
+// native port (`legacy/commands/db/start/start.handler.ts` -> `legacyStartDatabase`) installs
+// no signal handling of its own — it relies on the SAME `Effect.onError(() =>
+// legacyRollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
+// process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
+// failure) — a raw, unhandled OS signal skips it entirely, exactly like the `start` case above.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
-  ["db", "start"],
   // `db reset` (local path) drives the bootstrap seam, which holds SIGINT/SIGTERM/SIGHUP with
   // no-op listeners while the Go child recreates the container; the global handler would
   // otherwise race that and cut off the child's Docker cleanup / status propagation.
