@@ -284,15 +284,18 @@ prose, not structured data.
   rollback, prints `Started supabase local development setup.` + the status table + the
   security notice, and exits 0 even though no container ever started. That is an
   unintended quirk of Go's shape-based check (its own comment reads "Health check always
-  returns a joinError"), and it is deliberately NOT reproduced here: this port's
-  `legacyIsUnhealthyStartError` (`start.rollback.ts`) matches only
-  `LegacyHealthCheckTimeoutError` — never `LegacyImagePrepullError` — and the image
-  pre-pull runs before the downgrade envelope, so the same scenario exits 1 with no
-  success banner and no status table, flag or no flag. `--ignore-health-check`
-  downgrades health-check timeouts only. Rollback is NOT part of the divergence — the
-  pre-pull runs before any container/network is created, so there is nothing to roll
-  back in either CLI; the observable delta is exit code + success banner + status table
-  only. Note the flag's own help text ("Ignore unhealthy services and exit 0",
+  returns a joinError"), and it is deliberately NOT reproduced here — enforced by
+  control flow, not by a classifier: unlike Go's single outer check on the whole `run()`
+  result, this port consults `legacyIsUnhealthyStartError` (`start.rollback.ts`) only
+  inside its two health-wait failure branches, and the image pre-pull runs before
+  bring-up, so its failure propagates out without ever reaching a downgrade branch. The
+  same scenario exits 1 with no success banner and no status table, flag or no flag.
+  `--ignore-health-check` downgrades health-check timeouts only. Rollback is NOT part of
+  the divergence — the pre-pull runs before any container/network is created, so there
+  is nothing to roll back in either CLI; the observable delta is exit code + success
+  banner + status table + security notice (Go prints all three of the latter
+  unconditionally at `Run()`'s tail, `start.go:84-87`; this port's failure exits before
+  any of them). Note the flag's own help text ("Ignore unhealthy services and exit 0",
   byte-matched to Go's) over-promises in this scenario — a pre-pull failure is not an
   "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
 - `--preview` is a hidden, parsed-but-inert flag, matching Go exactly (never read by

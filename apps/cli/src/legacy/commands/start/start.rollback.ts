@@ -19,9 +19,11 @@ type Spawner = ChildProcessSpawner["Service"];
  * `--ignore-health-check` should downgrade a failure to a warning instead of
  * triggering rollback + a hard exit.
  *
- * INTENTIONAL DIVERGENCE (CLI-1987, ruled 2026-07-30): Go's shape-based check
+ * INTENTIONAL DIVERGENCE (CLI-1987, ruled 2026-07-30): Go applies
+ * `IsUnhealthyError` ONCE, at the outer `Run()` boundary, to whatever `run()`
+ * returns (`internal/start/start.go:74-75`) — and the shape-based check
  * accidentally also matches `ensureImagesCached`'s `errors.Join(result...)`
- * (`internal/start/start.go:257-260`) — under `--ignore-health-check`, Go
+ * (`internal/start/start.go:257-260`). Under `--ignore-health-check`, Go
  * therefore swallows a total image-pull failure (or a Docker daemon that
  * becomes unreachable during the pre-pull): it prints the error, skips
  * rollback, prints `Started supabase local development setup.` + the status
@@ -29,13 +31,22 @@ type Spawner = ChildProcessSpawner["Service"];
  * an unintended quirk of the shape check, not designed behaviour — Go's own
  * comment on `IsUnhealthyError` reads "Health check always returns a
  * joinError". Per the CLI-1987 ruling, this port deliberately does NOT
- * reproduce the quirk: `LegacyImagePrepullError` (`lib/image-prepull.ts`) is
- * intentionally excluded from this match, so a pre-pull failure always fails
- * the command with exit 1 and no status table, with or without the flag.
- * (Rollback is not part of the divergence — the pre-pull runs before any
- * container/network is created, so there is nothing to roll back in either
- * CLI; the observable delta is exit code + banner + status table only.) Do
- * not "fix" this by widening the match toward Go's shape check.
+ * reproduce the quirk — and what enforces that is control flow, not this
+ * matcher: the port has no outer classifier check. `start.handler.ts`
+ * consults this function only inside its two health-wait failure branches,
+ * and the pre-pull (`legacyEnsureImagesCached`) runs before bring-up, so a
+ * `LegacyImagePrepullError` (`lib/image-prepull.ts`) propagates straight out
+ * and always fails the command with exit 1, with or without the flag.
+ * Widening this match to accept `LegacyImagePrepullError` would be a dead
+ * no-op — no pre-pull failure ever reaches a call site. The observable delta
+ * vs Go's swallowed path is exit code + success banner + status table +
+ * security notice (Go prints all of the latter three unconditionally at
+ * `Run()`'s tail, `start.go:84-87`; this port's failure exits before any of
+ * them). Rollback is not part of the divergence — the pre-pull runs before
+ * any container/network is created, so there is nothing to roll back in
+ * either CLI. Do not "fix" this toward Go by gating the pre-pull on
+ * `--ignore-health-check` or by reintroducing an outer shape check on the
+ * whole handler result.
  */
 export function legacyIsUnhealthyStartError(
   error: unknown,
