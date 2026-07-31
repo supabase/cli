@@ -83,16 +83,28 @@ export function legacySsoPflagSliceValue(
  *   persistent flag.
  */
 export function legacySsoPflagWorkdirValue(
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
   parsedWorkdir: Option.Option<string>,
   envWorkdir: string | undefined,
 ): Option.Option<string> {
   const scanned = legacySsoPflagStringValue(scan.occurrences, "workdir");
+  // Same last-wins order as the profile resolver: post-path occurrence →
+  // pre-path occurrence (pflag parses persistent flags before the command
+  // path and repeats resolve last-wins, while the Effect parser is
+  // first-wins) → consumed-discard → parsed fallback (review r3690…, the
+  // pre-path workdir twin of r3686720491).
+  const prePathValues = scan.prePathOccurrences.get("workdir");
+  const prePath =
+    prePathValues !== undefined && prePathValues.length > 0
+      ? Option.some(prePathValues[prePathValues.length - 1] as string)
+      : Option.none<string>();
   const flagValue = Option.isSome(scanned)
     ? scanned
-    : scan.consumedFlagNames.has("workdir")
-      ? Option.none<string>()
-      : parsedWorkdir;
+    : Option.isSome(prePath)
+      ? prePath
+      : scan.consumedFlagNames.has("workdir")
+        ? Option.none<string>()
+        : parsedWorkdir;
   if (Option.isSome(flagValue)) {
     return flagValue.value.length > 0 ? flagValue : Option.none();
   }
@@ -118,7 +130,7 @@ export function legacySsoPflagWorkdirValue(
  * sides then issue the identical request for these inputs.
  */
 export const legacySsoValidatePflagWorkdir = Effect.fnUntraced(function* (
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
 ) {
   // `serviceOption`: absent outside the real CLI tree (handler-level tests
   // provide argv via `Stdio.layerTest`, not the global flag settings).

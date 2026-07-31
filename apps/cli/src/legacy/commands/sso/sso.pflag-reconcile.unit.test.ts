@@ -133,7 +133,46 @@ describe("legacySsoPflagWorkdirValue", () => {
   const scan = (
     entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>,
     consumed: ReadonlyArray<string> = [],
-  ) => ({ occurrences: occ(entries), consumedFlagNames: new Set(consumed) });
+    prePath: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [],
+  ) => ({
+    occurrences: occ(entries),
+    consumedFlagNames: new Set(consumed),
+    prePathOccurrences: occ(prePath),
+  });
+
+  it("resolves pre-path repeats last-wins, like pflag (the parser is first-wins)", () => {
+    // `--workdir /existing --workdir /missing sso add …`: pflag uses the
+    // LAST pre-path occurrence (/missing → Go's chdir aborts) while the
+    // Effect parser bound the first (pre-path workdir twin of the profile
+    // fix, PR #5974 review round 11).
+    expect(
+      legacySsoPflagWorkdirValue(
+        scan([], [], [["workdir", ["/existing", "/missing"]]]),
+        Option.some("/existing"),
+        undefined,
+      ),
+    ).toEqual(Option.some("/missing"));
+  });
+
+  it("keeps a pre-path occurrence when the only post-path workdir token was consumed", () => {
+    expect(
+      legacySsoPflagWorkdirValue(
+        scan([], ["workdir"], [["workdir", ["/pre"]]]),
+        Option.some("/pre"),
+        "/env",
+      ),
+    ).toEqual(Option.some("/pre"));
+  });
+
+  it("post-path occurrences still win over pre-path ones (argv-order last-wins)", () => {
+    expect(
+      legacySsoPflagWorkdirValue(
+        scan([["workdir", ["/post"]]], [], [["workdir", ["/pre"]]]),
+        Option.some("/pre"),
+        undefined,
+      ),
+    ).toEqual(Option.some("/post"));
+  });
 
   it("resolves nothing when no flag, parsed value, or env var is present (Go walks up)", () => {
     expect(legacySsoPflagWorkdirValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
