@@ -422,6 +422,16 @@ SUPABASE_ANON_KEY = "anon"
     expect(encodeLegacyGoYaml({ s: "1e10" }, spec)).toBe('s: "1e10"\n');
   });
 
+  it("wraps 19+-digit numeric key runs like Go's unchecked int64 accumulation", () => {
+    // Probed on go1.26: `keyList.Less` accumulates into `int64` without
+    // overflow checks, so `a10000000000000000000` wraps negative and sorts
+    // BEFORE `a9000000000000000000` (review r3689635556).
+    const spec = legacyGoStruct([["default", legacyGoAny, "Default"]]);
+    expect(
+      encodeLegacyGoYaml({ default: { a9000000000000000000: 1, a10000000000000000000: 2 } }, spec),
+    ).toBe("default:\n    a10000000000000000000: 2\n    a9000000000000000000: 1\n");
+  });
+
   it("orders Unicode-digit map keys with yaml.v3's naive rune arithmetic", () => {
     // Probed on go1.26: keyList.Less finds digit runs with unicode.IsDigit
     // but accumulates values as `rune - '0'`, so the Arabic-Indic key `a٢`

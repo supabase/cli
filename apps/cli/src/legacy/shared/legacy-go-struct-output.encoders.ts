@@ -552,11 +552,15 @@ function yamlKeyLess(a: string, b: string): boolean {
     }
     let ai = i;
     let bi = i;
+    // Go accumulates into `int64` WITHOUT overflow checks, so 19+-digit runs
+    // wrap negative and sort before shorter positive runs (probed:
+    // `a10000000000000000000` precedes `a9000000000000000000`;
+    // review r3689635556). `BigInt.asIntN(64, …)` reproduces the wrap.
     for (; ai < ar.length && isSortDigit(ar[ai] as string); ai++) {
-      an = an * 10n + BigInt(((ar[ai] as string).codePointAt(0) as number) - 48);
+      an = BigInt.asIntN(64, an * 10n + BigInt(((ar[ai] as string).codePointAt(0) as number) - 48));
     }
     for (; bi < br.length && isSortDigit(br[bi] as string); bi++) {
-      bn = bn * 10n + BigInt(((br[bi] as string).codePointAt(0) as number) - 48);
+      bn = BigInt.asIntN(64, bn * 10n + BigInt(((br[bi] as string).codePointAt(0) as number) - 48));
     }
     if (an !== bn) return an < bn;
     if (ai !== bi) return ai < bi;
