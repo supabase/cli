@@ -28,7 +28,7 @@ import { legacyAqua, legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbTomlValues } from "./legacy-db-config.toml-read.ts";
 import { redactLegacyConnectionString } from "./legacy-db-config.parse.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
-import { legacyResolveLocalProjectId } from "./legacy-docker-ids.ts";
+import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import { legacyApplyMigrations, legacySeedGlobals } from "./legacy-migration-apply.ts";
 import {
   legacyListRemoteMigrations,
@@ -116,6 +116,13 @@ export interface LegacyDbPushCoreInput {
    * `config.toml` is scaffolded fresh mid-handler, after `LegacyCliConfig` was
    * already built) would bind the pg-delta edge-runtime cache volume to the
    * generic `supabase_edge_runtime_` name shared by every unrelated project.
+   * The resolved id is sanitized ({@link legacySanitizeProjectId}) before it
+   * reaches {@link LegacyPgDeltaContext.projectId} — Go's `Config.Validate`
+   * (`pkg/config/config.go:992-995`) rewrites `Config.ProjectId` to its
+   * sanitized form once at config-load time, so every later reader (including
+   * `EdgeRuntimeId`) sees the already-sanitized value; an unsanitized
+   * `project_id` (e.g. `"my app"` from a downloaded bootstrap template) would
+   * otherwise reach the Docker volume name unescaped.
    */
   readonly projectId: Option.Option<string>;
   /** Already loaded + validated `config.toml`, e.g. via `legacyCheckDbToml`. */
@@ -304,10 +311,12 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             toml.pgDelta.enabled ||
             legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
           const pgDeltaCtx: LegacyPgDeltaContext = {
-            projectId: legacyResolveLocalProjectId(
-              Option.getOrUndefined(projectId),
-              Option.getOrUndefined(toml.projectId),
-              workdir,
+            projectId: legacySanitizeProjectId(
+              legacyResolveLocalProjectId(
+                Option.getOrUndefined(projectId),
+                Option.getOrUndefined(toml.projectId),
+                workdir,
+              ),
             ),
             cwd: workdir,
             npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),

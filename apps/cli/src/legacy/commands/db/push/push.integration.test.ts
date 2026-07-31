@@ -429,6 +429,26 @@ describe("legacy db push", () => {
     },
   );
 
+  it.live("sanitizes an invalid config.toml project_id before naming the pg-delta volume", () => {
+    const { layer, out, edgeRunCalls } = setup(tmp.current, {
+      toml: 'project_id = "my app"\n[experimental.pgdelta]\nenabled = true\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+      catalogStdout: '{"snapshot":"ok"}',
+      noProjectId: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+      expect(edgeRunCalls).toHaveLength(1);
+      // Go's `Config.Validate` (`config.go:992-995`) sanitizes an invalid
+      // `project_id` (replacing the disallowed run with `_`) once at
+      // config-load time, so every later reader — including `EdgeRuntimeId` —
+      // sees the sanitized form, never the raw `"my app"`.
+      expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_my_app:/root/.cache/deno:rw");
+    });
+  });
+
   it.live("warns without failing the push when the catalog export fails", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
