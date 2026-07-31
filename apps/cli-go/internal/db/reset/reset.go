@@ -265,11 +265,38 @@ func restartServices(ctx context.Context) error {
 		return nil
 	})
 	// Do not wait for service healthy as those services may be excluded from starting
-	return errors.Join(result...)
+	if err := errors.Join(result...); err != nil {
+		return err
+	}
+	return reloadKong(ctx)
 }
 
 func listServicesToRestart() []string {
 	return []string{utils.StorageId, utils.GotrueId, utils.RealtimeId, utils.PoolerId}
+}
+
+// reloadKong reloads Kong after the restarts above so its nginx re-resolves each
+// upstream container's address. Kong caches resolved addresses for the life of a
+// worker process, and a restarted container can come back on a different one,
+// leaving the gateway returning 502 for that route until Kong restarts. An
+// in-place reload (the `functions serve` pattern) keeps the gateway serving
+// throughout. https://github.com/supabase/cli/issues/6016
+func reloadKong(ctx context.Context) error {
+	resp, err := utils.Docker.ContainerInspect(ctx, utils.KongId)
+	if errdefs.IsNotFound(err) {
+		// Kong may be excluded from the stack.
+		return nil
+	} else if err != nil {
+		return errors.Errorf("failed to inspect kong: %w", err)
+	}
+	if !resp.State.Running {
+		// A stopped gateway has no stale cache to flush.
+		return nil
+	}
+	if _, err := utils.DockerExecOnce(ctx, utils.KongId, nil, []string{"kong", "reload"}); err != nil {
+		return errors.Errorf("failed to reload kong: %w", err)
+	}
+	return nil
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

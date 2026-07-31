@@ -60,8 +60,13 @@ The seam subprocesses run with `SUPABASE_TELEMETRY_DISABLED=1`, stderr inherited
 The recreate seam drops & recreates the `postgres`/`_supabase` databases (PG≤14) or
 removes & recreates the db container/volume (PG15), applies the initial schema +
 roles, then runs `MigrateAndSeed` (migrations `≤ --version`, seed unless `--no-seed`)
-and restarts the storage/auth/realtime/pooler containers. Bucket objects are then
-seeded over the Storage gateway (reusing the `seed buckets` local path).
+and restarts the storage/auth/realtime/pooler containers, then reloads Kong
+(`kong reload`, skipped when the gateway is absent or stopped) so its nginx
+re-resolves the restarted containers' addresses — otherwise routes to a moved
+container keep returning 502 after the reset succeeds (issue #6016). Bucket
+objects are then seeded over the Storage gateway (reusing the `seed buckets`
+local path); the in-place reload keeps Kong serving throughout, so this never
+races a restarting gateway.
 
 ## API Routes
 
