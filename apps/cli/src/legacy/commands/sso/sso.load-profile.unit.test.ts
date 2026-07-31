@@ -103,6 +103,42 @@ describe("legacySsoLoadProfile", () => {
     }),
   );
 
+  it.effect("accepts mixed-case keys like viper's insensitive decode (probed on go1.26)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      // `Name:` / `API_URL:` decode exactly like their lowercase spellings
+      // (viper `insensitiviseMap`; review r3689635101).
+      const file = writeProfile(
+        "mixed-case.yml",
+        [
+          "Name: harness",
+          "API_URL: http://127.0.0.1:44444",
+          "dashboard_url: http://127.0.0.1:44444/dashboard",
+          "Project_Host: supabase.co",
+        ].join("\n"),
+      );
+      const profile = yield* legacySsoLoadProfile(file, fs);
+      expect(profile.apiUrl).toBe("http://127.0.0.1:44444");
+      expect(profile.name).toBe("harness");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reports unknown keys LOWERCASED, like viper's pre-decode normalization", () =>
+    Effect.gen(function* () {
+      const file = writeProfile(
+        "bogus-upper.yml",
+        [
+          "name: harness",
+          "api_url: http://127.0.0.1:44444",
+          "dashboard_url: http://127.0.0.1:44444/dashboard",
+          "project_host: supabase.co",
+          "BOGUS_KEY: x",
+        ].join("\n"),
+      );
+      expect(yield* loadError(file)).toContain("'utils.Profile' has invalid keys: bogus_key");
+    }),
+  );
+
   it.effect(
     "returns Go's CurrentProfile.Name — the canonical built-in or the file's name field",
     () =>

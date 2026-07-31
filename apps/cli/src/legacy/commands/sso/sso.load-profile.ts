@@ -127,7 +127,16 @@ export function legacySsoLoadProfile(
         `While parsing config: yaml: unmarshal errors:\n  cannot unmarshal into map[string]interface {}`,
       );
     }
-    const config = parsed as Record<string, unknown>;
+    // Viper lowercases configuration keys before decoding
+    // (`insensitiviseMap`), so `API_URL:` / `Name:` decode exactly like
+    // their lowercase spellings, and UnmarshalExact reports unknown keys
+    // LOWERCASED (probed: `BOGUS_KEY` → `bogus_key`; review r3689635101).
+    // A same-key case collision is nondeterministic in Go (map iteration
+    // order) — document order (last wins) is used here.
+    const config: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      config[key.toLowerCase()] = value;
+    }
 
     // `UnmarshalExact` — unknown keys abort decoding. mapstructure reports
     // them sorted, in a padded multi-line block (binary-verified).
