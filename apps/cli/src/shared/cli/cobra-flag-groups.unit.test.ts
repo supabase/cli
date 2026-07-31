@@ -63,6 +63,31 @@ describe("pflagArgvScan", () => {
     valueFlagShorthands: PERSISTENT_VALUE_FLAG_SHORTHANDS,
   };
 
+  test("records value-taking persistent flags parsed BEFORE the command path", () => {
+    // cobra's Find/stripFlags steps over `--profile a.yml` while routing to
+    // `sso update`, but pflag parses it and marks it Changed — the pre-path
+    // occurrence is the effective value when later tokens are consumed
+    // (PR #5974 review round 10).
+    const scan = pflagArgvScan(
+      ["--profile", "a.yml", "sso", "update", "id", "--profile=b.yml"],
+      SSO_UPDATE_PATH,
+      SPEC,
+    );
+    expect(scan.anchored).toBe(true);
+    expect(scan.prePathOccurrences.get("profile")).toEqual(["a.yml"]);
+    expect(scan.occurrences.get("profile")).toEqual(["b.yml"]);
+  });
+
+  test("records inline and repeated pre-path values in argv order", () => {
+    const scan = pflagArgvScan(
+      ["--profile=a.yml", "--profile", "b.yml", "sso", "update", "id"],
+      SSO_UPDATE_PATH,
+      SPEC,
+    );
+    expect(scan.prePathOccurrences.get("profile")).toEqual(["a.yml", "b.yml"]);
+    expect(scan.occurrences.get("profile")).toBeUndefined();
+  });
+
   test("records a bare flag's next token as its value", () => {
     const { occurrences } = pflagArgvScan(
       ["sso", "update", "id", "--metadata-file", "foo.xml"],

@@ -101,6 +101,17 @@ export interface PflagArgvScan {
    */
   readonly consumedFlagNames: ReadonlySet<string>;
   /**
+   * Value-taking flags parsed BEFORE the command path completed — cobra's
+   * `Find`/`stripFlags` steps over them while routing to the subcommand, but
+   * pflag still parses them and marks them `Changed`, so a pre-path
+   * occurrence is the effective value when every post-path token of the same
+   * flag was consumed (e.g. `--profile A sso add --domains --profile`:
+   * pflag keeps A). Values in argv order. Boolean pre-path flags are not
+   * tracked — this exists for last-wins reconciliation of value-taking
+   * persistent flags (PR #5974 review round 10).
+   */
+  readonly prePathOccurrences: ReadonlyMap<string, ReadonlyArray<string>>;
+  /**
    * pflag's `ValueRequiredError` message when a bare value-taking flag is
    * the final argv token — byte-exact per pflag `errors.go:75,78`
    * (`flag needs an argument: --domains` / `flag needs an argument: 't' in
@@ -208,6 +219,15 @@ export function pflagArgvScan(
   // next token for any bare value-taking flag while locating subcommands).
   let segmentIndex = 0;
   let cursor = 0;
+  const prePathOccurrences = new Map<string, Array<string>>();
+  const recordPrePath = (name: string, value: string) => {
+    const existing = prePathOccurrences.get(name);
+    if (existing === undefined) {
+      prePathOccurrences.set(name, [value]);
+    } else {
+      existing.push(value);
+    }
+  };
   while (cursor < rawArgs.length && segmentIndex < commandPath.length) {
     const token = rawArgs[cursor];
     if (token === undefined || token === "--") {
@@ -222,14 +242,51 @@ export function pflagArgvScan(
       break; // A stray operand — this argv does not route to the command.
     }
     if (token.startsWith("--")) {
-      cursor += !token.includes("=") && valueFlagNames.has(token.slice(2)) ? 2 : 1;
+      const equalsIndex = token.indexOf("=");
+      if (equalsIndex !== -1) {
+        const name = token.slice(2, equalsIndex);
+        if (valueFlagNames.has(name)) {
+          recordPrePath(name, token.slice(equalsIndex + 1));
+        }
+        cursor += 1;
+        continue;
+      }
+      const name = token.slice(2);
+      if (valueFlagNames.has(name)) {
+        const value = rawArgs[cursor + 1];
+        if (value !== undefined) {
+          recordPrePath(name, value);
+        }
+        cursor += 2;
+        continue;
+      }
+      cursor += 1;
       continue;
     }
     const hit = clusterValueShorthand(token.slice(1), valueFlagShorthands);
-    cursor += hit !== undefined && hit.inlineValue === undefined ? 2 : 1;
+    if (hit !== undefined) {
+      if (hit.inlineValue !== undefined) {
+        recordPrePath(hit.longName, hit.inlineValue);
+        cursor += 1;
+      } else {
+        const value = rawArgs[cursor + 1];
+        if (value !== undefined) {
+          recordPrePath(hit.longName, value);
+        }
+        cursor += 2;
+      }
+      continue;
+    }
+    cursor += 1;
   }
   const anchored = segmentIndex === commandPath.length;
   const tokens = anchored ? rawArgs.slice(cursor) : rawArgs;
+  // Like `positionals`, pre-path occurrences are only meaningful when the
+  // scan anchored — an unscoped scan re-walks the whole argv below, so
+  // keeping the partial walk's records would double-count them.
+  if (!anchored) {
+    prePathOccurrences.clear();
+  }
 
   const occurrences = new Map<string, Array<string>>();
   const positionals: Array<string> = [];
@@ -327,7 +384,14 @@ export function pflagArgvScan(
       record(name, "true");
     }
   }
-  return { anchored, occurrences, positionals, consumedFlagNames, missingValueError };
+  return {
+    anchored,
+    occurrences,
+    positionals,
+    consumedFlagNames,
+    prePathOccurrences,
+    missingValueError,
+  };
 }
 
 /**

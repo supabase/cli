@@ -157,16 +157,29 @@ export const legacySsoValidatePflagWorkdir = Effect.fnUntraced(function* (
  *   config layer uses (`legacy-cli-config.layer.ts`).
  */
 export function legacySsoPflagProfileValue(
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames">,
+  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
   parsedProfile: Option.Option<string>,
   envProfile: string | undefined,
 ): Option.Option<string> {
   const scanned = legacySsoPflagStringValue(scan.occurrences, "profile");
+  // pflag's effective value is the LAST parsed occurrence anywhere in argv:
+  // a post-path occurrence wins outright; otherwise a persistent pre-path
+  // occurrence (`--profile A sso add …`) stays effective even when a later
+  // profile-shaped token was CONSUMED as another flag's value — discarding
+  // it here fell through to env/file/default and targeted a host Go never
+  // contacts (review r3686720491).
+  const prePathValues = scan.prePathOccurrences.get("profile");
+  const prePath =
+    prePathValues !== undefined && prePathValues.length > 0
+      ? Option.some(prePathValues[prePathValues.length - 1] as string)
+      : Option.none<string>();
   const flagValue = Option.isSome(scanned)
     ? scanned
-    : scan.consumedFlagNames.has("profile")
-      ? Option.none<string>()
-      : Option.filter(parsedProfile, (value) => value !== "supabase");
+    : Option.isSome(prePath)
+      ? prePath
+      : scan.consumedFlagNames.has("profile")
+        ? Option.none<string>()
+        : Option.filter(parsedProfile, (value) => value !== "supabase");
   if (Option.isSome(flagValue)) {
     return flagValue;
   }

@@ -196,7 +196,46 @@ describe("legacySsoPflagProfileValue", () => {
   const scan = (
     entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>,
     consumed: ReadonlyArray<string> = [],
-  ) => ({ occurrences: occ(entries), consumedFlagNames: new Set(consumed) });
+    prePath: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [],
+  ) => ({
+    occurrences: occ(entries),
+    consumedFlagNames: new Set(consumed),
+    prePathOccurrences: occ(prePath),
+  });
+
+  it("keeps a pre-path occurrence when the only post-path profile token was consumed", () => {
+    // `--profile A sso add --type saml --domains --profile`: pflag parsed A
+    // pre-path (cobra Find strips persistent flags while routing) and never
+    // parsed the consumed token, so A stays effective — falling through to
+    // env/default targeted a host Go never contacts (review r3686720491).
+    expect(
+      legacySsoPflagProfileValue(
+        scan([], ["profile"], [["profile", ["a.yml"]]]),
+        Option.some("a.yml"),
+        "env.yml",
+      ),
+    ).toEqual(Option.some("a.yml"));
+  });
+
+  it("resolves pre-path repeats last-wins, like pflag (the parser is first-wins)", () => {
+    expect(
+      legacySsoPflagProfileValue(
+        scan([], [], [["profile", ["a.yml", "b.yml"]]]),
+        Option.some("a.yml"),
+        undefined,
+      ),
+    ).toEqual(Option.some("b.yml"));
+  });
+
+  it("post-path occurrences still win over pre-path ones (argv-order last-wins)", () => {
+    expect(
+      legacySsoPflagProfileValue(
+        scan([["profile", ["post.yml"]]], [], [["profile", ["pre.yml"]]]),
+        Option.some("pre.yml"),
+        undefined,
+      ),
+    ).toEqual(Option.some("post.yml"));
+  });
 
   it("resolves nothing when no flag, parsed value, or env var is present (Go falls to the file/default)", () => {
     expect(legacySsoPflagProfileValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
