@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strings"
 	"testing"
 	fs "testing/fstest"
+	"time"
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
@@ -346,6 +348,51 @@ func TestDeployAll(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "unexpected deploy status 409")
 		assert.ErrorContains(t, err, "unexpected bulk update status 400")
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
+	t.Run("reports concurrent upload failures in input order", func(t *testing.T) {
+		client2 := NewEdgeRuntimeAPI(mockProject, *apiClient, WithMaxJobs(2))
+		toDeploy := []FunctionDeployMetadata{
+			{
+				Name:           cast.Ptr("first-fn"),
+				EntrypointPath: "testdata/shared/whatever.ts",
+			},
+			{
+				Name:           cast.Ptr("second-fn"),
+				EntrypointPath: "testdata/geometries/Geometries.js",
+			},
+		}
+		fsys := testImports
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
+			MatchParam("slug", "first-fn").
+			Reply(http.StatusConflict).
+			Delay(500 * time.Millisecond).
+			JSON(map[string]string{"message": "first failed"})
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
+			MatchParam("slug", "second-fn").
+			Reply(http.StatusConflict).
+			JSON(map[string]string{"message": "second failed"})
+		// Run test
+		err := client2.bulkUpload(context.Background(), toDeploy, fsys)
+		// Check error
+		require.Error(t, err)
+		// JSON replies are newline-terminated by json.Encoder, so filter out the
+		// resulting blank lines between joined errors before counting entries.
+		var lines []string
+		for _, line := range strings.Split(err.Error(), "\n") {
+			if len(line) > 0 {
+				lines = append(lines, line)
+			}
+		}
+		require.Len(t, lines, 2)
+		assert.Contains(t, lines[0], "first failed")
+		assert.Contains(t, lines[1], "second failed")
 		assert.Empty(t, gock.Pending())
 		assert.Empty(t, gock.GetUnmatchedRequests())
 	})

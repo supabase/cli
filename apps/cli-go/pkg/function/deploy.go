@@ -109,7 +109,12 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 	// exists nowhere but this client until the final bulk update request persists it. Bailing
 	// out on the first upload error strands that metadata and makes every subsequent deploy
 	// fail with a version conflict, so we keep going and report the errors at the end.
-	var bundleErrs []error
+	//
+	// Upload errors are recorded per function index rather than surfaced through the job
+	// queue's error channel, so they are reported in input order regardless of completion
+	// order under concurrent --jobs, matching the TS port.
+	uploadErrs := make([]error, len(toDeploy))
+	var queueErrs []error
 	for i, meta := range toDeploy {
 		param := api.V1DeployAFunctionParams{
 			Slug:       meta.Name,
@@ -119,7 +124,8 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 			fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
 			resp, err := s.upload(ctx, param, meta, fsys)
 			if err != nil {
-				return err
+				uploadErrs[i] = err
+				return nil
 			}
 			toUpdate[i].Id = resp.Id
 			toUpdate[i].Name = resp.Name
@@ -133,10 +139,10 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 			toUpdate[i].CreatedAt = resp.CreatedAt
 			return nil
 		}
-		bundleErrs = append(bundleErrs, jq.Put(bundle))
+		queueErrs = append(queueErrs, jq.Put(bundle))
 	}
-	bundleErrs = append(bundleErrs, jq.Collect())
-	bundleErr := errors.Join(bundleErrs...)
+	queueErrs = append(queueErrs, jq.Collect())
+	bundleErr := errors.Join(append(uploadErrs, queueErrs...)...)
 	// Failed uploads leave their slot zero valued, ie. without a function id.
 	uploaded := make(api.BulkUpdateFunctionBody, 0, len(toUpdate))
 	for _, f := range toUpdate {
