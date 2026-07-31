@@ -1065,6 +1065,20 @@ export class LegacyGoTomlEncodeError extends Error {
  *
  * Throws {@link LegacyGoTomlEncodeError} when a populated nullable field is
  * present, matching Go's runtime failure.
+ *
+ * DOCUMENTED BOUND (review r3689784209): on the ERROR path only, Go's stdout
+ * bytes can differ. BurntSushi encodes through an internal `bufio.Writer`, so
+ * when more than 4 KiB has been generated before a late encode error (e.g. a
+ * multi-KB `MetadataXml` scalar followed by a nil array element in a
+ * sub-table), Go has already auto-flushed whole 4096-byte chunks to stdout —
+ * probed on the repo's own `utils.EncodeOutput`: a 5000-char scalar +
+ * `[1, nil]` default leaves EXACTLY 4096 bytes flushed (the buffered tail is
+ * lost — NOT the full accumulated prefix), while the same payload under 4 KiB
+ * leaves 0 bytes. This all-in-memory port deliberately emits nothing on
+ * error: reproducing Go would mean emulating bufio's flush boundaries and
+ * large-write bypass over BurntSushi's internal write granularity, for
+ * unparseable partial output on a failure path. Do not "fix" this by
+ * emitting the accumulated prefix — that emits MORE than Go does.
  */
 export function encodeLegacyGoToml(value: unknown, type: LegacyGoType): string {
   const state = { out: "", hasWritten: false };
