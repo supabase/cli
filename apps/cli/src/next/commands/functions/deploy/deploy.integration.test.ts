@@ -68,6 +68,16 @@ interface RecordedRequest {
   readonly path: string;
   readonly urlParams: string;
   readonly headers: Readonly<Record<string, string | undefined>>;
+  /** Parsed JSON body, for the non-multipart requests (e.g. the bulk update PUT). */
+  readonly body?: unknown;
+}
+
+function readJsonBody(request: HttpClientRequest.HttpClientRequest): unknown {
+  // Docker bundle uploads are raw `EZBR`-prefixed Uint8Array bodies, not JSON.
+  if (request.body._tag !== "Uint8Array" || !request.body.contentType.includes("json")) {
+    return undefined;
+  }
+  return JSON.parse(new TextDecoder().decode(request.body.body));
 }
 
 interface RecordedMultipart {
@@ -235,6 +245,7 @@ function mockDeployApi(
               path,
               urlParams,
               headers: request.headers,
+              body: readJsonBody(request),
             });
             const multipart = readMultipart(request);
             if (multipart !== undefined) {
@@ -263,6 +274,11 @@ function mockDeployApi(
                 UrlParams.getFirst(request.urlParams, "slug"),
                 () => "hello-world",
               );
+              if (status !== 201) {
+                return jsonResponse(request, status, {
+                  message: `deployment already exists for ${slug}`,
+                });
+              }
               return jsonResponse(request, 201, {
                 ...makeFunction({
                   slug,
@@ -283,6 +299,9 @@ function mockDeployApi(
                   { message: "Too Many Requests" },
                   { "Retry-After": "0" },
                 );
+              }
+              if (status !== 200) {
+                return jsonResponse(request, status, { message: "bulk update rejected" });
               }
               return jsonResponse(request, 200, {
                 functions: [],
@@ -697,6 +716,109 @@ describe("functions deploy", () => {
         `Deployed Functions on project ${PROJECT_REF}: hello-world, bye-world\n`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  // INC-699: a `bundleOnly` upload bumps the remote version without persisting
+  // metadata, so a partially failed bulk deploy must still send the final PUT for
+  // whatever uploaded — otherwise the remote metadata is stranded and every later
+  // deploy conflicts.
+  describe("partial bulk upload failures (INC-699)", () => {
+    it.live("still persists the functions that uploaded when one upload fails", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+
+        const { out, api, layer } = setup(tempDir, {
+          api: { deployStatuses: [201, 409] },
+        });
+
+        const error = yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toBe(
+            'unexpected deploy status 409: {"message":"deployment already exists for bye-world"}',
+          );
+        }
+
+        // Both uploads ran — the 201 was not interrupted by the sibling 409.
+        expect(
+          api.requests.filter((request) => request.path.endsWith("/functions/deploy")),
+        ).toHaveLength(2);
+        const bulkUpdate = api.requests.find((request) => request.method === "PUT");
+        expect(bulkUpdate).toBeDefined();
+        expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world" }]);
+        expect(out.stdoutText).not.toContain("Deployed Functions on project");
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
+
+    it.live("skips the bulk update entirely when every upload fails", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+
+        const { out, api, layer } = setup(tempDir, {
+          api: { deployStatuses: [409, 400] },
+        });
+
+        const error = yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        // Go's `errors.Join`: one message per failed upload, in input order.
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toBe(
+            [
+              'unexpected deploy status 409: {"message":"deployment already exists for hello-world"}',
+              'unexpected deploy status 400: {"message":"deployment already exists for bye-world"}',
+            ].join("\n"),
+          );
+        }
+        expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
+        expect(out.stdoutText).not.toContain("Deployed Functions on project");
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
+
+    it.live("reports the upload failure and the bulk update failure together", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+
+        const { api, layer } = setup(tempDir, {
+          api: { deployStatuses: [201, 409], bulkStatuses: [400] },
+        });
+
+        const error = yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toBe(
+            [
+              'unexpected deploy status 409: {"message":"deployment already exists for bye-world"}',
+              'unexpected bulk update status 400: {"message":"bulk update rejected"}',
+            ].join("\n"),
+          );
+        }
+        expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
   });
 
   it.live("uploads import maps using the same relative path as metadata", () => {
