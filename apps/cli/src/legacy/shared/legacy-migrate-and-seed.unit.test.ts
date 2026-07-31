@@ -5,8 +5,11 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { LegacyMigrationApplyError } from "./legacy-migration-apply.ts";
 import {
   legacyMigrateAndSeed,
   type LegacyMigrateAndSeedConfig,
@@ -22,6 +25,25 @@ function fakeSession() {
       Effect.sync(() => {
         execs.push(sql);
       }),
+    query: () => Effect.succeed([]),
+    extensionExists: () => Effect.succeed(false),
+    copyToCsv: () => Effect.succeed(new Uint8Array()),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+  };
+  return { session, execs };
+}
+
+/** Every statement fails except the `BEGIN`/`COMMIT`/`ROLLBACK` transaction control Go wraps it in. */
+function failingExecSession(): { session: LegacyDbSession; execs: Array<string> } {
+  const execs: Array<string> = [];
+  const TRANSACTION_CONTROL = new Set(["BEGIN", "COMMIT", "ROLLBACK"]);
+  const session: LegacyDbSession = {
+    exec: (sql) => {
+      execs.push(sql);
+      return TRANSACTION_CONTROL.has(sql)
+        ? Effect.sync(() => {})
+        : Effect.fail(new LegacyDbExecError({ message: "syntax error" }));
+    },
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
@@ -327,6 +349,39 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
               expect(JSON.stringify(exit.cause)).toContain("failed to walk matched directory");
             }
             chmodSync(lockedDir, 0o755);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "attaches the failing schema file as Go's CmdSuggestion (See schema file: <fp>)",
+    () => {
+      const workdir = makeWorkdir();
+      const schemaPath = "supabase/schemas/broken.sql";
+      writeFile(workdir, schemaPath, "totally not valid sql;");
+      const { session } = failingExecSession();
+      const out = mockOutput();
+      return run(
+        workdir,
+        "",
+        {
+          ...baseConfig,
+          experimental: true,
+          schemaPaths: [schemaPath],
+        },
+        session,
+        out,
+      ).pipe(
+        Effect.flip,
+        Effect.tap((error) =>
+          Effect.sync(() => {
+            expect(error).toBeInstanceOf(LegacyMigrationApplyError);
+            const suggestion = (error as LegacyMigrationApplyError).suggestion;
+            expect(suggestion).toBeDefined();
+            expect(stripAnsi(suggestion ?? "")).toBe(`See schema file: ${schemaPath}`);
             rmSync(workdir, { recursive: true, force: true });
           }),
         ),

@@ -1,6 +1,7 @@
 import { Effect, type FileSystem, type Path, Result } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyGlobPattern, legacyResolveUnderWorkdir } from "./legacy-glob.ts";
 import {
@@ -131,7 +132,11 @@ const legacyResolveSchemaPathFiles = (
  * inserting a migration-history row (Go sets `schema.Version = ""` before `ExecBatch`) and
  * WITHOUT creating the history table or resetting connection state first (`applySchemaFiles`
  * calls `ExecBatch` directly on each file, unlike `applyMigrationFiles`'s
- * `migration.ApplyMigrations`) — `legacyExecSqlFile` already has exactly this shape.
+ * `migration.ApplyMigrations`) — `legacyExecSqlFile` already has exactly this shape. A failed
+ * `ExecBatch` sets `utils.CmdSuggestion = "See schema file: <fp>"` (`apply.go:57`, `fp` bolded)
+ * immediately, so the failing file is attached as the error's `suggestion` here too — the
+ * generic `normalizeCliError` fallback (`shared/output/normalize-error.ts`) surfaces any
+ * error's `suggestion` field verbatim, matching root.go's plain `CmdSuggestion` stderr line.
  */
 const legacyApplySchemaFiles = (
   session: LegacyDbSession,
@@ -149,7 +154,11 @@ const legacyApplySchemaFiles = (
         fs,
         path,
         absPath,
-        (message) => new LegacyMigrationApplyError({ message }),
+        (message) =>
+          new LegacyMigrationApplyError({
+            message,
+            suggestion: `See schema file: ${legacyBold(relativePath)}`,
+          }),
       );
     }
   });
