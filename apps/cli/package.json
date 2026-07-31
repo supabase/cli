@@ -40,11 +40,11 @@
   },
   "dependencies": {
     "eciesjs": "^0.5.0",
-    "jose": "^6.2.3"
+    "jose": "^6.2.4"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.216",
-    "@anthropic-ai/sdk": "^0.112.4",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.218",
+    "@anthropic-ai/sdk": "^0.114.0",
     "@clack/prompts": "^1.7.0",
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
@@ -76,8 +76,8 @@
     "oxlint-tsgolint": "catalog:",
     "pg": "^8.22.0",
     "pg-copy-streams": "^7.0.0",
-    "posthog-node": "^5.46.0",
-    "react": "^19.2.7",
+    "posthog-node": "^5.46.1",
+    "react": "^19.2.8",
     "react-devtools-core": "^7.0.1",
     "semantic-release": "^25.0.8",
     "smol-toml": "^1.7.0",
