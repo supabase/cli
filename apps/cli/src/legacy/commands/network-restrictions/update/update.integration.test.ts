@@ -1,3 +1,4 @@
+import { BunServices } from "@effect/platform-bun";
 import {
   type V1PatchNetworkRestrictionsOutput,
   type V1UpdateNetworkRestrictionsOutput,
@@ -17,7 +18,18 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { legacyNetworkRestrictionsUpdateDbAllowCidrFlag } from "./update.command.ts";
 import { legacyNetworkRestrictionsUpdate } from "./update.handler.ts";
+
+// Runs the real `--db-allow-cidr` flag pipeline (pflag StringSlice CSV parity —
+// `cmd/restrictions.go:40`) so these scenarios cover raw CLI values → request body.
+const parseDbAllowCidr = (rawValues: ReadonlyArray<string>) =>
+  legacyNetworkRestrictionsUpdateDbAllowCidrFlag
+    .parse({ flags: { "db-allow-cidr": rawValues }, arguments: [] })
+    .pipe(
+      Effect.map(([, values]) => values),
+      Effect.provide(BunServices.layer),
+    );
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -190,6 +202,69 @@ describe("legacy network-restrictions update integration", () => {
         dbAllowedCidrs: ["::ffff:1.2.3.4/128"],
         dbAllowedCidrsV6: [],
       });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("allows every CIDR in a comma-separated --db-allow-cidr value (pflag CSV parity)", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24"]);
+      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      expect(api.requests[0]?.body).toEqual({
+        dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24"],
+        dbAllowedCidrsV6: [],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("appends CIDRs across repeated --db-allow-cidr flags", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24", "5.6.7.0/24"]);
+      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      expect(api.requests[0]?.body).toEqual({
+        dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24"],
+        dbAllowedCidrsV6: [],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("combines comma-separated and repeated --db-allow-cidr occurrences", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24", "9.9.9.0/24"]);
+      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      expect(api.requests[0]?.body).toEqual({
+        dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24", "9.9.9.0/24"],
+        dbAllowedCidrsV6: [],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still allows a single --db-allow-cidr value", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24"]);
+      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      expect(api.requests[0]?.body).toEqual({
+        dbAllowedCidrs: ["1.2.3.0/24"],
+        dbAllowedCidrsV6: [],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects an invalid CIDR produced by a comma split before any API call", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,notacidr"]);
+      const exit = yield* Effect.exit(
+        legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(api.requests).toHaveLength(0);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse IP: notacidr");
+      }
     }).pipe(Effect.provide(layer));
   });
 

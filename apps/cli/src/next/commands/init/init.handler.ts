@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { initProject, type ProjectInitOptions } from "../../../shared/init/project-init.ts";
-import { InitExperimentalRequiredError } from "../../../shared/init/project-init.errors.ts";
+import { InitExperimentalRequiredError } from "./init.errors.ts";
 
 export const init = Effect.fnUntraced(function* (
   flags: Omit<ProjectInitOptions, "cwd" | "yes" | "withVscodeSettings" | "withIntellijSettings"> & {

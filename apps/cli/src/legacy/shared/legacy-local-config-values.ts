@@ -2984,8 +2984,9 @@ export function legacyResolveLocalConfigValues(
  * JWKS fetch) there would tax two commands that never render a JWKS. This is a standalone sibling
  * `start`-only callers invoke separately, alongside (not instead of) `legacyResolveLocalConfigValues`.
  *
- * Divergences from the structurally similar (but functionally unrelated) `resolveAuthArtifacts` in
- * `shared/functions/serve.ts` (Go's equivalent call site for THAT function is
+ * Divergences from the structurally similar (but functionally unrelated)
+ * `resolveLocalAuthArtifacts`/`finalizeAuthArtifacts` pair in
+ * `shared/functions/serve.ts` (Go's equivalent call site for THAT pair is
  * `internal/functions/serve/`, out of scope for this port) — deliberately NOT copied here:
  *  - a remote-JWKS fetch failure is a hard, propagating error here (matching `start.go:274-277`
  *    returning the error outright); `serve.ts` instead swallows the failure and continues with
