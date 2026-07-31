@@ -59,20 +59,20 @@ on any `StartDatabase` failure.
 
 ## Files Read
 
-| Path                                                                                            | Format | When                                                                                                                          |
-| ----------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                | TOML   | always — parsed up front; a malformed config aborts before any container work                                                 |
-| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file       | dotenv | always                                                                                                                        |
-| `auth.signing_keys_path` file                                                                   | JSON   | when configured                                                                                                               |
-| `<path>` (from `--from-backup`)                                                                 | binary | when `--from-backup` is set — read by Postgres's own entrypoint inside the container, not by this process                     |
-| `<workdir>/supabase/.temp/storage-migration`                                                    | text   | always — linked-project Storage migration pin (`DB_MIGRATIONS_FREEZE_AT`); absent/unreadable resolves to ""                   |
-| `<workdir>/supabase/.temp/postgres-version`                                                     | text   | when `db.major_version > 14` — linked-project Postgres version pin                                                            |
-| `<workdir>/supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,pooler}-version` | text   | always read; only the `gotrue`/`storage`/`realtime` pins are actually consulted (the fresh-volume setup jobs' images)         |
-| `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume with no `--from-backup` — the "Seeding globals..." message always prints first; a missing file is tolerated |
-| `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume with no `--from-backup`, via the standard migration-apply + seed pipeline                                   |
-| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)              | SQL    | on a fresh volume with no `--from-backup`, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false |
-| `<workdir>/supabase/.branches/_current_branch`                                                  | text   | always, existence check before writing (see "Files Written")                                                                  |
-| `~/.docker/config.json`                                                                         | JSON   | via the `docker`/`podman` CLI itself, for registry auth — never read directly by this process                                 |
+| Path                                                                                            | Format | When                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                | TOML   | always — parsed up front; a malformed config aborts before any container work                                                                                                |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file       | dotenv | always                                                                                                                                                                       |
+| `auth.signing_keys_path` file                                                                   | JSON   | when configured                                                                                                                                                              |
+| `<path>` (from `--from-backup`)                                                                 | binary | when `--from-backup` is set — read by Postgres's own entrypoint inside the container, not by this process                                                                    |
+| `<workdir>/supabase/.temp/storage-migration`                                                    | text   | always — linked-project Storage migration pin (`DB_MIGRATIONS_FREEZE_AT`); absent/unreadable resolves to ""                                                                  |
+| `<workdir>/supabase/.temp/postgres-version`                                                     | text   | when `db.major_version > 14` — linked-project Postgres version pin                                                                                                           |
+| `<workdir>/supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,pooler}-version` | text   | always read; only the `gotrue`/`storage`/`realtime` pins are actually consulted (the fresh-volume setup jobs' images)                                                        |
+| `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume with no `--from-backup` — the "Seeding globals..." message always prints first; a missing file is tolerated                                                |
+| `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume with no `--from-backup`, via the standard migration-apply + seed pipeline                                                                                  |
+| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)             | SQL    | on a fresh volume with no `--from-backup`, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false |
+| `<workdir>/supabase/.branches/_current_branch`                                                  | text   | always, existence check before writing (see "Files Written")                                                                                                                 |
+| `~/.docker/config.json`                                                                         | JSON   | via the `docker`/`podman` CLI itself, for registry auth — never read directly by this process                                                                                |
 
 ## Files Written
 
@@ -110,22 +110,22 @@ native container command in this codebase — never `supabase-go`.
 
 ## Environment Variables
 
-| Variable                                                       | Purpose                                                       | Required? |
-| -------------------------------------------------------------- | ------------------------------------------------------------- | --------- |
-| `SUPABASE_PROJECT_ID`                                          | overrides the local container id (`utils.DbId`)               | no        |
-| `SUPABASE_DB_PORT`                                             | overrides `db.port` (the published host port)                 | no        |
-| `SUPABASE_DB_MAJOR_VERSION`                                    | overrides `db.major_version` (image selection, schema branch) | no        |
-| `SUPABASE_DB_HEALTH_TIMEOUT`                                   | overrides `db.health_timeout`                                 | no        |
-| `SUPABASE_DB_SETTINGS_*`                                       | overrides individual `[db.settings]` fields                   | no        |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                       | overrides `experimental.orioledb_version` (image + env)       | no        |
-| `SUPABASE_EXPERIMENTAL_S3_{HOST,REGION,ACCESS_KEY,SECRET_KEY}` | OrioleDB S3 env overrides                                     | no        |
-| `SUPABASE_REALTIME_ENABLED`                                    | gates the fresh-volume realtime migrate job                   | no        |
-| `SUPABASE_REALTIME_IP_VERSION` / `_MAX_HEADER_LENGTH`          | realtime migrate job env overrides                            | no        |
-| `SUPABASE_STORAGE_ENABLED`                                     | gates the fresh-volume storage migrate job                    | no        |
-| `SUPABASE_STORAGE_FILE_SIZE_LIMIT`                             | storage migrate job env override                              | no        |
-| `SUPABASE_AUTH_ENABLED`                                        | gates the fresh-volume auth migrate job                       | no        |
-| `SUPABASE_AUTH_EXTERNAL_URL` / `SUPABASE_AUTH_SITE_URL`        | auth migrate job env overrides                                | no        |
-| `SUPABASE_AUTH_JWT_EXPIRY`                                     | Postgres's `JWT_EXP` env / signing                            | no        |
+| Variable                                                       | Purpose                                                                                              | Required? |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_PROJECT_ID`                                          | overrides the local container id (`utils.DbId`)                                                      | no        |
+| `SUPABASE_DB_PORT`                                             | overrides `db.port` (the published host port)                                                        | no        |
+| `SUPABASE_DB_MAJOR_VERSION`                                    | overrides `db.major_version` (image selection, schema branch)                                        | no        |
+| `SUPABASE_DB_HEALTH_TIMEOUT`                                   | overrides `db.health_timeout`                                                                        | no        |
+| `SUPABASE_DB_SETTINGS_*`                                       | overrides individual `[db.settings]` fields                                                          | no        |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                       | overrides `experimental.orioledb_version` (image + env)                                              | no        |
+| `SUPABASE_EXPERIMENTAL_S3_{HOST,REGION,ACCESS_KEY,SECRET_KEY}` | OrioleDB S3 env overrides                                                                            | no        |
+| `SUPABASE_REALTIME_ENABLED`                                    | gates the fresh-volume realtime migrate job                                                          | no        |
+| `SUPABASE_REALTIME_IP_VERSION` / `_MAX_HEADER_LENGTH`          | realtime migrate job env overrides                                                                   | no        |
+| `SUPABASE_STORAGE_ENABLED`                                     | gates the fresh-volume storage migrate job                                                           | no        |
+| `SUPABASE_STORAGE_FILE_SIZE_LIMIT`                             | storage migrate job env override                                                                     | no        |
+| `SUPABASE_AUTH_ENABLED`                                        | gates the fresh-volume auth migrate job                                                              | no        |
+| `SUPABASE_AUTH_EXTERNAL_URL` / `SUPABASE_AUTH_SITE_URL`        | auth migrate job env overrides                                                                       | no        |
+| `SUPABASE_AUTH_JWT_EXPIRY`                                     | Postgres's `JWT_EXP` env / signing                                                                   | no        |
 | `SUPABASE_EXPERIMENTAL` (or `--experimental`)                  | fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` | no        |
 
 `--network-id` (a global CLI flag, not an environment variable — `shared/legacy/global-flags.ts`)
