@@ -501,16 +501,20 @@ describe("legacy functions deploy", () => {
   // whatever uploaded — otherwise the remote metadata is stranded and every later
   // deploy conflicts.
   describe("partial bulk upload failures (INC-699)", () => {
-    function setupBulkDeploy(deployStatuses: ReadonlyArray<number>) {
+    function setupBulkDeploy(opts: {
+      readonly deployStatuses: ReadonlyArray<number>;
+      readonly bulkStatuses?: ReadonlyArray<number>;
+    }) {
       const out = mockOutput({ format: "text" });
       let deployCalls = 0;
+      let bulkCalls = 0;
       const api = mockLegacyPlatformApi({
         handler: (request, recorded) => {
           if (request.method === "GET") {
             return Effect.succeed(legacyJsonResponse(request, 200, []));
           }
           if (request.method === "POST") {
-            const status = deployStatuses[deployCalls] ?? 201;
+            const status = opts.deployStatuses[deployCalls] ?? 201;
             deployCalls += 1;
             const slug = recorded.urlParams.includes("slug=bye-world")
               ? "bye-world"
@@ -536,6 +540,15 @@ describe("legacy functions deploy", () => {
               }),
             );
           }
+          if (request.method === "PUT") {
+            const status = opts.bulkStatuses?.[bulkCalls] ?? 200;
+            bulkCalls += 1;
+            if (status !== 200) {
+              return Effect.succeed(
+                legacyJsonResponse(request, status, { message: "bulk update rejected" }),
+              );
+            }
+          }
           return Effect.succeed(legacyJsonResponse(request, 200, {}));
         },
       });
@@ -555,7 +568,7 @@ describe("legacy functions deploy", () => {
     }
 
     it.live("still persists the functions that uploaded when one upload fails", () => {
-      const { out, api, layer } = setupBulkDeploy([201, 409]);
+      const { out, api, layer } = setupBulkDeploy({ deployStatuses: [201, 409] });
 
       return Effect.gen(function* () {
         yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
@@ -590,7 +603,7 @@ describe("legacy functions deploy", () => {
     });
 
     it.live("skips the bulk update entirely when every upload fails", () => {
-      const { out, api, layer } = setupBulkDeploy([409, 400]);
+      const { out, api, layer } = setupBulkDeploy({ deployStatuses: [409, 400] });
 
       return Effect.gen(function* () {
         yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
@@ -611,6 +624,38 @@ describe("legacy functions deploy", () => {
         );
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+
+    it.live("reports the upload failure and the bulk update failure together", () => {
+      const { api, layer } = setupBulkDeploy({
+        deployStatuses: [201, 409],
+        bulkStatuses: [400],
+      });
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
+
+        const error = yield* legacyFunctionsDeploy({
+          ...baseFlags,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe(
+          [
+            'unexpected deploy status 409: {"message":"rejected bye-world"}',
+            'unexpected bulk update status 400: {"message":"bulk update rejected"}',
+          ].join("\n"),
+        );
+        expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(

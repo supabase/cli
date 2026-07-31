@@ -2000,16 +2000,18 @@ const deployViaApi = Effect.fnUntraced(function* (
 
   const deployed: BulkUpdateFunction[] = [];
   const messages: string[] = [];
+  const causes: Array<Extract<(typeof results)[number], { readonly success: false }>["error"]> = [];
   for (const result of results) {
     if (result.success) {
       deployed.push(result.value);
     } else {
       messages.push(result.error.message);
+      causes.push(result.error);
     }
   }
 
   if (deployed.length === 0) {
-    return yield* Effect.fail(new Error(messages.join("\n")));
+    return yield* Effect.fail(new AggregateError(causes, messages.join("\n")));
   }
 
   const updated = yield* bulkUpdateRemoteFunctions(api, projectRef, deployed).pipe(
@@ -2018,9 +2020,10 @@ const deployViaApi = Effect.fnUntraced(function* (
   );
   if (!updated.success) {
     messages.push(updated.error.message);
+    causes.push(updated.error);
   }
   if (messages.length > 0) {
-    return yield* Effect.fail(new Error(messages.join("\n")));
+    return yield* Effect.fail(new AggregateError(causes, messages.join("\n")));
   }
 });
 

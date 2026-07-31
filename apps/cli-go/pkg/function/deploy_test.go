@@ -311,6 +311,45 @@ func TestDeployAll(t *testing.T) {
 		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
+	t.Run("reports upload and bulk update failures together", func(t *testing.T) {
+		c := config.FunctionConfig{
+			"test-ts": {
+				Enabled:    true,
+				Entrypoint: "testdata/shared/whatever.ts",
+			},
+			"test-js": {
+				Enabled:    true,
+				Entrypoint: "testdata/geometries/Geometries.js",
+			},
+		}
+		// Setup in-memory fs
+		fsys := testImports
+		// Setup mock api
+		defer gock.OffAll()
+		mockFunctionList()
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
+			MatchParam("slug", "test-ts").
+			Reply(http.StatusCreated).
+			JSON(api.DeployFunctionResponse{Id: "test-ts", Name: "test-ts", Slug: "test-ts"})
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
+			MatchParam("slug", "test-js").
+			Reply(http.StatusConflict).
+			JSON(map[string]string{"message": "deployment already exists"})
+		gock.New(mockApiHost).
+			Put("/v1/projects/"+mockProject+"/functions").
+			Reply(http.StatusBadRequest).
+			JSON(map[string]string{"message": "bulk update rejected"})
+		// Run test
+		err := client.Deploy(context.Background(), c, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "unexpected deploy status 409")
+		assert.ErrorContains(t, err, "unexpected bulk update status 400")
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
 	t.Run("preserves remote verify_jwt when not configured", func(t *testing.T) {
 		c := config.FunctionConfig{"demo": {
 			Enabled:    true,
