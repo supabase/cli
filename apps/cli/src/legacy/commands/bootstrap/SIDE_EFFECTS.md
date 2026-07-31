@@ -8,15 +8,16 @@ command — see Notes).
 
 ## Files Read
 
-| Path                                  | Format     | When                                                                            |
-| ------------------------------------- | ---------- | ------------------------------------------------------------------------------- |
-| `~/.supabase/access-token`            | plain text | ensure-login token miss (env unset and keyring unavailable)                     |
-| `<workdir>/.env.example`              | dotenv     | optional; merged into the generated `.env`                                      |
-| `<workdir>/supabase/config.toml`      | TOML       | native push step (embedded defaults used when absent)                           |
-| `<workdir>/supabase/migrations/`      | directory  | native push step, when `[db.migrations].enabled` (default true)                 |
-| `<workdir>/supabase/migrations/*.sql` | SQL        | native push step, for each pending migration applied                            |
-| seed files from `[db.seed].sql_paths` | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`) |
-| `<workdir>/supabase/roles.sql`        | SQL        | native push step (`--include-roles` is always set; existence check + apply)     |
+| Path                                  | Format     | When                                                                                                                                                                                                                                                                 |
+| ------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`            | plain text | ensure-login token miss (env unset and keyring unavailable)                                                                                                                                                                                                          |
+| `<workdir>/.env.example`              | dotenv     | optional; merged into the generated `.env`                                                                                                                                                                                                                           |
+| `<workdir>/supabase/config.toml`      | TOML       | native push step (embedded defaults used when absent)                                                                                                                                                                                                                |
+| `<workdir>/supabase/.temp/pooler-url` | plain text | native push step's connection resolution, only when the direct `db.<ref>.<projectHost>:5432` host is unreachable (IPv4-only network) — `legacyResolveLinkedConn` falls back through the saved pooler URL `link.LinkServices` wrote in the earlier link-services step |
+| `<workdir>/supabase/migrations/`      | directory  | native push step, when `[db.migrations].enabled` (default true)                                                                                                                                                                                                      |
+| `<workdir>/supabase/migrations/*.sql` | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                 |
+| seed files from `[db.seed].sql_paths` | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                      |
+| `<workdir>/supabase/roles.sql`        | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                          |
 
 ## Files Written
 
@@ -51,9 +52,12 @@ staying in effect.
 | `GET`           | `/v1/projects/{ref}/health?services=db`                                                   | Bearer                         | retried with exponential backoff                                                             |
 | login endpoints | —                                                                                         | —                              | ensure-login browser flow (token miss)                                                       |
 
-The native push step fires **no Management API routes of its own** — it connects directly to
-Postgres using the same connection bootstrap already derived for `.env` (`db.<ref>.<projectHost>`),
-never re-resolving the project ref or db config via the Management API.
+The native push step fires **no Management API routes of its own**. Its connection is resolved
+separately from (not reused from) the naive one written to `.env` above: `legacyResolveLinkedConn`
+dials the direct `db.<ref>.<projectHost>:5432` host first and, only when that's unreachable, falls
+back to the project's IPv4 transaction pooler via the saved `<workdir>/supabase/.temp/pooler-url`
+(no Management API fetch — bootstrap's create step already guarantees a non-empty password, so
+neither branch ever reaches the temp-login-role/Management-API path a passwordless resolve would).
 
 ## Environment Variables
 
@@ -125,21 +129,32 @@ suppressed; a single structured result is emitted for the whole command:
   `legacyDbPushCore` — the same handler `db push`'s own command extracts its business logic into
   — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, dryRun: false }`,
   matching Go's `push.Run(ctx, false, false, true, true, config, fsys)` (`bootstrap.go:122-127`).
-  Go's bootstrap never re-resolves the project ref or db config for push: `create.Run` already
-  set `flags.ProjectRef`, and `flags.NewDbConfigWithPassword` already derived the connection
-  config passed straight into `push.Run`. The TS port mirrors this exactly — `workdir`,
-  `projectRef`, and the connection (the same `deriveDbConfig(...)` result already used for
-  `.env`) are passed as plain values, never re-derived via `LegacyProjectRefResolver` or
-  `LegacyDbConfigResolver` (both of which key off `LegacyCliConfig.workdir`, stale after this
-  handler's own `process.chdir` — see the workdir comments in `bootstrap.handler.ts`). This is
-  proven under test in `bootstrap.workdir-cache.integration.test.ts`, which seeds a migration file
-  at the _prompted_ bootstrap workdir (divergent from `cliConfig.workdir`'s cwd-walk result) and
-  asserts the push step still finds and applies it.
+  Go's bootstrap never re-resolves the project ref for push: `create.Run` already set
+  `flags.ProjectRef`, reused as-is. The TS port mirrors this for `workdir`/`projectRef` (passed as
+  plain values, never re-derived via `LegacyProjectRefResolver`, which keys off
+  `LegacyCliConfig.workdir`, stale after this handler's own `process.chdir` — see the workdir
+  comments in `bootstrap.handler.ts`). The **connection** itself, however, is resolved via its own
+  `legacyResolveLinkedConn` call — Go's `flags.NewDbConfigWithPassword` dial-direct/pooler-fallback
+  logic — not reused from the naive `deriveDbConfig(...)` connection already written to `.env`
+  above: an IPv6-only direct host would otherwise burn all 9 push retries before falling back (see
+  the connection-resolution bullet below). `LegacyDbConfigResolver` is still skipped (it keys off
+  the same stale `LegacyCliConfig.workdir`). This is proven under test in
+  `bootstrap.workdir-cache.integration.test.ts`, which seeds a migration file at the _prompted_
+  bootstrap workdir (divergent from `cliConfig.workdir`'s cwd-walk result) and asserts the push
+  step still finds and applies it.
+- **Connection resolution**: the native push step's connection comes from `legacyResolveLinkedConn`
+  (shared with `db push`/`db pull`'s own `--linked` resolution), which dials the direct
+  `db.<ref>.<projectHost>:5432` host first and transparently falls back to the project's IPv4
+  transaction pooler (reading the saved `<workdir>/supabase/.temp/pooler-url`, see Files Read)
+  when that host is unreachable — new Supabase projects commonly have an IPv6-only direct host, so
+  this fallback is the common case on an IPv4-only network. The resolved connection also carries
+  the active profile's `suggestionContext` (dashboard URL + profile name), so a connect failure
+  during the push still renders Go's `SetConnectSuggestion` hint (Network Restrictions / wrong
+  password / IPv6 / wrong profile) instead of falling back to the generic `--debug` suggestion.
 - **Password**: Go's bootstrap never forwards a password to its internal push call on a separate
-  channel — it always reuses the create-resolved password (`created.dbPassword`, baked into the
-  `dbConfig` connection already derived for `.env`). There is no flag-vs-env distinction to
-  preserve once the call is in-process (unlike the former Go-subprocess delegation, CLI-1617,
-  which had to route the resolved password across process boundaries).
+  channel — it always reuses the create-resolved password (`created.dbPassword`). There is no
+  flag-vs-env distinction to preserve once the call is in-process (unlike the former Go-subprocess
+  delegation, CLI-1617, which had to route the resolved password across process boundaries).
 - **Retry**: the native push step is wrapped in the same `legacyBootstrapRetryNotify()` +
   `Effect.retry(retry)` policy as the api-keys and health-poll steps, matching Go's
   `policy.Reset()` + `backoff.RetryNotify` wrap around `push.Run` (`bootstrap.go:122-127`). A
