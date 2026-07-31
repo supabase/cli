@@ -165,6 +165,25 @@ export interface LegacyStartContainerSpec {
    * then removes the temp file/directory once the container is created and
    * started. Generic by design — any future service's spec can set this, not
    * just the three call sites that need it today.
+   *
+   * Known, accepted limitation (pre-existing — not introduced by CLI-1954's `db start`
+   * port, which only extends the SAME already-shared mechanism to one more Postgres
+   * entrypoint variant): the generated bind mount's host-side path must be visible to
+   * whichever machine the DOCKER DAEMON itself runs on, not just this CLI process —
+   * Docker's bind mounts are resolved daemon-side
+   * (https://docs.docker.com/engine/storage/bind-mounts/#considerations-and-constraints).
+   * A `DOCKER_HOST`/Docker-context pointing at a remote daemon (a scenario this codebase
+   * otherwise explicitly supports — see `legacy-hostname.ts`'s `legacyGetHostname`) would
+   * see a missing or wrong path there, even though the daemon itself is reachable. Go's
+   * own heredoc/`Cmd`-embed delivery has no such requirement (the content travels inside
+   * the container-create request itself, over the Engine API), so this is a genuine,
+   * Go-parity-relevant gap for that scenario — not merely a stylistic difference. A fix
+   * (e.g. `docker cp`-ing the secret into a created-but-not-yet-started container instead
+   * of bind-mounting a host path — `docker cp` streams file content over the same
+   * connection, so it works against a remote daemon too) would need to change how EVERY
+   * `secretFiles` caller's container gets created, not just Postgres's — out of scope for
+   * a single command's bootstrap port; tracked as a known gap here rather than fixed
+   * silently or left undocumented.
    */
   readonly secretFiles?: ReadonlyArray<LegacyStartSecretFileSpec>;
   /**
