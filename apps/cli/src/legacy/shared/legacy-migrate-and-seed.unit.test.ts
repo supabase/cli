@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -350,6 +350,49 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
             }
             chmodSync(lockedDir, 0o755);
             rmSync(workdir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "skips a symlinked .sql file and an entire symlinked subdirectory inside a matched schema_paths directory",
+    () => {
+      // Go's `walkMatchedDir` (`fs.WalkDir` + `entry.Type().IsRegular()`) never follows a
+      // symlinked `DirEntry` — a symlinked `.sql` file is excluded regardless of target, and a
+      // symlinked subdirectory is never even descended into. Both live OUTSIDE the matched
+      // directory here, so applying either would mean executing SQL Go would never touch.
+      const workdir = makeWorkdir();
+      const outsideDir = mkdtempSync(join(tmpdir(), "legacy-migrate-and-seed-outside-"));
+      writeFileSync(join(outsideDir, "escaped.sql"), "select 999;");
+      writeFileSync(join(outsideDir, "linked-target.sql"), "select 888;");
+      writeFile(workdir, "supabase/schemas/real.sql", "select 1;");
+      symlinkSync(
+        join(outsideDir, "linked-target.sql"),
+        join(workdir, "supabase", "schemas", "link-to-file.sql"),
+      );
+      symlinkSync(outsideDir, join(workdir, "supabase", "schemas", "link-to-dir"));
+      const { session, execs } = fakeSession();
+      const out = mockOutput();
+      return run(
+        workdir,
+        "",
+        {
+          ...baseConfig,
+          experimental: true,
+          schemaPaths: ["supabase/schemas"],
+        },
+        session,
+        out,
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(execs).toContain("select 1");
+            expect(execs).not.toContain("select 888");
+            expect(execs).not.toContain("select 999");
+            rmSync(workdir, { recursive: true, force: true });
+            rmSync(outsideDir, { recursive: true, force: true });
           }),
         ),
       );
