@@ -19666,9 +19666,6 @@
           "saml": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
-              },
               "entity_id": {
                 "type": "string"
               },
@@ -19731,7 +19728,7 @@
                 ]
               }
             },
-            "required": ["id", "entity_id"]
+            "required": ["entity_id"]
           },
           "domains": {
             "type": "array",
@@ -19777,9 +19774,6 @@
                 "saml": {
                   "type": "object",
                   "properties": {
-                    "id": {
-                      "type": "string"
-                    },
                     "entity_id": {
                       "type": "string"
                     },
@@ -19887,9 +19881,6 @@
           "saml": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
-              },
               "entity_id": {
                 "type": "string"
               },
@@ -20066,9 +20057,6 @@
           "saml": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
-              },
               "entity_id": {
                 "type": "string"
               },
@@ -20131,7 +20119,7 @@
                 ]
               }
             },
-            "required": ["id", "entity_id"]
+            "required": ["entity_id"]
           },
           "domains": {
             "type": "array",
@@ -20172,9 +20160,6 @@
           "saml": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
-              },
               "entity_id": {
                 "type": "string"
               },
@@ -20237,7 +20222,7 @@
                 ]
               }
             },
-            "required": ["id", "entity_id"]
+            "required": ["entity_id"]
           },
           "domains": {
             "type": "array",
