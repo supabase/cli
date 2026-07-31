@@ -1972,7 +1972,11 @@ const deployViaApi = Effect.fnUntraced(function* (
     return;
   }
 
-  const deployed = yield* Effect.forEach(
+  // INC-699: each bundleOnly upload writes the bundle and bumps the remote version without
+  // persisting metadata, which only the final bulk update does. Failing fast on the first
+  // upload error strands that metadata remotely and makes every later deploy conflict, so
+  // run every upload to completion, always persist what succeeded, then report the errors.
+  const results = yield* Effect.forEach(
     enabled,
     (config) =>
       Effect.gen(function* () {
@@ -1987,10 +1991,37 @@ const deployViaApi = Effect.fnUntraced(function* (
             true,
           ),
         );
-      }),
+      }).pipe(
+        Effect.map((value) => ({ success: true as const, value })),
+        Effect.catch((error) => Effect.succeed({ success: false as const, error })),
+      ),
     { concurrency: jobs },
   );
-  yield* bulkUpdateRemoteFunctions(api, projectRef, deployed);
+
+  const deployed: BulkUpdateFunction[] = [];
+  const messages: string[] = [];
+  for (const result of results) {
+    if (result.success) {
+      deployed.push(result.value);
+    } else {
+      messages.push(result.error.message);
+    }
+  }
+
+  if (deployed.length === 0) {
+    return yield* Effect.fail(new Error(messages.join("\n")));
+  }
+
+  const updated = yield* bulkUpdateRemoteFunctions(api, projectRef, deployed).pipe(
+    Effect.map(() => ({ success: true as const })),
+    Effect.catch((error) => Effect.succeed({ success: false as const, error })),
+  );
+  if (!updated.success) {
+    messages.push(updated.error.message);
+  }
+  if (messages.length > 0) {
+    return yield* Effect.fail(new Error(messages.join("\n")));
+  }
 });
 
 const deployViaDocker = Effect.fnUntraced(function* (

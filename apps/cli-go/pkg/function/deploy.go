@@ -105,6 +105,11 @@ func toRelPath(fp string) string {
 func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDeployMetadata, fsys fs.FS) error {
 	jq := queue.NewJobQueue(s.maxJobs)
 	toUpdate := make(api.BulkUpdateFunctionBody, len(toDeploy))
+	// Bulk uploads only write the bundle and bump the version remotely, so the new metadata
+	// exists nowhere but this client until the final bulk update request persists it. Bailing
+	// out on the first upload error strands that metadata and makes every subsequent deploy
+	// fail with a version conflict, so we keep going and report the errors at the end.
+	var bundleErrs []error
 	for i, meta := range toDeploy {
 		param := api.V1DeployAFunctionParams{
 			Slug:       meta.Name,
@@ -128,23 +133,30 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 			toUpdate[i].CreatedAt = resp.CreatedAt
 			return nil
 		}
-		if err := jq.Put(bundle); err != nil {
-			return err
+		bundleErrs = append(bundleErrs, jq.Put(bundle))
+	}
+	bundleErrs = append(bundleErrs, jq.Collect())
+	bundleErr := errors.Join(bundleErrs...)
+	// Failed uploads leave their slot zero valued, ie. without a function id.
+	uploaded := make(api.BulkUpdateFunctionBody, 0, len(toUpdate))
+	for _, f := range toUpdate {
+		if len(f.Id) > 0 {
+			uploaded = append(uploaded, f)
 		}
 	}
-	if err := jq.Collect(); err != nil {
-		return err
+	if len(uploaded) == 0 {
+		return bundleErr
 	}
 	for attempt := 0; ; attempt++ {
-		resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate)
+		resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, uploaded)
 		if err != nil {
-			return errors.Errorf("failed to bulk update: %w", err)
+			return errors.Join(bundleErr, errors.Errorf("failed to bulk update: %w", err))
 		} else if resp.JSON200 != nil {
-			return nil
+			return bundleErr
 		} else if resp.StatusCode() != http.StatusTooManyRequests || attempt >= deployRateLimitMaxRetries {
-			return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
+			return errors.Join(bundleErr, errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body)))
 		} else if err := waitForRateLimit(ctx, responseHeaders(resp.HTTPResponse), attempt, "bulk updating functions"); err != nil {
-			return err
+			return errors.Join(bundleErr, err)
 		}
 	}
 }
