@@ -18,19 +18,13 @@ import { join } from "node:path";
 import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import {
-  legacyDescribeContainerCliFailure,
-  spawnContainerCli,
-} from "../../../shared/legacy-container-cli.ts";
+import { legacyDescribeContainerCliFailure, spawnContainerCli } from "../legacy-container-cli.ts";
 import {
   legacyBindMountSpecSource,
   legacyIsBindMountSource,
-} from "../../../shared/legacy-docker-bind-classify.ts";
-import {
-  LEGACY_CLI_PROJECT_LABEL,
-  LEGACY_CLI_WORKDIR_LABEL,
-} from "../../../shared/legacy-docker-ids.ts";
-import { isUserDefinedDockerNetwork } from "../../../../shared/functions/deploy.ts";
+} from "../legacy-docker-bind-classify.ts";
+import { LEGACY_CLI_PROJECT_LABEL, LEGACY_CLI_WORKDIR_LABEL } from "../legacy-docker-ids.ts";
+import { isUserDefinedDockerNetwork } from "../../../shared/functions/deploy.ts";
 import {
   legacyBuildStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,

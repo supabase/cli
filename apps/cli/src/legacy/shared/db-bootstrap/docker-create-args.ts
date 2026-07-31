@@ -54,7 +54,7 @@
 import {
   legacyBindMountSpecSource,
   legacyIsBindMountSource,
-} from "../../../shared/legacy-docker-bind-classify.ts";
+} from "../legacy-docker-bind-classify.ts";
 
 /**
  * `container.HealthConfig` (`docker/docker/api/types/container`). Not

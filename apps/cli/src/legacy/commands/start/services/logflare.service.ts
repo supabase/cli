@@ -19,7 +19,7 @@
 import { join } from "node:path";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
 /** `utils.LogflareAliases[0]` (`apps/cli-go/internal/utils/config.go:47`) — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
 const LEGACY_LOGFLARE_CONTAINER_SUFFIX = "analytics";

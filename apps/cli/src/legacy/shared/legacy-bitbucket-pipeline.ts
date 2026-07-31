@@ -9,7 +9,7 @@
  *
  * Hoisted here because it is needed by ≥2 call sites: `legacy-docker-run.layer.ts`
  * (`docker run`, e.g. `db dump`/`db test`) and `start`'s per-service container
- * creation (`commands/start/lib/container-lifecycle.ts`).
+ * creation (`legacy/shared/db-bootstrap/container-lifecycle.ts`).
  */
 export function legacyIsBitbucketPipeline(): boolean {
   const value = globalThis.process.env["BITBUCKET_CLONE_DIR"];

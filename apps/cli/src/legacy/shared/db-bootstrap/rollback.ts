@@ -1,10 +1,10 @@
 import { Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import type { LegacyContainerIdName } from "../../shared/legacy-docker-lifecycle.ts";
-import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
-import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
-import { LegacyHealthCheckTimeoutError } from "./lib/health-check.ts";
+import type { LegacyContainerIdName } from "../legacy-docker-lifecycle.ts";
+import { legacyDockerRemoveAll } from "../legacy-docker-remove-all.ts";
+import { legacyCleanupStartSecrets } from "../legacy-start-secrets-cleanup.ts";
+import { LegacyHealthCheckTimeoutError } from "./health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -14,7 +14,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * multi-error, which is exactly the shape `WaitForHealthyService` produces on
  * timeout and nothing else in `run()` ever produces. This port's equivalent
  * "only the health-check timeout produces this shape" failure is
- * {@link LegacyHealthCheckTimeoutError} (`lib/health-check.ts`), so the
+ * {@link LegacyHealthCheckTimeoutError} (`./health-check.ts`), so the
  * classification collapses to an `instanceof` check against that one class —
  * the caller (`start.handler.ts`) uses this to decide whether
  * `--ignore-health-check` should downgrade a failure to a warning instead of

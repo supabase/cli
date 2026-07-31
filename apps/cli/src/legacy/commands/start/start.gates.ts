@@ -1,11 +1,11 @@
 import type { ProjectConfig } from "@supabase/config";
 
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import {
-  replaceImageTag,
-  type LocalServiceVersionName,
-  type LocalServiceVersionOverrides,
+import type {
+  LocalServiceVersionName,
+  LocalServiceVersionOverrides,
 } from "../../../shared/services/services.shared.ts";
+import { legacyResolvePinnedImage } from "../../shared/db-bootstrap/pinned-image.ts";
 import { legacyEnvOverrideBool } from "../../shared/legacy-local-config-values.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 
@@ -223,26 +223,6 @@ const START_SERVICE_TO_LOCAL_VERSION_NAME: Readonly<Record<string, LocalServiceV
   logflare: "analytics",
   supavisor: "pooler",
 };
-
-/**
- * The embedded Dockerfile default image for `alias`, with its tag replaced by
- * `serviceVersions`' pin for `localServiceName` when one is present — Go's
- * `Config.Load` rewriting `c.Auth.Image`/etc. from `supabase/.temp/*-version`
- * (`pkg/config/config.go:827-863`) before `start`/`db start` ever read them.
- * Exported so `start.handler.ts` can resolve the SAME pinned image for the
- * one-shot fresh-DB setup jobs (`realtime`/`storage`/`auth`), which Go runs
- * regardless of `--exclude` and therefore can't go through
- * {@link legacyResolveStartImagePlan}'s gate-filtered plan.
- */
-export function legacyResolvePinnedImage(
-  alias: string,
-  localServiceName: LocalServiceVersionName,
-  serviceVersions: LocalServiceVersionOverrides,
-): string {
-  const baseImage = dockerfileServiceImage(alias);
-  const pinnedVersion = serviceVersions[localServiceName];
-  return pinnedVersion === undefined ? baseImage : replaceImageTag(baseImage, pinnedVersion);
-}
 
 export interface LegacyStartImagePlanEntry {
   /** `LEGACY_SERVICE_CATALOG`'s `service` key. */

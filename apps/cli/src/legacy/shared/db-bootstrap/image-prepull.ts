@@ -19,11 +19,11 @@
 import { Data, Effect, Result } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { legacyMakeDockerImageResolver } from "../../../shared/legacy-docker-image-resolve.ts";
+import { legacyMakeDockerImageResolver } from "../legacy-docker-image-resolve.ts";
 import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
   legacyIsDockerDaemonUnreachable,
-} from "../../../shared/legacy-docker-suggest.ts";
+} from "../legacy-docker-suggest.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 

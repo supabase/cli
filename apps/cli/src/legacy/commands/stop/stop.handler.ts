@@ -196,7 +196,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // LATER stages (volume prune, network prune) can still independently fail AFTER `container
     // prune` has already confirmed removal, and a plain `yield*` below would never run once that
     // later failure propagates — leaking staged secret directories for containers a later `stop`
-    // can no longer rediscover (they're already gone). `legacyRollbackStart` (`start.rollback.ts`)
+    // can no longer rediscover (they're already gone). `legacyRollbackStart` (`legacy/shared/db-bootstrap/rollback.ts`)
     // already runs this same cleanup unconditionally after its own `legacyDockerRemoveAll` call for
     // the identical reason; this makes `stop` consistent with that sibling caller, just without
     // swallowing the teardown error itself. The finalizer is wrapped in `Effect.suspend` so

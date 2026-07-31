@@ -7,7 +7,7 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
 
 /**
  * Best-effort removal of `legacyStageStartSecretFiles`'s
- * (`legacy/commands/start/lib/container-lifecycle.ts`) per-container
+ * (`legacy/shared/db-bootstrap/container-lifecycle.ts`) per-container
  * staged-secret directories for every container in `containers` — plaintext
  * JWT/TLS/pgsodium/pooler secret material `start` stages on host disk (Kong,
  * Postgres, Supavisor) that otherwise survives indefinitely, since neither
@@ -18,7 +18,7 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * Docker Engine API) — this is a TS-port-only hygiene fix.
  *
  * Hoisted here (`legacy/shared/`) per `apps/cli/CLAUDE.md`'s "Hoist Before
- * You Duplicate" rule: both `start`'s own rollback (`start.rollback.ts`) and
+ * You Duplicate" rule: both `start`'s own rollback (`legacy/shared/db-bootstrap/rollback.ts`) and
  * `stop` (`stop.handler.ts`) need this same cleanup.
  *
  * Each container's own directory is resolved as `<workdir>/supabase/.temp/

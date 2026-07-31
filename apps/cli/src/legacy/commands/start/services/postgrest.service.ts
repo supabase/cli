@@ -13,7 +13,7 @@
  * `Healthcheck:` entry — confirmed by reading the struct literal itself, not
  * just the comment. PostgREST readiness is instead checked at runtime via an
  * HTTP HEAD through the local Kong gateway
- * (`legacyCheckHttpReady`/`LEGACY_POSTGREST_READY_PATH`, `../lib/health-check.ts`,
+ * (`legacyCheckHttpReady`/`LEGACY_POSTGREST_READY_PATH`, `../../../shared/db-bootstrap/health-check.ts`,
  * itself porting `status.go:159-229`'s "PostgREST does not support native
  * health checks" branch) — this builder correctly omits `healthcheck` so
  * `legacyBuildStartContainerCreateArgs` never emits a `--health-*` flag for
@@ -24,11 +24,11 @@
 import type { ProjectConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
-} from "../lib/internal-db-connection.ts";
+} from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 export interface LegacyPostgrestEnvInput {
   /** `config.api.schemas` — joined with `,` into `PGRST_DB_SCHEMAS`. */
@@ -39,7 +39,7 @@ export interface LegacyPostgrestEnvInput {
   readonly maxRows: ProjectConfig["api"]["max_rows"];
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `legacyStartInternalDbPassword` (`../lib/internal-db-connection.ts`). */
+  /** See `legacyStartInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
   readonly dbPassword: string;
   /**
    * `legacyResolveLocalJwks`'s resolved JWKS JSON string — feeds

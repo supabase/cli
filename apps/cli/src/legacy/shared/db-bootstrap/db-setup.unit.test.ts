@@ -7,13 +7,10 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 
-import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
-import {
-  LegacyDockerRun,
-  type LegacyDockerRunOpts,
-} from "../../../shared/legacy-docker-run.service.ts";
-import { LegacyDockerRunError } from "../../../shared/legacy-docker-run.errors.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
+import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
+import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
 import {
   LegacyStartDbSetupError,
   legacyStartInitCurrentBranch,

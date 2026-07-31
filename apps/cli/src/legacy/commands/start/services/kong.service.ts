@@ -56,7 +56,7 @@
 
 import * as nodePath from "node:path";
 
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import { legacyRenderStartKongYml } from "../lib/template-render.ts";
 import { LEGACY_START_CUSTOM_NGINX_TEMPLATE } from "../templates/custom_nginx.template.ts";

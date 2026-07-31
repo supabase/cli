@@ -1458,6 +1458,29 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/**
+ * `auth.external_url` isn't modeled in `@supabase/config`'s schema, so it's read off the raw
+ * document — same presence-based pattern as passkey/webauthn/external. Go's `auth.GetExternalURL`
+ * (`pkg/config/auth.go:401-405`) prefers this explicit value over deriving from `apiUrl`, and feeds
+ * it into `API_EXTERNAL_URL`, the mailer verify URL, the default JWT issuer, and OAuth redirect-URI
+ * fallbacks for `supabase start`'s long-running GoTrue container AND `db start`'s/`supabase
+ * start`'s fresh-DB one-shot auth migration job — every caller must resolve the SAME value, hence
+ * this single standalone helper instead of independent per-caller derivations. Hoisted here (was
+ * private to `start/start.handler.ts`) once `db/start/start.handler.ts`'s own native container
+ * bootstrap became a third caller — see `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ */
+export function legacyResolveAuthExternalUrl(
+  document: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
+  return legacyEnvOverride(
+    "SUPABASE_AUTH_EXTERNAL_URL",
+    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
+    projectEnvValues,
+  );
+}
+
 /** Go's `hook.validate()` hook-type iteration order (`pkg/config/config.go:1453-1485`), used
  * only to build {@link legacyResolveLocalConfigValues}'s `hooks` input in the right order —
  * the actual per-hook validation now lives in `legacyValidateResolvedConfig`. */

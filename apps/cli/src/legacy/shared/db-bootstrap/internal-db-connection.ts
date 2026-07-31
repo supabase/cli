@@ -16,11 +16,11 @@
  * always-5432 internal port — the two never share a value except by
  * coincidence (`db.port` happening to equal 5432).
  *
- * Hoisted here (`start/lib/`, the `start` command family's shared root) per
- * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule: Realtime,
- * PostgREST, and Storage's own container-spec builders
- * (`start/services/*.service.ts`) all need this exact host/port/password
- * derivation.
+ * Hoisted here (`legacy/shared/db-bootstrap/`) per `apps/cli/CLAUDE.md`'s
+ * "Hoist Before You Duplicate" rule: Realtime, PostgREST, and Storage's own
+ * container-spec builders (`start/services/*.service.ts`) all need this
+ * exact host/port/password derivation, and `db start` (a different command
+ * family, `commands/db/start/`) needs it too since CLI-1954.
  */
 
 /** Go's `dbConfig.Port` literal (`start.go:68`) — always 5432, never the configurable `db.port`. */

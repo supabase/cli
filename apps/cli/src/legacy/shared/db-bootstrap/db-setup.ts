@@ -20,7 +20,7 @@
  *      `docker.go:379-383`), each gated on its own service's `enabled` flag and none
  *      of which touch `conn` directly:
  *      - `initRealtimeJob` (`start.go:268-295`) — reuses
- *        `../services/realtime.service.ts`'s `legacyBuildRealtimeEnv`, which builds
+ *        `./realtime-env.ts`'s `legacyBuildRealtimeEnv`, which builds
  *        the byte-identical env-var literal Go's own `initRealtimeJob` embeds
  *        verbatim (both are the same Go `Env` list, just addressed from two call
  *        sites: the long-running container and this one-shot job).
@@ -65,39 +65,30 @@
  * This module also duplicates ONE config-load pass: `legacyCheckDbToml` is called
  * internally (not threaded in from the caller) to resolve `[db.vault]`, `[db.seed]`,
  * `db.migrations.enabled`, and the effective `api.auto_expose_new_tables` tri-state —
- * the same accepted duplication `db start`'s own handler already takes
- * independently of the top-level `start` command's own config resolution (see
- * `commands/db/start/start.handler.ts:40`).
+ * the same accepted duplication `db start`'s own handler (`commands/db/start/
+ * start.handler.ts`) already takes independently of the top-level `supabase start`
+ * command's own config resolution.
  */
 
 import type { ProjectConfig } from "@supabase/config";
 import { Data, Effect, type FileSystem, Option, type Path } from "effect";
 
-import { Output } from "../../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
-import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
-import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import {
-  LegacyDockerRun,
-  type LegacyDockerRunOpts,
-} from "../../../shared/legacy-docker-run.service.ts";
-import { legacyMigrateAndSeed } from "../../../shared/legacy-migrate-and-seed.ts";
-import {
-  LegacyMigrationApplyError,
-  legacyExecSqlFile,
-} from "../../../shared/legacy-migration-apply.ts";
-import type { LegacyMigrationSeedError } from "../../../shared/legacy-seed.ts";
-import { ramInBytes } from "../../../shared/legacy-size-units.ts";
-import {
-  LegacyMigrationVaultError,
-  legacyUpsertVaultSecrets,
-} from "../../../shared/legacy-vault.ts";
-import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "../services/realtime.service.ts";
-import { LEGACY_START_DB_GLOBALS_SQL } from "../templates/db-globals.sql.ts";
-import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "../templates/db-initial-schema-13.sql.ts";
-import { LEGACY_START_DB_INITIAL_SCHEMA_14_SQL } from "../templates/db-initial-schema-14.sql.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
+import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
+import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
+import { legacyServiceContainerName } from "../legacy-docker-ids.ts";
+import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
+import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
+import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migration-apply.ts";
+import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
+import { ramInBytes } from "../legacy-size-units.ts";
+import { LegacyMigrationVaultError, legacyUpsertVaultSecrets } from "../legacy-vault.ts";
+import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "./realtime-env.ts";
+import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
+import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
+import { LEGACY_START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
