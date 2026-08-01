@@ -417,6 +417,45 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
+    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as an int arrives as a fractional number",
+    () => {
+      // Go's `TotalApplied int` (and its `int`-typed siblings) reject any JSON number literal
+      // with a decimal point via `strconv.ParseInt` on the raw literal text — verified
+      // empirically that `json.Unmarshal` on `{"totalApplied":1.5}` errors identically to a
+      // string-typed field mismatch, so `1.5` must fail the parse here too, not be treated as a
+      // truncated/rounded successful-apply count.
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({
+        stdout: JSON.stringify({ status: "success", totalApplied: 1.5 }),
+      });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to parse pg-delta apply output",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "on a non-success status, prints the formatted failure to stderr but not the raw payload when --debug is unset",
     () => {
       const dir = makeDeclarativeDir();

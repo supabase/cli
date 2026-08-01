@@ -101,6 +101,23 @@ export interface LegacyPgDeltaApplyResult {
 }
 
 /**
+ * Go's `int`-typed fields (`TotalStatements`/`TotalRounds`/`TotalApplied`/`TotalSkipped` on
+ * `ApplyResult`, `Position` on `ApplyIssue`) reject any JSON number literal containing a decimal
+ * point or exponent — Go's `json.Unmarshal` parses the literal text via `strconv.ParseInt`
+ * rather than decoding a `float64` and truncating it, so even a "whole" float like `1.0` fails
+ * identically to `1.5` (verified empirically: `json.Unmarshal([]byte(\`{"totalApplied":1.0}\`),
+ * &r)` and the `1.5` variant both return `cannot unmarshal number ... into ... type int`). A
+ * `JSON.parse`'d `1.0` is already indistinguishable from the integer `1` by the time it reaches
+ * this guard — `JSON.parse` itself collapses that distinction, so that exact literal-text
+ * sub-case can't be reproduced post-parse — but `Number.isInteger` still correctly rejects any
+ * genuinely fractional value like `1.5`, which is the reachable and observable part of this
+ * parity gap.
+ */
+function legacyIsGoIntNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+/**
  * Go's `(i *ApplyIssue) UnmarshalJSON` (`apply.go:124-142`) accepts `null`, a bare string, or
  * an object whose PRESENT fields each match `ApplyIssue`'s declared JSON types — anything else
  * (a number, boolean, array, or an object with a mistyped field) fails Go's `json.Unmarshal`
@@ -130,7 +147,7 @@ function legacyIsValidApplyIssueElement(value: unknown): boolean {
   if ("code" in value && typeof value.code !== "string") return false;
   if ("message" in value && typeof value.message !== "string") return false;
   if ("isDependencyError" in value && typeof value.isDependencyError !== "boolean") return false;
-  if ("position" in value && typeof value.position !== "number") return false;
+  if ("position" in value && !legacyIsGoIntNumber(value.position)) return false;
   if ("detail" in value && typeof value.detail !== "string") return false;
   if ("hint" in value && typeof value.hint !== "string") return false;
   return true;
@@ -188,10 +205,10 @@ function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApply
   ) {
     return false;
   }
-  if ("totalStatements" in value && typeof value.totalStatements !== "number") return false;
-  if ("totalRounds" in value && typeof value.totalRounds !== "number") return false;
-  if ("totalApplied" in value && typeof value.totalApplied !== "number") return false;
-  if ("totalSkipped" in value && typeof value.totalSkipped !== "number") return false;
+  if ("totalStatements" in value && !legacyIsGoIntNumber(value.totalStatements)) return false;
+  if ("totalRounds" in value && !legacyIsGoIntNumber(value.totalRounds)) return false;
+  if ("totalApplied" in value && !legacyIsGoIntNumber(value.totalApplied)) return false;
+  if ("totalSkipped" in value && !legacyIsGoIntNumber(value.totalSkipped)) return false;
   if ("errors" in value) {
     if (!Array.isArray(value.errors) || !value.errors.every(legacyIsValidApplyIssueElement)) {
       return false;
