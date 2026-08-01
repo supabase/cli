@@ -2,6 +2,10 @@ import { Effect, Option } from "effect";
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 import { CliArgs } from "../cli/cli-args.service.ts";
+import {
+  VALUE_CONSUMING_LONG_FLAGS,
+  VALUE_CONSUMING_SHORT_FLAGS,
+} from "../../legacy/shared/legacy-db-target-flags.ts";
 import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./legacy-viper-env.ts";
 
 // The Effect CLI hoists global flags out of the token stream before the leaf
@@ -157,18 +161,56 @@ const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray
 };
 
 /**
+ * Drops tokens that pflag would consume as a value-consuming flag's value in
+ * space-separated form (`--flag value` / `-f value`), so the `--yes`/`--experimental`
+ * argv scanners below don't mistake a consumed value token for an explicit
+ * occurrence of the global flag. `--yes`/`--experimental` are global,
+ * position-independent flags (bound anywhere in argv), so any LOCAL command's
+ * bare value-consuming flag immediately before one of them "eats" it under real
+ * pflag semantics — e.g. `db pull --password --experimental=false` parses as
+ * `--password`'s value being the literal string `"--experimental=false"`, not a
+ * changed `--experimental` (verified against the review finding on CLI-1957: the
+ * repository's own argv scanner already documents and handles this exact case for
+ * `resolveLegacyDbTargetFlags`/`legacyChangedLinkedLocalFlags`
+ * (`legacy/shared/legacy-db-target-flags.ts`) and `extractChangedFlagNames`
+ * (`legacy/telemetry/legacy-command-instrumentation.ts`), which this reuses the
+ * same `VALUE_CONSUMING_LONG_FLAGS`/`VALUE_CONSUMING_SHORT_FLAGS` registries for,
+ * so the three scans can't drift out of sync).
+ */
+const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const kept: Array<string> = [];
+  let skipNext = false;
+  for (const arg of args) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    kept.push(arg);
+    if (arg.startsWith("--")) {
+      const eqIdx = arg.indexOf("=");
+      const name = eqIdx === -1 ? arg.slice(2) : arg.slice(2, eqIdx);
+      if (eqIdx === -1 && VALUE_CONSUMING_LONG_FLAGS.has(name)) skipNext = true;
+    } else if (arg.startsWith("-") && arg.length === 2 && arg.charAt(1) !== "-") {
+      if (VALUE_CONSUMING_SHORT_FLAGS.has(arg.charAt(1))) skipNext = true;
+    }
+  }
+  return kept;
+};
+
+/**
  * True when the raw argv contains an explicit `--yes=<false>` (pflag's `ParseBool`
  * false set). Go binds `--yes` to viper, so a *set* pflag value wins over
  * `AutomaticEnv`; `LegacyYesFlag` is a plain boolean that can't distinguish an
  * explicit `--yes=false` from the omitted default, so we scan the raw argv (global
  * flags are position-independent) up to the first `--` operand terminator (see
- * {@link argsBeforeOperandTerminator}). Only `--yes=false` needs special handling:
- * for `--yes` / `--yes=true` the flag is already `true`, so `flag || env` matches
- * Go, and for an omitted flag the env fallback matches Go. Reading the raw argv
- * also sidesteps however the CLI parser coerces `--yes=false`.
+ * {@link argsBeforeOperandTerminator}), skipping tokens consumed as another flag's
+ * value (see {@link nonValueConsumedTokens}). Only `--yes=false` needs special
+ * handling: for `--yes` / `--yes=true` the flag is already `true`, so `flag || env`
+ * matches Go, and for an omitted flag the env fallback matches Go. Reading the raw
+ * argv also sidesteps however the CLI parser coerces `--yes=false`.
  */
 const legacyYesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
-  argsBeforeOperandTerminator(args).some(
+  nonValueConsumedTokens(argsBeforeOperandTerminator(args)).some(
     (arg) => arg.startsWith("--yes=") && PFLAG_FALSE_VALUES.has(arg.slice("--yes=".length)),
   );
 
@@ -229,10 +271,14 @@ export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string
  * default, and (independently) this CLI's flag parser resolves a repeated flag from its
  * FIRST occurrence rather than pflag's last-occurrence-wins, so the caller must reread
  * the raw argv rather than trust the parsed flag whenever `--experimental` is set at all.
+ * Tokens consumed as another (local) flag's value are skipped (see
+ * {@link nonValueConsumedTokens}) so e.g. `db pull --password --experimental=false` — where
+ * pflag treats `--experimental=false` as `--password`'s space-separated value, not a changed
+ * `--experimental` — doesn't falsely report an explicit occurrence.
  */
 const legacyExperimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   let result: boolean | undefined;
-  for (const arg of argsBeforeOperandTerminator(args)) {
+  for (const arg of nonValueConsumedTokens(argsBeforeOperandTerminator(args))) {
     if (arg === "--experimental") {
       result = true;
     } else if (arg.startsWith("--experimental=")) {

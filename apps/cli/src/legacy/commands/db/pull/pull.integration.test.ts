@@ -1134,6 +1134,43 @@ describe("legacy db pull", () => {
     );
   });
 
+  it.effect(
+    "a bare --password consumes the following token, so SUPABASE_YES still auto-confirms",
+    () => {
+      // Same value-token-consuming hazard as the --experimental scanner fix above
+      // (CLI-1957 review): `--password --yes=false` parses under pflag as
+      // `--password`'s VALUE being the literal string "--yes=false" — `--yes` was
+      // never actually Changed — so SUPABASE_YES=1 must still auto-confirm the
+      // history update rather than a scanner wrongly reading an explicit
+      // `--yes=false` here.
+      const prev = process.env["SUPABASE_YES"];
+      process.env["SUPABASE_YES"] = "1";
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        // A TTY with no scripted prompt response: only SUPABASE_YES makes this pass.
+        stdinIsTty: true,
+        args: ["db", "pull", "--password", "--yes=false"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.historyUpserts.length).toBe(1);
+        expect(streamText(s.out, "stderr")).toContain(
+          "Update remote migration history table? [Y/n] y",
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_YES"];
+            else process.env["SUPABASE_YES"] = prev;
+          }),
+        ),
+        Effect.provide(s.layer),
+      );
+    },
+  );
+
   it.effect("SUPABASE_EXPERIMENTAL fails with the retired structured-dump message", () => {
     // CLI-1957: the structured-dump mode is retired rather than delegated to Go.
     const s = setup(tmp.current);
@@ -1310,6 +1347,39 @@ describe("legacy db pull", () => {
           message: expect.stringContaining("--declarative"),
         });
       }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "a bare --password consumes the following token, so SUPABASE_EXPERIMENTAL still gates the retirement error",
+    () => {
+      // pflag accepts `--flag value` (space form) for `--password` (a string flag,
+      // `pull.command.ts`'s `password: Flag.string(...)`), so `--password
+      // --experimental=false` parses as `--password`'s VALUE being the literal string
+      // "--experimental=false" — `--experimental` was never actually Changed. A scanner
+      // that examines every pre-terminator token without skipping consumed values would
+      // wrongly read an explicit `--experimental=false` here and let the pull proceed
+      // normally instead of falling back to SUPABASE_EXPERIMENTAL=true (CLI-1957 review).
+      const prev = process.env["SUPABASE_EXPERIMENTAL"];
+      process.env["SUPABASE_EXPERIMENTAL"] = "true";
+      const s = setup(tmp.current, {
+        args: ["db", "pull", "--password", "--experimental=false"],
+      });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "LegacyDbPullExperimentalRetiredError",
+          message: expect.stringContaining("--declarative"),
+        });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
+            else process.env["SUPABASE_EXPERIMENTAL"] = prev;
+          }),
+        ),
+        Effect.provide(s.layer),
+      );
     },
   );
 
