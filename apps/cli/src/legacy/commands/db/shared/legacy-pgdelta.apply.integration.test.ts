@@ -267,6 +267,119 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
+    "fails with LegacyDeclarativeApplyError (not treated as a false success) when an errors array element is a number",
+    () => {
+      // A configured or future pg-delta emitting `{"status":"success","errors":[123]}` must not
+      // be accepted as a successful apply. Verified against Go's real `ApplyIssue.UnmarshalJSON`
+      // (`apps/cli-go/internal/pgdelta/apply.go:124-142`): a numeric element fails BOTH its
+      // string-arm and its object-arm unmarshal, which fails the WHOLE `ApplyResult` decode —
+      // Go never reaches a "success" status in this case, so the TS guard must reject it too.
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({
+        stdout: JSON.stringify({ status: "success", errors: [123] }),
+      });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to parse pg-delta apply output",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "fails with LegacyDeclarativeApplyError (not treated as a false success) when a diagnostics array element is a bare string",
+    () => {
+      // Unlike `ApplyIssue`, Go's `ApplyDiagnosis.UnmarshalJSON` (`apply.go:79-116`) has no
+      // bare-string acceptance branch, so `{"diagnostics":["boom"]}` fails Go's whole decode too
+      // (verified: unmarshaling a JSON string into `ApplyDiagnosis`'s shadow struct errors).
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({
+        stdout: JSON.stringify({ status: "success", diagnostics: ["boom"] }),
+      });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to parse pg-delta apply output",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "accepts a diagnostics element whose statementId is a mistyped, non-object/non-string value (Go degrades it silently)",
+    () => {
+      // Unlike a top-level array-element shape mismatch, Go's `ApplyDiagnosis.UnmarshalJSON`
+      // decodes `statementId` into a `json.RawMessage` first (accepts ANY valid JSON value), then
+      // tries `ApplyStatementLocation`, then a bare string, and silently leaves `StatementID` nil
+      // if BOTH fail — never propagating an error. A mistyped `statementId` must NOT fail the
+      // whole parse.
+      const dir = makeDeclarativeDir();
+      const payload = {
+        status: "success",
+        diagnostics: [{ message: "note", statementId: 42 }],
+      };
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as a number arrives as a string",
     () => {
       // Same reasoning as the array-typed-field test above, for `ApplyResult`'s numeric fields

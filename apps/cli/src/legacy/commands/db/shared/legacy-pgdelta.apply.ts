@@ -41,13 +41,14 @@ const LEGACY_PG_DELTA_APPLY_CONTAINER_SCHEMA_PATH = "/declarative";
 /** One statement/error entry — Go's `ApplyIssue`, which may arrive as a bare string or an object. */
 export interface LegacyPgDeltaApplyIssue {
   readonly statement?: {
-    // Optional (not required): this whole interface types an untrusted `JSON.parse` of a
-    // pg-delta subprocess's stdout — `legacyApplyDeclarativePgDelta` only structurally
-    // validates the top-level shape (`{status: string}`), not nested fields — so a
-    // partially-populated `statement` object (e.g. a future pg-delta release that only
-    // reports `id`) must render, not throw — see `legacyFormatApplyIssue`'s defensive
-    // `?? ""` handling below. Go's own `(i *ApplyIssue) UnmarshalJSON` is deliberately just
-    // as defensive, for the same reason.
+    // Optional (not required): `legacyIsValidApplyIssueElement` only checks the TYPE of each
+    // present field (matching Go's per-field `json.Unmarshal` type check), not that every
+    // field is present — so a partially-populated `statement` object (e.g. a future pg-delta
+    // release that only reports `id`) must still render, not throw — see
+    // `legacyFormatApplyIssue`'s defensive `?? ""` handling below. Go's own `(i
+    // *ApplyIssue) UnmarshalJSON` is deliberately just as permissive about ABSENT fields,
+    // while still rejecting a MISTYPED one for the whole payload — see
+    // `legacyIsValidApplyIssueElement`'s own doc comment.
     readonly id?: string;
     readonly sql?: string;
     readonly statementClass?: string;
@@ -100,6 +101,64 @@ export interface LegacyPgDeltaApplyResult {
 }
 
 /**
+ * Go's `(i *ApplyIssue) UnmarshalJSON` (`apply.go:124-142`) accepts `null`, a bare string, or
+ * an object whose PRESENT fields each match `ApplyIssue`'s declared JSON types — anything else
+ * (a number, boolean, array, or an object with a mistyped field) fails Go's `json.Unmarshal`
+ * for the WHOLE `ApplyResult`, not just that element. Verified empirically against Go's real
+ * struct definitions: `{"errors":[123]}` returns `cannot unmarshal number into Go struct field
+ * ApplyResult.errors of type main.alias`, and `{"errors":[{"message":123}]}` returns `cannot
+ * unmarshal number into Go struct field ApplyResult.errors.message of type string` — both abort
+ * the ENTIRE parse rather than degrading that one element, so a payload like
+ * `{"status":"success","errors":[123]}` must be rejected here too, not accepted as a (false)
+ * success. Nested `statement` is checked the same way, one level deep — Go's `ApplyStatement`
+ * has no custom `UnmarshalJSON`, so a mistyped `id`/`sql`/`statementClass` fails identically.
+ */
+function legacyIsValidApplyIssueElement(value: unknown): boolean {
+  if (value === null || typeof value === "string") return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  if ("statement" in value) {
+    const statement = value.statement;
+    if (statement !== null && statement !== undefined) {
+      if (typeof statement !== "object" || Array.isArray(statement)) return false;
+      if ("id" in statement && typeof statement.id !== "string") return false;
+      if ("sql" in statement && typeof statement.sql !== "string") return false;
+      if ("statementClass" in statement && typeof statement.statementClass !== "string") {
+        return false;
+      }
+    }
+  }
+  if ("code" in value && typeof value.code !== "string") return false;
+  if ("message" in value && typeof value.message !== "string") return false;
+  if ("isDependencyError" in value && typeof value.isDependencyError !== "boolean") return false;
+  if ("position" in value && typeof value.position !== "number") return false;
+  if ("detail" in value && typeof value.detail !== "string") return false;
+  if ("hint" in value && typeof value.hint !== "string") return false;
+  return true;
+}
+
+/**
+ * Go's `(d *ApplyDiagnosis) UnmarshalJSON` (`apply.go:79-116`) — unlike `ApplyIssue`, there is
+ * NO bare-string acceptance branch, so only `null` or an object is valid; a bare
+ * string/number/boolean/array element fails the whole `ApplyResult` unmarshal. Verified
+ * empirically: `{"diagnostics":["boom"]}` returns `cannot unmarshal string into Go struct field
+ * ApplyResult.diagnostics of type struct {...}`. `statementId` is deliberately NOT type-checked
+ * here: Go decodes it into a `json.RawMessage` first (accepts any valid JSON value), then tries
+ * `ApplyStatementLocation`, then a bare string, and silently leaves `StatementID` nil if BOTH
+ * fail — it never propagates an error for a mistyped `statementId` (verified empirically:
+ * `{"statementId":42}` and `{"statementId":{"filePath":123}}` both unmarshal with `err: <nil>`),
+ * so `legacyNormalizeApplyDiagnosis`/`legacyFormatStatementLocation`'s existing defensive
+ * handling is the correct (and only) place that degrades gracefully.
+ */
+function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
+  if (value === null) return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  if ("code" in value && typeof value.code !== "string") return false;
+  if ("message" in value && typeof value.message !== "string") return false;
+  if ("suggestedFix" in value && typeof value.suggestedFix !== "string") return false;
+  return true;
+}
+
+/**
  * Structural guard for Go's `ApplyResult` JSON shape, applied to an untrusted
  * `JSON.parse` of the pg-delta subprocess's stdout. A syntactically valid but non-object
  * payload (`null`, an array, a bare string/number — e.g. a future pg-delta release that
@@ -112,12 +171,12 @@ export interface LegacyPgDeltaApplyResult {
  * int`, etc., `apps/cli-go/internal/pgdelta/apply.go:27-44`), so e.g. an `errors` field that
  * arrives as an object (`{"length":1}`) instead of an array must fail here too, not reach
  * `legacyFormatApplyFailure`'s `for (const issue of errors)` and throw an unhandled
- * `TypeError` defect. Only each field's OWN declared type is checked (not the shape of
- * elements inside `errors`/`stuckStatements`/`validationErrors`/`diagnostics`) — everything
- * downstream already treats a malformed element as optional/malformed-tolerant (see this
- * module's other `String(x ?? "")` doc comments and `ApplyIssue`'s own dual string/object
- * `UnmarshalJSON`), so per-element validation stays there. This is also the AGENTS.md-mandated
- * way to narrow `unknown` without an `as` cast.
+ * `TypeError` defect. Each ARRAY field's elements are also validated ({@link
+ * legacyIsValidApplyIssueElement}/{@link legacyIsValidApplyDiagnosisElement}) since Go's own
+ * per-element `UnmarshalJSON` implementations reject a malformed element by failing the WHOLE
+ * `ApplyResult` decode, not by skipping just that element — see those functions' own doc
+ * comments for the empirical verification. This is also the AGENTS.md-mandated way to narrow
+ * `unknown` without an `as` cast.
  */
 function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApplyResult {
   if (
@@ -133,10 +192,35 @@ function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApply
   if ("totalRounds" in value && typeof value.totalRounds !== "number") return false;
   if ("totalApplied" in value && typeof value.totalApplied !== "number") return false;
   if ("totalSkipped" in value && typeof value.totalSkipped !== "number") return false;
-  if ("errors" in value && !Array.isArray(value.errors)) return false;
-  if ("stuckStatements" in value && !Array.isArray(value.stuckStatements)) return false;
-  if ("validationErrors" in value && !Array.isArray(value.validationErrors)) return false;
-  if ("diagnostics" in value && !Array.isArray(value.diagnostics)) return false;
+  if ("errors" in value) {
+    if (!Array.isArray(value.errors) || !value.errors.every(legacyIsValidApplyIssueElement)) {
+      return false;
+    }
+  }
+  if ("stuckStatements" in value) {
+    if (
+      !Array.isArray(value.stuckStatements) ||
+      !value.stuckStatements.every(legacyIsValidApplyIssueElement)
+    ) {
+      return false;
+    }
+  }
+  if ("validationErrors" in value) {
+    if (
+      !Array.isArray(value.validationErrors) ||
+      !value.validationErrors.every(legacyIsValidApplyIssueElement)
+    ) {
+      return false;
+    }
+  }
+  if ("diagnostics" in value) {
+    if (
+      !Array.isArray(value.diagnostics) ||
+      !value.diagnostics.every(legacyIsValidApplyDiagnosisElement)
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
