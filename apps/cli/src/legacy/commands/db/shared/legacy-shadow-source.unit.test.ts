@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -24,6 +24,9 @@ function pgDelta(overrides: Partial<LegacyPgDeltaTomlConfig> = {}): LegacyPgDelt
 function makeWorkdir(): string {
   return mkdtempSync(join(tmpdir(), "legacy-shadow-source-"));
 }
+
+// Root bypasses POSIX permission bits, so chmod 000 wouldn't block readdir() there.
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 describe("legacyShouldApplyDeclarativeWithPgDelta", () => {
   it.effect("is false whenever usePgDelta is false, regardless of schema_paths", () =>
@@ -198,4 +201,97 @@ describe("legacyLoadDeclaredSchemas", () => {
       rmSync(workdir, { recursive: true, force: true });
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.effect(
+    "normalizes a backslash-separated schema_paths entry before globbing (Go's filepath.ToSlash)",
+    () => {
+      // Go calls `fs.Glob(fsys, filepath.ToSlash(pattern))` immediately before globbing
+      // (`pkg/config/config.go:145`) — a pattern containing `\` (as every absolute Windows
+      // `schema_paths` entry does) must be forward-slashed first, or `legacyPathMatch`/
+      // `legacyGlobPattern` (which only recognize `/` as a segment separator, and treat `\`
+      // as a glob escape) mis-parse it entirely.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "custom"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "custom", "x.sql"), "select 1;\n");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          ["custom\\x.sql"],
+          pgDelta(),
+        );
+        expect(result).toEqual(["supabase/custom/x.sql"]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
+    "excludes a symlinked .sql file from a recursively-matched schema_paths directory",
+    () => {
+      // Go's `entry.Type().IsRegular()` (`config.go:127`) is a no-follow check — a symlink
+      // is never "regular", so `walkMatchedDir` excludes it even when it resolves to a real
+      // `.sql` file.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "custom"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "custom", "real.sql"), "select 1;\n");
+      const secretTarget = join(workdir, "outside.sql");
+      writeFileSync(secretTarget, "select 2;\n");
+      symlinkSync(secretTarget, join(workdir, "supabase", "custom", "linked.sql"));
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(fs, path, workdir, ["custom"], pgDelta());
+        expect(result).toEqual(["supabase/custom/real.sql"]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect("excludes a symlinked .sql file from the supabase/schemas fallback walk", () => {
+    const workdir = makeWorkdir();
+    mkdirSync(join(workdir, "supabase", "schemas"), { recursive: true });
+    writeFileSync(join(workdir, "supabase", "schemas", "real.sql"), "select 1;\n");
+    const secretTarget = join(workdir, "outside.sql");
+    writeFileSync(secretTarget, "select 2;\n");
+    symlinkSync(secretTarget, join(workdir, "supabase", "schemas", "linked.sql"));
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const result = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [], pgDelta());
+      expect(result).toEqual(["supabase/schemas/real.sql"]);
+      rmSync(workdir, { recursive: true, force: true });
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect.skipIf(isRoot)(
+    "fails (rather than silently treating as empty) when a matched schema directory can't be read",
+    () => {
+      // Go's `walkMatchedDir` (`pkg/config/config.go:194-211`) propagates ANY `fs.WalkDir`
+      // error as `failed to walk matched directory: <err>` — an unreadable directory must
+      // surface as a failure, not silently contribute zero files (which could compare a
+      // local-target diff against the wrong target or generate an incomplete migration).
+      const workdir = makeWorkdir();
+      const locked = join(workdir, "supabase", "locked");
+      mkdirSync(locked, { recursive: true });
+      chmodSync(locked, 0o000);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          ["locked"],
+          pgDelta(),
+        ).pipe(Effect.exit);
+        expect(exit._tag).toBe("Failure");
+        chmodSync(locked, 0o755);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 });

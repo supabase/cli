@@ -316,8 +316,13 @@ function legacyGlobDeclaredSchemaPaths(
       // Go's `config.go:976-979`: a non-empty, non-absolute `schema_paths` entry is resolved
       // under `supabase/` (via `path.Join`, which also cleans the result) at config-load
       // time — `legacyResolveSeedSqlPath` already implements the identical resolution Go
-      // applies to `[db.seed] sql_paths`, the same shape.
-      const pattern = legacyResolveSeedSqlPath(path, rawPattern);
+      // applies to `[db.seed] sql_paths`, the same shape. Go's `Glob.files` then normalizes
+      // to forward slashes immediately before globbing (`fs.Glob(fsys,
+      // filepath.ToSlash(pattern))`, `config.go:145`) — an absolute Windows entry such as
+      // `C:\repo\schema.sql` must become `C:/repo/schema.sql` before `legacyPathMatch`/
+      // `legacyGlobPattern` (which only recognize `/` as a segment separator) ever see it.
+      // Mirrors `legacy-seed-ops.ts`'s identical `toSlash` step for `[db.seed] sql_paths`.
+      const pattern = legacyResolveSeedSqlPath(path, rawPattern).replaceAll("\\", "/");
       if (legacyPathMatch(pattern, "").badPattern) {
         problems.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
         continue;
@@ -349,16 +354,35 @@ function legacyGlobDeclaredSchemaPaths(
           }
           continue;
         }
-        const names = yield* fs
+        // Go's `walkMatchedDir` (`pkg/config/config.go:194-211`) propagates ANY `fs.WalkDir`
+        // error (e.g. a permission-denied or I/O-erroring subdirectory) as `failed to walk
+        // matched directory: <err>` — it does NOT treat an unreadable directory as an empty
+        // match set, since silently doing so can omit declared schemas and compare a
+        // local-target diff against the wrong target.
+        const namesResult = yield* fs
           .readDirectory(absMatch, { recursive: true })
-          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
-        const sqlRelative = names
+          .pipe(Effect.result);
+        if (Result.isFailure(namesResult)) {
+          problems.push(`failed to walk matched directory: ${match}`);
+          continue;
+        }
+        const sqlRelative = namesResult.success
           .map((name) => name.replaceAll("\\", "/"))
           .filter((name) => name.endsWith(".sql"))
           .sort();
         for (const relative of sqlRelative) {
           const relativeToWorkdir = `${match}/${relative}`;
           const absEntry = legacyResolveUnderWorkdir(path, workdir, relativeToWorkdir);
+          // Go's `entry.Type().IsRegular()` (`config.go:127`) is a no-follow check — a
+          // symlinked `.sql` file is excluded, not resolved through. Effect's `stat` alone
+          // follows symlinks (there is no `lstat`), so detect (and skip) a symlink first via
+          // `readLink` — the same no-follow-detector idiom as `cp.handler.ts`'s
+          // `walkUploadDir`/`legacy-seed-buckets.ts`.
+          const isSymlink = yield* fs.readLink(absEntry).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (isSymlink) continue;
           const entryStat = yield* fs.stat(absEntry).pipe(Effect.orElseSucceed(() => undefined));
           if (entryStat?.type !== "File") continue;
           if (!seen.has(relativeToWorkdir)) {
@@ -410,6 +434,14 @@ function legacyWalkSqlFilesSorted(
     for (const relative of sqlRelative) {
       const relativeToWorkdir = `${dirRel}/${relative}`;
       const absEntry = legacyResolveUnderWorkdir(path, workdir, relativeToWorkdir);
+      // See `legacyGlobDeclaredSchemaPaths`'s identical `readLink`-as-no-follow-detector
+      // comment: Go's `entry.Type().IsRegular()` excludes symlinks, and Effect's `stat`
+      // alone would follow them.
+      const isSymlink = yield* fs.readLink(absEntry).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (isSymlink) continue;
       const entryStat = yield* fs.stat(absEntry).pipe(Effect.orElseSucceed(() => undefined));
       if (entryStat?.type !== "File") continue;
       result.push(relativeToWorkdir);
