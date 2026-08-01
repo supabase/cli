@@ -112,13 +112,22 @@ export interface LegacyPgDeltaApplyDiagnosis {
   readonly suggestedFix?: string | null;
 }
 
-/** The JSON payload `pgdelta_declarative_apply.ts` prints on stdout. Go's `ApplyResult`. */
+/**
+ * The JSON payload `pgdelta_declarative_apply.ts` prints on stdout. Go's `ApplyResult`.
+ *
+ * `| null` on each `total*` counter (not just `?`): `ApplyResult` has no custom
+ * `UnmarshalJSON` of its own, so these plain, non-pointer `int` fields decode via the
+ * default `encoding/json`, which — verified empirically, same rule as {@link
+ * LegacyPgDeltaApplyIssue.code} — accepts a JSON `null` for a non-pointer `int` field with
+ * NO error and leaves the zero value. So `{"status":"success","totalApplied":null}` is a
+ * valid, Go-accepted `ApplyResult`, not a parse failure.
+ */
 export interface LegacyPgDeltaApplyResult {
   readonly status: string;
-  readonly totalStatements?: number;
-  readonly totalRounds?: number;
-  readonly totalApplied?: number;
-  readonly totalSkipped?: number;
+  readonly totalStatements?: number | null;
+  readonly totalRounds?: number | null;
+  readonly totalApplied?: number | null;
+  readonly totalSkipped?: number | null;
   readonly errors?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
   readonly stuckStatements?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
   readonly validationErrors?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
@@ -270,10 +279,34 @@ function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApply
   ) {
     return false;
   }
-  if ("totalStatements" in value && !legacyIsGoIntNumber(value.totalStatements)) return false;
-  if ("totalRounds" in value && !legacyIsGoIntNumber(value.totalRounds)) return false;
-  if ("totalApplied" in value && !legacyIsGoIntNumber(value.totalApplied)) return false;
-  if ("totalSkipped" in value && !legacyIsGoIntNumber(value.totalSkipped)) return false;
+  if (
+    "totalStatements" in value &&
+    value.totalStatements !== null &&
+    !legacyIsGoIntNumber(value.totalStatements)
+  ) {
+    return false;
+  }
+  if (
+    "totalRounds" in value &&
+    value.totalRounds !== null &&
+    !legacyIsGoIntNumber(value.totalRounds)
+  ) {
+    return false;
+  }
+  if (
+    "totalApplied" in value &&
+    value.totalApplied !== null &&
+    !legacyIsGoIntNumber(value.totalApplied)
+  ) {
+    return false;
+  }
+  if (
+    "totalSkipped" in value &&
+    value.totalSkipped !== null &&
+    !legacyIsGoIntNumber(value.totalSkipped)
+  ) {
+    return false;
+  }
   if ("errors" in value) {
     if (!Array.isArray(value.errors) || !value.errors.every(legacyIsValidApplyIssueElement)) {
       return false;
