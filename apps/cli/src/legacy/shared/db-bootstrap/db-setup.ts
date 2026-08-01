@@ -633,7 +633,13 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
         }),
     ),
   );
-  yield* fs.writeFileString(currentBranchPath, "main").pipe(
+  // Go's `utils.WriteFile` writes through `afero.WriteFile(fsys, path, contents, 0644)`
+  // (`internal/utils/misc.go:280-286`) — an explicit mode, not the platform default. Effect's
+  // `writeFileString` falls back to Node's default file mode (`0666` before the umask) when no
+  // `mode` is given, so under a permissive/group-writable umask (`000`/`002`) this file could be
+  // created `0666`/`0664` instead of Go's `0644`, making project branch metadata writable by
+  // additional local users.
+  yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 }).pipe(
     Effect.mapError(
       (error) =>
         new LegacyStartDbSetupError({
