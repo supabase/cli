@@ -96,6 +96,32 @@ describe("legacyFormatApplyFailure", () => {
     expect(message).toContain("  SQL: alter table t add column c int;");
   });
 
+  test("truncates a multibyte SQL statement by UTF-8 bytes, not UTF-16 code units", () => {
+    // Go's `formatStatementSQL` (`apply.go:277-283`) truncates via `len(normalized)` and
+    // `normalized[:maxLen-3]`, both of which count/slice raw UTF-8 bytes. 70 repetitions of a
+    // single 3-byte CJK character is only 70 JS UTF-16 code units (well under the 120-char
+    // threshold a naive `.length`/`.slice()` guard would use — it would never truncate at all),
+    // but 210 UTF-8 bytes — well over Go's 120-byte limit. `117 / 3 === 39` lands the byte cut
+    // exactly on a codepoint boundary, so the expected output is unambiguous.
+    const sql = "字".repeat(70);
+    const issue: LegacyPgDeltaApplyIssue = {
+      message: "boom",
+      statement: { id: "001_a", sql },
+    };
+    const result: LegacyPgDeltaApplyResult = {
+      status: "error",
+      totalApplied: 0,
+      totalRounds: 1,
+      totalSkipped: 0,
+      errors: [issue],
+    };
+    const message = legacyFormatApplyFailure(result, false);
+    expect(sql.length).toBeLessThanOrEqual(120);
+    expect(Buffer.byteLength(sql, "utf-8")).toBe(210);
+    expect(message).toContain(`  SQL: ${"字".repeat(39)}...`);
+    expect(message).not.toContain(sql);
+  });
+
   test("stuck statements and validation errors get their own labeled sections", () => {
     const result: LegacyPgDeltaApplyResult = {
       status: "error",

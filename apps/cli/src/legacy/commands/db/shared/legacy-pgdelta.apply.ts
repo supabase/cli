@@ -382,15 +382,25 @@ function legacyFormatStatementLocation(
   return path;
 }
 
-/** Go's `formatStatementSQL` (`apply.go:277-283`): collapse whitespace, then truncate at 120 chars. */
+/**
+ * Go's `formatStatementSQL` (`apply.go:277-283`): collapse whitespace, then truncate at 120
+ * UTF-8 bytes — not JS UTF-16 code units. Go's `len(normalized)` and `normalized[:maxLen-3]`
+ * both count/slice raw bytes, so a statement with multibyte (e.g. non-ASCII identifier)
+ * characters can be far longer in bytes than in UTF-16 units — a `.length`/`.slice()` guard
+ * would under-truncate (or not truncate at all) relative to Go's 120-byte limit, changing the
+ * legacy stderr contract for an already-failed apply. `Buffer.subarray` slices at the same byte
+ * offset Go's `[:maxLen-3]` would, including landing mid-codepoint on a multibyte boundary —
+ * matching Go's own raw byte slice rather than rounding to the nearest whole character.
+ */
 function legacyFormatStatementSql(sql: string): string {
   const normalized = sql
     .split(/\s+/u)
     .filter((part) => part.length > 0)
     .join(" ");
   const maxLen = 120;
-  if (normalized.length <= maxLen) return normalized;
-  return `${normalized.slice(0, maxLen - 3)}...`;
+  const normalizedBytes = Buffer.from(normalized, "utf-8");
+  if (normalizedBytes.byteLength <= maxLen) return normalized;
+  return `${normalizedBytes.subarray(0, maxLen - 3).toString("utf-8")}...`;
 }
 
 /** Go's `formatDebugJSON` (`apply.go:285-294`): pretty-print if parseable, else the trimmed raw bytes. */
