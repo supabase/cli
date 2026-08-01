@@ -618,7 +618,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
           connType === "linked" ? linkedRef : undefined,
         );
-        const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
         // Go's `diffRemoteSchema` retries the ENTIRE `diff.DiffDatabase` call — shadow
         // provisioning included — against the pooler config on an IPv6 failure, not
         // just the diff step (`internal/db/pull/pull.go:176-190`): `DiffDatabase`
@@ -636,6 +635,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // doesn't print its own banner, so the pull handler emits it itself to
             // match the migration-style `db pull` output.
             yield* output.raw("Creating shadow database...\n", "stderr");
+            // Resolved AFTER the banner, inside the retried closure — Go's
+            // `CreateShadowDatabase` → `utils.DockerStart` (where the postgres image is
+            // resolved/pulled) runs inside `PrepareShadowSource`, which is itself called
+            // after `DiffDatabase` prints "Creating shadow database..." above, and is
+            // re-run fresh on every pooler-retry attempt (see the comment above). Resolving
+            // it earlier, outside this closure (as `diff.handler.ts`'s sibling call site does
+            // NOT do — it also resolves after its own banner), would both print nothing on an
+            // image-resolution failure before the banner and skip re-resolving it on retry.
+            const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
             // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
             // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a
             // local target with declarative schema files gets a second
