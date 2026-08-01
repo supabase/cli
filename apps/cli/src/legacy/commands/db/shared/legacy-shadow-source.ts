@@ -547,12 +547,19 @@ function legacyGlobDeclaredSchemaPaths(
  * just the outer `dirRel`/`relative` join (verified: `path.win32.join("supabase/database",
  * "sub/dir/file.sql")` returns `"supabase\\database\\sub\\dir\\file.sql"`, not a mixed-separator
  * string) — on POSIX this is a no-op (`path.posix.join` is byte-identical to the old template).
+ *
+ * `errorPrefix` lets the two callers preserve Go's own DIFFERENT wrapping messages for the same
+ * walk failure: the pg-delta declarative-dir branch reports `"failed to walk declarative dir:
+ * %w"` while the `supabase/schemas` fallback reports `"failed to walk dir: %w"`
+ * (`apps/cli-go/internal/db/diff/diff.go:65-76,86-96` — same walk, genuinely different prefix
+ * per source), so stderr still identifies which configured source failed.
  */
 function legacyWalkSqlFilesSorted(
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   dirRel: string,
+  errorPrefix: string,
 ): Effect.Effect<ReadonlyArray<string>, LegacyDeclarativeShadowDbError> {
   return Effect.gen(function* () {
     const dirAbs = legacyResolveUnderWorkdir(path, workdir, dirRel);
@@ -564,7 +571,7 @@ function legacyWalkSqlFilesSorted(
     const sqlRelative = yield* legacyWalkRegularSqlFilesNoFollow(fs, path, dirAbs).pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyDeclarativeShadowDbError({ message: `failed to walk dir: ${cause.message}` }),
+          new LegacyDeclarativeShadowDbError({ message: `${errorPrefix}: ${cause.message}` }),
       ),
     );
     return sqlRelative.map((relative) => path.join(dirRel, relative));
@@ -599,7 +606,13 @@ export function legacyLoadDeclaredSchemas(
         Effect.orElseSucceed(() => false),
       );
       if (isDeclDir) {
-        return yield* legacyWalkSqlFilesSorted(fs, path, workdir, declDirRel);
+        return yield* legacyWalkSqlFilesSorted(
+          fs,
+          path,
+          workdir,
+          declDirRel,
+          "failed to walk declarative dir",
+        );
       }
     }
     const schemasDirRel = "supabase/schemas";
@@ -621,7 +634,7 @@ export function legacyLoadDeclaredSchemas(
       }),
     );
     if (!isSchemasDir) return [];
-    return yield* legacyWalkSqlFilesSorted(fs, path, workdir, schemasDirRel);
+    return yield* legacyWalkSqlFilesSorted(fs, path, workdir, schemasDirRel, "failed to walk dir");
   });
 }
 

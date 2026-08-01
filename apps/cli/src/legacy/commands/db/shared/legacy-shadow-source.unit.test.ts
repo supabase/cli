@@ -566,4 +566,63 @@ describe("legacyLoadDeclaredSchemas", () => {
       }).pipe(Effect.provide(BunServices.layer));
     },
   );
+
+  it.effect.skipIf(isRoot)(
+    "reports the pg-delta declarative dir walk failure as 'failed to walk declarative dir', not the generic 'failed to walk dir'",
+    () => {
+      // Go's `loadDeclaredSchemas` (`apps/cli-go/internal/db/diff/diff.go:52-101`) wraps the
+      // SAME `afero.Walk` failure with a DIFFERENT prefix per source: the pg-delta declarative
+      // dir branch reports `failed to walk declarative dir: %w`, while the `supabase/schemas`
+      // fallback (covered by the sibling test below) reports `failed to walk dir: %w` — both
+      // walks share `legacyWalkSqlFilesSorted`, which must be told which source it's walking.
+      const workdir = makeWorkdir();
+      const declDir = join(workdir, "supabase", "database");
+      mkdirSync(declDir, { recursive: true });
+      chmodSync(declDir, 0o000);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          [],
+          pgDelta({ enabled: true }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("failed to walk declarative dir:");
+          expect(errorJson).not.toContain("failed to walk dir:");
+        }
+        chmodSync(declDir, 0o755);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect.skipIf(isRoot)(
+    "reports the supabase/schemas fallback walk failure as 'failed to walk dir', not the declarative-dir prefix",
+    () => {
+      const workdir = makeWorkdir();
+      const schemasDir = join(workdir, "supabase", "schemas");
+      mkdirSync(schemasDir, { recursive: true });
+      chmodSync(schemasDir, 0o000);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [], pgDelta()).pipe(
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("failed to walk dir:");
+          expect(errorJson).not.toContain("failed to walk declarative dir:");
+        }
+        chmodSync(schemasDir, 0o755);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 });
