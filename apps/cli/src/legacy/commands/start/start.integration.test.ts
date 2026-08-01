@@ -2706,8 +2706,16 @@ content_path = "./templates/custom_notice.html"
         const pullAttempts = new Map<string, number>();
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
-          // Force every image through the pull path instead of the "already cached" shortcut.
-          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+          // Force every image through the pull path instead of the "already cached" shortcut —
+          // a confirmed "no such image" (not merely a non-zero exit) is what tells
+          // `hasLocalImage` this is a genuine cache miss rather than some other inspect
+          // failure, which now fails fast instead of falling through to a pull.
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: [`Error response from daemon: No such image: ${args[2]}`],
+            };
+          }
           if (args[0] === "pull") {
             const image = args[1] ?? "";
             if (image.includes("kong")) {
@@ -2745,7 +2753,12 @@ content_path = "./templates/custom_notice.html"
         // unlike a failure inside `bringUp` itself (see the "rollback" describe block below).
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
-          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: [`Error response from daemon: No such image: ${args[2]}`],
+            };
+          }
           if (args[0] === "pull") {
             const image = args[1] ?? "";
             if (image.includes("kong")) {

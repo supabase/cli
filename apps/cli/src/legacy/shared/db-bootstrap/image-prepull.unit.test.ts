@@ -56,7 +56,12 @@ describe("legacyEnsureImagesCached", () => {
         const cached =
           image === "public.ecr.aws/supabase/postgres:15" ||
           image === "public.ecr.aws/supabase/kong:3";
-        return { exitCode: cached ? 0 : 1 };
+        // A confirmed "no such image" (not merely a non-zero exit) is what tells
+        // `hasLocalImage` this candidate is a genuine cache miss rather than some other
+        // inspect failure, which now fails fast instead of falling through to a pull.
+        return cached
+          ? { exitCode: 0 }
+          : { exitCode: 1, stderr: `Error response from daemon: No such image: ${image}` };
       }
       return { exitCode: 1 };
     });
@@ -132,7 +137,12 @@ describe("legacyEnsureImagesCached", () => {
     "aggregates every failed image's message into one combined error",
     () => {
       const mock = mockSpawner((args) => {
-        if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+        if (args[0] === "image" && args[1] === "inspect") {
+          return {
+            exitCode: 1,
+            stderr: `Error response from daemon: No such image: ${args[2]}`,
+          };
+        }
         if (args[0] === "pull") return { exitCode: 1, stderr: `no such image: ${args[1]}\n` };
         return { exitCode: 1 };
       });
@@ -153,7 +163,12 @@ describe("legacyEnsureImagesCached", () => {
     "appends the install hint once when a failure indicates the daemon is unreachable",
     () => {
       const mock = mockSpawner((args) => {
-        if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+        if (args[0] === "image" && args[1] === "inspect") {
+          return {
+            exitCode: 1,
+            stderr: `Error response from daemon: No such image: ${args[2]}`,
+          };
+        }
         if (args[0] === "pull") {
           return {
             exitCode: 1,
