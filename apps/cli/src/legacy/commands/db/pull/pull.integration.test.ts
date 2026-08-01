@@ -26,6 +26,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
@@ -224,6 +225,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
+  // The linked ref is pre-loaded (for the post-run cache) before `resolve()`,
+  // mirroring Go's `LoadProjectRef`-before-`NewDbConfigWithPassword` order
+  // (see the pre-load block in `pull.handler.ts`, CLI-1879). Default to the same
+  // ref the `LegacyDbConfigResolver` mock below uses for its `db.<ref>.…` host so
+  // both stay consistent unless a test overrides `resolvedRef`.
+  const projectRefResolver = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
+    resolveForLink: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
+    resolveOptional: () => Effect.succeed(Option.some(opts.resolvedRef ?? "abcdefghijklmnopqrst")),
+    loadProjectRef: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
+    promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
+  });
+
   const baseLayer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -233,6 +247,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     docker,
     dbConnection,
     resolver,
+    projectRefResolver,
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
@@ -261,6 +276,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return {
     layer,
     out,
+    cache,
     provisionCalls,
     removedContainers,
     historyUpserts,
@@ -1139,6 +1155,39 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).not.toContain("Connecting to");
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "still caches the linked project ref on the retired path, matching Go's PersistentPostRun",
+    () => {
+      // Go's ParseDatabaseConfig resolves (and Execute()'s PersistentPostRun caches)
+      // the linked ref regardless of what RunE does next (cmd/root.go:171-181,
+      // internal/utils/flags/db_url.go:87-92) — including the now-retired EXPERIMENTAL
+      // structured-dump branch, which used to run entirely after that resolution. The
+      // retirement gate must not turn this into a no-op cache miss (CLI-1957 review).
+      const s = setup(tmp.current, { experimental: true, resolvedRef: "abcdefghijklmnopqrst" });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "LegacyDbPullExperimentalRetiredError" });
+        expect(s.cache.cached).toBe(true);
+        expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "does not cache a project ref for the retired path on --local (no linked ref exists)",
+    () => {
+      // --local never resolves a linked ref (Go's flags.ProjectRef stays empty), so
+      // the post-run cache correctly stays a no-op here — unlike the --linked case
+      // above, this is not a regression to guard against becoming a no-op.
+      const s = setup(tmp.current, { experimental: true });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags({ local: Option.some(true) })).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "LegacyDbPullExperimentalRetiredError" });
+        expect(s.cache.cached).toBe(false);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("the global --experimental flag fails with the retired structured-dump message", () => {
     // viper resolves EXPERIMENTAL from the pflag OR the env var; the flag form

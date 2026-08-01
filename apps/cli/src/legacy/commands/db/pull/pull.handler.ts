@@ -8,6 +8,7 @@ import {
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
@@ -168,6 +169,27 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       }
     }
 
+    const connType: LegacyDbConnType = Option.isSome(flags.dbUrl)
+      ? "db-url"
+      : Option.isSome(flags.local)
+        ? "local"
+        : "linked";
+
+    // Go's `ParseDatabaseConfig` resolves the linked ref via the cheap, local-only
+    // `LoadProjectRef` (flag/env/`.temp/project-ref` file, no network) BEFORE `RunE`
+    // ever reaches the `EXPERIMENTAL` check below (`internal/utils/flags/db_url.go:
+    // 87-92`, `internal/db/pull/pull.go:47-50`), and `Execute()`'s `PersistentPostRun`
+    // caches that ref regardless of what `RunE` does next (`cmd/root.go:171-181`).
+    // Pre-load it here — same pattern as `reset.handler.ts`/`push.handler.ts`
+    // (CLI-1879) — so the post-run linked-project-cache finalizer still fires when
+    // the retirement error below returns, without paying for the expensive temp-
+    // role/pooler dance `resolver.resolve()` performs for the connection itself
+    // (which the retirement path never uses).
+    if (connType === "linked") {
+      const refResolver = yield* LegacyProjectRefResolver;
+      linkedRefForCache = yield* refResolver.loadProjectRef(Option.none());
+    }
+
     // Go resolves `EXPERIMENTAL` from *either* the global `--experimental` pflag or
     // `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,327,334`), with the same
     // bound-pflag-wins-over-env precedence `legacyResolveExperimentalWithProjectEnv`
@@ -187,11 +209,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       );
     }
 
-    const connType: LegacyDbConnType = Option.isSome(flags.dbUrl)
-      ? "db-url"
-      : Option.isSome(flags.local)
-        ? "local"
-        : "linked";
     const resolved = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType,
