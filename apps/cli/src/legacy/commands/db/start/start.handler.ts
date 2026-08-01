@@ -671,7 +671,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
-    yield* wrapDbConfigOverride("studio.enabled", () =>
+    const studioEnabledForValidation = yield* wrapDbConfigOverride("studio.enabled", () =>
       legacyEnvOverrideBool(
         "SUPABASE_STUDIO_ENABLED",
         config.studio.enabled,
@@ -679,6 +679,33 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Unlike every other field in this battery, `studio.port` isn't satisfied by a bare decode:
+    // Go's `Config.Validate` rejects `studio.port === 0`/`SUPABASE_STUDIO_PORT=0` ONLY when
+    // `studio.enabled` (`pkg/config/config.go:1070-1073`) — a Validate-level rule, still run
+    // unconditionally inside `flags.LoadConfig`, before `AssertSupabaseDbIsRunning`. This
+    // handler's very first line already runs `legacyCheckDbToml` (D's shared-validator caller),
+    // but `legacy-config-validate.ts`'s own scope table marks `studio.port`/`studio.api_url` as
+    // "L-only — D has no studio section", so — unlike the passkey/webauthn rule the comment above
+    // cites — this check does NOT already fail fast there. `values.studioPort`
+    // (`legacyResolveLocalConfigValues`) is the only other place this is checked, and this
+    // handler calls it ONLY in the not-running branch — so a malformed/zero `SUPABASE_STUDIO_PORT`
+    // would otherwise be silently accepted whenever Postgres is already running, unlike Go
+    // (review: PRRT_kwDOErm0O86VpoeR).
+    const studioPortForValidation = yield* wrapDbConfigOverride("studio.port", () =>
+      legacyEnvOverridePort(
+        "SUPABASE_STUDIO_PORT",
+        config.studio.port,
+        "studio.port",
+        projectEnvValues,
+      ),
+    );
+    if (studioEnabledForValidation && studioPortForValidation === 0) {
+      yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: "Missing required field in config: studio.port",
+        }),
+      );
+    }
     yield* wrapDbConfigOverride("local_smtp.enabled", () =>
       legacyEnvOverrideBool(
         "SUPABASE_LOCAL_SMTP_ENABLED",
