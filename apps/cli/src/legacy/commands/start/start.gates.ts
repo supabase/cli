@@ -5,7 +5,7 @@ import type {
   LocalServiceVersionName,
   LocalServiceVersionOverrides,
 } from "../../../shared/services/services.shared.ts";
-import { legacyResolvePinnedImage } from "../../shared/db-bootstrap/pinned-image.ts";
+import { legacyResolvePinnedImage } from "../../shared/containers/pinned-image.ts";
 import { legacyEnvOverrideBool } from "../../shared/legacy-local-config-values.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 

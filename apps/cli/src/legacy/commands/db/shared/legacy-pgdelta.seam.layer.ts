@@ -505,8 +505,8 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
   }),
 );
 
-// Intentionally NOT `LegacyGoChildExitError` (contrast `legacy-db-bootstrap.seam.layer.ts`,
-// fixed under CLI-1879): this seam's failure is a TS-authored domain summary over noisy
+// Intentionally NOT `LegacyGoChildExitError` (contrast the now-removed `db __db-bootstrap`
+// seam, fixed under CLI-1879): this seam's failure is a TS-authored domain summary over noisy
 // docker/pgdelta child stderr, not a passthrough of a real Go-CLI child the user invoked
 // directly — Go itself wraps every shadow-DB failure into a generic error that `cmd/root.go`'s
 // `recoverAndExit` exits `1` for, so propagating THIS child's exact exit code would itself

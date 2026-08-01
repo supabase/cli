@@ -13,7 +13,7 @@
  * `Healthcheck:` entry — confirmed by reading the struct literal itself, not
  * just the comment. PostgREST readiness is instead checked at runtime via an
  * HTTP HEAD through the local Kong gateway
- * (`legacyCheckHttpReady`/`LEGACY_POSTGREST_READY_PATH`, `../../../shared/db-bootstrap/health-check.ts`,
+ * (`legacyCheckHttpReady`/`LEGACY_POSTGREST_READY_PATH`, `../../../shared/containers/health-check.ts`,
  * itself porting `status.go:159-229`'s "PostgREST does not support native
  * health checks" branch) — this builder correctly omits `healthcheck` so
  * `legacyBuildStartContainerCreateArgs` never emits a `--health-*` flag for
@@ -24,7 +24,7 @@
 import type { ProjectConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,

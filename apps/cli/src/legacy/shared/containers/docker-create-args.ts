@@ -47,7 +47,7 @@
  * It exists purely because this module's own "shell out to `docker create`"
  * architecture (unlike Go's direct Engine API calls) has an argv-exposure
  * problem `container.Config`/`container.HostConfig` never had — see that
- * field's doc comment, and `container-lifecycle.ts`'s `legacyStartContainer`,
+ * field's doc comment, and `container-lifecycle.ts`'s `legacyCreateContainer`,
  * for the mitigation.
  */
 
@@ -154,7 +154,7 @@ export interface LegacyStartContainerSpec {
    *
    * NOT consumed here: {@link legacyBuildStartContainerCreateArgs} stays
    * pure/no-I/O and never reads this field. `container-lifecycle.ts`'s
-   * `legacyStartContainer` is the sole consumer — it writes each entry's
+   * `legacyCreateContainer` is the sole consumer — it writes each entry's
    * `content` to a HOST-side temp file (mode `0644` — world-readable, so the
    * non-root in-container user reading it (e.g. Kong, Postgres) doesn't hit
    * `EACCES` once the bind mount preserves this host mode verbatim; see

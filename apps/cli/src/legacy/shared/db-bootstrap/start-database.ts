@@ -49,42 +49,38 @@ import type * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
 import { legacyAqua } from "../legacy-colors.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import type { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
 import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
 import {
-  legacyEnsureStartNetwork,
-  legacyStartContainer,
-  legacyStartVolumeExists,
+  legacyEnsureNetwork,
+  legacyCreateContainer,
+  legacyVolumeExists,
   LEGACY_COMPOSE_PROJECT_LABEL,
-  type LegacyStartContainerCreateError,
-  type LegacyStartContainerOpts,
-  type LegacyStartContainerStartError,
-  type LegacyStartNetworkCreateError,
-  type LegacyStartVolumeCreateError,
-  type LegacyStartVolumeInspectError,
-} from "./container-lifecycle.ts";
+  type LegacyContainerCreateError,
+  type LegacyContainerOpts,
+  type LegacyContainerStartError,
+  type LegacyNetworkCreateError,
+  type LegacyVolumeCreateError,
+  type LegacyVolumeInspectError,
+} from "../containers/container-lifecycle.ts";
 import {
+  legacyRunFreshDbSetup,
   legacyStartInitCurrentBranch,
-  legacyStartSetupLocalDatabase,
-  type LegacyStartDbSetupImages,
+  type LegacyFreshDbSetupInput,
   type LegacyStartSetupLocalDatabaseError,
-  type LegacyStartSetupLocalDatabaseInput,
 } from "./db-setup.ts";
-import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
+import type { LegacyImagePrepullError } from "../containers/image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
-} from "./health-check.ts";
-import { legacyStartInternalDbPassword } from "./internal-db-connection.ts";
+} from "../containers/health-check.ts";
 import {
   LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
   LEGACY_START_STARTING_DATABASE_MESSAGE,
 } from "./messages.ts";
-import { legacyResolvePinnedImage } from "./pinned-image.ts";
 import {
   legacyBuildPostgresStartContainerSpec,
   type LegacyPostgresStartServiceInput,
@@ -111,45 +107,16 @@ class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
 
 /** Every failure {@link legacyStartDatabase} itself can produce, independent of the caller's own `E`. */
 export type LegacyStartDatabaseError =
-  | LegacyStartNetworkCreateError
-  | LegacyStartVolumeInspectError
+  | LegacyNetworkCreateError
+  | LegacyVolumeInspectError
   | LegacyStartBackupVolumeExistsError
-  | LegacyStartVolumeCreateError
-  | LegacyStartContainerCreateError
-  | LegacyStartContainerStartError
+  | LegacyVolumeCreateError
+  | LegacyContainerCreateError
+  | LegacyContainerStartError
   | LegacyImagePrepullError
   | LegacyHealthCheckTimeoutError
   | LegacyDbConnectError
   | LegacyStartSetupLocalDatabaseError;
-
-/**
- * Everything {@link legacyStartSetupLocalDatabase} needs, minus what `legacyStartDatabase`
- * itself already resolves/threads through (`session`, `majorVersion`, `projectId`,
- * `networkId`, `images`). Not exported outside this module — callers build this shape as
- * the `setup` field of {@link LegacyStartDatabaseInput} without needing to name the type.
- */
-interface LegacyStartDatabaseSetupInput<E> {
-  readonly majorVersion: number;
-  /** Already spliced with the caller's own realtime/storage/auth enabled-for-setup + ip_version/max_header_length/file_size_limit overrides — see `bootstrap-config.ts`'s `LegacyDbBootstrapConfig`. */
-  readonly config: LegacyStartSetupLocalDatabaseInput["config"];
-  /** Threaded straight through to {@link LegacyStartSetupLocalDatabaseInput.experimental} — see its own doc comment. */
-  readonly experimental: boolean;
-  readonly dbUrl: string;
-  readonly jwtSecret: string;
-  /** Lazy — evaluated only when reached (fresh volume, `fromBackup` unset) AND `realtimeEnabledForSetup`. See this module's header for why this is caller-supplied rather than resolved here unconditionally. */
-  readonly jwks: Effect.Effect<string, E>;
-  readonly apiUrl: string;
-  readonly authExternalUrl: string | undefined;
-  readonly siteUrl: string;
-  readonly anonKey: string;
-  readonly serviceRoleKey: string;
-  readonly storageTargetMigration: string;
-  readonly realtimeEnabledForSetup: boolean;
-  readonly storageEnabledForSetup: boolean;
-  readonly authEnabledForSetup: boolean;
-  readonly serviceVersionOverrides: LocalServiceVersionOverrides;
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
-}
 
 export interface LegacyStartDatabaseInput<E> {
   readonly fs: FileSystem.FileSystem;
@@ -161,7 +128,7 @@ export interface LegacyStartDatabaseInput<E> {
   /** `localDbContainerId(projectId)` — also the connect-target host inside the local Postgres session below. */
   readonly dbContainerId: string;
   readonly dbPort: number;
-  readonly containerOpts: LegacyStartContainerOpts;
+  readonly containerOpts: LegacyContainerOpts;
   /** Fed straight to `legacyBuildPostgresStartContainerSpec` — `fromBackup` (if set) drives BOTH the restore-entrypoint variant and the backup-volume-exists guard below. */
   readonly postgresSpec: Omit<LegacyPostgresStartServiceInput, "image">;
   /**
@@ -173,7 +140,7 @@ export interface LegacyStartDatabaseInput<E> {
    */
   readonly resolvePostgresImage: Effect.Effect<string, LegacyImagePrepullError>;
   readonly dbHealthTimeoutSeconds: number;
-  readonly setup: LegacyStartDatabaseSetupInput<E>;
+  readonly setup: LegacyFreshDbSetupInput<E>;
   /**
    * Fired synchronously, exactly once, right after the pre-create volume probe resolves —
    * the caller's own equivalent of Go's package-level `utils.NoBackupVolume` global, needed by
@@ -198,9 +165,8 @@ export const legacyStartDatabase = <E>(
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
-    const dbConnection = yield* LegacyDbConnection;
 
-    yield* legacyEnsureStartNetwork(spawner, input.networkId, {
+    yield* legacyEnsureNetwork(spawner, input.networkId, {
       [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
       [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
     });
@@ -208,7 +174,7 @@ export const legacyStartDatabase = <E>(
     // Go's pre-create volume-existence check (`internal/db/start/start.go:165-167`) — MUST run
     // before Postgres's own volume gets created below: `docker volume create` is idempotent, so
     // creating first would make "did this volume already exist" unobservable.
-    const isFreshVolume = !(yield* legacyStartVolumeExists(spawner, input.dbContainerId));
+    const isFreshVolume = !(yield* legacyVolumeExists(spawner, input.dbContainerId));
     input.onFreshVolumeResolved(isFreshVolume);
 
     const fromBackup = input.postgresSpec.fromBackup;
@@ -237,7 +203,7 @@ export const legacyStartDatabase = <E>(
       ...input.postgresSpec,
       image: resolvedPostgresImage,
     });
-    yield* legacyStartContainer(spawner, postgresSpec, input.containerOpts);
+    yield* legacyCreateContainer(spawner, postgresSpec, input.containerOpts);
 
     const postgresHealthResult = yield* legacyWaitForHealthyServices(
       spawner,
@@ -262,89 +228,21 @@ export const legacyStartDatabase = <E>(
     // (`start.go:184-188`) — SKIPPED IN FULL when `fromBackup` is set, not merely reduced: no
     // initSchema/ApplyApiPrivileges/vault/roles.sql/MigrateAndSeed on that path at all.
     if (isFreshVolume && fromBackup === undefined) {
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const { setup } = input;
-          const dbPassword = legacyStartInternalDbPassword(setup.dbUrl);
-          const session = yield* dbConnection.connect(
-            {
-              host: input.hostname,
-              port: input.dbPort,
-              user: "postgres",
-              password: dbPassword,
-              database: "postgres",
-            },
-            { isLocal: true, dnsResolver: "native" },
-          );
-
-          // Go's `initSchema15`'s realtime job resolves JWKS itself — see this module's header
-          // for why this is a caller-supplied lazy `Effect`, gated the same way Go gates the
-          // call: only when reached AND `Realtime.Enabled`.
-          const jwks = setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
-
-          // Go's one-shot fresh-DB setup jobs (`initSchema15`) use the SAME already-pin-rewritten
-          // `utils.Config.{Realtime,Storage,Auth}.Image` fields the long-running containers would
-          // use (`internal/db/start/start.go:270,299,321`), regardless of `--exclude` — resolved
-          // through `legacyResolvePinnedImage`, not the raw Dockerfile default, so a linked
-          // project's version pins apply here too. Resolved lazily (only when the job will
-          // actually run), matching Go's own `ensureImagesCached` (`start.go:237-262`), which
-          // never pre-pulls these for EITHER caller.
-          const rawSetupJobImages = {
-            realtime: legacyResolvePinnedImage(
-              "realtime",
-              "realtime",
-              setup.serviceVersionOverrides,
-            ),
-            storage: legacyResolvePinnedImage("storage", "storage", setup.serviceVersionOverrides),
-            auth: legacyResolvePinnedImage("gotrue", "auth", setup.serviceVersionOverrides),
-          };
-          const setupJobImagesToResolve =
-            setup.majorVersion >= 15
-              ? [
-                  ...(setup.realtimeEnabledForSetup ? [rawSetupJobImages.realtime] : []),
-                  ...(setup.storageEnabledForSetup ? [rawSetupJobImages.storage] : []),
-                  ...(setup.authEnabledForSetup ? [rawSetupJobImages.auth] : []),
-                ]
-              : [];
-          const resolvedSetupJobImages =
-            setupJobImagesToResolve.length > 0
-              ? yield* legacyEnsureImagesCached(
-                  spawner,
-                  setupJobImagesToResolve,
-                  setup.projectEnvValues,
-                )
-              : new Map<string, string>();
-          const resolveSetupJobImage = (image: string) =>
-            resolvedSetupJobImages.get(image) ?? image;
-          const dbSetupImages: LegacyStartDbSetupImages = {
-            realtime: resolveSetupJobImage(rawSetupJobImages.realtime),
-            storage: resolveSetupJobImage(rawSetupJobImages.storage),
-            auth: resolveSetupJobImage(rawSetupJobImages.auth),
-          };
-
-          yield* legacyStartSetupLocalDatabase({
-            session,
-            fs: input.fs,
-            path: input.path,
-            workdir: input.workdir,
-            config: setup.config,
-            experimental: setup.experimental,
-            majorVersion: setup.majorVersion,
-            projectId: input.projectId,
-            networkId: input.networkId,
-            dbUrl: setup.dbUrl,
-            jwtSecret: setup.jwtSecret,
-            jwks,
-            apiUrl: setup.apiUrl,
-            authExternalUrl: setup.authExternalUrl,
-            siteUrl: setup.siteUrl,
-            anonKey: setup.anonKey,
-            serviceRoleKey: setup.serviceRoleKey,
-            storageTargetMigration: setup.storageTargetMigration,
-            images: dbSetupImages,
-          });
-        }),
-      );
+      yield* legacyRunFreshDbSetup(spawner, {
+        fs: input.fs,
+        path: input.path,
+        workdir: input.workdir,
+        projectId: input.projectId,
+        networkId: input.networkId,
+        hostname: input.hostname,
+        dbPort: input.dbPort,
+        // Go's own `StartDatabase` -> `SetupLocalDatabase(ctx, "", ...)` call
+        // (`start.go:185`) — every pending migration, no `db reset`-only seed
+        // override (`db start` has neither `--no-seed` nor `--sql-paths`).
+        version: "",
+        seedFlags: { noSeed: false, sqlPaths: [] },
+        setup: input.setup,
+      });
     }
 
     // Go's `initCurrentBranch` (`db/start/start.go:189`) — the LAST line of `StartDatabase`,

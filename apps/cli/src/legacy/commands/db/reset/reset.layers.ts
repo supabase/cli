@@ -9,18 +9,23 @@ import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import { legacyDbBootstrapSeamLayer } from "../shared/legacy-db-bootstrap.seam.layer.ts";
 
 /**
  * Runtime layer for `supabase db reset`. Same composition as `db push` / `db lint`:
  * the Postgres connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache, all over the lazy management-API factory so the local /
  * `--db-url` paths never resolve an access token at layer-build time. `LegacyGoProxy`
- * (used to delegate the local / experimental reset paths) is ambient from the root.
+ * (used to delegate the remaining `--experimental` reset path) is ambient from the
+ * root. `legacyDockerRunLayer` backs the native local recreate's PG15+ one-shot
+ * migrate jobs (`legacyStartSetupLocalDatabase`, reused via
+ * `legacyRecreateLocalDatabase`) — same reasoning as `db start`'s own
+ * `start.layers.ts`. `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/
+ * `RuntimeInfo` are ambient from the root runtime (`shared/cli/run.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -74,7 +79,7 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   // `console.ReadLine`); without it a CI/piped remote `db reset` that reaches the
   // confirmation prompt fails with a missing-service defect instead of the default.
   stdinLayer,
-  // Container-recreate / storage-health primitives for the native local reset.
-  legacyDbBootstrapSeamLayer.pipe(Layer.provide(cliConfig)),
+  // Backs the native local recreate's PG15+ one-shot migrate jobs.
+  legacyDockerRunLayer,
   commandRuntimeLayer(["db", "reset"]),
 );

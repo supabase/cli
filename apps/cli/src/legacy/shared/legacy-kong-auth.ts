@@ -8,7 +8,7 @@
  * Hoisted here because it is needed by every local Kong-gateway caller across
  * command families: `legacy-storage-gateway.ts` (Storage, `seed buckets` /
  * `storage ls/cp/mv/rm`) and `start`'s PostgREST HTTP-HEAD readiness probe
- * (`legacy/shared/db-bootstrap/health-check.ts`).
+ * (`legacy/shared/containers/health-check.ts`).
  */
 export function legacyKongAuthHeaders(apiKey: string): Readonly<Record<string, string>> {
   const isOpaqueServiceKey = apiKey.startsWith("sb_");

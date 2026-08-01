@@ -12,7 +12,7 @@ import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
 import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
 import {
-  LegacyStartDbSetupError,
+  LegacyDbSetupError,
   legacyStartInitCurrentBranch,
   legacyStartSetupLocalDatabase,
   type LegacyStartSetupLocalDatabaseInput,
@@ -124,6 +124,8 @@ function baseInput(
       storage: "public.ecr.aws/supabase/storage-api:v1.0.0",
       auth: "public.ecr.aws/supabase/gotrue:v2.170.0",
     },
+    version: "",
+    seedFlags: { noSeed: false, sqlPaths: [] },
     ...overrides,
   };
 }
@@ -368,10 +370,8 @@ describe("legacyStartSetupLocalDatabase", () => {
       return run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyStartDbSetupError);
-          expect((error as LegacyStartDbSetupError).message).toBe(
-            "error running container: exit 1",
-          );
+          expect(error).toBeInstanceOf(LegacyDbSetupError);
+          expect((error as LegacyDbSetupError).message).toBe("error running container: exit 1");
           rmSync(workdir, { recursive: true, force: true });
         }),
       );

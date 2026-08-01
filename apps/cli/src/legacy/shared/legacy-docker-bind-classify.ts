@@ -8,7 +8,7 @@
  *
  * Hoisted here so every `docker run`/`docker create` argv builder that needs
  * this classification — `legacy-docker-run.args.ts` (`docker run`) and
- * `legacy/shared/db-bootstrap/docker-create-args.ts` (`docker create`) — shares one
+ * `legacy/shared/containers/docker-create-args.ts` (`docker create`) — shares one
  * implementation instead of duplicating the regex.
  */
 export function legacyIsBindMountSource(source: string): boolean {

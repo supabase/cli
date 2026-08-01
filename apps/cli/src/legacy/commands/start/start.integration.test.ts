@@ -255,7 +255,7 @@ function freshVolumeRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
 ): (args: ReadonlyArray<string>) => RouteResult {
   return (args) => {
-    // `legacyStartVolumeExists` now distinguishes a confirmed "not found" from
+    // `legacyVolumeExists` now distinguishes a confirmed "not found" from
     // any other inspect error (matching Go's `errdefs.IsNotFound` gate) — the
     // stderr text is what makes this simulate a genuinely fresh/non-existent
     // volume rather than an ambiguous inspect failure.
@@ -2911,7 +2911,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartNetworkCreateError");
+          expect(serialized).toContain("LegacyNetworkCreateError");
           expect(serialized).toContain("failed to create docker network");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2936,7 +2936,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartContainerCreateError");
+          expect(serialized).toContain("LegacyContainerCreateError");
           expect(serialized).toContain("failed to create docker container");
         }
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
@@ -2962,7 +2962,7 @@ content_path = "./templates/custom_notice.html"
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartContainerStartError");
+            expect(serialized).toContain("LegacyContainerStartError");
             expect(serialized).toContain("port is already allocated");
             expect(serialized).toContain(
               "Try stopping the project or container already using 0.0.0.0:54322",
@@ -3205,7 +3205,7 @@ content_path = "./templates/custom_notice.html"
   // Node event-loop turns to settle — under a virtualized `TestClock` those
   // never resolve, so the forked fiber never even reaches the health-check
   // phase. This exercises the real 30s `serviceTimeout` bulk health-check
-  // wait (`../../shared/db-bootstrap/health-check.ts`'s default), hence the generous timeout.
+  // wait (`../../shared/containers/health-check.ts`'s default), hence the generous timeout.
   it.live(
     "exits 0 on --ignore-health-check when a non-Postgres container never turns healthy, without rolling back",
     () => {

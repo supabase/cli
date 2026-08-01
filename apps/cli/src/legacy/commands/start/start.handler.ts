@@ -133,15 +133,15 @@ import { legacyResolveDbBootstrapConfig } from "../../shared/db-bootstrap/bootst
 import { legacyStartDatabase } from "../../shared/db-bootstrap/start-database.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
-  legacyStartContainer,
-  type LegacyStartContainerOpts,
-} from "../../shared/db-bootstrap/container-lifecycle.ts";
-import { legacyEnsureImagesCached } from "../../shared/db-bootstrap/image-prepull.ts";
+  legacyCreateContainer,
+  type LegacyContainerOpts,
+} from "../../shared/containers/container-lifecycle.ts";
+import { legacyEnsureImagesCached } from "../../shared/containers/image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckPostgrestGateway,
   type LegacyHealthCheckTimeoutError,
-} from "../../shared/db-bootstrap/health-check.ts";
+} from "../../shared/containers/health-check.ts";
 import {
   legacyStartInternalDbPassword,
   LEGACY_START_INTERNAL_DB_NAME,
@@ -198,8 +198,8 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 /**
  * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect`: "No such
  * container" or "No such object" depending on daemon version/CLI path — the same pair already
- * handled in `shared/functions/serve.ts`/`legacy-db-bootstrap.seam.layer.ts`/`legacy-pgdelta.seam.
- * layer.ts`.
+ * handled in `shared/functions/serve.ts`/`legacy/shared/db-bootstrap/local-db-running.ts`/
+ * `legacy-pgdelta.seam.layer.ts`.
  */
 function isContainerNotFoundMessage(message: string): boolean {
   return (
@@ -627,7 +627,7 @@ function buildKongEmailTemplateMounts(
 
 /**
  * What `--ignore-health-check` prints when it downgrades a health-check timeout
- * to a warning. That decision belongs to this caller, not `../../shared/db-bootstrap/health-check.ts`
+ * to a warning. That decision belongs to this caller, not `../../shared/containers/health-check.ts`
  * (which only implements the polling contract), and it writes straight to
  * stderr — bypassing the `Output.fail` renderer that would otherwise append the
  * error's `suggestion` for it.
@@ -1146,7 +1146,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // (`legacy-edge-runtime-script.layer.ts`).
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    const startOpts: LegacyStartContainerOpts = {
+    const startOpts: LegacyContainerOpts = {
       projectId,
       isBitbucketPipeline,
       workdir: cliConfig.workdir,
@@ -2005,7 +2005,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           const runtime: StartedRuntime = yield* legacyStartEdgeRuntimeContainer(edgeRuntimeInput);
           // Deliberately NOT calling `runtime.cleanup` here — see
           // `edge-runtime.service.ts`'s header for why. Unlike every other
-          // service built here (`legacyStartContainer`'s `restartPolicy:
+          // service built here (`legacyCreateContainer`'s `restartPolicy:
           // "unless-stopped"`), Go's own Edge Runtime bring-up sets no Docker
           // restart policy at all, so this container's `docker run` matches
           // that — but its bind-mounted host temp files must still exist for
@@ -2049,7 +2049,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             ),
           ),
         );
-        yield* legacyStartContainer(spawner, spec, startOpts);
+        yield* legacyCreateContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
           started.set(spec.containerName, spec.image);
         }

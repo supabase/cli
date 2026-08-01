@@ -92,7 +92,7 @@ command (Go's `return seedErr` instead of the downgraded `return err`).
 | GCP JWT credentials file                                                                        | JSON   | when `analytics.backend = "bigquery"`                                                                                                                                            |
 | `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume (custom-roles seed) — the "Seeding globals..." message always prints first; the file itself is only read if it exists, tolerating a missing file               |
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume, via the standard migration-apply + seed pipeline                                                                                                              |
-| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)              | SQL    | on a fresh volume, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false                            |
+| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)             | SQL    | on a fresh volume, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false                             |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text   | on every start, existence check before writing (see "Files Written")                                                                                                             |
 | `<workdir>/supabase/functions/**`                                                               | —      | when Edge Runtime starts, and independently when Studio starts (function discovery/config resolution + Docker bind mounts, regardless of whether Edge Runtime itself is enabled) |
 | `<workdir>/supabase/.temp/storage-migration`                                                    | text   | always — linked-project Storage migration pin (`DB_MIGRATIONS_FREEZE_AT`), written by `supabase link`; absent/unreadable resolves to no pin                                      |
@@ -161,16 +161,16 @@ not implemented.
 
 ## Environment Variables
 
-| Variable                               | Purpose                                                                                                                                                         | Required? |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_*` (any dotted config field) | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                      | no        |
-| `SUPABASE_EXPERIMENTAL` (or `--experimental`) | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                  | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`     | Overrides the image registry used to resolve every service's image                                                                                              | no        |
-| `SUPABASE_PROJECT_ID`                  | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                  | no        |
-| `SUPABASE_WORKDIR`                     | Resolves `LegacyCliConfig.workdir`                                                                                                                              | no        |
-| `BITBUCKET_CLONE_DIR`                  | When non-empty, drops named volumes and `--security-opt` from every container create                                                                            | no        |
-| `DOCKER_HOST`                          | Read to discover the Docker daemon's own address, then re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection | no        |
-| `KONG_NGINX_WORKER_PROCESSES`          | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                             | no        |
+| Variable                                      | Purpose                                                                                                                                                         | Required? |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_*` (any dotted config field)        | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                      | no        |
+| `SUPABASE_EXPERIMENTAL` (or `--experimental`) | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                        | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`            | Overrides the image registry used to resolve every service's image                                                                                              | no        |
+| `SUPABASE_PROJECT_ID`                         | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                  | no        |
+| `SUPABASE_WORKDIR`                            | Resolves `LegacyCliConfig.workdir`                                                                                                                              | no        |
+| `BITBUCKET_CLONE_DIR`                         | When non-empty, drops named volumes and `--security-opt` from every container create                                                                            | no        |
+| `DOCKER_HOST`                                 | Read to discover the Docker daemon's own address, then re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection | no        |
+| `KONG_NGINX_WORKER_PROCESSES`                 | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                             | no        |
 
 `docker`/`podman` must be resolvable on `PATH` — same fallback behavior as `stop`/`status`.
 

@@ -122,13 +122,72 @@ export const containerCliExitCode = (
     ),
   );
 
-function collectDockerCliText(stream: Stream.Stream<Uint8Array, unknown>) {
+/**
+ * Folds a byte stream into a decoded string. Hoisted here (the shared home for
+ * container-CLI plumbing) so `container-lifecycle.ts`/`restart-services.ts`/
+ * `legacy-docker-lifecycle.ts` — every module that spawns `docker`/`podman` and
+ * needs its stdout/stderr as text — stop each defining their own copy.
+ */
+export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
     () => "",
     (text, chunk) => text + decoder.decode(chunk, { stream: true }),
   ).pipe(Effect.map((text) => text + decoder.decode()));
+}
+
+/**
+ * Docker's/Podman's "container doesn't exist" stderr shapes — "No such container"
+ * or "No such object" depending on daemon version/CLI path — Go's
+ * `errdefs.IsNotFound(err)` equivalent for a CLI-shelled-out (rather than
+ * Engine-API) caller. Hoisted here so callers across the container-lifecycle/
+ * restart/health-check domain (`legacyIsLocalDbRunning`,
+ * `legacyRestartSatelliteService`, `legacyReloadKong`) share one predicate
+ * instead of re-deriving the same substring match.
+ */
+export function legacyIsContainerNotFoundMessage(message: string): boolean {
+  return message.includes("No such container") || message.includes("No such object");
+}
+
+/**
+ * Runs a container-CLI command that must succeed outright — no tolerance for any
+ * failure mode (spawn failure, non-zero exit) — the shared shape behind every
+ * "docker verb target" primitive that fails hard on any problem
+ * (`legacyRemoveContainer`/`legacyRemoveVolume`/`legacyRestartContainer`; see
+ * `containers/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
+ * `verb` is the human-readable action embedded in the error message (e.g.
+ * `"remove container"` → `"failed to remove container: <cause>"`).
+ */
+export function runContainerCliExpectSuccess<E>(
+  spawner: Spawner,
+  args: ReadonlyArray<string>,
+  verb: string,
+  makeError: (message: string) => E,
+): Effect.Effect<void, E> {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnContainerCli(spawner, args, {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      }).pipe(
+        Effect.mapError((cause) =>
+          makeError(`failed to ${verb}: ${legacyDescribeContainerCliFailure(cause)}`),
+        ),
+      );
+      const [exitCode, stderr] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(() => makeError(`failed to ${verb}`)));
+      if (exitCode !== 0) {
+        const message = stderr.trim();
+        return yield* Effect.fail(
+          makeError(message.length > 0 ? `failed to ${verb}: ${message}` : `failed to ${verb}`),
+        );
+      }
+    }),
+  );
 }
 
 /**
@@ -180,7 +239,7 @@ export const legacyDockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
         }),
       );
       const [exitCode, stdout] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectDockerCliText(child.stdout)],
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) return false;

@@ -47,20 +47,21 @@ describe("extractCommandPath", () => {
 describe("shouldUseGlobalSignalInterrupt", () => {
   it("opts out for self-managed signal commands, even behind global flags", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "serve"])).toBe(false);
-    // `db reset` drives the bootstrap seam (holds signals for the Go child), so it must not
-    // be wrapped in the global handler either.
-    expect(shouldUseGlobalSignalInterrupt(["db", "reset"])).toBe(false);
     expect(
       shouldUseGlobalSignalInterrupt(["--workdir", "/tmp/app", "functions", "serve", "--debug"]),
     ).toBe(false);
   });
 
-  it("opts in for ordinary commands, including native start/db start (each installs no signal handling of its own, so the global wrapper's rollback-on-interrupt is the only thing that runs legacyRollbackStart on Ctrl-C)", () => {
+  it("opts in for ordinary commands, including native start/db start/db reset (each installs no signal handling of its own, so the global wrapper's rollback-on-interrupt/finalizers are the only thing that runs on Ctrl-C)", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "list"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["db", "push"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["projects", "list"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["db", "start"])).toBe(true);
+    // `db reset` (CLI-1955): the hidden `db __db-bootstrap` seam this used to drive is
+    // gone — the local path is fully native TS, installing no signal handling of its
+    // own, so it participates in the global handler like `db start` (CLI-1954) before it.
+    expect(shouldUseGlobalSignalInterrupt(["db", "reset"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt([])).toBe(true);
   });
 

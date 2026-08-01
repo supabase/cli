@@ -4,7 +4,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 import type { LegacyContainerIdName } from "../legacy-docker-lifecycle.ts";
 import { legacyDockerRemoveAll } from "../legacy-docker-remove-all.ts";
 import { legacyCleanupStartSecrets } from "../legacy-start-secrets-cleanup.ts";
-import { LegacyHealthCheckTimeoutError } from "./health-check.ts";
+import { LegacyHealthCheckTimeoutError } from "../containers/health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 

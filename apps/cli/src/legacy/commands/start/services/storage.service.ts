@@ -44,7 +44,7 @@ import type { ProjectConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import {
   legacyStartInternalDbUrl,

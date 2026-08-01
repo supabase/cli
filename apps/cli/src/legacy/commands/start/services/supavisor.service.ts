@@ -39,7 +39,7 @@
  */
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
 import {
   legacyRenderStartPoolerExs,
   type LegacyStartPoolerExsFields,
