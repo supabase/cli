@@ -267,6 +267,50 @@ describe("legacyLoadDeclaredSchemas", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
+  it.effect(
+    "falls back to supabase/schemas when the pg-delta declarative path exists but is a regular file",
+    () => {
+      // Go's `afero.DirExists` (`apps/cli-go/internal/db/diff/diff.go:63`) treats a non-directory
+      // path as absent, not present-but-unwalkable — a stray `supabase/database` FILE (e.g. left
+      // over from a previous config) must fall through to `supabase/schemas`, not make
+      // `legacyWalkSqlFilesSorted` try (and fail) to read a file as a directory.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "database"), "not a directory");
+      mkdirSync(join(workdir, "supabase", "schemas"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "schemas", "a.sql"), "select 1;\n");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          [],
+          pgDelta({ enabled: true }),
+        );
+        expect(result).toEqual(["supabase/schemas/a.sql"]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
+    "returns [] when supabase/schemas exists but is a regular file, not a directory",
+    () => {
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "schemas"), "not a directory");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [], pgDelta());
+        expect(result).toEqual([]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
   it.effect.skipIf(isRoot)(
     "fails (rather than silently treating as empty) when a matched schema directory can't be read",
     () => {

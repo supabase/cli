@@ -240,9 +240,12 @@ export const legacyPrepareShadowSource = <E>(
           if (useDeclarativePgDelta) {
             const declDirRel = legacyResolveDeclarativeDir(input.path, input.pgDelta);
             const declDirAbs = legacyResolveUnderWorkdir(input.path, input.workdir, declDirRel);
-            const declDirExists = yield* input.fs
-              .exists(declDirAbs)
-              .pipe(Effect.orElseSucceed(() => false));
+            // Go's `afero.DirExists` (`shadow.go:72`) — a non-directory path is treated as
+            // absent here too, same reasoning as `legacyLoadDeclaredSchemas` below.
+            const declDirExists = yield* input.fs.stat(declDirAbs).pipe(
+              Effect.map((info) => info.type === "Directory"),
+              Effect.orElseSucceed(() => false),
+            );
             if (declDirExists) {
               yield* legacyApplyDeclarativePgDelta(input.ctx, {
                 fs: input.fs,
@@ -470,22 +473,36 @@ export function legacyLoadDeclaredSchemas(
     if (pgDelta.enabled) {
       const declDirRel = legacyResolveDeclarativeDir(path, pgDelta);
       const declDirAbs = legacyResolveUnderWorkdir(path, workdir, declDirRel);
-      const exists = yield* fs.exists(declDirAbs).pipe(Effect.orElseSucceed(() => false));
-      if (exists) {
+      // Go's `afero.DirExists` (`diff.go:63`) — a path that exists but is a regular file is
+      // "not a directory" (`err == nil && exists` is false), not an error, so it falls through
+      // to the `supabase/schemas` source below rather than being walked as a directory.
+      const isDeclDir = yield* fs.stat(declDirAbs).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      );
+      if (isDeclDir) {
         return yield* legacyWalkSqlFilesSorted(fs, path, workdir, declDirRel);
       }
     }
     const schemasDirRel = "supabase/schemas";
     const schemasDirAbs = legacyResolveUnderWorkdir(path, workdir, schemasDirRel);
-    const exists = yield* fs.exists(schemasDirAbs).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyDeclarativeShadowDbError({
-            message: `failed to check schemas: ${cause.message}`,
-          }),
-      ),
+    // Same `afero.DirExists` semantics as above (`diff.go:80`): a missing path or a path that
+    // exists but isn't a directory both resolve to "no declared schemas" (`[]`), not an error —
+    // only a genuine stat failure (permission denied, I/O error) propagates.
+    const isSchemasDir = yield* fs.stat(schemasDirAbs).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(false)
+            : Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message: `failed to check schemas: ${cause.message}`,
+                }),
+              ),
+        onSuccess: (info) => Effect.succeed(info.type === "Directory"),
+      }),
     );
-    if (!exists) return [];
+    if (!isSchemasDir) return [];
     return yield* legacyWalkSqlFilesSorted(fs, path, workdir, schemasDirRel);
   });
 }
