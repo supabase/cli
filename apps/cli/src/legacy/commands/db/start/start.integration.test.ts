@@ -676,6 +676,31 @@ describe("legacy db start", () => {
     },
   );
 
+  it.live(
+    "fails with a typed config error on a malformed SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT override, before any container is created",
+    () => {
+      // Go's `Auth.RateLimit` (plain `uint`s, `pkg/config/auth.go:200-208`) has no `Enabled`-gated
+      // `validate()` method — its only Go-side check is the unconditional `uint` type-decode inside
+      // `Config.Load`'s single pass, which fails a non-numeric override regardless of `auth.enabled`
+      // or whether `db start` itself ever reads the field (review: PRRT_kwDOErm0O86Vk-e0).
+      const { layer, child } = setup({});
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.rate_limit");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
     // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before
     // `AssertSupabaseDbIsRunning` in `start.Run` (`internal/db/start/start.go:45-47`) — a
@@ -708,6 +733,24 @@ describe("legacy db start", () => {
       return Effect.gen(function* () {
         yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
+      });
+    },
+  );
+
+  it.live(
+    "does not warn about SMS when auth is disabled, matching Go's Enabled-gated (s *sms) validate()",
+    () => {
+      // Go only calls `Sms.validate()` — the source of this warning — `if c.Auth.Enabled`
+      // (`config.go:1087,1145`). A disabled-auth project with `enable_signup = true` and no
+      // provider configured must NOT print the warning (review: PRRT_kwDOErm0O86Vk-e2).
+      const { layer, out } = setup({
+        configContents:
+          'project_id = "test"\n[auth]\nenabled = false\n[auth.sms]\nenable_signup = true\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("no SMS provider is enabled");
       });
     },
   );

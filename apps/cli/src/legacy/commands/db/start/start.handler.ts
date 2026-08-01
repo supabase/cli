@@ -25,6 +25,7 @@ import {
   legacyResolveAuthMfa,
   legacyResolveAuthSms,
   legacyResolveDbSettingsEnvOverrides,
+  legacyResolveGotrueRateLimit,
   legacyResolveGotrueSessions,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
@@ -150,12 +151,20 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     yield* wrapDbConfigOverride("auth.sms.max_frequency", () =>
       legacyParseGoDuration(smsForValidation.max_frequency),
     );
-    // Go's `(s *sms) validate()` (`config.go:1412-1415`) prints this and downgrades
-    // `EnableSignup` to `false` when no provider is enabled — `legacyResolveAuthSms` already
-    // applies the downgrade itself, so this only needs to detect whether that branch fired (the
-    // user configured `enable_signup = true` with every provider disabled) to reproduce the
-    // matching warning, same as `commands/start/start.handler.ts`'s identical check.
+    // Go's `(s *sms) validate()` — including this print and the `EnableSignup` downgrade — only
+    // runs `if c.Auth.Enabled` (`config.go:1087,1145`); `legacyResolveAuthSms` already applies the
+    // downgrade unconditionally (needed for the duration check above, which Go decodes regardless
+    // of `auth.enabled`), so the warning itself must be re-gated here on the SAME
+    // `SUPABASE_AUTH_ENABLED`-overridden value `Validate` reads, or a disabled-auth project with
+    // `sms.enable_signup = true` and no provider would wrongly print a warning Go never emits.
+    const authEnabledForValidation = legacyEnvOverrideBool(
+      "SUPABASE_AUTH_ENABLED",
+      config.auth.enabled,
+      "auth.enabled",
+      projectEnvValues,
+    );
     if (
+      authEnabledForValidation &&
       !smsForValidation.twilio.enabled &&
       !smsForValidation.twilio_verify.enabled &&
       !smsForValidation.messagebird.enabled &&
@@ -188,6 +197,15 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       legacyParseGoDuration(
         legacyResolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency,
       ),
+    );
+    // Go's `Auth.RateLimit` (plain `uint`s, `pkg/config/auth.go:200-208`) is decoded by the SAME
+    // unconditional `Config.Load` pass as the duration fields above — unlike `auth.sms`/`auth.mfa`,
+    // it has no `Enabled`-gated `validate()` method at all (`config.go:1087-1153` never mentions
+    // it), so a malformed override (e.g. `SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus`) must fail
+    // `db start` regardless of `auth.enabled`, matching `commands/start/start.handler.ts`'s
+    // identical eager call.
+    yield* wrapDbConfigOverride("auth.rate_limit", () =>
+      legacyResolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
     );
 
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to

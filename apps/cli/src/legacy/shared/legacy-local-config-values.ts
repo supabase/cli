@@ -917,8 +917,9 @@ export type LegacyResolvedAuthEmail = Omit<
 /**
  * Go's `Auth.Email` is a value-typed (non-pointer) struct (`pkg/config/auth.go:174,242-253`),
  * always Viper/`AutomaticEnv`-bound regardless of `[auth.email]` presence in config.toml
- * (`config.go:580-586`) — same reasoning as {@link resolveGotrueRateLimit}/`resolveGotrueSessions`
- * in `start.handler.ts`, just hoisted here since `readAuthEmailTemplateContent`'s validation-only
+ * (`config.go:580-586`) — same reasoning as {@link legacyResolveGotrueRateLimit}/
+ * {@link legacyResolveGotrueSessions} elsewhere in this module, just hoisted here since
+ * `readAuthEmailTemplateContent`'s validation-only
  * file-read ALSO needs the override-aware `template`/`notification` maps, not just
  * `start.handler.ts`'s GoTrue env builder — same single-source/two-consumer shape as
  * {@link legacyResolveAuthExternalProviders}.
@@ -1651,6 +1652,71 @@ export function legacyResolveAuthMfa(
       "SUPABASE_AUTH_MFA_MAX_ENROLLED_FACTORS",
       "auth.mfa.max_enrolled_factors",
       mfa.max_enrolled_factors,
+      projectEnvValues,
+    ),
+  };
+}
+
+/**
+ * Go's `Auth.RateLimit` (`pkg/config/auth.go:200-208`) is a value-typed struct of plain `uint`s,
+ * always Viper-bound regardless of `[auth.rate_limit]` presence, so every
+ * `SUPABASE_AUTH_RATE_LIMIT_*` override applies before `start.go` builds `GOTRUE_RATE_LIMIT_*` —
+ * no raw-document presence gate needed, matching the existing `db.pooler`/SMS numeric-field
+ * precedent. Unlike `auth.sms`/`auth.mfa`, `rateLimit` has no `Enabled`-gated Go `validate()`
+ * method at all (`config.go:1087-1153` never mentions `RateLimit`) — its only Go-side check is
+ * the unconditional `uint` type-decode inside `Config.Load`'s single `UnmarshalExact` pass, so
+ * callers resolve it eagerly and unconditionally, with no `authEnabled` gate.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the same eager,
+ * unconditional `auth.rate_limit.*` resolution to reproduce Go's `Config.Load` decode, per
+ * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
+ */
+export function legacyResolveGotrueRateLimit(
+  rateLimit: ProjectConfig["auth"]["rate_limit"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["rate_limit"] {
+  return {
+    anonymous_users: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
+      "auth.rate_limit.anonymous_users",
+      rateLimit.anonymous_users,
+      projectEnvValues,
+    ),
+    token_refresh: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
+      "auth.rate_limit.token_refresh",
+      rateLimit.token_refresh,
+      projectEnvValues,
+    ),
+    sign_in_sign_ups: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
+      "auth.rate_limit.sign_in_sign_ups",
+      rateLimit.sign_in_sign_ups,
+      projectEnvValues,
+    ),
+    token_verifications: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
+      "auth.rate_limit.token_verifications",
+      rateLimit.token_verifications,
+      projectEnvValues,
+    ),
+    email_sent: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
+      "auth.rate_limit.email_sent",
+      rateLimit.email_sent,
+      projectEnvValues,
+    ),
+    sms_sent: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
+      "auth.rate_limit.sms_sent",
+      rateLimit.sms_sent,
+      projectEnvValues,
+    ),
+    web3: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_WEB3",
+      "auth.rate_limit.web3",
+      rateLimit.web3,
       projectEnvValues,
     ),
   };

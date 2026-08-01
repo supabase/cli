@@ -83,6 +83,7 @@ import {
   legacyResolveConfiguredSigningKeys,
   legacyResolveAuthExternalUrl,
   legacyResolveDbSettingsEnvOverrides,
+  legacyResolveGotrueRateLimit as resolveGotrueRateLimit,
   legacyResolveGotrueSessions as resolveGotrueSessions,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
@@ -314,63 +315,6 @@ function resolveGotruePasskeyWebauthn(
         }
       : undefined;
   return { passkeyEnabled, webauthn };
-}
-
-/**
- * Go's `Auth.RateLimit` (`pkg/config/auth.go:200-208`) is a value-typed
- * struct of plain `uint`s, always Viper-bound regardless of `[auth.rate_
- * limit]` presence, so every `SUPABASE_AUTH_RATE_LIMIT_*` override applies
- * before `start.go` builds `GOTRUE_RATE_LIMIT_*` — no raw-document presence
- * gate needed, matching the existing `db.pooler`/SMS numeric-field precedent.
- */
-function resolveGotrueRateLimit(
-  rateLimit: ProjectConfig["auth"]["rate_limit"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["rate_limit"] {
-  return {
-    anonymous_users: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
-      "auth.rate_limit.anonymous_users",
-      rateLimit.anonymous_users,
-      projectEnvValues,
-    ),
-    token_refresh: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
-      "auth.rate_limit.token_refresh",
-      rateLimit.token_refresh,
-      projectEnvValues,
-    ),
-    sign_in_sign_ups: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
-      "auth.rate_limit.sign_in_sign_ups",
-      rateLimit.sign_in_sign_ups,
-      projectEnvValues,
-    ),
-    token_verifications: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
-      "auth.rate_limit.token_verifications",
-      rateLimit.token_verifications,
-      projectEnvValues,
-    ),
-    email_sent: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
-      "auth.rate_limit.email_sent",
-      rateLimit.email_sent,
-      projectEnvValues,
-    ),
-    sms_sent: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
-      "auth.rate_limit.sms_sent",
-      rateLimit.sms_sent,
-      projectEnvValues,
-    ),
-    web3: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_WEB3",
-      "auth.rate_limit.web3",
-      rateLimit.web3,
-      projectEnvValues,
-    ),
-  };
 }
 
 /**
