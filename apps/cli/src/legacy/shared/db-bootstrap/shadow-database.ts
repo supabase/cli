@@ -45,7 +45,11 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 
 import { Output } from "../../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { collectText, spawnContainerCli } from "../legacy-container-cli.ts";
+import {
+  collectText,
+  legacyDescribeContainerCliFailure,
+  spawnContainerCli,
+} from "../legacy-container-cli.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
 import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
@@ -259,9 +263,15 @@ const legacyCleanupShadowSecretDir = (
  * failure here must never mask whatever the caller was doing with the shadow — but it does
  * NOT swallow the message: Go prints `"Failed to remove container:", containerId, err` to
  * stderr on failure (`apps/cli-go/internal/utils/docker.go:442-449`), so this does the same
- * before continuing. Also reclaims the shadow's staged secret directory (see
- * {@link legacyCleanupShadowSecretDir}), since nothing else in this codebase can find it once
- * the container is gone (`secretDirId` is randomized per shadow, not the container's name).
+ * before continuing. That includes a failure to even launch/collect the removal itself (the
+ * container CLI missing, a disconnected runtime, a stream-read error) — Go's single
+ * `Docker.ContainerRemove` SDK call folds every one of those causes into the same `err` it
+ * prints, so this catches {@link spawnContainerCli}/exit-code-collection failures the same way
+ * {@link legacyRestartSatelliteService} does (`restart-services.ts`), via
+ * {@link legacyDescribeContainerCliFailure}, rather than discarding them unreported. Also
+ * reclaims the shadow's staged secret directory (see {@link legacyCleanupShadowSecretDir}),
+ * since nothing else in this codebase can find it once the container is gone (`secretDirId` is
+ * randomized per shadow, not the container's name).
  */
 export const legacyRemoveShadowDatabase = (
   spawner: Spawner,
@@ -270,7 +280,7 @@ export const legacyRemoveShadowDatabase = (
   Effect.gen(function* () {
     const { containerId, secretDirId, workdir } = input;
     if (containerId.length > 0) {
-      yield* Effect.scoped(
+      const failureMessage = yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawnContainerCli(spawner, ["rm", "-f", "-v", containerId], {
             stdin: "ignore",
@@ -282,15 +292,16 @@ export const legacyRemoveShadowDatabase = (
             [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
             { concurrency: "unbounded" },
           );
-          if (exitCode !== 0) {
-            const output = yield* Output;
-            yield* output.raw(
-              `Failed to remove container: ${containerId} ${stderr.trim()}\n`,
-              "stderr",
-            );
-          }
+          return exitCode === 0 ? undefined : stderr.trim();
         }),
-      ).pipe(Effect.ignore);
+      ).pipe(Effect.catch((cause) => Effect.succeed(legacyDescribeContainerCliFailure(cause))));
+      if (failureMessage !== undefined) {
+        const output = yield* Output;
+        yield* output.raw(
+          `Failed to remove container: ${containerId} ${failureMessage}\n`,
+          "stderr",
+        );
+      }
     }
     yield* legacyCleanupShadowSecretDir(secretDirId, workdir);
   });
