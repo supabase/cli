@@ -113,6 +113,24 @@ export const legacyLoadLocalProjectContext = <E>(
       }
     }
 
+    // Deliberately NOT extended to `SUPABASE_SERVICES_HOSTNAME` (review: PRRT_kwDOErm0O86VlqIJ):
+    // Go's `GetHostname()` (`apps/cli-go/internal/utils/misc.go:305-311`) has exactly one call
+    // site — `var Config = config.NewConfig(config.WithHostname(GetHostname()))`
+    // (`internal/utils/config.go:100`), a package-level `var` initializer. Go's runtime evaluates
+    // every package-level `var` before `main()` runs, which is before cobra parses argv, which is
+    // before ANY command's `RunE`/`PersistentPreRunE` calls `flags.LoadConfig` -> `Config.Load` ->
+    // `loadNestedEnv` -> `godotenv.Load`. So `utils.Config.Hostname` is permanently fixed to
+    // whatever `os.Getenv("SUPABASE_SERVICES_HOSTNAME")` returns at Go BINARY STARTUP — before a
+    // project dotenv file is ever parsed by that process — and nothing re-reads `GetHostname()`
+    // afterward to pick up a dotenv-installed value. Verified empirically (scratch probe
+    // reproducing the exact package-var-init-before-dotenv-load ordering): a project-dotenv-only
+    // `SUPABASE_SERVICES_HOSTNAME` never reaches Go's hostname resolution; only a value already
+    // present in the shell env before the binary starts does. `legacyGetHostname()` right below
+    // must therefore NOT see a project-dotenv-only override either — installing it into
+    // `process.env` here would make native `db start`/`start`/`stop`/`status` honor a case Go's
+    // own `utils.Config.Hostname` can never observe, which is a NEW divergence from Go, not a fix
+    // for one.
+
     // An absent config.toml is not a failure — Go's `flags.LoadConfig` still resolves a project id
     // via the workdir basename default. Only a malformed file (`loadProjectConfig` failing rather
     // than returning `null`) is a hard error.

@@ -239,6 +239,21 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // override, so calling each here, once, eagerly, and discarding the result closes the gap.
     // `auth.oauth_server.authorization_url_path` is a plain string and can't throw, so it needs no
     // eager check.
+    //
+    // NOT a reimplementation of `Config.Validate`'s passkey/webauthn RULE (review:
+    // PRRT_kwDOErm0O86VlqIK): the "Missing required config section: auth.webauthn.../rp_id/
+    // rp_origins" checks (`config.go:1117-1134`) are decode-INDEPENDENT semantic validation that
+    // already, exclusively lives in `legacyValidateResolvedConfig` — this handler's very first
+    // line runs `legacyCheckDbToml`, which builds `LegacyPasskeyInput` and calls that single
+    // shared validator before ANY of this eager-decode battery executes, so a malformed/
+    // incomplete `[auth.passkey]`/`[auth.webauthn]` section already fails fast there. The call
+    // below is the SAME `legacy-local-config-values.ts` resolver `start`'s own identical battery
+    // (and `db start`'s later GoTrue-container-building path, were it to build one) already call —
+    // invoked here only to force its internal `legacyEnvOverrideBool`/`legacyRawUnmodeledBool`
+    // decode-hook errors (a malformed `SUPABASE_AUTH_PASSKEY_ENABLED`, etc.) to surface eagerly,
+    // matching Go's unconditional `Config.Load` field decode. No validation logic is duplicated
+    // here — only the pre-existing, already-shared resolver is called again, and its result is
+    // discarded.
     yield* wrapDbConfigOverride("auth.web3", () =>
       legacyResolveGotrueWeb3(config.auth.web3, projectEnvValues),
     );
