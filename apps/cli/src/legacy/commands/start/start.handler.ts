@@ -46,10 +46,10 @@ import {
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
 import {
   legacyCliProjectFilterValue,
+  legacyResolveNetworkId,
   legacyServiceContainerIds,
   legacyServiceContainerName,
   localDbContainerId,
-  localNetworkId,
 } from "../../shared/legacy-docker-ids.ts";
 import {
   legacyInspectContainerState,
@@ -904,11 +904,18 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
     // Go's `DockerStart` forces every container's network mode (and the
     // network it creates) to `--network-id` when set, ahead of the generated
-    // `supabase_network_<project>` fallback (`docker.go:379-383`).
+    // `supabase_network_<project>` fallback (`docker.go:379-383`) — and `--network-id` falls
+    // back to the `SUPABASE_NETWORK_ID` shell/project-dotenv env var when the flag itself is
+    // omitted, via the same `viper`/`AutomaticEnv` mechanism as `SUPABASE_YES`/
+    // `SUPABASE_EXPERIMENTAL` (review: PRRT_kwDOErm0O86VlqIL). See
+    // {@link legacyResolveNetworkId}'s doc comment (shared with `db start`, which computes this
+    // identically).
     const networkIdFlag = yield* LegacyNetworkIdFlag;
-    const networkId = Option.isSome(networkIdFlag)
-      ? networkIdFlag.value
-      : localNetworkId(projectId);
+    const networkId = legacyResolveNetworkId(
+      Option.getOrUndefined(networkIdFlag),
+      projectId,
+      projectEnvValues,
+    );
     // Go's `DockerStart` unconditionally appends the Linux-only
     // `host.docker.internal:host-gateway` extra host for every container it
     // starts (`docker_linux.go`; empty on darwin/windows, where Docker

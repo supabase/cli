@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -314,6 +314,10 @@ const currentBranchPath = (workdir: string) =>
   join(workdir, "supabase", ".branches", "_current_branch");
 
 describe("legacy db start", () => {
+  afterEach(() => {
+    delete process.env["SUPABASE_NETWORK_ID"];
+  });
+
   it.live("reports an already-running database without starting a container", () => {
     const { layer, out, telemetry, child } = setup({ running: true });
     return Effect.gen(function* () {
@@ -627,6 +631,25 @@ describe("legacy db start", () => {
       });
     },
   );
+
+  it.live("falls back to SUPABASE_NETWORK_ID when --network-id is omitted", () => {
+    // Go's `network-id` is a persistent flag bound to viper under `SetEnvPrefix("SUPABASE")` +
+    // `AutomaticEnv()` (`apps/cli-go/cmd/root.go:318-334`), and `DockerStart` reads
+    // `viper.GetString("network-id")` fresh at its own call site — well after `Config.Load`'s
+    // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is effective when the flag
+    // itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
+    process.env["SUPABASE_NETWORK_ID"] = "env-network";
+    const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(
+        child.spawned.some((s) => s.args[0] === "network" && s.args.at(-1) === "env-network"),
+      ).toBe(true);
+      const args = createArgs(child.spawned);
+      const networkIndex = args?.indexOf("--network") ?? -1;
+      expect(args?.[networkIndex + 1]).toBe("env-network");
+    });
+  });
 
   it.live(
     "fails with a typed config error on a malformed SUPABASE_DB_HEALTH_TIMEOUT, before any container is created",

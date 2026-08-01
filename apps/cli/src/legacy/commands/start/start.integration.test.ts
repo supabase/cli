@@ -3407,6 +3407,32 @@ content_path = "./templates/custom_notice.html"
         expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
       }).pipe(Effect.provide(layer));
     });
+
+    it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () => {
+      // Go's `network-id` is a persistent flag bound to viper under `SetEnvPrefix("SUPABASE")`
+      // + `AutomaticEnv()` (`apps/cli-go/cmd/root.go:318-334`), and `DockerStart` reads
+      // `viper.GetString("network-id")` fresh at its own call site — well after `Config.Load`'s
+      // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is effective when the flag
+      // itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
+      const previous = process.env["SUPABASE_NETWORK_ID"];
+      process.env["SUPABASE_NETWORK_ID"] = "env-net";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const networkCreate = child.spawned.find(
+          (s) => s.args[0] === "network" && s.args[1] === "create",
+        );
+        expect(networkCreate?.args.at(-1)).toBe("env-net");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+            else process.env["SUPABASE_NETWORK_ID"] = previous;
+          }),
+        ),
+      );
+    });
   });
 
   describe("SUPABASE_API_PORT override", () => {
