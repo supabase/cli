@@ -1486,7 +1486,7 @@ describe("legacy start integration", () => {
       "brings up the stack with every optional config.toml section populated (bigquery analytics, session pool mode, passkey/webauthn, external provider, SMTP, email templates)",
       () => {
         // Exercises the config-document-shape branches `start.handler.ts` itself owns
-        // (`resolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
+        // (`legacyResolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
         // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass, none of
         // which interact with each other. A malformed `db.health_timeout` is exercised
         // separately below (it now hard-fails the whole command, matching Go, so it can't
@@ -1969,8 +1969,8 @@ content_path = "./templates/custom_notice.html"
       () => {
         // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
         // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
-        // `resolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw reasoning as
-        // the web3/oauth_server tests above, except the malformed value lives directly in
+        // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw
+        // reasoning as the web3/oauth_server tests above, except the malformed value lives directly in
         // config.toml here since `@supabase/config` never sees (or rejects) this unmodeled field —
         // there's no schema-level bool coercion to catch it first.
         const { layer, child } = setup({

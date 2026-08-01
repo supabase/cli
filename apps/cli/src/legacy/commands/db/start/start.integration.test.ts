@@ -701,6 +701,91 @@ describe("legacy db start", () => {
     },
   );
 
+  // Closes the review-thread gap: Go's `Config.Load` decodes the ENTIRE config struct
+  // unconditionally in a single `v.UnmarshalExact` pass, including every field below, regardless
+  // of whether `db start` itself ever reads it — mirrors `commands/start/start.handler.ts`'s own
+  // identical eager-validation tests for these same fields (review: PRRT_kwDOErm0O86VlOHQ).
+  it.live.each([
+    ["edge_runtime.inspector_port", "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT", "not-a-port"],
+    ["edge_runtime.policy", "SUPABASE_EDGE_RUNTIME_POLICY", "not-a-policy"],
+    ["api.max_rows", "SUPABASE_API_MAX_ROWS", "not-a-uint"],
+    ["storage.analytics.max_namespaces", "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES", "not-a-uint"],
+    ["local_smtp.port", "SUPABASE_LOCAL_SMTP_PORT", "not-a-port"],
+    ["analytics.port", "SUPABASE_ANALYTICS_PORT", "not-a-port"],
+    ["db.pooler.pool_mode", "SUPABASE_DB_POOLER_POOL_MODE", "not-a-mode"],
+    ["auth.web3", "SUPABASE_AUTH_WEB3_SOLANA_ENABLED", "not-a-bool"],
+    ["auth.oauth_server", "SUPABASE_AUTH_OAUTH_SERVER_ENABLED", "not-a-bool"],
+    ["api.enabled", "SUPABASE_API_ENABLED", "not-a-bool"],
+    ["storage.vector.enabled", "SUPABASE_STORAGE_VECTOR_ENABLED", "not-a-bool"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override, before any container is created",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({});
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
+    () => {
+      // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
+      // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
+      // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, so the malformed value must live
+      // directly in config.toml here since `@supabase/config` never sees (or rejects) this
+      // unmodeled field — there's no schema-level bool coercion to catch it first
+      // (review: PRRT_kwDOErm0O86VlOHQ).
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.passkey");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
+    () => {
+      // `auth.external` is a genuine Go `map[string]provider` (auth.go:190) — an unmodeled/
+      // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
+      // schema silently drops at decode time, so `legacyResolveAuthExternalProviders`'s
+      // raw-document read is the only place this malformed value is ever seen — same
+      // override-only-throw reasoning as the passkey test above (review: PRRT_kwDOErm0O86VlOHQ).
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.external");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
     // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before
     // `AssertSupabaseDbIsRunning` in `start.Run` (`internal/db/start/start.go:45-47`) — a

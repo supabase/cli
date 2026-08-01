@@ -1450,8 +1450,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       // `StringToSliceHookFunc(",")` mapstructure hook as every other `[]string` field
       // (`config.go:775-784`) — a raw or `env(...)`-resolved comma-separated string must be
       // split, not treated as "missing" just because it isn't already a literal TOML array.
-      // Matches `start.handler.ts`'s own `resolveGotruePasskeyWebauthn`/`legacyStrToArr` handling
-      // of this identical field.
+      // Matches `legacy-local-config-values.ts`'s own `legacyResolveGotruePasskeyWebauthn`/
+      // `legacyStrToArr` handling of this identical field.
       const rpOrigins = Array.isArray(rpOriginsRaw)
         ? rpOriginsRaw
         : legacyStrToArr(str(webauthnRaw, "rp_origins"));

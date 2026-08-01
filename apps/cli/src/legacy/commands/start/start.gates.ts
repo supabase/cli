@@ -123,7 +123,7 @@ export function legacyResolveStartGates(inputs: LegacyStartGateInputs): LegacySt
   // either — it always decodes to a defaulted `{enabled: false}`, never
   // `undefined` — so presence must come from the raw document, same
   // `asRecord(document?.[...])` gate `legacyResolveAuthEmailSmtp`/
-  // `resolveGotruePasskeyWebauthn`/`legacyResolveAuthSms` already use for the
+  // `legacyResolveGotruePasskeyWebauthn`/`legacyResolveAuthSms` already use for the
   // identical Go-pointer-section shape.
   const imageTransformationSectionPresent =
     asRecord(asRecord(document?.["storage"])?.["image_transformation"]) !== undefined;

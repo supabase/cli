@@ -1759,6 +1759,167 @@ export function legacyResolveGotrueSessions(
   return { timebox, inactivity_timeout: inactivityTimeout };
 }
 
+/**
+ * Go's `appendGotruePasskeyEnv`/`Auth.Passkey`/`Auth.Webauthn` presence gate
+ * (`start.go:1427-1440`, `pkg/config/config.go:1117-1134`): `@supabase/config`
+ * has no `auth.passkey`/`auth.webauthn` schema fields at all, so presence and
+ * every field must come from the raw, pre-schema TOML document instead — same
+ * document-based approach this file's own `Config.Validate`-parity resolution
+ * (inside {@link legacyResolveLocalConfigValues}) already uses for these two
+ * sections.
+ */
+/**
+ * `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other
+ * nested field once `[auth.passkey]`/`[auth.webauthn]` are present in
+ * config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
+ * so `SUPABASE_AUTH_PASSKEY_ENABLED`/`SUPABASE_AUTH_WEBAUTHN_{RP_ID,
+ * RP_DISPLAY_NAME,RP_ORIGINS}` overrides apply before `appendGotruePasskeyEnv`
+ * (`start.go:1427-1436`) builds GoTrue's env — same reasoning, and same
+ * presence-gating (an absent section is never synthesized from an env
+ * override alone), as this file's identical `Config.Validate`-parity
+ * resolution for this raw-document pair. `rp_display_name` has no
+ * validation-path precedent (Go's `Config.Validate` never checks it), but
+ * GoTrue's env does consume it, so it gets the same treatment here.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.passkey`/`auth.webauthn` resolution to reproduce Go's
+ * unconditional `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before
+ * You Duplicate".
+ */
+export function legacyResolveGotruePasskeyWebauthn(
+  document: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): {
+  readonly passkeyEnabled: boolean | undefined;
+  readonly webauthn:
+    | {
+        readonly rpId: string;
+        readonly rpDisplayName: string;
+        readonly rpOrigins: ReadonlyArray<string>;
+      }
+    | undefined;
+} {
+  const authDoc = asRecord(document?.["auth"]);
+  const passkeyDoc = asRecord(authDoc?.["passkey"]);
+  const webauthnDoc = asRecord(authDoc?.["webauthn"]);
+  const passkeyEnabled =
+    passkeyDoc !== undefined
+      ? legacyEnvOverrideBool(
+          "SUPABASE_AUTH_PASSKEY_ENABLED",
+          legacyRawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
+          "auth.passkey.enabled",
+          projectEnvValues,
+        )
+      : undefined;
+  const rpOriginsOverride =
+    webauthnDoc !== undefined
+      ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+      : undefined;
+  const webauthn =
+    webauthnDoc !== undefined
+      ? {
+          rpId:
+            legacyEnvOverride(
+              "SUPABASE_AUTH_WEBAUTHN_RP_ID",
+              typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
+              projectEnvValues,
+            ) ?? "",
+          rpDisplayName:
+            legacyEnvOverride(
+              "SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME",
+              typeof webauthnDoc["rp_display_name"] === "string"
+                ? webauthnDoc["rp_display_name"]
+                : "",
+              projectEnvValues,
+            ) ?? "",
+          // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")`
+          // unconditionally to every `[]string`-typed field (`config.go:775-784`) — a raw or
+          // `env(...)`-resolved `rp_origins` string (this section has no `@supabase/config`
+          // schema at all) is comma-split, not silently dropped to `[]`.
+          rpOrigins: (() => {
+            if (rpOriginsOverride !== undefined) return legacyStrToArr(rpOriginsOverride);
+            const raw = webauthnDoc["rp_origins"];
+            if (Array.isArray(raw)) {
+              return raw.filter((item): item is string => typeof item === "string");
+            }
+            return typeof raw === "string" ? legacyStrToArr(raw) : [];
+          })(),
+        }
+      : undefined;
+  return { passkeyEnabled, webauthn };
+}
+
+/**
+ * Go's `Auth.Web3` (`pkg/config/auth.go:379-382`) is a value-typed struct —
+ * same no-presence-gate reasoning as {@link legacyResolveGotrueRateLimit}.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.web3.*.enabled` resolution to reproduce Go's unconditional
+ * `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before You
+ * Duplicate".
+ */
+export function legacyResolveGotrueWeb3(
+  web3: ProjectConfig["auth"]["web3"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["web3"] {
+  return {
+    solana: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
+        web3.solana.enabled,
+        "auth.web3.solana.enabled",
+        projectEnvValues,
+      ),
+    },
+    ethereum: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_WEB3_ETHEREUM_ENABLED",
+        web3.ethereum.enabled,
+        "auth.web3.ethereum.enabled",
+        projectEnvValues,
+      ),
+    },
+  };
+}
+
+/**
+ * Go's `Auth.OAuthServer` (`pkg/config/auth.go:394-398`) is a value-typed
+ * struct — same no-presence-gate reasoning as {@link legacyResolveGotrueRateLimit}.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.oauth_server.*` resolution to reproduce Go's unconditional
+ * `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before You
+ * Duplicate".
+ */
+export function legacyResolveGotrueOAuthServer(
+  oauthServer: ProjectConfig["auth"]["oauth_server"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["oauth_server"] {
+  return {
+    enabled: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
+      oauthServer.enabled,
+      "auth.oauth_server.enabled",
+      projectEnvValues,
+    ),
+    authorization_url_path:
+      legacyEnvOverride(
+        "SUPABASE_AUTH_OAUTH_SERVER_AUTHORIZATION_URL_PATH",
+        oauthServer.authorization_url_path,
+        projectEnvValues,
+      ) ?? oauthServer.authorization_url_path,
+    allow_dynamic_registration: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION",
+      oauthServer.allow_dynamic_registration,
+      "auth.oauth_server.allow_dynamic_registration",
+      projectEnvValues,
+    ),
+  };
+}
+
 /** Go's `(s *sms) validate()` fixed provider priority (`pkg/config/config.go:1348-1410`) — a
  * `switch` that validates ONLY the first enabled provider in this order. */
 const LEGACY_SMS_PROVIDER_ORDER = [
@@ -2038,9 +2199,9 @@ export interface LegacyResolvedAuthExternalProvider {
  * as the literal string `"true"`/`"false"` instead of a real boolean. A native TOML `true`/`false`
  * literal still decodes to an actual `boolean` even for an unmodeled key (only `env(...)`
  * substitution is schema-blind), so this must accept both. Used by
- * {@link legacyResolveAuthExternalProviders} below AND by `start.handler.ts`'s
- * `resolveGotruePasskeyWebauthn`/this file's own passkey-validation read, since both are
- * unmodeled-document reads of the identical shape.
+ * {@link legacyResolveAuthExternalProviders} below AND by
+ * {@link legacyResolveGotruePasskeyWebauthn}/this file's own passkey-validation read, since both
+ * are unmodeled-document reads of the identical shape.
  *
  * An unparsable STRING (e.g. a typo, or a still-literal `"env(VAR)"` when the referenced var was
  * never set) is a hard `Config.Load` failure in Go, not a silent `false` — `v.UnmarshalExact`'s
