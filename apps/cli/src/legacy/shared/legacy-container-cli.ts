@@ -138,16 +138,25 @@ export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
 }
 
 /**
- * Docker's/Podman's "container doesn't exist" stderr shapes — "No such container"
- * or "No such object" depending on daemon version/CLI path — Go's
- * `errdefs.IsNotFound(err)` equivalent for a CLI-shelled-out (rather than
- * Engine-API) caller. Hoisted here so callers across the container-lifecycle/
- * restart/health-check domain (`legacyIsLocalDbRunning`,
- * `legacyRestartSatelliteService`, `legacyReloadKong`) share one predicate
- * instead of re-deriving the same substring match.
+ * Docker's/Podman's "container doesn't exist" stderr shapes — "No such container"/
+ * "No such object" (Docker, either casing depending on daemon version/CLI path) or
+ * "no container with name or ID" (Podman's own wording) — Go's `errdefs.IsNotFound(err)`
+ * equivalent for a CLI-shelled-out (rather than Engine-API) caller. Case-insensitive
+ * and covers all three shapes, matching the pre-existing Podman-aware parser in
+ * `commands/start/start.handler.ts`'s own `isContainerNotFoundMessage` — a lowercase
+ * Podman message must be tolerated exactly like an uppercase Docker one, or a reset
+ * excluding a satellite service (storage/auth/realtime/pooler) or Kong would report a
+ * hard restart/reload failure instead of tolerating the absent container. Hoisted here
+ * so callers across the container-lifecycle/restart/health-check domain
+ * (`legacyIsLocalDbRunning`, `legacyRestartSatelliteService`, `legacyReloadKong`) share
+ * one predicate instead of re-deriving the same match.
  */
 export function legacyIsContainerNotFoundMessage(message: string): boolean {
-  return message.includes("No such container") || message.includes("No such object");
+  return (
+    /no such container/iu.test(message) ||
+    /no such object/iu.test(message) ||
+    /no container with name or id/iu.test(message)
+  );
 }
 
 /**
