@@ -5,9 +5,14 @@ migration (diffing a throwaway shadow against the remote, native pg-delta or
 migra) or declarative files (`--declarative`, native pg-delta export). The
 initial-migra pull (no local migrations) seeds the migration file with a native
 `pg_dump` of the remote schema (a Docker `pg_dump` container, with IPv4
-transaction-pooler fallback) and then appends the migra diff. Only the rare
-`--experimental` structured-dump sub-branch still delegates to the bundled Go
-binary (it needs `format.WriteStructuredSchemas`, which has no TS port yet).
+transaction-pooler fallback) and then appends the migra diff. `--experimental`'s
+structured-dump sub-branch (Go's `format.WriteStructuredSchemas`) has been
+retired (CLI-1957) rather than ported: it required a TS PostgreSQL DDL AST
+parser with no equivalent in this repo, while `--declarative` already delivers
+the same per-object schema split via pg-delta catalog introspection.
+`db pull --experimental` (or `SUPABASE_EXPERIMENTAL=true`) now fails fast — no
+Go binary is invoked, and no database connection is attempted — printing a
+removal message to stderr and exiting non-zero instead.
 
 ## Files Read
 
@@ -47,20 +52,20 @@ binary (it needs `format.WriteStructuredSchemas`, which has no TS port yet).
 
 ## Environment Variables
 
-| Variable                         | Purpose                                       | Required? |
-| -------------------------------- | --------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`          | auth for the linked target                    | no        |
-| `SUPABASE_DB_PASSWORD`           | remote DB password (overridden by `-p`)       | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA` | force pg-delta diff engine                    | no        |
-| `SUPABASE_EXPERIMENTAL`          | structured-dump pull branch (still delegates) | no        |
-| `PGDELTA_NPM_REGISTRY`           | scoped npm registry for edge-runtime          | no        |
+| Variable                         | Purpose                                                       | Required? |
+| -------------------------------- | ------------------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`          | auth for the linked target                                    | no        |
+| `SUPABASE_DB_PASSWORD`           | remote DB password (overridden by `-p`)                       | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA` | force pg-delta diff engine                                    | no        |
+| `SUPABASE_EXPERIMENTAL`          | selects the retired structured-dump branch (fails, see below) | no        |
+| `PGDELTA_NPM_REGISTRY`           | scoped npm registry for edge-runtime                          | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                           |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (migration written + optional history update; declarative export)                                                                                                                           |
-| `1`  | target mutex; `--declarative`/`--use-pg-delta` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error |
+| Code | Condition                                                                                                                                                                                                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (migration written + optional history update; declarative export)                                                                                                                                                                                                    |
+| `1`  | target mutex; `--declarative`/`--use-pg-delta` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error; `--experimental`/`SUPABASE_EXPERIMENTAL` structured-dump mode (retired) |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
 > exit** for `db pull` — Go returns `errInSync` as an error.
@@ -91,8 +96,10 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   the remote schema into the migration file, then appends the migra diff. An empty
   diff after a non-empty dump is swallowed (Go's `swallowInitialInSync`); an empty
   dump + empty diff is "No schema changes found".
-- The `--experimental` structured-dump branch still rebuilds the argv and execs the
-  bundled Go binary (its side effects are Go's), because Go's
-  `format.WriteStructuredSchemas` needs a PostgreSQL DDL AST parser that has no TS
-  port yet. The Go child's telemetry is disabled so the single `cli_command_executed`
-  event comes from this TS command.
+- The `--experimental` structured-dump mode (or the `SUPABASE_EXPERIMENTAL`
+  project-`.env` equivalent) is retired: the handler fails with
+  `LegacyDbPullExperimentalRetiredError` right after flag-mutex validation,
+  before `LegacyDbConfigResolver.resolve` runs, so no database connection is
+  attempted, no temp login role is minted, and no Docker containers are
+  provisioned — printing a message pointing at `--declarative` to stderr and
+  exiting non-zero. No Go binary is invoked for this flag combination.

@@ -25,7 +25,6 @@ import {
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
@@ -78,7 +77,6 @@ interface SetupOpts {
   readonly edgeFailFirstWith?: string;
   // resolvePoolerFallback returns Some(pooler conn) when true, None otherwise.
   readonly poolerAvailable?: boolean;
-  readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   readonly catalogStdout?: string; // stdout returned by pg-delta catalog-export runs
   // Initial-migra pull: the bytes the native pg_dump container streams to its sink,
   // its exit code / stderr, and (when set) an IPv6 stderr that fails the FIRST dump
@@ -226,21 +224,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
-  const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
-  const proxyCaptureCalls: Array<{
-    args: ReadonlyArray<string>;
-    env?: Record<string, string>;
-    stdin?: "inherit" | "ignore";
-  }> = [];
-  const proxy = Layer.succeed(LegacyGoProxy, {
-    exec: (args, execOpts) => Effect.sync(() => void proxyCalls.push({ args, env: execOpts?.env })),
-    execCapture: (args, execOpts) =>
-      Effect.sync(() => {
-        proxyCaptureCalls.push({ args, env: execOpts?.env, stdin: execOpts?.stdin });
-        return opts.delegateStdout ?? "";
-      }),
-  });
-
   const baseLayer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -250,7 +233,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     docker,
     dbConnection,
     resolver,
-    proxy,
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
@@ -281,8 +263,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out,
     provisionCalls,
     removedContainers,
-    proxyCalls,
-    proxyCaptureCalls,
     historyUpserts,
     execLog,
     poolerFallbackCalls,
@@ -672,8 +652,6 @@ describe("legacy db pull", () => {
       });
       return Effect.gen(function* () {
         yield* legacyDbPull(flags());
-        expect(s.proxyCalls).toHaveLength(0);
-        expect(s.proxyCaptureCalls).toHaveLength(0);
         // pg_dump ran with the schema-dump env (internal-schema exclude + comment strip).
         expect(s.dumpCalls).toHaveLength(1);
         expect(s.dumpCalls[0]?.env["EXTRA_SED"]).toBe("/^--/d");
@@ -713,8 +691,6 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
-      expect(s.proxyCalls).toHaveLength(0);
-      expect(s.proxyCaptureCalls).toHaveLength(0);
       const success = s.out.messages.find((m) => m.type === "success");
       // Machine mode never prompts, so history is updated on Go's default (true);
       // `schemaWritten` is the real native migration path (not null as when delegated).
@@ -1142,112 +1118,97 @@ describe("legacy db pull", () => {
     );
   });
 
-  it.effect("SUPABASE_EXPERIMENTAL delegates the structured-dump pull to Go", () => {
+  it.effect("SUPABASE_EXPERIMENTAL fails with the retired structured-dump message", () => {
+    // CLI-1957: the structured-dump mode is retired rather than delegated to Go.
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const prev = process.env["SUPABASE_EXPERIMENTAL"];
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
+      let error: unknown;
       try {
-        yield* legacyDbPull(flags());
+        error = yield* legacyDbPull(flags()).pipe(Effect.flip);
       } finally {
         if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
         else process.env["SUPABASE_EXPERIMENTAL"] = prev;
       }
-      expect(s.proxyCalls).toHaveLength(1);
-      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-      // The Go child's own `ConnectByConfig` prints the Connecting line; the
-      // parent must not print it too (it would appear twice in the stream).
+      expect(error).toMatchObject({
+        _tag: "LegacyDbPullExperimentalRetiredError",
+        message: expect.stringContaining("--declarative"),
+      });
+      // No connection attempt for a command that's about to fail.
       expect(streamText(s.out, "stderr")).not.toContain("Connecting to");
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("forwards an explicit --local=false target flag to the delegated pull", () => {
-    // Target flags are selectors keyed on flag.Changed in Go; dropping Some(false)
-    // would make the delegated child default to linked instead of the local target
-    // the native path selected.
+  it.effect("the global --experimental flag fails with the retired structured-dump message", () => {
+    // viper resolves EXPERIMENTAL from the pflag OR the env var; the flag form
+    // (`supabase --experimental db pull`) must fail just like the env form.
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ local: Option.some(false) }));
-      expect(s.proxyCalls[0]?.args).toContain("--local=false");
+      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "LegacyDbPullExperimentalRetiredError",
+        message: expect.stringContaining("--declarative"),
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an experimental pull in json mode also fails with the retired-mode error", () => {
+    // json/stream-json machine output must not silently succeed a removed mode, and
+    // must fail with the SAME tagged error as the text-mode paths, not just any error.
+    const s = setup(tmp.current, { experimental: true, format: "json" });
+    return Effect.gen(function* () {
+      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "LegacyDbPullExperimentalRetiredError",
+        message: expect.stringContaining("--declarative"),
+      });
+      expect(s.out.messages.find((m) => m.type === "success")).toBeUndefined();
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--declarative wins over --experimental and is unaffected by the retirement", () => {
+    // Go checks `usePgDelta` before `EXPERIMENTAL` (pull.go:47-50): declarative
+    // export must still run normally even when --experimental is also set.
+    const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+      expect(streamText(s.out, "stderr")).toContain(
+        "Preparing declarative schema export using pg-delta...",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect(
-    "delegated pull forwards resolved migration mode when the last alias occurrence is false",
+    "an explicit --experimental=false wins over SUPABASE_EXPERIMENTAL=true and pulls normally",
     () => {
-      // Parent resolves migration mode (last wins = false). The rebuilt delegate
-      // argv must forward that decision as `--declarative=false`, not replay the
-      // truthy `--declarative` alone — Go binds both aliases to one variable, so a
-      // lone `--declarative` would flip the child back to declarative export. The
-      // deprecated `--use-pg-delta` must NOT be forwarded (the parent already
-      // printed its deprecation line).
+      // viper's bound-pflag precedence: a SET pflag value wins over AutomaticEnv
+      // regardless of whether it's true or false, so `--experimental=false` must NOT
+      // be overridden by a truthy `SUPABASE_EXPERIMENTAL` — the pull proceeds as
+      // normal instead of hitting the retirement error (CLI-1957).
+      const prev = process.env["SUPABASE_EXPERIMENTAL"];
+      process.env["SUPABASE_EXPERIMENTAL"] = "true";
+      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
-        experimental: true,
-        args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+        args: ["db", "pull", "--experimental=false"],
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(
-          flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
-        );
-        expect(s.proxyCalls[0]?.args).toContain("--declarative=false");
-        expect(s.proxyCalls[0]?.args).not.toContain("--declarative");
-        expect(s.proxyCalls[0]?.args).not.toContain("--use-pg-delta");
-      }).pipe(Effect.provide(s.layer));
+        yield* legacyDbPull(flags());
+        expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
+            else process.env["SUPABASE_EXPERIMENTAL"] = prev;
+          }),
+        ),
+        Effect.provide(s.layer),
+      );
     },
   );
-
-  it.effect("delegated pull with --diff-engine and no alias omits --declarative entirely", () => {
-    // The "alias present" guard matters: forwarding --declarative=false alongside
-    // --diff-engine would trip Go's mutually-exclusive [declarative diff-engine]
-    // group (which fires on Changed regardless of value). With no alias passed, the
-    // delegate argv must carry only --diff-engine.
-    const s = setup(tmp.current, { experimental: true });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
-      expect(s.proxyCalls[0]?.args).toContain("--diff-engine");
-      expect(s.proxyCalls[0]?.args).not.toContain("--declarative=false");
-      expect(s.proxyCalls[0]?.args).not.toContain("--declarative");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("the global --experimental flag delegates the structured-dump pull to Go", () => {
-    // viper resolves EXPERIMENTAL from the pflag OR the env var; the flag form
-    // (`supabase --experimental db pull`) must delegate just like the env form.
-    const s = setup(tmp.current, { experimental: true });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
-      expect(s.proxyCalls).toHaveLength(1);
-      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-      // The Go child's own `ConnectByConfig` prints the Connecting line; the
-      // parent must not print it too (it would appear twice in the stream).
-      expect(streamText(s.out, "stderr")).not.toContain("Connecting to");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("an experimental pull in json mode reports no remote-history repair", () => {
-    // Go's structured-dump path returns before writing a migration or touching
-    // schema_migrations (pull.go:49-61), so the envelope must not claim a repair.
-    const s = setup(tmp.current, { experimental: true, format: "json" });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
-      expect(s.proxyCaptureCalls).toHaveLength(1);
-      const success = s.out.messages.find((m) => m.type === "success");
-      expect(success?.data).toMatchObject({ remoteHistoryUpdated: false });
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("re-quotes a comma-containing schema when delegating the pull", () => {
-    // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
-    // would let the Go child's pflag StringSlice CSV-split it into two schemas, so
-    // it must be re-encoded as a quoted CSV field.
-    const s = setup(tmp.current, { experimental: true });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ schema: ["tenant,one"] }));
-      const args = s.proxyCalls[0]?.args ?? [];
-      const idx = args.indexOf("--schema");
-      expect(args[idx + 1]).toBe('"tenant,one"');
-    }).pipe(Effect.provide(s.layer));
-  });
 
   it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
     // Go loads supabase/.env via godotenv before reading EXPERIMENTAL_PG_DELTA
