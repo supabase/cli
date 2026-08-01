@@ -5,7 +5,8 @@ import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
@@ -77,6 +78,34 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
   return { layer, runs };
 }
 
+/**
+ * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0 (image
+ * already cached) — feeds `legacyRunStartMigrateJob`'s own per-image `legacyEnsureImagesCached`
+ * resolve (see `db-setup.ts`), so every job's `image` resolves to the SAME raw string this
+ * suite's `baseInput` already asserts on, without needing a real Docker daemon.
+ */
+function mockAlwaysCachedSpawner(): ChildProcessSpawner.ChildProcessSpawner["Service"] {
+  return ChildProcessSpawner.make((_command) =>
+    Effect.gen(function* () {
+      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        exitCode: Deferred.await(exitDeferred),
+        isRunning: Effect.succeed(false),
+        stdin: Sink.drain,
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+}
+
 function mockDockerRunFails() {
   const layer = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.fail(new LegacyDockerRunError({ message: "failed to run docker" })),
@@ -124,6 +153,7 @@ function baseInput(
       storage: "public.ecr.aws/supabase/storage-api:v1.0.0",
       auth: "public.ecr.aws/supabase/gotrue:v2.170.0",
     },
+    projectEnvValues: undefined,
     ...overrides,
   };
 }
@@ -136,7 +166,11 @@ const run = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* legacyStartSetupLocalDatabase({ ...input, fs, path });
+    return yield* legacyStartSetupLocalDatabase(mockAlwaysCachedSpawner(), {
+      ...input,
+      fs,
+      path,
+    });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
