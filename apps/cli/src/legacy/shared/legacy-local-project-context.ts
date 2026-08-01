@@ -7,6 +7,7 @@ import {
 } from "@supabase/config";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
+import { legacyIsDockerClientEnvKey } from "./db-bootstrap/docker-create-args.ts";
 import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
 import { legacyResolveProjectEnvironmentValues } from "./legacy-project-environment.ts";
@@ -91,6 +92,26 @@ export const legacyLoadLocalProjectContext = <E>(
       try: () => legacyResolveProjectEnvironmentValues(projectEnv, workdir),
       catch: (cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`),
     });
+
+    // Go's `godotenv.Load` (`loadEnvIfExists`, called by `loadNestedEnv` above this same
+    // `Config.Load` pass, `pkg/config/config.go:1261`) installs every parsed dotenv key into
+    // the process's OWN environment via `os.Setenv` — never overriding an already-set key —
+    // so it's visible to every subsequent Docker-client-facing call in THIS process, not just
+    // to `Config.Load`'s own field decoding. `legacyGetHostname()` right below, and every
+    // Docker subprocess this context's callers (`start`/`stop`/`status`/`db start`) spawn
+    // afterward, read `DOCKER_HOST`/`DOCKER_CONTEXT`/etc straight from `process.env`
+    // (`legacy-hostname.ts`, `extendEnv: true` at every `docker`/`podman` spawn site) — a
+    // daemon target configured ONLY in a project `.env` file (never exported to the shell)
+    // must land here, before `legacyGetHostname()` runs, or this whole context resolves
+    // against the WRONG daemon. Deliberately permanent (unlike `legacyApplyProjectEnv`'s own
+    // narrower, explicitly-scoped opt-in around a single command's container work) — matching
+    // Go's own non-reverting `os.Setenv`, which persists for that single-command process's
+    // entire lifetime.
+    for (const [key, value] of Object.entries(projectEnvValues)) {
+      if (legacyIsDockerClientEnvKey(key) && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
 
     // An absent config.toml is not a failure — Go's `flags.LoadConfig` still resolves a project id
     // via the workdir basename default. Only a malformed file (`loadProjectConfig` failing rather
