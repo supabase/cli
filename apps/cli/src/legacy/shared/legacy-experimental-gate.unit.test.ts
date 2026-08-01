@@ -64,4 +64,28 @@ describe("legacyRequireExperimental", () => {
         expect(error).toBeInstanceOf(LegacyExperimentalRequiredError);
       }),
   );
+
+  it.effect(
+    "passes with SUPABASE_EXPERIMENTAL=1 when --experimental=false is a positional operand after --",
+    () =>
+      Effect.gen(function* () {
+        // Both pflag/cobra (`apps/cli-go`'s pinned cobra/pflag: a value placed after --
+        // never sets cmd.Flags().Changed(...)) and this CLI's own lexer
+        // (effect/unstable/cli/internal/lexer.ts, `argv.indexOf("--")`) stop parsing
+        // flags at the first bare `--`. A positional operand that merely LOOKS like a
+        // flag — e.g. a migration name literally called `--experimental=false` passed
+        // as `db pull -- --experimental=false` — must not be mistaken for an explicit
+        // `--experimental=false` and must not suppress the SUPABASE_EXPERIMENTAL=1
+        // AutomaticEnv fallback.
+        const saved = process.env[ENV];
+        process.env[ENV] = "1";
+        const exit = yield* legacyRequireExperimental.pipe(
+          Effect.provide(withFlag(false, ["--", "--experimental=false"])),
+          Effect.exit,
+        );
+        if (saved === undefined) delete process.env[ENV];
+        else process.env[ENV] = saved;
+        expect(exit._tag).toBe("Success");
+      }),
+  );
 });

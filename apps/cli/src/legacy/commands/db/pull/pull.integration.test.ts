@@ -1210,6 +1210,38 @@ describe("legacy db pull", () => {
     },
   );
 
+  it.effect(
+    "a migration name literally '--experimental=false' after -- does not suppress SUPABASE_EXPERIMENTAL",
+    () => {
+      // Both pflag/cobra (apps/cli-go's pinned cobra/pflag) and this CLI's own lexer
+      // (effect/unstable/cli/internal/lexer.ts, `argv.indexOf("--")`) stop parsing
+      // flags at the first bare `--` — `db pull -- --experimental=false` passes
+      // "--experimental=false" as the positional migration-name argument, NOT as an
+      // explicit flag occurrence. Unlike the unterminated `--experimental=false`
+      // case above, this must still hit the retirement error.
+      const prev = process.env["SUPABASE_EXPERIMENTAL"];
+      process.env["SUPABASE_EXPERIMENTAL"] = "true";
+      const s = setup(tmp.current, {
+        args: ["db", "pull", "--", "--experimental=false"],
+      });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "LegacyDbPullExperimentalRetiredError",
+          message: expect.stringContaining("--declarative"),
+        });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
+            else process.env["SUPABASE_EXPERIMENTAL"] = prev;
+          }),
+        ),
+        Effect.provide(s.layer),
+      );
+    },
+  );
+
   it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
     // Go loads supabase/.env via godotenv before reading EXPERIMENTAL_PG_DELTA
     // (config.go), so a project .env must select pg-delta even when the shell

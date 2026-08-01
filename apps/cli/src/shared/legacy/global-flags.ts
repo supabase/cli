@@ -140,17 +140,35 @@ export const legacyGlobalFlagValues = Effect.gen(function* () {
 const PFLAG_FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 
 /**
+ * Raw argv truncated at the first bare `--` operand terminator. Both pflag/cobra
+ * (verified against the pinned `apps/cli-go` versions: a value placed after `--`
+ * never sets `cmd.Flags().Changed(...)`) and this CLI's own lexer
+ * (`effect/unstable/cli/internal/lexer.ts`, which splits on `argv.indexOf("--")`
+ * into parsed tokens vs. `trailingOperands`) stop parsing flags at the first `--`
+ * — everything after is a positional operand, e.g. a migration name literally
+ * called `--experimental=false` passed as `db pull -- --experimental=false`. The
+ * argv-scanning `*ExplicitlyFalse` heuristics below must only look at the
+ * flag-parsing region, or a positional operand that merely looks like a flag gets
+ * mistaken for an explicit one.
+ */
+const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const terminatorIndex = args.indexOf("--");
+  return terminatorIndex === -1 ? args : args.slice(0, terminatorIndex);
+};
+
+/**
  * True when the raw argv contains an explicit `--yes=<false>` (pflag's `ParseBool`
  * false set). Go binds `--yes` to viper, so a *set* pflag value wins over
  * `AutomaticEnv`; `LegacyYesFlag` is a plain boolean that can't distinguish an
  * explicit `--yes=false` from the omitted default, so we scan the raw argv (global
- * flags are position-independent). Only `--yes=false` needs special handling: for
- * `--yes` / `--yes=true` the flag is already `true`, so `flag || env` matches Go,
- * and for an omitted flag the env fallback matches Go. Reading the raw argv also
- * sidesteps however the CLI parser coerces `--yes=false`.
+ * flags are position-independent) up to the first `--` operand terminator (see
+ * {@link argsBeforeOperandTerminator}). Only `--yes=false` needs special handling:
+ * for `--yes` / `--yes=true` the flag is already `true`, so `flag || env` matches
+ * Go, and for an omitted flag the env fallback matches Go. Reading the raw argv
+ * also sidesteps however the CLI parser coerces `--yes=false`.
  */
 const legacyYesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
-  args.some(
+  argsBeforeOperandTerminator(args).some(
     (arg) => arg.startsWith("--yes=") && PFLAG_FALSE_VALUES.has(arg.slice("--yes=".length)),
   );
 
@@ -200,12 +218,13 @@ export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string
  * lookup returns the flag value whenever `Changed` is true — BEFORE falling back to
  * `AutomaticEnv` — regardless of whether that value is `true` or `false`
  * (`viper@v1.21.0/viper.go:1176-1178`). A plain boolean can't distinguish an explicit
- * `--experimental=false` from the omitted default, so scan the raw argv. Only the `=false`
+ * `--experimental=false` from the omitted default, so scan the raw argv up to the first
+ * `--` operand terminator (see {@link argsBeforeOperandTerminator}). Only the `=false`
  * form needs special handling: `--experimental` / `--experimental=true` are already `true`,
  * so `flag || env` matches Go, and an omitted flag correctly falls through to the env value.
  */
 const legacyExperimentalFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
-  args.some(
+  argsBeforeOperandTerminator(args).some(
     (arg) =>
       arg.startsWith("--experimental=") &&
       PFLAG_FALSE_VALUES.has(arg.slice("--experimental=".length)),
