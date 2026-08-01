@@ -149,6 +149,10 @@ describe("legacyBuildStartContainerCreateArgs", () => {
     expect(legacyIsDockerClientEnvKey("DOCKER_CERT_PATH")).toBe(true);
     expect(legacyIsDockerClientEnvKey("DOCKER_CONTEXT")).toBe(true);
     expect(legacyIsDockerClientEnvKey("DOCKER_API_VERSION")).toBe(true);
+    // `docker/cli`'s `EnvOverrideConfigDir` (`cli/config/config.go:25`) — also read by
+    // `legacyGetHostname`'s `dockerConfigDir()`, so a project-dotenv-only override must reach
+    // `process.env` the same way `DOCKER_HOST`/`DOCKER_CONTEXT` already do (review: PRRT_kwDOErm0O86Vk-ex).
+    expect(legacyIsDockerClientEnvKey("DOCKER_CONFIG")).toBe(true);
     expect(legacyIsDockerClientEnvKey("DB_PASSWORD")).toBe(false);
   });
 
