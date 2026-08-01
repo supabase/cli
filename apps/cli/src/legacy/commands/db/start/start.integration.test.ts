@@ -758,6 +758,33 @@ describe("legacy db start", () => {
     },
   );
 
+  // Regression test for the exact gap the review thread found: `legacyEnvOverrideRealtimeIpVersion`/
+  // `legacyEnvOverrideRealtimeMaxHeaderLength` used to be invoked ONLY inside
+  // `legacyResolveDbBootstrapConfig`, which never runs once `legacyIsLocalDbRunning` short-circuits
+  // — so a malformed override was silently ignored whenever Postgres was already running, unlike
+  // Go's `flags.LoadConfig`, which decodes both fields unconditionally before
+  // `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86VmHkl).
+  it.live.each([
+    ["realtime.ip_version", "SUPABASE_REALTIME_IP_VERSION", "IPv5"],
+    ["realtime.max_header_length", "SUPABASE_REALTIME_MAX_HEADER_LENGTH", "not-a-uint"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override even when Postgres is already running",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   it.live(
     "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
     () => {

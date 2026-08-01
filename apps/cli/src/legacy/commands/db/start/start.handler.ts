@@ -26,6 +26,8 @@ import {
   legacyEnvOverrideMaxClientConn,
   legacyEnvOverridePoolMode,
   legacyEnvOverridePort,
+  legacyEnvOverrideRealtimeIpVersion,
+  legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyEnvOverrideUint,
   legacyResolveAuthEmail,
   legacyResolveAuthExternalProviders,
@@ -453,6 +455,19 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         "edge_runtime.inspector_port",
         projectEnvValues,
       ),
+    );
+
+    // Same gap for Realtime's `ip_version` (an enum via `UnmarshalText`) and
+    // `max_header_length` (a plain `uint`) — decoded in the same unconditional `Config.Load`
+    // pass as `edge_runtime.inspector_port` above (`pkg/config/config.go:252-253`), regardless
+    // of whether this eager battery itself ever reads them: they're only otherwise consumed by
+    // `legacyResolveDbBootstrapConfig` below, which never runs on the already-running
+    // short-circuit right after this block (review: PRRT_kwDOErm0O86VmHkl).
+    yield* wrapDbConfigOverride("realtime.ip_version", () =>
+      legacyEnvOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues),
+    );
+    yield* wrapDbConfigOverride("realtime.max_header_length", () =>
+      legacyEnvOverrideRealtimeMaxHeaderLength(config.realtime.max_header_length, projectEnvValues),
     );
 
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
