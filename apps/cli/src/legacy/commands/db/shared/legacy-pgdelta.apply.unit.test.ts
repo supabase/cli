@@ -201,6 +201,24 @@ describe("legacyFormatApplyFailure", () => {
     expect(message).toContain("(123#1)");
   });
 
+  test("renders a diagnosis with a null statementId as having no location, without throwing", () => {
+    // Reproduces a real pg-delta subprocess emitting
+    // `{"diagnostics":[{"message":"failed","statementId":null}]}` — Go's
+    // `(d *ApplyDiagnosis) UnmarshalJSON` (`apply.go:79-108`) explicitly maps a JSON
+    // `"statementId":null` to a nil `*ApplyStatementLocation`, and `formatStatementLocation`
+    // (`apply.go:263-274`) returns `""` for a nil pointer. A guard that only checked
+    // `resolved === undefined` (not `null`) would fall through to
+    // `legacyFormatStatementLocation`'s `resolved.filePath` and dereference a `null`, throwing a
+    // `TypeError` instead of rendering the rest of the diagnostic.
+    const parsed = JSON.parse(
+      '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":["e"],"diagnostics":[{"message":"failed","statementId":null}]}',
+    ) as LegacyPgDeltaApplyResult;
+    expect(() => legacyFormatApplyFailure(parsed, true)).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, true);
+    expect(message).toContain("- failed");
+    expect(message).not.toContain("undefined");
+  });
+
   test("a diagnosis with a statementId location and suggestedFix renders both", () => {
     const statementId: LegacyPgDeltaApplyStatementLocation = {
       filePath: "001_a.sql",

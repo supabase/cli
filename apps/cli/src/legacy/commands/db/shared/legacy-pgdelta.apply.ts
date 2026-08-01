@@ -76,7 +76,13 @@ export interface LegacyPgDeltaApplyStatementLocation {
 export interface LegacyPgDeltaApplyDiagnosis {
   readonly code?: string;
   readonly message?: string;
-  readonly statementId?: LegacyPgDeltaApplyStatementLocation | string;
+  // `| null` (not just `?`): Go's `(d *ApplyDiagnosis) UnmarshalJSON` (`apply.go:79-108`)
+  // explicitly maps a JSON `"statementId":null` to a nil `*ApplyStatementLocation`, and
+  // `formatStatementLocation` (`apply.go:263-274`) returns `""` for a nil pointer — so the TS
+  // path must accept `null` here as absent too, or a `JSON.parse`'d `null` reaches
+  // `legacyFormatStatementLocation`'s `resolved.filePath` and throws a `TypeError` instead of
+  // rendering the rest of the diagnostic.
+  readonly statementId?: LegacyPgDeltaApplyStatementLocation | string | null;
   readonly suggestedFix?: string;
 }
 
@@ -159,13 +165,18 @@ function legacyNormalizeApplyDiagnosis(
  * `?? ""` before `.trim()`: `filePath` is typed as `string | undefined`, but this whole module
  * types an untrusted `JSON.parse` of subprocess output, so a malformed payload can hand this a
  * non-string value (e.g. a number) at runtime — `?? ""` alone only substitutes `null`/
- * `undefined`, so a non-string, non-nullish value would still reach `.trim()` and throw.
+ * `undefined`, so a non-string, non-nullish value would still reach `.trim()` and throw. The
+ * `resolved === null` check (not just `undefined`) is the same shape: Go's `StatementID
+ * *ApplyStatementLocation` is a pointer, so `"statementId":null` unmarshals to `nil` and
+ * `formatStatementLocation`'s own `loc == nil` (`apply.go:264`) treats it as absent — checking
+ * only `undefined` here would fall through to `resolved.filePath` on a `null` and throw a
+ * `TypeError` instead of rendering the rest of the diagnostic.
  */
 function legacyFormatStatementLocation(
-  loc: LegacyPgDeltaApplyStatementLocation | string | undefined,
+  loc: LegacyPgDeltaApplyStatementLocation | string | null | undefined,
 ): string {
   const resolved = typeof loc === "string" ? { filePath: loc } : loc;
-  if (resolved === undefined) return "";
+  if (resolved === null || resolved === undefined) return "";
   const path = String(resolved.filePath ?? "").trim();
   if (path.length === 0) return "";
   if ((resolved.statementIndex ?? 0) > 0) return `${path}#${resolved.statementIndex}`;
