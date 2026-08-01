@@ -1,4 +1,5 @@
 import { Effect, type FileSystem, type Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 import { legacyPathMatch } from "./legacy-path-match.ts";
 
@@ -102,4 +103,51 @@ export const legacyGlobPattern = (
       }
     }
     return result;
+  });
+
+/**
+ * Port of Go's `walkMatchedDir` (`pkg/config/config.go:194-207`, called by `Glob.SQLFiles` on
+ * every directory match): a manual, non-recursing-through-`{recursive: true}` walk, because
+ * Go's `fs.WalkDir` never follows a symlinked `DirEntry` — its `IsDir()` is false for a
+ * symlink regardless of target, so `WalkDir` neither descends into a symlinked subdirectory
+ * nor lets `entry.Type().IsRegular()` (the `.sql`-file inclusion check) pass a symlinked file.
+ * The `FileSystem` service exposes no non-following `lstat`; `fs.readLink` succeeding on a
+ * path IS Effect's only non-following "is this a symlink" primitive, so it stands in for that
+ * check at each level, both for recursion (a symlinked directory is skipped, not walked) and
+ * for file inclusion (a symlinked `.sql` file is skipped, not applied) — using `fs.stat`
+ * (which follows) here instead would silently include a symlink's target, unlike Go. Returns
+ * paths relative to `dir`; the caller does the single final sort over the whole aggregate,
+ * matching Go's one `sort.Strings(files)` after the complete walk rather than per-directory.
+ *
+ * Hoisted here (from `legacy-migrate-and-seed.ts`, the first caller, for `db.migrations.
+ * schema_paths`) once `legacy-seed.ts`'s `db.seed.sql_paths` resolution became a second
+ * caller — Go's `Glob.SQLFiles` (`pkg/config/config.go:122-128`) is the SAME method both
+ * config fields resolve through (`GetPendingSeeds` calls `locals.SQLFiles(fsys)` exactly like
+ * `applySchemaFiles`'s `SchemaPaths.SQLFiles(fsys)`), so a matched seed directory must expand
+ * to its sorted regular `.sql` files exactly like a matched schema-path directory does.
+ */
+export const legacyWalkSqlFiles = (
+  fs: FileSystem.FileSystem,
+  dir: string,
+  relativePrefix: string,
+): Effect.Effect<ReadonlyArray<string>, PlatformError> =>
+  Effect.gen(function* () {
+    const names = yield* fs.readDirectory(dir);
+    const files: Array<string> = [];
+    for (const name of names) {
+      const absChild = `${dir}/${name}`;
+      const relChild = relativePrefix.length === 0 ? name : `${relativePrefix}/${name}`;
+      const isSymlink = yield* fs.readLink(absChild).pipe(
+        Effect.map(() => true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (isSymlink) continue;
+      const info = yield* fs.stat(absChild).pipe(Effect.orElseSucceed(() => undefined));
+      if (info?.type === "Directory") {
+        files.push(...(yield* legacyWalkSqlFiles(fs, absChild, relChild)));
+      } else if (info?.type === "File" && relChild.endsWith(".sql")) {
+        files.push(relChild);
+      }
+    }
+    return files;
   });
