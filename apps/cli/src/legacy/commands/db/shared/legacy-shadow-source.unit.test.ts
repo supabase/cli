@@ -268,6 +268,50 @@ describe("legacyLoadDeclaredSchemas", () => {
   });
 
   it.effect(
+    "does not follow a symlinked subdirectory in a recursively-matched schema_paths directory",
+    () => {
+      // Go's `fs.WalkDir` (`walkMatchedDir`, `config.go:194-211`) is `Lstat`-based and never
+      // descends into a symlinked directory (`io/fs.WalkDir` doc: "WalkDir does not follow
+      // symbolic links found in directories") — a schema dir symlinking OUT of the configured
+      // schema tree must not leak the linked directory's files into the diff/pull target.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "custom"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "custom", "real.sql"), "select 1;\n");
+      const outsideDir = join(workdir, "outside");
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(join(outsideDir, "secret.sql"), "select 2;\n");
+      symlinkSync(outsideDir, join(workdir, "supabase", "custom", "linked-dir"), "dir");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(fs, path, workdir, ["custom"], pgDelta());
+        expect(result).toEqual(["supabase/custom/real.sql"]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
+    "does not follow a symlinked subdirectory in the supabase/schemas fallback walk",
+    () => {
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "schemas"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "schemas", "real.sql"), "select 1;\n");
+      const outsideDir = join(workdir, "outside");
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(join(outsideDir, "secret.sql"), "select 2;\n");
+      symlinkSync(outsideDir, join(workdir, "supabase", "schemas", "linked-dir"), "dir");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [], pgDelta());
+        expect(result).toEqual(["supabase/schemas/real.sql"]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
     "falls back to supabase/schemas when the pg-delta declarative path exists but is a regular file",
     () => {
       // Go's `afero.DirExists` (`apps/cli-go/internal/db/diff/diff.go:63`) treats a non-directory

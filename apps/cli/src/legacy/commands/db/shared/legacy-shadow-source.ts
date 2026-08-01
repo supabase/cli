@@ -13,6 +13,7 @@
  */
 
 import { Effect, Option, Result, type FileSystem, type Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import type { GlobalFlag } from "effect/unstable/cli";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -291,6 +292,62 @@ function legacyHasConfigGlobMeta(pattern: string): boolean {
 }
 
 /**
+ * Manual, no-follow-symlink directory walk shared by `legacyGlobDeclaredSchemaPaths` (Go's
+ * `walkMatchedDir`/`fs.WalkDir`) and `legacyWalkSqlFilesSorted` (Go's `afero.Walk`). Both Go
+ * walkers are `Lstat`-based and therefore never descend into a symlinked directory —
+ * `io/fs.WalkDir`'s doc comment: "WalkDir does not follow symbolic links found in directories,
+ * but if root itself is a symbolic link, its target will be walked"; `afero.walk` confirms the
+ * same via its own `lstatIfPossible` call (`github.com/spf13/afero/path.go`), which reports a
+ * symlinked subdirectory's `IsDir()` as false so the recursive `walk` call returns without
+ * descending. Effect's `FileSystem.readDirectory(dir, { recursive: true })` is instead backed by
+ * Node's recursive `fs.readdir` (`NodeFileSystem.ts`'s `readDirectory` passes `options` straight
+ * to `fs.promises.readdir`), which DOES follow symlinked subdirectories — verified empirically: a
+ * directory containing a symlink to an external directory has the external directory's files
+ * appear in the recursive listing. Left uncorrected, a schema directory symlinking outside the
+ * configured schema tree would leak external `.sql` files into a local-target diff/pull that Go
+ * would never have picked up. Walking manually here, one `fs.readDirectory(dir)` (non-recursive)
+ * per level, and testing each entry with `readLink` BEFORE `stat` (the same no-follow-detector
+ * idiom as `cp.handler.ts`'s `walkUploadDir`) — skipping a symlinked directory entirely, exactly
+ * like Lstat-based Go — reproduces that behavior. Both Go walkers also finish with a plain
+ * `sort.Strings` over the complete set of collected paths (`config.go:186`,
+ * `internal/db/diff/diff.go:75,95`), which is a full lexicographic sort over full relative paths,
+ * NOT merely a per-directory-level sort — so the final `.sort()` below is required even though
+ * entries are already read in sorted order at each level.
+ */
+function legacyWalkRegularSqlFilesNoFollow(
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  rootAbs: string,
+): Effect.Effect<ReadonlyArray<string>, PlatformError> {
+  return Effect.gen(function* () {
+    const result: Array<string> = [];
+
+    const visit = (dirAbs: string, dirRel: string): Effect.Effect<void, PlatformError> =>
+      Effect.gen(function* () {
+        const names = [...(yield* fs.readDirectory(dirAbs))].sort();
+        for (const name of names) {
+          const entryAbs = path.join(dirAbs, name);
+          const entryRel = dirRel === "" ? name : `${dirRel}/${name}`;
+          const isSymlink = yield* fs.readLink(entryAbs).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (isSymlink) continue;
+          const entryStat = yield* fs.stat(entryAbs).pipe(Effect.orElseSucceed(() => undefined));
+          if (entryStat?.type === "Directory") {
+            yield* visit(entryAbs, entryRel);
+          } else if (entryStat?.type === "File" && entryRel.endsWith(".sql")) {
+            result.push(entryRel);
+          }
+        }
+      });
+
+    yield* visit(rootAbs, "");
+    return result.sort();
+  });
+}
+
+/**
  * Port of Go's `Glob.SQLFiles(fsys, WithSkipEmptyGlobs(), WithErrorOnAllSkippedGlobs())`
  * (`apps/cli-go/pkg/config/config.go:119-192`), the exact option combination
  * `loadDeclaredSchemas`'s `schema_paths` branch uses. Deliberately separate from
@@ -361,33 +418,17 @@ function legacyGlobDeclaredSchemaPaths(
         // error (e.g. a permission-denied or I/O-erroring subdirectory) as `failed to walk
         // matched directory: <err>` — it does NOT treat an unreadable directory as an empty
         // match set, since silently doing so can omit declared schemas and compare a
-        // local-target diff against the wrong target.
-        const namesResult = yield* fs
-          .readDirectory(absMatch, { recursive: true })
-          .pipe(Effect.result);
-        if (Result.isFailure(namesResult)) {
+        // local-target diff against the wrong target. `legacyWalkRegularSqlFilesNoFollow` also
+        // matches Go's no-follow-symlink walk semantics — see its doc comment.
+        const sqlRelativeResult = yield* legacyWalkRegularSqlFilesNoFollow(fs, path, absMatch).pipe(
+          Effect.result,
+        );
+        if (Result.isFailure(sqlRelativeResult)) {
           problems.push(`failed to walk matched directory: ${match}`);
           continue;
         }
-        const sqlRelative = namesResult.success
-          .map((name) => name.replaceAll("\\", "/"))
-          .filter((name) => name.endsWith(".sql"))
-          .sort();
-        for (const relative of sqlRelative) {
+        for (const relative of sqlRelativeResult.success) {
           const relativeToWorkdir = `${match}/${relative}`;
-          const absEntry = legacyResolveUnderWorkdir(path, workdir, relativeToWorkdir);
-          // Go's `entry.Type().IsRegular()` (`config.go:127`) is a no-follow check — a
-          // symlinked `.sql` file is excluded, not resolved through. Effect's `stat` alone
-          // follows symlinks (there is no `lstat`), so detect (and skip) a symlink first via
-          // `readLink` — the same no-follow-detector idiom as `cp.handler.ts`'s
-          // `walkUploadDir`/`legacy-seed-buckets.ts`.
-          const isSymlink = yield* fs.readLink(absEntry).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-          if (isSymlink) continue;
-          const entryStat = yield* fs.stat(absEntry).pipe(Effect.orElseSucceed(() => undefined));
-          if (entryStat?.type !== "File") continue;
           if (!seen.has(relativeToWorkdir)) {
             seen.add(relativeToWorkdir);
             result.push(relativeToWorkdir);
@@ -411,7 +452,8 @@ function legacyGlobDeclaredSchemaPaths(
 /**
  * Port of Go's `afero.Walk` + regular-`.sql`-file filter + `sort.Strings` (the shared tail of
  * both `loadDeclaredSchemas`'s pg-delta-declarative-dir and `SchemasDir` branches,
- * `apps/cli-go/internal/db/diff/diff.go:65-76,86-96`).
+ * `apps/cli-go/internal/db/diff/diff.go:65-76,86-96`). `legacyWalkRegularSqlFilesNoFollow` also
+ * matches Go's no-follow-symlink walk semantics — see its doc comment.
  */
 function legacyWalkSqlFilesSorted(
   fs: FileSystem.FileSystem,
@@ -421,35 +463,13 @@ function legacyWalkSqlFilesSorted(
 ): Effect.Effect<ReadonlyArray<string>, LegacyDeclarativeShadowDbError> {
   return Effect.gen(function* () {
     const dirAbs = legacyResolveUnderWorkdir(path, workdir, dirRel);
-    const names = yield* fs
-      .readDirectory(dirAbs, { recursive: true })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyDeclarativeShadowDbError({ message: `failed to walk dir: ${cause.message}` }),
-        ),
-      );
-    const sqlRelative = names
-      .map((name) => name.replaceAll("\\", "/"))
-      .filter((name) => name.endsWith(".sql"))
-      .sort();
-    const result: Array<string> = [];
-    for (const relative of sqlRelative) {
-      const relativeToWorkdir = `${dirRel}/${relative}`;
-      const absEntry = legacyResolveUnderWorkdir(path, workdir, relativeToWorkdir);
-      // See `legacyGlobDeclaredSchemaPaths`'s identical `readLink`-as-no-follow-detector
-      // comment: Go's `entry.Type().IsRegular()` excludes symlinks, and Effect's `stat`
-      // alone would follow them.
-      const isSymlink = yield* fs.readLink(absEntry).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
-      if (isSymlink) continue;
-      const entryStat = yield* fs.stat(absEntry).pipe(Effect.orElseSucceed(() => undefined));
-      if (entryStat?.type !== "File") continue;
-      result.push(relativeToWorkdir);
-    }
-    return result;
+    const sqlRelative = yield* legacyWalkRegularSqlFilesNoFollow(fs, path, dirAbs).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyDeclarativeShadowDbError({ message: `failed to walk dir: ${cause.message}` }),
+      ),
+    );
+    return sqlRelative.map((relative) => `${dirRel}/${relative}`);
   });
 }
 
