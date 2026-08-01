@@ -8,6 +8,7 @@ import {
 import { Effect, FileSystem, Path, Schema } from "effect";
 
 import { legacyIsDockerClientEnvKey } from "./db-bootstrap/docker-create-args.ts";
+import { LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY } from "./legacy-bitbucket-pipeline.ts";
 import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
 import { legacyResolveProjectEnvironmentValues } from "./legacy-project-environment.ts";
@@ -107,8 +108,16 @@ export const legacyLoadLocalProjectContext = <E>(
     // narrower, explicitly-scoped opt-in around a single command's container work) — matching
     // Go's own non-reverting `os.Setenv`, which persists for that single-command process's
     // entire lifetime.
+    //
+    // `BITBUCKET_CLONE_DIR` is included alongside the Docker-client keys for the same
+    // subsequent-process-env-read reason, even though it isn't itself a Docker-client-targeting
+    // var (see {@link LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY}'s own doc comment for why this one, and
+    // not `SUPABASE_SERVICES_HOSTNAME` right below, must be installed here: review:
+    // PRRT_kwDOErm0O86VmHkm).
     for (const [key, value] of Object.entries(projectEnvValues)) {
-      if (legacyIsDockerClientEnvKey(key) && process.env[key] === undefined) {
+      const installsFromProjectDotenv =
+        legacyIsDockerClientEnvKey(key) || key === LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY;
+      if (installsFromProjectDotenv && process.env[key] === undefined) {
         process.env[key] = value;
       }
     }
