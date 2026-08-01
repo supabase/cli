@@ -785,6 +785,33 @@ describe("legacy db start", () => {
     },
   );
 
+  // Same gap, same shape, different field: `auth.jwt_expiry` (a plain `uint`,
+  // `pkg/config/auth.go:155`) was only ever resolved as part of `values.authJwtExpiry`
+  // (`legacyResolveLocalConfigValues`), which this handler calls ONLY in the not-running branch —
+  // so a malformed override was silently ignored whenever Postgres was already running, unlike
+  // Go's `flags.LoadConfig`, which decodes it unconditionally before `AssertSupabaseDbIsRunning`
+  // (review: PRRT_kwDOErm0O86VmpeG).
+  it.live(
+    "fails with a typed config error on a malformed SUPABASE_AUTH_JWT_EXPIRY override even when Postgres is already running",
+    () => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_AUTH_JWT_EXPIRY=not-a-uint\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.jwt_expiry");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   it.live(
     "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
     () => {

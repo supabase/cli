@@ -220,6 +220,21 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     yield* wrapDbConfigOverride("auth.rate_limit", () =>
       legacyResolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
     );
+    // Same gap for `auth.jwt_expiry` — a plain `uint` (`pkg/config/auth.go:155`) decoded by the
+    // SAME unconditional `Config.Load` pass as `auth.rate_limit` above, with no `Enabled`-gated
+    // `validate()` method of its own. Below, it's only ever resolved as part of
+    // `values.authJwtExpiry` (`legacyResolveLocalConfigValues`), which this handler calls ONLY in
+    // the not-running branch — so a malformed `SUPABASE_AUTH_JWT_EXPIRY` would otherwise be
+    // silently accepted whenever Postgres is already running, unlike Go, which decodes it before
+    // `AssertSupabaseDbIsRunning` regardless (review: PRRT_kwDOErm0O86VmpeG).
+    yield* wrapDbConfigOverride("auth.jwt_expiry", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_AUTH_JWT_EXPIRY",
+        "auth.jwt_expiry",
+        config.auth.jwt_expiry,
+        projectEnvValues,
+      ),
+    );
 
     // The rest of the eager-validation battery: Go's `Config.Load` decodes the ENTIRE config
     // struct in one `v.UnmarshalExact` pass (`pkg/config/config.go`'s `(c *config) load`),
