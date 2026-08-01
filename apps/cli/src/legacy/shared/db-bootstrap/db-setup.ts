@@ -86,7 +86,7 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
 import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
-import { legacyServiceContainerName } from "../legacy-docker-ids.ts";
+import { LEGACY_CLI_PROJECT_LABEL, legacyServiceContainerName } from "../legacy-docker-ids.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
 import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
@@ -94,6 +94,7 @@ import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migratio
 import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
 import { ramInBytes } from "../legacy-size-units.ts";
 import { LegacyMigrationVaultError, legacyUpsertVaultSecrets } from "../legacy-vault.ts";
+import { LEGACY_COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
 import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "./realtime-env.ts";
 import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
 import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
@@ -326,6 +327,14 @@ const legacyStartInitSchemaPre15 = Effect.fnUntraced(function* (
  * `start-database.ts`'s own doc comment for why), and Go's registry-override env var applies
  * uniformly to every `DockerResolveImageIfNotCached` call, including project-`.env`-scoped
  * values — this call must see the same override the long-running containers' own resolve does.
+ *
+ * Labels the container with `com.supabase.cli.project`/`com.docker.compose.project`
+ * (`opts.projectId`), matching Go's `DockerStart`, which sets both unconditionally for
+ * every container it starts, one-shot jobs included (`docker.go:371-376`) — so if the
+ * client is interrupted or the daemon disconnects while this job is still running, the
+ * orphaned container is still discoverable (and removable) by `supabase stop`/rollback's
+ * project-label filter (`legacy-docker-remove-all.ts`), not left invisible to both
+ * (review: Codex, PR #6022).
  */
 const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
   spawner: Spawner,
@@ -334,6 +343,7 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
     readonly env: Readonly<Record<string, string>>;
     readonly cmd: ReadonlyArray<string>;
     readonly networkId: string;
+    readonly projectId: string;
     readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
     /** `--debug` — Go's `utils.GetDebugLogger()`, see this function's own doc comment. */
     readonly debug: boolean;
@@ -360,6 +370,10 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
     securityOpt: [],
     extraHosts,
     network: { _tag: "named", name: opts.networkId },
+    labels: {
+      [LEGACY_CLI_PROJECT_LABEL]: opts.projectId,
+      [LEGACY_COMPOSE_PROJECT_LABEL]: opts.projectId,
+    },
     // Already resolved, immediately above — `LegacyDockerRun.runCapture`'s own ambient-only
     // resolver must not re-resolve it (it doesn't see `opts.projectEnvValues` at all).
     skipImageResolve: true,
@@ -452,6 +466,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
     yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.realtime,
       networkId: input.networkId,
+      projectId: input.projectId,
       projectEnvValues: input.projectEnvValues,
       debug: input.debug,
       env: legacyBuildRealtimeEnv({
@@ -502,6 +517,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
     yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.storage,
       networkId: input.networkId,
+      projectId: input.projectId,
       projectEnvValues: input.projectEnvValues,
       debug: input.debug,
       env: storageEnv,
@@ -512,6 +528,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
     yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.auth,
       networkId: input.networkId,
+      projectId: input.projectId,
       projectEnvValues: input.projectEnvValues,
       debug: input.debug,
       env: legacyStartAuthMigrateEnv({

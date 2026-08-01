@@ -297,6 +297,33 @@ describe("legacyStartSetupLocalDatabase", () => {
     });
 
     it.effect(
+      "labels every one-shot job with the project's Docker labels, matching Go's DockerStart (review: Codex, PR #6022)",
+      () => {
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        // Default config: realtime, storage, and auth are all enabled — 3 jobs.
+        return run(
+          baseInput(workdir, session, { majorVersion: 15, projectId: "labeled-proj" }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            expect(docker.runs.length).toBe(3);
+            for (const job of docker.runs) {
+              expect(job.labels).toEqual({
+                "com.supabase.cli.project": "labeled-proj",
+                "com.docker.compose.project": "labeled-proj",
+              });
+            }
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
       "the realtime job's env matches `legacyBuildRealtimeEnv` on the internal db address + jwks",
       () => {
         const workdir = makeWorkdir();
