@@ -19,6 +19,7 @@ import {
   localDbContainerId,
 } from "../../../shared/legacy-docker-ids.ts";
 import {
+  legacyEnvOverride,
   legacyEnvOverrideApiMaxRows,
   legacyEnvOverrideAuthPasswordRequirements,
   legacyEnvOverrideBool,
@@ -44,7 +45,11 @@ import {
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
 } from "../../../shared/legacy-local-config-values.ts";
-import { legacyParseGoDuration } from "../../../shared/legacy-go-duration.ts";
+import {
+  legacyParseGoDuration,
+  legacyResolveHealthTimeoutSeconds,
+} from "../../../shared/legacy-go-duration.ts";
+import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import { legacyLoadLocalProjectContext } from "../../../shared/legacy-local-project-context.ts";
 import { legacyResolveDbBootstrapConfig } from "../../../shared/db-bootstrap/bootstrap-config.ts";
 import { legacyEnsureImagesCached } from "../../../shared/db-bootstrap/image-prepull.ts";
@@ -581,6 +586,45 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // whenever Postgres is already running, unlike Go (review: PRRT_kwDOErm0O86Vn3Hw).
     yield* wrapDbConfigOverride("db.settings", () =>
       legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+    );
+
+    // Same gap for the fresh-volume one-shot setup jobs' own `realtime.enabled`/
+    // `storage.file_size_limit` overrides and `db.health_timeout` — Go's `Config.Load`
+    // decodes all three in the same unconditional pass as the fields above (the bool via
+    // `mapstructure`'s `decodeBool`, `pkg/config/config.go:749-756`; the byte-size and
+    // duration via their own `UnmarshalText`/`StringToTimeDurationHookFunc` hooks,
+    // `config.go:39-49,580-586`). `legacyResolveDbBootstrapConfig` (below) is the only
+    // other place that parses `SUPABASE_REALTIME_ENABLED`/
+    // `SUPABASE_STORAGE_FILE_SIZE_LIMIT`/`SUPABASE_DB_HEALTH_TIMEOUT`, and it never runs
+    // on the already-running short-circuit right after this block — so a malformed
+    // override (e.g. `SUPABASE_DB_HEALTH_TIMEOUT=bogus`) would otherwise be silently
+    // accepted whenever Postgres is already running, unlike Go (review:
+    // PRRT_kwDOErm0O86VoJnt).
+    yield* wrapDbConfigOverride("realtime.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_REALTIME_ENABLED",
+        config.realtime.enabled,
+        "realtime.enabled",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("storage.file_size_limit", () =>
+      ramInBytes(
+        legacyEnvOverride(
+          "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
+          config.storage.file_size_limit,
+          projectEnvValues,
+        ) ?? config.storage.file_size_limit,
+      ),
+    );
+    yield* wrapDbConfigOverride("db.health_timeout", () =>
+      legacyResolveHealthTimeoutSeconds(
+        legacyEnvOverride(
+          "SUPABASE_DB_HEALTH_TIMEOUT",
+          config.db.health_timeout,
+          projectEnvValues,
+        ) ?? config.db.health_timeout,
+      ),
     );
 
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
