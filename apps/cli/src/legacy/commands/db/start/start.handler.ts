@@ -4,6 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
+  LegacyDebugFlag,
   LegacyNetworkIdFlag,
   legacyResolveExperimentalWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
@@ -99,6 +100,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
   const runtimeInfo = yield* RuntimeInfo;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
+  const debug = yield* LegacyDebugFlag;
 
   const body = Effect.gen(function* () {
     // Go's `flags.LoadConfig(fsys)` runs first thing in `start.Run`
@@ -388,6 +390,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         authEnabledForSetup: bootstrapConfig.authEnabledForSetup,
         serviceVersionOverrides: bootstrapConfig.serviceVersionOverrides,
         projectEnvValues,
+        debug,
       },
       onFreshVolumeResolved: (resolved) => {
         isFreshVolume = resolved;

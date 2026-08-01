@@ -1742,6 +1742,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // falls through to that SAME unconditional tail (`start.go:74-87`) rather
     // than returning early from the whole command.
     const bringUp = Effect.gen(function* () {
+      // `--debug` — threaded into `setup.debug` below so a failed fresh-volume
+      // Realtime/Storage/Auth migrate job (see `db-setup.ts`'s `legacyRunStartMigrateJob`
+      // doc comment) tees its own stderr, matching Go's `initSchema15` passing
+      // `utils.GetDebugLogger()` as that job's stderr writer (`start.go:349-353`).
+      const bringUpDebug = yield* LegacyDebugFlag;
+
       // Runs the exact Go `StartDatabase` sequence (network -> volume probe -> container
       // create+start -> health wait -> fresh-volume setup -> `_current_branch`) — shared
       // with `db start`'s own native container bootstrap, see `legacyStartDatabase`'s own
@@ -1849,6 +1855,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           authEnabledForSetup,
           serviceVersionOverrides,
           projectEnvValues,
+          debug: bringUpDebug,
         },
         onFreshVolumeResolved: (resolved) => {
           isFreshVolume = resolved;

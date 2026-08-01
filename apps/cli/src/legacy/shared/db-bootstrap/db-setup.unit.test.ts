@@ -63,10 +63,12 @@ function fakeSession() {
 
 function mockDockerRun(opts: { exitCode?: number } = {}) {
   const runs: Array<LegacyDockerRunOpts> = [];
+  const captureOptsCalls: Array<{ readonly teeStderr?: boolean } | undefined> = [];
   const layer = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.succeed(opts.exitCode ?? 0),
-    runCapture: (runOpts) => {
+    runCapture: (runOpts, captureOpts) => {
       runs.push(runOpts);
+      captureOptsCalls.push(captureOpts);
       return Effect.succeed({
         exitCode: opts.exitCode ?? 0,
         stdout: new Uint8Array(),
@@ -75,7 +77,7 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
     },
     runStream: () => Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" }),
   });
-  return { layer, runs };
+  return { layer, runs, captureOptsCalls };
 }
 
 /**
@@ -154,6 +156,7 @@ function baseInput(
       auth: "public.ecr.aws/supabase/gotrue:v2.170.0",
     },
     projectEnvValues: undefined,
+    debug: false,
     ...overrides,
   };
 }
@@ -392,6 +395,51 @@ describe("legacyStartSetupLocalDatabase", () => {
         );
       },
     );
+
+    it.effect(
+      "--debug tees every one-shot job's stderr, matching Go's utils.GetDebugLogger()",
+      () => {
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const config = decodeConfig({
+          realtime: { enabled: true },
+          storage: { enabled: false },
+          auth: { enabled: true },
+        });
+        return run(
+          baseInput(workdir, session, { majorVersion: 15, config, debug: true }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            expect(docker.runs.length).toBe(2);
+            expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect("without --debug, one-shot jobs run with teeStderr off", () => {
+      const workdir = makeWorkdir();
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
+      return run(
+        baseInput(workdir, session, { majorVersion: 15, config, debug: false }),
+        out,
+        docker,
+      ).pipe(
+        Effect.map(() => {
+          expect(docker.runs.length).toBe(1);
+          expect(docker.captureOptsCalls).toEqual([{ teeStderr: false }]);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
 
     it.effect("a non-zero exit from a one-shot job fails the whole pipeline", () => {
       const workdir = makeWorkdir();

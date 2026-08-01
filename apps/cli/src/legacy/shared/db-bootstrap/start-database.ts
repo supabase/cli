@@ -153,6 +153,8 @@ interface LegacyStartDatabaseSetupInput<E> {
   readonly authEnabledForSetup: boolean;
   readonly serviceVersionOverrides: LocalServiceVersionOverrides;
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /** `--debug` — threaded straight through to {@link LegacyStartSetupLocalDatabaseInput.debug}; see its own doc comment. */
+  readonly debug: boolean;
 }
 
 export interface LegacyStartDatabaseInput<E> {
@@ -350,6 +352,7 @@ export const legacyStartDatabase = <E>(
             storageTargetMigration: setup.storageTargetMigration,
             images: dbSetupImages,
             projectEnvValues: setup.projectEnvValues,
+            debug: setup.debug,
           });
         }),
       );

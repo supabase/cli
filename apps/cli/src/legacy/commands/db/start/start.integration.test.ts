@@ -20,6 +20,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
+  LegacyDebugFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
@@ -262,6 +263,8 @@ interface SetupOpts {
   readonly networkId?: string;
   /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
   readonly experimental?: boolean;
+  /** `--debug`. Defaults to `false`. */
+  readonly debug?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -302,6 +305,7 @@ function setup(opts: SetupOpts = {}) {
     ),
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
   );
   return { layer, out, telemetry, child, dbSession };
 }

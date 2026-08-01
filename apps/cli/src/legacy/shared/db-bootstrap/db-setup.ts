@@ -230,6 +230,13 @@ export interface LegacyStartSetupLocalDatabaseInput {
    * reads bare `process.env`.
    */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /**
+   * `--debug` — threaded to each PG15+ one-shot migrate job (see
+   * {@link legacyRunStartMigrateJob}'s own doc comment) so a failed Realtime/Storage/Auth
+   * migration job's own stderr is visible, matching Go's `initSchema15` passing
+   * `utils.GetDebugLogger()` as the job's stderr writer (`start.go:349-353`).
+   */
+  readonly debug: boolean;
 }
 
 const errMessage = (e: unknown): string =>
@@ -302,9 +309,13 @@ const legacyStartInitSchemaPre15 = Effect.fnUntraced(function* (
  * Runs one PG15+ one-shot service-migration job to completion (Go's
  * `utils.DockerRunJob` = `DockerRunOnceWithStream`, `docker.go:457-459,469-487`):
  * foreground, same Docker network as `db`, no entrypoint override (Go's plain
- * `Cmd` field), stdout discarded and stderr not teed (Go discards both outside
- * `--debug` — `utils.GetDebugLogger()`, `logger.go:10-15`). A non-zero exit fails
- * with the same shape as Go's `error running container: <cause>`.
+ * `Cmd` field), stdout always discarded (Go's own `stdout` writer here is always
+ * `io.Discard`, `start.go:352`) and stderr teed to the parent process's own stderr ONLY
+ * under `--debug` — Go passes `logger := utils.GetDebugLogger()` as the job's stderr
+ * writer (`os.Stderr` under `--debug`, else `io.Discard`, `logger.go:10-15`) — so a
+ * fresh-volume Realtime/Storage/Auth migration job's own diagnostics are visible when
+ * `db start --debug`/`supabase start --debug` is used, not just its exit code. A
+ * non-zero exit fails with the same shape as Go's `error running container: <cause>`.
  *
  * Resolves `opts.image` itself, individually, right here — via `legacyEnsureImagesCached`
  * (NOT `LegacyDockerRun.runCapture`'s own ambient-only resolver, which never sees
@@ -324,6 +335,8 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
     readonly cmd: ReadonlyArray<string>;
     readonly networkId: string;
     readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+    /** `--debug` — Go's `utils.GetDebugLogger()`, see this function's own doc comment. */
+    readonly debug: boolean;
   },
 ) {
   const docker = yield* LegacyDockerRun;
@@ -352,7 +365,7 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
     skipImageResolve: true,
   };
   const result = yield* docker
-    .runCapture(runOpts)
+    .runCapture(runOpts, { teeStderr: opts.debug })
     .pipe(Effect.mapError((cause) => new LegacyStartDbSetupError({ message: cause.message })));
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
@@ -440,6 +453,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
       image: input.images.realtime,
       networkId: input.networkId,
       projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: legacyBuildRealtimeEnv({
         ipVersion: input.config.realtime.ip_version,
         maxHeaderLength: input.config.realtime.max_header_length,
@@ -489,6 +503,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
       image: input.images.storage,
       networkId: input.networkId,
       projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: storageEnv,
       cmd: ["node", "dist/scripts/migrate-call.js"],
     });
@@ -498,6 +513,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
       image: input.images.auth,
       networkId: input.networkId,
       projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: legacyStartAuthMigrateEnv({
         apiUrl: input.apiUrl,
         authExternalUrl: input.authExternalUrl,
