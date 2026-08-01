@@ -10,9 +10,12 @@ structured-dump sub-branch (Go's `format.WriteStructuredSchemas`) has been
 retired (CLI-1957) rather than ported: it required a TS PostgreSQL DDL AST
 parser with no equivalent in this repo, while `--declarative` already delivers
 the same per-object schema split via pg-delta catalog introspection.
-`db pull --experimental` (or `SUPABASE_EXPERIMENTAL=true`) now fails fast — no
-Go binary is invoked, and no database connection is attempted — printing a
-removal message to stderr and exiting non-zero instead.
+`db pull --experimental` (or `SUPABASE_EXPERIMENTAL=true`) without `--declarative`
+now fails fast — no Go binary is invoked, and no database connection is
+attempted — printing a removal message to stderr and exiting non-zero instead.
+`--experimental --declarative` is unaffected: Go checks `usePgDelta` before
+`EXPERIMENTAL`, so that combination still connects and runs the declarative
+export normally (see the Notes/Delegation section below).
 
 ## Files Read
 
