@@ -1452,6 +1452,32 @@ const LEGACY_PASSWORD_REQUIREMENTS_VALUES = new Set([
   "lower_upper_letters_digits_symbols",
 ]);
 
+/**
+ * `auth.password_requirements`-flavored sibling of {@link legacyEnvOverrideEdgeRuntimePolicy} —
+ * Go's `PasswordRequirements.UnmarshalText` (`pkg/config/auth.go:26-31`) hard-fails config loading
+ * on a value outside this fixed set, same decode-time-failure semantics as the other `UnmarshalText`
+ * enums above. Extracted to its own exported function (rather than left inline in
+ * {@link legacyResolveLocalConfigValues}) so `db start`'s own eager-validation battery
+ * (`commands/db/start/start.handler.ts`) can call it directly instead of duplicating the check —
+ * mirroring how that battery already calls `legacyEnvOverrideBool`/`legacyEnvOverrideUint` directly
+ * for `auth.enable_signup`/`auth.refresh_token_reuse_interval` rather than going through the full
+ * resolver (review: PRRT_kwDOErm0O86VnEV6).
+ */
+export function legacyEnvOverrideAuthPasswordRequirements(
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string {
+  const override = legacyEnvOverride(
+    "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
+    undefined,
+    projectEnvValues,
+  );
+  if (override !== undefined && !LEGACY_PASSWORD_REQUIREMENTS_VALUES.has(override)) {
+    throw new Error(`Failed reading config: Invalid auth.password_requirements: ${override}.`);
+  }
+  return override ?? configured;
+}
+
 /** Narrows an unknown value to a plain object, mirroring `legacy-db-config.toml-read.ts`'s `asRecord`. */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -2742,24 +2768,10 @@ export function legacyResolveLocalConfigValues(
     config.auth.minimum_password_length,
     projectEnvValues,
   );
-  // Go's `PasswordRequirements.UnmarshalText` (`pkg/config/auth.go:26-31`)
-  // hard-fails config loading on a value outside this fixed set — same
-  // decode-time-failure semantics as the numeric overrides above, just
-  // string-typed.
-  const passwordRequirementsOverride = legacyEnvOverride(
-    "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
-    undefined,
+  const passwordRequirements = legacyEnvOverrideAuthPasswordRequirements(
+    config.auth.password_requirements,
     projectEnvValues,
   );
-  if (
-    passwordRequirementsOverride !== undefined &&
-    !LEGACY_PASSWORD_REQUIREMENTS_VALUES.has(passwordRequirementsOverride)
-  ) {
-    throw new Error(
-      `Failed reading config: Invalid auth.password_requirements: ${passwordRequirementsOverride}.`,
-    );
-  }
-  const passwordRequirements = passwordRequirementsOverride ?? config.auth.password_requirements;
   // `LoadedProjectConfig.document` (the raw, pre-schema-default TOML `config` was decoded from) —
   // hoisted here (rather than inside the `authEnabled` block below, where it used to live) because
   // the captcha presence check right below needs it too. `undefined` for callers that haven't

@@ -812,6 +812,39 @@ describe("legacy db start", () => {
     },
   );
 
+  // Same gap, same shape, remaining root-level `auth.*` scalars: none of these is referenced
+  // anywhere in `Config.Validate`'s `if c.Auth.Enabled` block (`pkg/config/config.go:1086-1153`),
+  // so — like `auth.jwt_expiry` above — each was only ever resolved as part of
+  // `legacyResolveLocalConfigValues`, which this handler calls ONLY in the not-running branch, and
+  // a malformed override was silently ignored whenever Postgres was already running, unlike Go's
+  // `flags.LoadConfig`, which decodes all of them unconditionally before
+  // `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86VnEV6).
+  it.live.each([
+    ["auth.enable_signup", "SUPABASE_AUTH_ENABLE_SIGNUP", "not-a-bool"],
+    ["auth.enable_anonymous_sign_ins", "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS", "not-a-bool"],
+    ["auth.enable_refresh_token_rotation", "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION", "not-a-bool"],
+    ["auth.refresh_token_reuse_interval", "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL", "not-a-uint"],
+    ["auth.enable_manual_linking", "SUPABASE_AUTH_ENABLE_MANUAL_LINKING", "not-a-bool"],
+    ["auth.minimum_password_length", "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH", "not-a-uint"],
+    ["auth.password_requirements", "SUPABASE_AUTH_PASSWORD_REQUIREMENTS", "not-a-requirement"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override even when Postgres is already running",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   it.live(
     "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
     () => {

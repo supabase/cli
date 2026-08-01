@@ -20,6 +20,7 @@ import {
 } from "../../../shared/legacy-docker-ids.ts";
 import {
   legacyEnvOverrideApiMaxRows,
+  legacyEnvOverrideAuthPasswordRequirements,
   legacyEnvOverrideBool,
   legacyEnvOverrideDefaultPoolSize,
   legacyEnvOverrideEdgeRuntimePolicy,
@@ -232,6 +233,77 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         "SUPABASE_AUTH_JWT_EXPIRY",
         "auth.jwt_expiry",
         config.auth.jwt_expiry,
+        projectEnvValues,
+      ),
+    );
+    // Same gap for the remaining root-level `auth.*` scalars — Go decodes ALL of them in the SAME
+    // unconditional `Config.Load` pass as `auth.jwt_expiry` above (`pkg/config/auth.go:158-163`),
+    // and NONE of them is referenced anywhere in `Config.Validate`'s `if c.Auth.Enabled` block
+    // (`config.go:1086-1153`) — so, like `auth.jwt_expiry`/`auth.rate_limit`, they're pure
+    // decode-time fields with no `Enabled`-gated `validate()` method of their own.
+    // `auth.enable_refresh_token_rotation`/`auth.enable_manual_linking`/
+    // `auth.enable_anonymous_sign_ins` (plain `bool`s), `auth.refresh_token_reuse_interval`/
+    // `auth.minimum_password_length` (plain `uint`s), and `auth.password_requirements` (an enum
+    // via `UnmarshalText`) are only otherwise resolved as part of `values.authEnableRefreshTokenRotation`/
+    // `values.authEnableManualLinking`/`values.authEnableAnonymousSignIns`/
+    // `values.authRefreshTokenReuseInterval`/`values.authMinimumPasswordLength`/
+    // `values.authPasswordRequirements` (`legacyResolveLocalConfigValues`), which — like
+    // `values.authJwtExpiry` above — this handler calls ONLY in the not-running branch, so a
+    // malformed override of any one of them would otherwise be silently accepted whenever Postgres
+    // is already running, unlike Go (review: PRRT_kwDOErm0O86VnEV6, which named
+    // `auth.refresh_token_reuse_interval`/`auth.enable_signup`/`auth.password_requirements` as
+    // examples of "the complete root-auth group").
+    yield* wrapDbConfigOverride("auth.enable_signup", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_SIGNUP",
+        config.auth.enable_signup,
+        "auth.enable_signup",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("auth.enable_anonymous_sign_ins", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
+        config.auth.enable_anonymous_sign_ins,
+        "auth.enable_anonymous_sign_ins",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("auth.enable_refresh_token_rotation", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
+        config.auth.enable_refresh_token_rotation,
+        "auth.enable_refresh_token_rotation",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("auth.refresh_token_reuse_interval", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
+        "auth.refresh_token_reuse_interval",
+        config.auth.refresh_token_reuse_interval,
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("auth.enable_manual_linking", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
+        config.auth.enable_manual_linking,
+        "auth.enable_manual_linking",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("auth.minimum_password_length", () =>
+      legacyEnvOverrideUint(
+        "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
+        "auth.minimum_password_length",
+        config.auth.minimum_password_length,
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("auth.password_requirements", () =>
+      legacyEnvOverrideAuthPasswordRequirements(
+        config.auth.password_requirements,
         projectEnvValues,
       ),
     );
