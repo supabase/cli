@@ -1518,6 +1518,50 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "warnOnUnresolvedEnv: false suppresses the S3 env WARN (review: Codex, PR #6022)",
+    () => {
+      // `start`/`db start`'s fresh-volume bootstrap reads this same config.toml more
+      // than once per invocation (an earlier, authoritative preflight call already
+      // warned) — internal re-reads pass `warnOnUnresolvedEnv: false` so Go's
+      // exactly-once `flags.LoadConfig` WARN isn't printed a second/third time.
+      delete process.env["LEGACY_S3_KEY_QUIET"];
+      const writes: Array<string> = [];
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+        writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      }) as typeof process.stderr.write;
+      const dir = withConfig(
+        [
+          "[db]",
+          "major_version = 15",
+          "[experimental]",
+          'orioledb_version = "15.1.0.55"',
+          's3_access_key = "env(LEGACY_S3_KEY_QUIET)"',
+          "",
+        ].join("\n"),
+      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyReadDbToml(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            // Config load still succeeds and still resolves the value; only the
+            // stderr WARN side effect is suppressed.
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.55");
+            expect(writes.join("")).not.toContain("WARN: environment variable is unset");
+            process.stderr.write = original;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("keeps the literal password when its env var is unset/empty", () => {
     // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
     // preserves the literal string. Password is a plain string field, so an

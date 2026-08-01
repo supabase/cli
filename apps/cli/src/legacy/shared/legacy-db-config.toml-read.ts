@@ -922,6 +922,19 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // wrapper uses this as its fallback after a config-load failure, mirroring the
   // best-effort behavior the container-id seam relied on before.
   ignoreConfigFile = false,
+  // Internal: gates the `assertEnvLoaded` OrioleDB S3 stderr WARN below (review:
+  // Codex, PR #6022). Go's `flags.LoadConfig` runs exactly once per command
+  // invocation, so the warning prints at most once. `start`/`db start`'s
+  // fresh-volume bootstrap calls this reader more than once in a single
+  // invocation — once purely for its Go-parity validation side effect
+  // (`start.handler.ts:614`, `db/start/start.handler.ts:125`, both discard the
+  // result), then again internally wherever a resolved value is actually needed
+  // (`legacyIsLocalDbRunning`'s best-effort `projectId` probe,
+  // `legacyStartSetupLocalDatabase`'s own accepted duplicate config-load pass —
+  // see `db-bootstrap/db-setup.ts`'s header). Those internal re-reads pass
+  // `false` so the warning still fires exactly once per invocation, matching
+  // Go, instead of two or three times.
+  warnOnUnresolvedEnv = true,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const configPath = path.join(supabaseDir, "config.toml");
@@ -1194,7 +1207,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (typeof raw !== "string") continue;
       const expanded = legacyExpandEnv(raw, lookup);
       const unset = ENV_PATTERN.exec(expanded);
-      if (unset !== null) {
+      if (unset !== null && warnOnUnresolvedEnv) {
         process.stderr.write(`WARN: environment variable is unset: ${unset[1] ?? ""}\n`);
       }
     }
@@ -2002,7 +2015,12 @@ export const legacyCheckDbToml = (
   path: Path.Path,
   workdir: string,
   ref?: string,
-) => readDbTomlCore(fs, path, workdir, ref, false);
+  // `warnOnUnresolvedEnv: false` — see `readDbTomlCore`'s own doc comment — for a
+  // caller known to run AFTER an earlier, same-invocation `legacyCheckDbToml`/
+  // `legacyReadDbToml` call already printed the OrioleDB S3 `assertEnvLoaded` WARN
+  // once. Omit (default `true`) for every standalone command entry point.
+  opts?: { readonly warnOnUnresolvedEnv?: boolean },
+) => readDbTomlCore(fs, path, workdir, ref, false, opts?.warnOnUnresolvedEnv ?? true);
 
 /**
  * Read `config.toml`. Defaults to Go's validating behavior (identical to
@@ -2017,17 +2035,19 @@ export const legacyReadDbToml = (
   path: Path.Path,
   workdir: string,
   ref?: string,
-  opts?: { readonly validate?: boolean },
-) =>
-  opts?.validate === false
-    ? readDbTomlCore(fs, path, workdir, ref, false).pipe(
+  opts?: { readonly validate?: boolean; readonly warnOnUnresolvedEnv?: boolean },
+) => {
+  const warnOnUnresolvedEnv = opts?.warnOnUnresolvedEnv ?? true;
+  return opts?.validate === false
+    ? readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv).pipe(
         // Fall back to the ignore-file defaults path (never re-reads the broken config)
         // so a best-effort caller gets a well-formed defaults result instead of a throw.
         Effect.catchTag("LegacyDbConfigLoadError", () =>
-          readDbTomlCore(fs, path, workdir, ref, true),
+          readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv),
         ),
       )
-    : readDbTomlCore(fs, path, workdir, ref, false);
+    : readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv);
+};
 
 /**
  * The effective declarative schema directory: the configured

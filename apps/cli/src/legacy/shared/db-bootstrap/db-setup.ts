@@ -655,7 +655,18 @@ export const legacyStartSetupLocalDatabase = (
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    const toml = yield* legacyCheckDbToml(fs, path, workdir);
+    // `warnOnUnresolvedEnv: false` — both `start.handler.ts` and `db/start/
+    // start.handler.ts` already ran an earlier, same-invocation `legacyCheckDbToml`
+    // purely for its Go-parity validation side effect (their own callers discard the
+    // result) before ever reaching this fresh-volume setup, so that earlier call
+    // already printed Go's single `assertEnvLoaded` OrioleDB S3 WARN, if any. Without
+    // this, this module's own accepted duplicate config-load pass (see this module's
+    // header) would print the SAME warning a second time — a real, observable stderr
+    // divergence from Go's exactly-once `flags.LoadConfig`, unlike the harmless
+    // resolved-value duplication the header describes.
+    const toml = yield* legacyCheckDbToml(fs, path, workdir, undefined, {
+      warnOnUnresolvedEnv: false,
+    });
 
     // SetupDatabase: initSchema -> ApplyApiPrivileges (start.go:383-389).
     yield* Effect.scoped(
