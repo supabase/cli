@@ -410,7 +410,7 @@ func TestPostgresURLWithoutPassword(t *testing.T) {
 	}
 	url := ToPostgresURLWithoutPassword(config)
 	// Same as ToPostgresURL but with the password omitted from the userinfo, so a
-	// credential is never written to stdout by the db __shadow seam.
+	// credential is never written to stdout by a caller that prints this URL.
 	assert.Equal(t, `postgresql://postgres@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
 	assert.NotContains(t, url, "%21%40%23")
 }

@@ -102,6 +102,14 @@ export const legacyBuildLocalDbContainerInputs = (
   workdir: string,
   networkIdFlag: Option.Option<string>,
   platform: string,
+  // The resolved `--linked` ref, when the caller already has one (`db diff`/`db pull` —
+  // CLI-1956) — threaded straight through to `legacyLoadLocalProjectContext` so the shadow's
+  // OWN container-spec fields (image, `db.major_version`, JWT secret, root key,
+  // `db.settings`, service enabled-for-setup flags) reflect the matching `[remotes.<ref>]`
+  // override, the same way `legacyReadDbToml(..., ref)` already does for those commands'
+  // other config read. `db start`/`db reset` never pass this — see that function's own doc
+  // comment.
+  projectRef?: string,
 ): Effect.Effect<
   LegacyLocalDbContainerInputs,
   LegacyDbConfigLoadError,
@@ -112,7 +120,7 @@ export const legacyBuildLocalDbContainerInputs = (
     const path = yield* Path.Path;
     const mapError = (message: string) => new LegacyDbConfigLoadError({ message });
 
-    const context = yield* legacyLoadLocalProjectContext(workdir, mapError);
+    const context = yield* legacyLoadLocalProjectContext(workdir, mapError, projectRef);
     const { config, projectEnvValues, loaded, hostname, projectId } = context;
     // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
     // inside `legacyRunFreshDbSetup`'s fresh-volume setup pipeline — see this field's own doc

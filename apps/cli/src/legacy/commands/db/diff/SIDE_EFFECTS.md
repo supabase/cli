@@ -7,29 +7,33 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 
 ## Files Read
 
-| Path                                               | Format     | When                                                              |
-| -------------------------------------------------- | ---------- | ----------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                   | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version) |
-| `<workdir>/supabase/migrations/*.sql`              | SQL        | shadow provisioning (applied to the shadow source)                |
-| `<workdir>/supabase/database/**` (declarative dir) | SQL        | local target when declarative schemas exist                       |
-| `~/.supabase/access-token`                         | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`           |
-| `<workdir>/supabase/.temp/project-ref`             | plain text | `--linked` ref resolution                                         |
-| `<workdir>/supabase/.temp/pgdelta/*.json`          | JSON       | explicit `--from/--to migrations` catalog (cache)                 |
+| Path                                                                                                                                 | Format     | When                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ---------- | -------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                                                     | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version)                      |
+| `<workdir>/supabase/migrations/*.sql`                                                                                                | SQL        | shadow provisioning (applied to the shadow source)                                     |
+| `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` (pg-delta declarative dir) / `<workdir>/supabase/schemas/**` | SQL        | local target: 3-source declarative-schema fallback ladder, first non-empty source wins |
+| `~/.supabase/access-token`                                                                                                           | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                |
+| `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | `--linked` ref resolution                                                              |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                                                                                            | JSON       | explicit `--from/--to migrations` catalog (cache)                                      |
 
 ## Files Written
 
-| Path                                                        | Format | When                                            |
-| ----------------------------------------------------------- | ------ | ----------------------------------------------- |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | `--file <name>` and the diff is non-empty       |
-| `<path>` (from `--output` / `-o`)                           | SQL    | explicit `--from/--to` mode with `--output`     |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                   | JSON   | explicit `--from/--to migrations` catalog cache |
-| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | `--linked` (post-run cache)                     |
-| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)                     |
+| Path                                                              | Format | When                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`       | SQL    | `--file <name>` and the diff is non-empty                                                                                                                                                                                                 |
+| `<path>` (from `--output` / `-o`)                                 | SQL    | explicit `--from/--to` mode with `--output`                                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                         | JSON   | explicit `--from/--to migrations` catalog cache                                                                                                                                                                                           |
+| `~/.supabase/<workdir-hash>/linked-project.json`                  | JSON   | `--linked` (post-run cache)                                                                                                                                                                                                               |
+| `~/.supabase/telemetry.json`                                      | JSON   | every invocation (post-run)                                                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/start-secrets/shadow-<random>/secret-0` | binary | PG >= 15 only: the shadow container's pgsodium root key, staged as a host bind-mount source. Randomized per invocation, reclaimed (`rm -rf`) once the shadow container is torn down — see `legacyRemoveShadowDatabase`'s own doc comment. |
 
 ## Docker
 
-- Edge-runtime container (pg-delta / migra diff scripts).
-- Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam).
+- Edge-runtime container (pg-delta / migra diff scripts; also the declarative
+  pg-delta apply script for the local-target branch).
+- Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource`
+  in `legacy/commands/db/shared/legacy-shadow-source.ts`, over the lower-level primitives in
+  `legacy/shared/db-bootstrap/shadow-database.ts`), no longer via a Go seam.
 - `supabase/migra` container — the migra OOM bash fallback only.
 
 ## API Routes (linked path, via the db-config resolver)

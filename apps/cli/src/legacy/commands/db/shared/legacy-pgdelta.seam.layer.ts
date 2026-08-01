@@ -5,7 +5,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import { LegacyNetworkIdFlag, LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { containerCliExitCode, spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
@@ -14,8 +14,7 @@ import {
   localDbContainerId,
 } from "../../../shared/legacy-docker-ids.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
-import { LegacyDeclarativeSeam, type LegacyShadowSource } from "./legacy-pgdelta.seam.service.ts";
-import { legacyInjectPostgresPassword } from "./legacy-pgdelta.seam.url.ts";
+import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
 
 /**
  * Real `LegacyDeclarativeSeam`: runs the bundled `supabase-go`'s hidden
@@ -75,7 +74,9 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               // calls `flags.LoadConfig` directly without `LoadProjectRef`, so the
               // env (read only by LoadProjectRef) never reaches the merge — the Go
               // command seeds `flags.ProjectRef` from `--project-ref` before
-              // LoadConfig instead (mirrors `db __shadow`).
+              // LoadConfig instead (the same trick the Go `db __shadow` hidden
+              // command used to use, before CLI-1956 removed it in favor of a
+              // native shadow-provisioning port).
               ...(projectRef !== undefined ? ["--project-ref", projectRef] : []),
               ...profileArgs,
             ];
@@ -379,128 +380,6 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             );
           }),
         ),
-      provisionShadow: ({ mode, targetLocal, usePgDelta, schema, projectRef }) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            if (!("found" in resolved)) {
-              return yield* Effect.fail(
-                new LegacyDeclarativeShadowDbError({
-                  message:
-                    "Could not find the supabase-go binary required to provision the shadow database.",
-                }),
-              );
-            }
-            const args = [
-              "db",
-              "__shadow",
-              "--mode",
-              mode,
-              ...(targetLocal ? ["--target-local"] : []),
-              ...(usePgDelta ? ["--use-pg-delta"] : []),
-              ...(schema.length > 0 ? ["--schema", schema.join(",")] : []),
-              ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
-              // Linked path only: pass the resolved ref so the hidden `db __shadow`
-              // child's LoadConfig merges the matching `[remotes.<ref>]` override
-              // into the shadow baseline (db.major_version, service enables, vault),
-              // matching the Go monolith which builds the shadow from the
-              // remote-merged config. A flag (not env) keeps the Go-proxy channel
-              // parity and avoids over-merging on local/db-url shadows.
-              ...(projectRef !== undefined ? ["--project-ref", projectRef] : []),
-              ...profileArgs,
-            ];
-            const command = ChildProcess.make(resolved.found, args, {
-              cwd: cliConfig.workdir,
-              stdin: "inherit",
-              stdout: "pipe",
-              stderr: "inherit",
-              extendEnv: true,
-              // Disable the child's telemetry so the hidden `db __shadow` seam
-              // doesn't record its own `cli_command_executed` (and run Go post-run
-              // work) on top of the user's TS command, matching the explicit
-              // LegacyGoProxy delegates which set the same env.
-              env: { SUPABASE_TELEMETRY_DISABLED: "1" },
-              detached: false,
-            });
-            const handle = yield* spawner.spawn(command).pipe(
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: "failed to run the shadow-database provisioner (supabase-go).",
-                  }),
-              ),
-            );
-            const chunks: Array<Uint8Array> = [];
-            yield* Stream.runForEach(handle.stdout, (chunk) =>
-              Effect.sync(() => {
-                chunks.push(chunk);
-              }),
-            ).pipe(Effect.mapError(() => failure()));
-            const exitCode = yield* handle.exitCode.pipe(Effect.mapError(() => failure()));
-            if (exitCode !== 0) {
-              return yield* Effect.fail(failure(exitCode));
-            }
-            const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-            const bytes = new Uint8Array(total);
-            let offset = 0;
-            for (const chunk of chunks) {
-              bytes.set(chunk, offset);
-              offset += chunk.length;
-            }
-            // stdout is three newline-separated lines: container id, source URL,
-            // and an optional target-override URL (empty unless the local-target
-            // declarative branch redirected the target to a second shadow db).
-            // The URLs arrive WITHOUT a password — the Go seam prints them via
-            // ToPostgresURLWithoutPassword so it never logs a credential to stdout
-            // (CWE-312). The shadow uses the local Postgres password, so we re-inject
-            // the password resolved from config.toml before handing the URLs to the
-            // differ / sql-pg connection. On the linked path the child built the
-            // shadow from the remote-merged config (via --project-ref), so re-read
-            // with the same ref to pick up a `[remotes.<ref>].db.password` override —
-            // otherwise the injected password wouldn't match the shadow's and the
-            // connection would fail auth. Absent (local/db-url) → base config.
-            const lines = new TextDecoder().decode(bytes).split(/\r?\n/u);
-            const container = (lines[0] ?? "").trim();
-            const sourceUrl = (lines[1] ?? "").trim();
-            const targetOverride = (lines[2] ?? "").trim();
-            if (container.length === 0 || sourceUrl.length === 0) {
-              return yield* Effect.fail(failure());
-            }
-            const password = yield* legacyReadDbToml(fs, path, cliConfig.workdir, projectRef).pipe(
-              Effect.map((toml) => toml.password),
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message:
-                      "failed to read the local database password from config.toml to connect to the shadow database.",
-                  }),
-              ),
-            );
-            return {
-              container,
-              sourceUrl: legacyInjectPostgresPassword(sourceUrl, password),
-              targetUrlOverride:
-                targetOverride.length > 0
-                  ? legacyInjectPostgresPassword(targetOverride, password)
-                  : undefined,
-            } satisfies LegacyShadowSource;
-          }),
-        ),
-      removeShadowContainer: (container) =>
-        Effect.gen(function* () {
-          if (container.length === 0) return;
-          // Remove the shadow left running by provisionShadow. Best-effort — a
-          // failure here must never mask the diff result. `-v` removes the
-          // Postgres anonymous data volume too, matching Go's `DockerRemove`
-          // (`RemoveOptions{RemoveVolumes: true, Force: true}`,
-          // `internal/utils/docker.go:330`); without it every shadow leaves a
-          // dangling volume behind.
-          yield* containerCliExitCode(spawner, ["rm", "-f", "-v", container], {
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "ignore",
-            extendEnv: true,
-          }).pipe(Effect.ignore);
-        }),
     });
   }),
 );

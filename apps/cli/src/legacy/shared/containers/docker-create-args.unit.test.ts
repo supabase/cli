@@ -115,6 +115,36 @@ describe("legacyBuildStartContainerCreateArgs", () => {
     ]);
   });
 
+  test("omits --name entirely when containerName is empty (Docker auto-generates one, e.g. the shadow database)", () => {
+    const spec: LegacyStartContainerSpec = {
+      image: "supabase/postgres:17.4.1.030",
+      containerName: "",
+      env: {},
+      binds: [],
+      networkId: "supabase_network_proj",
+      labels: {},
+    };
+    const args = legacyBuildStartContainerCreateArgs(spec);
+    expect(args).not.toContain("--name");
+    expect(args).toEqual(["create", "--network", "supabase_network_proj", spec.image]);
+  });
+
+  test("emits --rm when autoRemove is true, omits it otherwise", () => {
+    const base: LegacyStartContainerSpec = {
+      image: "supabase/postgres:17.4.1.030",
+      containerName: "",
+      env: {},
+      binds: [],
+      networkId: "supabase_network_proj",
+      labels: {},
+    };
+    expect(legacyBuildStartContainerCreateArgs(base)).not.toContain("--rm");
+    expect(legacyBuildStartContainerCreateArgs({ ...base, autoRemove: true })).toContain("--rm");
+    expect(legacyBuildStartContainerCreateArgs({ ...base, autoRemove: false })).not.toContain(
+      "--rm",
+    );
+  });
+
   test("never serializes env values into argv (CWE-214: secrets must not leak to ps)", () => {
     const args = legacyBuildStartContainerCreateArgs(full);
     expect(args).toContain("DB_PASSWORD");

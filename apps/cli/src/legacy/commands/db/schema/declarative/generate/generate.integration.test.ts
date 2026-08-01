@@ -106,8 +106,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             : Effect.void,
         ),
       ),
-    provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
-    removeShadowContainer: () => Effect.void,
   });
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {

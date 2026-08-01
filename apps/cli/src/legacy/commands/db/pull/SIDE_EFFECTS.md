@@ -11,26 +11,31 @@ binary (it needs `format.WriteStructuredSchemas`, which has no TS port yet).
 
 ## Files Read
 
-| Path                                   | Format     | When                                                |
-| -------------------------------------- | ---------- | --------------------------------------------------- |
-| `<workdir>/supabase/config.toml`       | TOML       | always (db port/password, `[experimental.pgdelta]`) |
-| `<workdir>/supabase/migrations/*.sql`  | SQL        | history reconciliation + shadow provisioning        |
-| `~/.supabase/access-token`             | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`       |
-| `<workdir>/supabase/.temp/project-ref` | plain text | linked ref resolution                               |
+| Path                                                                                                                                 | Format     | When                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.toml`                                                                                                     | TOML       | always (db port/password, `[experimental.pgdelta]`)                                                                                              |
+| `<workdir>/supabase/migrations/*.sql`                                                                                                | SQL        | history reconciliation + shadow provisioning                                                                                                     |
+| `~/.supabase/access-token`                                                                                                           | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`                                                                                                    |
+| `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | linked ref resolution                                                                                                                            |
+| `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` (pg-delta declarative dir) / `<workdir>/supabase/schemas/**` | SQL        | migration-style pull against the local target only: 3-source declarative-schema fallback ladder, first non-empty source wins (same as `db diff`) |
 
 ## Files Written
 
-| Path                                                        | Format | When                                                                       |
-| ----------------------------------------------------------- | ------ | -------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed) |
-| `<workdir>/supabase/database/**`                            | SQL    | `--declarative`                                                            |
-| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | linked (post-run cache)                                                    |
-| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)                                                |
+| Path                                                              | Format | When                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`       | SQL    | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed)                                                                                                                                                                |
+| `<workdir>/supabase/database/**`                                  | SQL    | `--declarative`                                                                                                                                                                                                                           |
+| `~/.supabase/<workdir-hash>/linked-project.json`                  | JSON   | linked (post-run cache)                                                                                                                                                                                                                   |
+| `~/.supabase/telemetry.json`                                      | JSON   | every invocation (post-run)                                                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/start-secrets/shadow-<random>/secret-0` | binary | PG >= 15 only: the shadow container's pgsodium root key, staged as a host bind-mount source. Randomized per invocation, reclaimed (`rm -rf`) once the shadow container is torn down — see `legacyRemoveShadowDatabase`'s own doc comment. |
 
 ## Docker
 
 - Edge-runtime container (pg-delta export / pg-delta or migra diff).
-- Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam).
+- Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource` in
+  `legacy/commands/db/shared/legacy-shadow-source.ts` / `legacyPrepareRawShadow` in
+  `legacy/shared/db-bootstrap/shadow-database.ts`, which also owns the lower-level primitives
+  both build on), no longer via a Go seam.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
   (`legacyStreamPgDump`, shared with `db dump`).

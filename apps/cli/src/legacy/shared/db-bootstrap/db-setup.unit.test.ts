@@ -109,7 +109,7 @@ function baseInput(
     config: defaultConfig,
     experimental: false,
     majorVersion: 17,
-    projectId: "proj",
+    dbHost: "supabase_db_proj",
     networkId: "supabase_network_proj",
     dbUrl: "postgresql://postgres:postgrespassword@127.0.0.1:54322/postgres",
     jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
@@ -273,7 +273,7 @@ describe("legacyStartSetupLocalDatabase", () => {
           baseInput(workdir, session, {
             majorVersion: 15,
             config,
-            projectId: "myproj",
+            dbHost: "supabase_db_myproj",
             jwks: '{"keys":["stub"]}',
           }),
           out,

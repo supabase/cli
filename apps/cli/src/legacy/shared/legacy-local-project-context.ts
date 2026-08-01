@@ -53,6 +53,14 @@ export interface LegacyLocalProjectContext {
 export const legacyLoadLocalProjectContext = <E>(
   workdir: string,
   mapConfigLoadError: (message: string) => E,
+  // The resolved `--linked` ref, when the caller already has one in scope (`db diff`/`db
+  // pull`'s shadow-provisioning prelude — CLI-1956) — threaded straight into
+  // `loadProjectConfig`'s own `projectRef` option so the matching `[remotes.<ref>]` block
+  // merges over the base config, exactly like `legacyReadDbToml(..., ref)` already does for
+  // those same commands' OTHER config read. `db start`/`db reset` never pass this (neither
+  // operates against a linked target), so it defaults to `undefined` — no remote merge,
+  // unchanged from before.
+  projectRef?: string,
 ): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // `search: false`: `workdir` already IS Go's fully-resolved chdir target (`legacy-cli-config.
@@ -104,6 +112,7 @@ export const legacyLoadLocalProjectContext = <E>(
       // `config.toml`.
       tomlOnly: true,
       goViperCompat: true,
+      projectRef,
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );

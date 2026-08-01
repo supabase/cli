@@ -1,0 +1,289 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Cause, Effect, Exit, FileSystem, Layer } from "effect";
+
+import { LegacyDebugFlag } from "../../../../shared/legacy/global-flags.ts";
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import {
+  type LegacyEdgeRuntimeRunOpts,
+  type LegacyEdgeRuntimeRunResult,
+  LegacyEdgeRuntimeScript,
+} from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
+import { legacyApplyDeclarativePgDelta } from "./legacy-pgdelta.apply.ts";
+import type { LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+
+const CTX: LegacyPgDeltaContext = {
+  projectId: "ref",
+  cwd: "/proj",
+  npmVersion: undefined,
+  denoVersion: 2,
+};
+
+function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: string } = {}) {
+  const calls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (opts: LegacyEdgeRuntimeRunOpts) => {
+      calls.push(opts);
+      if (outcome.fail !== undefined) {
+        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: outcome.fail }));
+      }
+      return Effect.succeed({
+        stdout: outcome.stdout ?? "",
+        stderr: outcome.stderr ?? "",
+      } satisfies LegacyEdgeRuntimeRunResult);
+    },
+  });
+  return { layer, calls };
+}
+
+function makeDeclarativeDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-apply-"));
+  mkdirSync(join(dir, "declarative"), { recursive: true });
+  writeFileSync(join(dir, "declarative", "public.sql"), "create table t ();");
+  return join(dir, "declarative");
+}
+
+const failError = (exit: Exit.Exit<unknown, unknown>) =>
+  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
+
+describe("legacyApplyDeclarativePgDelta", () => {
+  it.effect("fails with LegacyDeclarativeApplyError when the declarative dir doesn't exist", () => {
+    const edge = fakeEdgeRuntime();
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+        fs,
+        declarativeDirAbs: "/does/not/exist",
+        target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+      }).pipe(Effect.exit);
+      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      expect((failError(exit) as { message: string }).message).toContain(
+        "declarative schema directory not found",
+      );
+      // Never even reaches the edge-runtime — the exists() check runs first.
+      expect(edge.calls).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          edge.layer,
+          out.layer,
+          Layer.succeed(LegacyDebugFlag, false),
+        ),
+      ),
+    );
+  });
+
+  it.effect("maps an edge-runtime failure to LegacyDeclarativeApplyError", () => {
+    const dir = makeDeclarativeDir();
+    const edge = fakeEdgeRuntime({ fail: "error running pg-delta script: boom" });
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+        fs,
+        declarativeDirAbs: dir,
+        target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+      }).pipe(Effect.exit);
+      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      expect((failError(exit) as { message: string }).message).toBe(
+        "error running pg-delta script: boom",
+      );
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          edge.layer,
+          out.layer,
+          Layer.succeed(LegacyDebugFlag, false),
+        ),
+      ),
+    );
+  });
+
+  it.effect("fails with a parse error WITHOUT the raw stdout when --debug is unset", () => {
+    const dir = makeDeclarativeDir();
+    const edge = fakeEdgeRuntime({ stdout: "not json{" });
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+        fs,
+        declarativeDirAbs: dir,
+        target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+      }).pipe(Effect.exit);
+      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      const message = (failError(exit) as { message: string }).message;
+      expect(message).toContain("failed to parse pg-delta apply output");
+      expect(message).not.toContain("stdout:");
+      expect(message).not.toContain("not json{");
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          edge.layer,
+          out.layer,
+          Layer.succeed(LegacyDebugFlag, false),
+        ),
+      ),
+    );
+  });
+
+  it.effect("fails with a parse error INCLUDING the raw stdout when --debug is set", () => {
+    const dir = makeDeclarativeDir();
+    const edge = fakeEdgeRuntime({ stdout: "not json{" });
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+        fs,
+        declarativeDirAbs: dir,
+        target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+      }).pipe(Effect.exit);
+      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      const message = (failError(exit) as { message: string }).message;
+      expect(message).toContain("failed to parse pg-delta apply output");
+      expect(message).toContain("stdout: not json{");
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          edge.layer,
+          out.layer,
+          Layer.succeed(LegacyDebugFlag, true),
+        ),
+      ),
+    );
+  });
+
+  it.effect(
+    "on a non-success status, prints the formatted failure to stderr but not the raw payload when --debug is unset",
+    () => {
+      const dir = makeDeclarativeDir();
+      const payload = {
+        status: "error",
+        totalApplied: 0,
+        totalRounds: 1,
+        totalSkipped: 0,
+        errors: ["boom"],
+      };
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toBe(
+          "pg-delta declarative apply failed with status: error",
+        );
+        expect(out.stderrText).toContain('pg-delta apply returned status "error".');
+        expect(out.stderrText).toContain("- boom");
+        expect(out.stderrText).not.toContain("pg-delta apply result:");
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "on a non-success status with --debug set, additionally dumps the pretty-printed raw payload",
+    () => {
+      const dir = makeDeclarativeDir();
+      const payload = {
+        status: "error",
+        totalApplied: 0,
+        totalRounds: 1,
+        totalSkipped: 0,
+        errors: ["boom"],
+      };
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(out.stderrText).toContain("pg-delta apply result:");
+        expect(out.stderrText).toContain(JSON.stringify(payload, null, 2));
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, true),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "on success, prints the applied-statements summary and forwards SCHEMA_PATH/TARGET/binds",
+    () => {
+      const dir = makeDeclarativeDir();
+      const payload = {
+        status: "success",
+        totalStatements: 3,
+        totalApplied: 3,
+        totalRounds: 2,
+        totalSkipped: 0,
+      };
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        });
+        expect(out.stderrText).toContain("Applying declarative schemas via pg-delta...");
+        expect(out.stderrText).toContain("Applied 3 statements in 2 round(s).");
+        const opts = edge.calls[0]!;
+        expect(opts.env["SCHEMA_PATH"]).toBe("/declarative");
+        expect(opts.env["TARGET"]).toBe(
+          "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        );
+        expect(opts.binds).toEqual([
+          "supabase_edge_runtime_ref:/root/.cache/deno:rw",
+          `${dir}:/declarative:ro`,
+        ]);
+        expect(opts.errPrefix).toBe("error running pg-delta script");
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+});

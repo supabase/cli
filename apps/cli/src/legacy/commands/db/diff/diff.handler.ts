@@ -1,9 +1,14 @@
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -14,6 +19,8 @@ import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
+import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
+import { legacyRemoveShadowDatabase } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -29,6 +36,10 @@ import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
+import {
+  legacyPrepareShadowSource,
+  legacyShadowRunInputFromLocalContainerInputs,
+} from "../shared/legacy-shadow-source.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyClassifyExplicitRef, legacyUnknownTargetMessage } from "./diff.explicit.ts";
 import {
@@ -378,15 +389,35 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     });
 
     yield* output.raw("Creating shadow database...\n", "stderr");
-    const shadow = yield* seam.provisionShadow({
-      mode: "diff",
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimeInfo = yield* RuntimeInfo;
+    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    const localInputs = yield* legacyBuildLocalDbContainerInputs(
+      spawner,
+      cliConfig.workdir,
+      networkIdFlag,
+      runtimeInfo.platform,
+      // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
+      // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
+      // as `cfg` above (`legacyReadDbToml(..., linkedRef)`) — Go remote-merges the WHOLE
+      // config uniformly on the linked path (`LoadConfig` seeds `flags.ProjectRef` before
+      // every field read).
+      connType === "linked" ? linkedRef : undefined,
+    );
+    const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
+    const shadow = yield* legacyPrepareShadowSource(spawner, {
+      ...legacyShadowRunInputFromLocalContainerInputs(
+        localInputs,
+        resolvedShadowImage,
+        cfg,
+        fs,
+        path,
+      ),
       targetLocal: resolved.isLocal,
       usePgDelta: useDelta,
-      schema: flags.schema,
-      // Linked path only: the shadow merges the same `[remotes.<ref>]` override
-      // the engine/format read above (Go builds the shadow from the remote-merged
-      // config). Default `db diff` is local, which never merges a remote block.
-      projectRef: connType === "linked" ? linkedRef : undefined,
+      schemaPaths: localInputs.context.config.db.migrations.schema_paths,
+      pgDelta: cfg.pgDelta,
+      ctx,
     });
 
     const diffResult = yield* Effect.gen(function* () {
@@ -418,7 +449,15 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // The migra engine has no execution-aware plan units, so it always writes a
       // single migration file (Go's `SaveDiff` single-file path).
       return { sql, files: undefined };
-    }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+    }).pipe(
+      Effect.ensuring(
+        legacyRemoveShadowDatabase(spawner, {
+          containerId: shadow.container,
+          secretDirId: shadow.secretDirId,
+          workdir: cliConfig.workdir,
+        }),
+      ),
+    );
     const out = diffResult.sql;
 
     // Detect the branch from the resolved workdir, not the caller's CWD: Go

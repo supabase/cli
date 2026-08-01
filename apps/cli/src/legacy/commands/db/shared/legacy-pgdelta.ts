@@ -127,9 +127,11 @@ export function legacyIsPgDeltaDebugEnabled(): boolean {
  * Mirrors Go's `PgDeltaNpmRegistryOption` (`internal/utils/pgdelta_local.go:30`):
  * when `PGDELTA_NPM_REGISTRY` is set, drop a project-local `.npmrc` scoping the
  * `@supabase` registry and forward both `PGDELTA_NPM_REGISTRY` and the universal
- * `NPM_CONFIG_REGISTRY` into the container.
+ * `NPM_CONFIG_REGISTRY` into the container. Exported so `legacy-pgdelta.apply.ts`'s
+ * declarative-apply runner (CLI-1956) can reuse the same option, matching every other
+ * pg-delta edge-runtime invocation in this file.
  */
-function legacyPgDeltaNpmRegistryOption(): {
+export function legacyPgDeltaNpmRegistryOption(): {
   readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
   readonly extraEnv?: Readonly<Record<string, string>>;
 } {

@@ -125,6 +125,25 @@ export interface LegacyContainerOpts {
    * Go applies it identically to every container this orchestrator creates.
    */
   readonly extraHosts: ReadonlyArray<string>;
+  /**
+   * Fallback identifier for {@link legacyStageStartSecretFiles}'s per-container secret
+   * directory, used ONLY when `spec.containerName` is empty (Docker auto-generates the
+   * real name — see that field's own doc comment): the deterministic, name-keyed
+   * directory this mechanism otherwise relies on isn't knowable until AFTER the
+   * container is created. Every real service container has a non-empty `containerName`
+   * and never reaches this fallback.
+   *
+   * REQUIRED (not merely "the caller's responsibility to supply") whenever
+   * `spec.containerName === ""`: {@link legacyStageStartSecretFiles} unconditionally
+   * `rm -rf`s its target directory FIRST on every call, even when `spec.secretFiles` is
+   * empty. Falling through to an empty identifier would resolve to the shared
+   * `<workdir>/supabase/.temp/start-secrets/` ROOT directory itself (an empty trailing
+   * path segment collapses away), wiping every OTHER container's staged secrets sharing
+   * that root — {@link legacyCreateContainer} fails loudly with a
+   * {@link LegacyContainerCreateError} instead of ever falling through to that empty
+   * default.
+   */
+  readonly secretDirId?: string;
 }
 
 /**
@@ -727,9 +746,28 @@ export function legacyCreateContainer(
       opts.isBitbucketPipeline,
     );
 
+    // `finalSpec.containerName` is empty only for a shadow database (Docker auto-generates
+    // the real name) — `opts.secretDirId` is the caller-REQUIRED fallback identifier for that
+    // case; see both fields' own doc comments. Fail loudly rather than silently falling
+    // through to an empty identifier, which would resolve to the shared `start-secrets/` ROOT
+    // directory itself and let `legacyStageStartSecretFiles`'s unconditional `rm -rf` wipe
+    // every OTHER container's staged secrets sharing that root.
+    let secretDirId: string;
+    if (finalSpec.containerName.length > 0) {
+      secretDirId = finalSpec.containerName;
+    } else if (opts.secretDirId !== undefined && opts.secretDirId.length > 0) {
+      secretDirId = opts.secretDirId;
+    } else {
+      return yield* Effect.fail(
+        new LegacyContainerCreateError({
+          message:
+            "failed to create docker container: an unnamed container spec requires opts.secretDirId",
+        }),
+      );
+    }
     const { binds: secretBinds, cleanup: cleanupSecretFiles } = yield* legacyStageStartSecretFiles(
       finalSpec.secretFiles ?? [],
-      finalSpec.containerName,
+      secretDirId,
       opts.workdir,
     );
     const specWithSecretBinds: LegacyStartContainerSpec =

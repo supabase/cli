@@ -125,7 +125,14 @@ interface LegacyStartSecretFileSpec {
 export interface LegacyStartContainerSpec {
   /** `container.Config.Image` (already resolved/pulled — resolution is out of scope here). */
   readonly image: string;
-  /** The 4th `DockerStart` positional argument — `--name`. */
+  /**
+   * The 4th `DockerStart` positional argument — `--name`. An empty string mirrors Go
+   * passing `""` (e.g. `CreateShadowDatabase`, `apps/cli-go/internal/db/diff/diff.go:150`)
+   * and lets Docker auto-generate one — {@link legacyBuildStartContainerCreateArgs} omits
+   * `--name` entirely in that case (docker rejects an explicit empty `--name` value, unlike
+   * the Engine API's empty `containerName` positional, which it happily treats as "generate
+   * one"). Every real service container still passes a non-empty name, unchanged.
+   */
   readonly containerName: string;
   /**
    * `container.Config.Hostname`. Only Logflare sets this (`start.go:353`,
@@ -257,6 +264,15 @@ export interface LegacyStartContainerSpec {
    * supported for completeness/future callers, per the task brief.
    */
   readonly restartPolicy?: "unless-stopped" | "no" | "always" | "on-failure";
+  /**
+   * `container.HostConfig.AutoRemove` — only the shadow-database container sets this
+   * (`CreateShadowDatabase`, `apps/cli-go/internal/db/diff/diff.go:144`), via `--rm`.
+   * `AutoRemove` only fires once the container's own main process exits on its own; it
+   * does NOT make an explicit remove redundant for a still-running container (verified
+   * empirically), so callers still remove the shadow explicitly once they are done with
+   * it — see `shadow-database.ts`'s `legacyRemoveShadowDatabase`.
+   */
+  readonly autoRemove?: boolean;
   /**
    * `container.HostConfig.SecurityOpt`. Only Vector sets this
    * (`start.go:441`, `"label:disable"`, when mounting a non-root Docker
@@ -427,8 +443,8 @@ export function legacyBuildStartContainerCreateArgs(
 ): ReadonlyArray<string> {
   return [
     "create",
-    "--name",
-    spec.containerName,
+    ...(spec.containerName.length === 0 ? [] : ["--name", spec.containerName]),
+    ...(spec.autoRemove === true ? ["--rm"] : []),
     ...(spec.hostname === undefined ? [] : ["--hostname", spec.hostname]),
     ...Object.entries(spec.env).flatMap(([key, value]) =>
       legacyIsDockerClientEnvKey(key) ? ["-e", `${key}=${value}`] : ["-e", key],

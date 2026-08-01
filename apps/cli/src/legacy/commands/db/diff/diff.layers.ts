@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
@@ -18,9 +19,12 @@ import { legacyDeclarativeSeamLayer } from "../shared/legacy-pgdelta.seam.layer.
  *
  * Mirrors `db schema declarative generate` (`generate.layers.ts`): the db-config
  * resolver plus the native pg-delta / migra stack — the edge-runtime runner, the
- * SSL probe, and the Go shadow-database seam (`provisionShadow`). `LegacyDockerRun`
- * is exposed in the merge (not just provided to the edge-runtime layer) because the
- * migra OOM bash fallback runs the `supabase/migra` container directly.
+ * SSL probe, `HttpClient` (the native shadow's health-check wait), and the Go
+ * seam (`exportCatalog`, still used by the explicit `--from migrations`/`--to
+ * migrations` path; shadow provisioning itself is native — see
+ * `commands/db/shared/legacy-shadow-source.ts`). `LegacyDockerRun` is exposed in
+ * the merge (not just provided to the edge-runtime layer) because the migra OOM
+ * bash fallback runs the `supabase/migra` container directly.
  * Per the "provide doesn't share to siblings" rule, `LegacyCliConfig` is provided
  * to every layer that needs it.
  */
@@ -43,6 +47,8 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
 
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
 
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+
 export const legacyDbDiffRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
@@ -50,6 +56,7 @@ export const legacyDbDiffRuntimeLayer = Layer.mergeAll(
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,
+  httpClient,
   cliConfig,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,

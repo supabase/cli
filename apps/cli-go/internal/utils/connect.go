@@ -28,11 +28,13 @@ func ToPostgresURL(config pgconn.Config) string {
 
 // ToPostgresURLWithoutPassword renders the connection URL exactly like
 // ToPostgresURL but omits the password from the userinfo. Use it for callers that
-// print the URL to stdout (the hidden `db __shadow` seam): embedding the password
-// there is clear-text logging of a credential (CWE-312, flagged by CodeQL). The
-// password is never the seam's to share — the TS caller that consumes the seam
-// output re-injects the local Postgres password it already resolves from
-// config.toml (`utils.Config.Db.Password`).
+// print the URL to stdout: embedding the password there is clear-text logging of
+// a credential (CWE-312, flagged by CodeQL).
+//
+// No longer called from the CLI itself (CLI-1956 removed its only caller, the
+// hidden `db __shadow` seam, once shadow-database provisioning for `db diff`/
+// `db pull` was ported natively to TypeScript) — kept as a small, still-correct
+// utility rather than deleted, since removing it is outside this change's scope.
 func ToPostgresURLWithoutPassword(config pgconn.Config) string {
 	return toPostgresURL(config, url.User(config.User))
 }

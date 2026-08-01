@@ -909,3 +909,111 @@ describe("legacyRemoveVolume", () => {
     );
   });
 });
+
+describe("legacyCreateContainer with an empty containerName (the shadow database)", () => {
+  it.live(
+    "omits --name from the create argv, stages secretFiles under `opts.secretDirId` instead of the (empty) containerName, and leaves them in place after a successful start",
+    () => {
+      let hostPath: string | undefined;
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") {
+          expect(args).not.toContain("--name");
+          const bind = args.find((a) =>
+            a.endsWith(":/etc/postgresql-custom/pgsodium_root.key:ro,Z"),
+          );
+          if (bind !== undefined) {
+            hostPath = bind.slice(
+              0,
+              bind.length - ":/etc/postgresql-custom/pgsodium_root.key:ro,Z".length,
+            );
+          }
+          return { exitCode: 0, stdout: "shadow-container-id\n" };
+        }
+        return { exitCode: 0 };
+      });
+
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        containerName: "",
+        binds: [],
+        networkAliases: undefined,
+        autoRemove: true,
+        secretFiles: [
+          { containerPath: "/etc/postgresql-custom/pgsodium_root.key", content: "root-key" },
+        ],
+      };
+
+      return legacyCreateContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+        secretDirId: "shadow",
+      }).pipe(
+        Effect.map((containerId) => {
+          expect(containerId).toBe("shadow-container-id");
+          expect(hostPath).toBeDefined();
+          expect(hostPath).toBe(
+            join(workdir, "supabase", ".temp", "start-secrets", "shadow", "secret-0"),
+          );
+          // Not reclaimed here: eagerly deleting right after `docker start` returns isn't
+          // safe on every Docker backend (see `legacyCreateShadowDatabase`'s own doc
+          // comment), so the staged file stays in place immediately after create/start —
+          // it is reclaimed later, at container teardown, by `legacyRemoveShadowDatabase`
+          // (keyed off the same `secretDirId` this test passed in).
+          expect(existsSync(hostPath ?? "")).toBe(true);
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "still stages secretFiles under the real name when containerName is non-empty, ignoring an (irrelevant) secretDirId",
+    () => {
+      const mock = alwaysSucceed("real-name-container-id\n");
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "secret" }],
+      };
+      return legacyCreateContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+        secretDirId: "should-be-ignored",
+      }).pipe(
+        Effect.map(() => {
+          expect(
+            existsSync(join(workdir, "supabase", ".temp", "start-secrets", spec.containerName)),
+          ).toBe(true);
+          expect(
+            existsSync(join(workdir, "supabase", ".temp", "start-secrets", "should-be-ignored")),
+          ).toBe(false);
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "fails loudly instead of silently defaulting to the shared start-secrets root when containerName is empty and no secretDirId is supplied",
+    () => {
+      const mock = alwaysSucceed("shadow-container-id\n");
+      const spec: LegacyStartContainerSpec = { ...baseSpec, containerName: "", binds: [] };
+      return legacyCreateContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => {
+          expect(error).toBeInstanceOf(LegacyContainerCreateError);
+          expect(error.message).toContain("requires opts.secretDirId");
+          // Never even reaches `docker create` — this is a caller-programming-error
+          // check, not a Docker-level failure.
+          expect(mock.spawned).toEqual([]);
+        }),
+      );
+    },
+  );
+});

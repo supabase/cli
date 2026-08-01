@@ -1,13 +1,16 @@
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
@@ -31,6 +34,11 @@ import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts
 import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
+import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
+import {
+  legacyPrepareRawShadow,
+  legacyRemoveShadowDatabase,
+} from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -66,7 +74,10 @@ import {
   legacyIsPgDeltaDebugEnabled,
 } from "../shared/legacy-pgdelta.ts";
 import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
-import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
+import {
+  legacyPrepareShadowSource,
+  legacyShadowRunInputFromLocalContainerInputs,
+} from "../shared/legacy-shadow-source.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import {
   LegacyDbPullDumpError,
@@ -133,7 +144,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
-  const seam = yield* LegacyDeclarativeSeam;
   const proxy = yield* LegacyGoProxy;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
@@ -361,15 +371,33 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
-          const shadow = yield* seam.provisionShadow({
-            mode: "declarative",
-            targetLocal: false,
-            usePgDelta: true,
-            schema: flags.schema,
-            // Linked path only: merge the same `[remotes.<ref>]` override into the
-            // shadow baseline (Go builds the shadow from the remote-merged config).
-            projectRef: connType === "linked" ? linkedRef : undefined,
-          });
+          const declSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const declRuntimeInfo = yield* RuntimeInfo;
+          const declNetworkIdFlag = yield* LegacyNetworkIdFlag;
+          const declLocalInputs = yield* legacyBuildLocalDbContainerInputs(
+            declSpawner,
+            cliConfig.workdir,
+            declNetworkIdFlag,
+            declRuntimeInfo.platform,
+            // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
+            // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
+            connType === "linked" ? linkedRef : undefined,
+          );
+          const resolvedDeclShadowImage = yield* declLocalInputs.resolvePostgresImage;
+          // `legacyPrepareRawShadow` needs none of the `setup`/declarative-branch fields the
+          // adapter also returns (a bare shadow never runs `MigrateShadowDatabase`) — its own
+          // input type (`LegacyShadowConnectionInput`) is structurally narrower, so the extra
+          // fields are simply never read.
+          const shadow = yield* legacyPrepareRawShadow(
+            declSpawner,
+            legacyShadowRunInputFromLocalContainerInputs(
+              declLocalInputs,
+              resolvedDeclShadowImage,
+              toml,
+              fs,
+              path,
+            ),
+          );
           const exported = yield* withPoolerFallback(targetUrl, (targetRef) =>
             legacyDeclarativeExportPgDelta(ctx, {
               sourceRef: shadow.sourceUrl,
@@ -377,7 +405,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               schema: flags.schema,
               formatOptions,
             }),
-          ).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+          ).pipe(
+            Effect.ensuring(
+              legacyRemoveShadowDatabase(declSpawner, {
+                containerId: shadow.container,
+                secretDirId: shadow.secretDirId,
+                workdir: cliConfig.workdir,
+              }),
+            ),
+          );
           yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
@@ -571,21 +607,40 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // matching Go's `diffRemoteSchema(ctx, nil, …)`.
         const diffSchema = sync.kind === "missing" ? [] : flags.schema;
         // Go's `DiffDatabase` emits these to stderr before provisioning + diffing
-        // (`internal/db/diff/diff.go:189,234-237`); the shadow seam doesn't, so the
-        // pull handler emits them itself to match the migration-style `db pull` output.
+        // (`internal/db/diff/diff.go:212,223-226`); `legacyPrepareShadowSource` doesn't
+        // print its own banner, so the pull handler emits it itself to match the
+        // migration-style `db pull` output.
         yield* output.raw("Creating shadow database...\n", "stderr");
-        const shadow = yield* seam.provisionShadow({
-          mode: "diff",
-          // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
-          // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:190`):
-          // a local target with declarative schema files gets a second
-          // `contrib_regression` shadow returned as the target override.
+        const pullSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const pullRuntimeInfo = yield* RuntimeInfo;
+        const pullNetworkIdFlag = yield* LegacyNetworkIdFlag;
+        const pullLocalInputs = yield* legacyBuildLocalDbContainerInputs(
+          pullSpawner,
+          cliConfig.workdir,
+          pullNetworkIdFlag,
+          pullRuntimeInfo.platform,
+          // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
+          // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
+          connType === "linked" ? linkedRef : undefined,
+        );
+        const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
+        // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
+        // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a local
+        // target with declarative schema files gets a second `contrib_regression`
+        // shadow returned as the target override.
+        const shadow = yield* legacyPrepareShadowSource(pullSpawner, {
+          ...legacyShadowRunInputFromLocalContainerInputs(
+            pullLocalInputs,
+            resolvedPullShadowImage,
+            toml,
+            fs,
+            path,
+          ),
           targetLocal: resolved.isLocal,
           usePgDelta: usePgDeltaDiff,
-          schema: diffSchema,
-          // Linked path only: merge the same `[remotes.<ref>]` override into the
-          // shadow baseline (Go builds the shadow from the remote-merged config).
-          projectRef: connType === "linked" ? linkedRef : undefined,
+          schemaPaths: pullLocalInputs.context.config.db.migrations.schema_paths,
+          pgDelta: toml.pgDelta,
+          ctx,
         });
         const diffOutcome = yield* Effect.gen(function* () {
           // Use the declarative target override when present (Go substitutes it
@@ -643,7 +698,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               return { sql, files: undefined, capture: undefined };
             }),
           );
-        }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+        }).pipe(
+          Effect.ensuring(
+            legacyRemoveShadowDatabase(pullSpawner, {
+              containerId: shadow.container,
+              secretDirId: shadow.secretDirId,
+              workdir: cliConfig.workdir,
+            }),
+          ),
+        );
 
         const out = diffOutcome.sql;
         const diffEmpty = out.trim().length === 0;

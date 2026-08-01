@@ -5,29 +5,6 @@ import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts"
 /** Which shadow-database catalog the Go seam should produce. */
 export type LegacyCatalogMode = "baseline" | "migrations" | "declarative";
 
-/**
- * Which live shadow database the Go seam should provision and leave running:
- *  - `diff`: platform baseline + local migrations (the `db diff` / migration-style
- *    `db pull` diff source), plus the local-target declarative branch.
- *  - `declarative`: a bare shadow with no baseline/migrations (the `db pull
- *    --declarative` empty export source).
- */
-type LegacyShadowMode = "diff" | "declarative";
-
-/** A live shadow database left running for the caller to diff against and remove. */
-export interface LegacyShadowSource {
-  /** Container id; the caller removes it via `removeShadowContainer` when done. */
-  readonly container: string;
-  /** The diff source Postgres URL (the provisioned shadow). */
-  readonly sourceUrl: string;
-  /**
-   * When set, replaces the diff target with a second shadow database
-   * (`contrib_regression` with declarative schemas applied). Mirrors Go's
-   * local-target declarative branch, where the user's local DB is not diffed.
-   */
-  readonly targetUrlOverride: string | undefined;
-}
-
 interface LegacyDeclarativeSeamShape {
   /**
    * Provisions the shadow-database platform baseline (and, for
@@ -37,8 +14,13 @@ interface LegacyDeclarativeSeamShape {
    * under `supabase/.temp/pgdelta/`). Go's progress is teed to stderr; only the
    * catalog path is captured from stdout.
    *
-   * This is the seam for `start.SetupDatabase` (the auth/storage/realtime service
-   * migrations), which is not yet ported to TypeScript.
+   * The shadow-database provisioning this needs (`start.SetupDatabase`, the
+   * auth/storage/realtime service migrations) IS now natively ported
+   * (`legacySetupDatabase`, `shared/db-bootstrap/db-setup.ts`, CLI-1956) — `db diff`/
+   * `db pull` no longer go through this Go seam for their own shadow at all (see
+   * `commands/db/shared/legacy-shadow-source.ts`). This method stays Go-delegated
+   * only because `db schema declarative generate`/`sync` haven't been natively
+   * ported yet, not because the underlying shadow primitive is missing.
    */
   readonly exportCatalog: (opts: {
     readonly mode: LegacyCatalogMode;
@@ -82,33 +64,6 @@ interface LegacyDeclarativeSeamShape {
     void,
     LegacyDeclarativeShadowDbError
   >;
-  /**
-   * Provisions a live shadow database via the bundled Go binary's hidden
-   * `db __shadow` command and returns it running (the container is NOT removed —
-   * the caller must call `removeShadowContainer` when the diff completes). This
-   * is the diff "source" that both the migra and pg-delta engines run against in
-   * `db diff` / `db pull`, mirroring Go's `DiffDatabase` (`differ(shadow, target)`).
-   * Go's shadow-provisioning progress is teed to stderr.
-   */
-  readonly provisionShadow: (opts: {
-    readonly mode: LegacyShadowMode;
-    readonly targetLocal: boolean;
-    readonly usePgDelta: boolean;
-    readonly schema: ReadonlyArray<string>;
-    /**
-     * Resolved linked project ref, passed ONLY on the `--linked` path so the
-     * shadow merges the matching `[remotes.<ref>]` config override (Go builds the
-     * shadow from the already-remote-merged global config on the linked path).
-     * Omitted for local/db-url shadows, which Go never remote-merges.
-     */
-    readonly projectRef?: string;
-  }) => Effect.Effect<LegacyShadowSource, LegacyDeclarativeShadowDbError>;
-  /**
-   * Removes a shadow database container left running by `provisionShadow`
-   * (`docker rm -f <id>`). Best-effort: a failure to remove is swallowed so it
-   * never masks the underlying diff result.
-   */
-  readonly removeShadowContainer: (container: string) => Effect.Effect<void>;
 }
 
 export class LegacyDeclarativeSeam extends Context.Service<
