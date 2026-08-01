@@ -7,12 +7,14 @@
  * shape available in a codebase whose whole contract is byte-level Go parity. A future change to
  * Go's `StartDatabase` now only has one TS home to update.
  *
- * Exact Go call order: network ensure -> pre-create volume-existence probe (+ the
- * `fromBackup`-on-an-existing-volume guard) -> Postgres container create+start -> health wait
- * (swallowed ONLY when `fromBackup` is set — "restoring a large backup may take longer than 2
- * minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent pipeline (skipped IN FULL when
- * `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the LAST line of `StartDatabase`,
- * reached on every path that doesn't already return/fail above).
+ * Exact Go call order: pre-create volume-existence probe (+ the `fromBackup`-on-an-existing-volume
+ * guard) -> image resolve + network ensure (Go's `DockerStart` resolves the image, THEN creates
+ * the network, both strictly ahead of container create — `docker.go:363-386` — so NEITHER one
+ * ever runs on a request the volume guard above already rejected) -> Postgres container
+ * create+start -> health wait (swallowed ONLY when `fromBackup` is set — "restoring a large
+ * backup may take longer than 2 minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent
+ * pipeline (skipped IN FULL when `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the
+ * LAST line of `StartDatabase`, reached on every path that doesn't already return/fail above).
  *
  * Deliberately has ZERO knowledge of `--ignore-health-check` — matching Go exactly: that flag is
  * `internal/start/start.go`'s `Run()`'s own concern, entirely OUTSIDE `StartDatabase` (Go's
@@ -34,8 +36,10 @@
  *    `ensureImagesCached` pre-pull, before bring-up even starts, and just threads that value
  *    through.
  *  - `setup.jwks` — `db start` has no earlier use for JWKS at all, so it resolves it lazily,
- *    conditionally (only when reached AND `realtime.enabled`), matching Go's own `initSchema15`-
- *    local `ResolveJWKS` call (`internal/db/start/start.go:337-341`) exactly; `supabase start`
+ *    conditionally (only when reached AND `majorVersion >= 15` AND `realtime.enabled` — Go's
+ *    `initSchema`, `start.go:243-254`, only ever reaches `initSchema15`'s `ResolveJWKS` call on
+ *    PG15+; the PG13/14 branch, `InitSchema14`, never touches JWKS at all), matching Go's own
+ *    `initSchema15`-local `ResolveJWKS` call (`internal/db/start/start.go:337-341`) exactly; `supabase start`
  *    resolves JWKS once, unconditionally, near the top of its OWN prelude (feeding its
  *    long-running Realtime/GoTrue/PostgREST containers too — `internal/start/start.go:274-277`)
  *    and reuses that SAME already-resolved value here rather than re-resolving (a second resolve
@@ -74,7 +78,7 @@ import {
   type LegacyStartSetupLocalDatabaseError,
   type LegacyStartSetupLocalDatabaseInput,
 } from "./db-setup.ts";
-import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
+import { type LegacyImagePrepullError } from "./image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
@@ -200,21 +204,21 @@ export const legacyStartDatabase = <E>(
     const output = yield* Output;
     const dbConnection = yield* LegacyDbConnection;
 
-    yield* legacyEnsureStartNetwork(spawner, input.networkId, {
-      [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
-      [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
-    });
-
     // Go's pre-create volume-existence check (`internal/db/start/start.go:165-167`) — MUST run
-    // before Postgres's own volume gets created below: `docker volume create` is idempotent, so
-    // creating first would make "did this volume already exist" unobservable.
+    // before Postgres's own volume gets created below, AND before the network is created too:
+    // `docker volume create`/`docker network create` are both idempotent, so creating either
+    // first would make "did this volume already exist" unobservable, and would leave a Docker
+    // network behind even for a request the guard below is about to reject outright — Go's own
+    // `VolumeInspect` and the guard both run strictly BEFORE `DockerStart`, which is the ONLY
+    // place Go ever creates the network (`docker.go:363-386`).
     const isFreshVolume = !(yield* legacyStartVolumeExists(spawner, input.dbContainerId));
     input.onFreshVolumeResolved(isFreshVolume);
 
     const fromBackup = input.postgresSpec.fromBackup;
     if (!isFreshVolume && fromBackup !== undefined) {
       // Go's `StartDatabase` (`start.go:170-172`): a `--from-backup` restore into an
-      // already-provisioned volume is refused outright, BEFORE any container is created.
+      // already-provisioned volume is refused outright, BEFORE any container or network is
+      // created.
       return yield* Effect.fail(
         new LegacyStartBackupVolumeExistsError({
           message: "backup volume already exists",
@@ -233,6 +237,17 @@ export const legacyStartDatabase = <E>(
     }
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
+
+    // Go's `DockerStart` (`docker.go:363-386`): image resolve, THEN network create, both
+    // strictly ahead of container create — hoisted here to run ONCE per `start` run instead of
+    // once per container (Go's own repeated per-container call is a no-op after the first, see
+    // `legacyEnsureStartNetwork`'s own doc comment), but kept in Go's own relative position:
+    // after the volume probe/guard above, never before it.
+    yield* legacyEnsureStartNetwork(spawner, input.networkId, {
+      [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
+      [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
+    });
+
     const postgresSpec = legacyBuildPostgresStartContainerSpec({
       ...input.postgresSpec,
       image: resolvedPostgresImage,
@@ -279,17 +294,32 @@ export const legacyStartDatabase = <E>(
 
           // Go's `initSchema15`'s realtime job resolves JWKS itself — see this module's header
           // for why this is a caller-supplied lazy `Effect`, gated the same way Go gates the
-          // call: only when reached AND `Realtime.Enabled`.
-          const jwks = setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
+          // call: only when reached AND `majorVersion >= 15` AND `Realtime.Enabled`. Go's
+          // `initSchema` (`start.go:243-254`) branches to `initSchema15` — the ONLY place
+          // `ResolveJWKS` is ever called — solely on `majorVersion >= 15`; the PG13/14 branch
+          // (`InitSchema14`) never touches JWKS, so a PG13/14 database with realtime enabled must
+          // not pay for (or fail on) an external JWKS fetch it will never use.
+          const jwks =
+            setup.majorVersion >= 15 && setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
 
           // Go's one-shot fresh-DB setup jobs (`initSchema15`) use the SAME already-pin-rewritten
           // `utils.Config.{Realtime,Storage,Auth}.Image` fields the long-running containers would
           // use (`internal/db/start/start.go:270,299,321`), regardless of `--exclude` — resolved
           // through `legacyResolvePinnedImage`, not the raw Dockerfile default, so a linked
-          // project's version pins apply here too. Resolved lazily (only when the job will
-          // actually run), matching Go's own `ensureImagesCached` (`start.go:237-262`), which
-          // never pre-pulls these for EITHER caller.
-          const rawSetupJobImages = {
+          // project's version pins apply here too. Deliberately NOT resolved/pulled here as a
+          // batch: Go resolves (and pulls) each one-shot job's own image individually,
+          // sequentially, right before THAT job runs (`DockerRunJob` -> `DockerStart` ->
+          // `DockerResolveImageIfNotCached`, `start.go:334-355`, `docker.go:363-365`) — neither
+          // caller pre-pulls these three images as a batch ahead of time (see
+          // `commands/start/start.handler.ts`'s own `resolvedImages` comment and
+          // `commands/db/start/start.handler.ts`'s `resolvePostgresImage` comment, both of which
+          // explicitly exclude these from their own upfront pre-pulls). Batching the resolve here
+          // instead would mean one unreachable image (e.g. Storage's) fails the WHOLE setup
+          // before an earlier job (e.g. Realtime's) ever gets to run, even though Go would already
+          // have run it to completion by the time it reaches Storage's own resolve.
+          // `legacyRunStartMigrateJob` (`db-setup.ts`) resolves each of these lazily itself, right
+          // before running that job — see its own doc comment.
+          const dbSetupImages: LegacyStartDbSetupImages = {
             realtime: legacyResolvePinnedImage(
               "realtime",
               "realtime",
@@ -298,31 +328,8 @@ export const legacyStartDatabase = <E>(
             storage: legacyResolvePinnedImage("storage", "storage", setup.serviceVersionOverrides),
             auth: legacyResolvePinnedImage("gotrue", "auth", setup.serviceVersionOverrides),
           };
-          const setupJobImagesToResolve =
-            setup.majorVersion >= 15
-              ? [
-                  ...(setup.realtimeEnabledForSetup ? [rawSetupJobImages.realtime] : []),
-                  ...(setup.storageEnabledForSetup ? [rawSetupJobImages.storage] : []),
-                  ...(setup.authEnabledForSetup ? [rawSetupJobImages.auth] : []),
-                ]
-              : [];
-          const resolvedSetupJobImages =
-            setupJobImagesToResolve.length > 0
-              ? yield* legacyEnsureImagesCached(
-                  spawner,
-                  setupJobImagesToResolve,
-                  setup.projectEnvValues,
-                )
-              : new Map<string, string>();
-          const resolveSetupJobImage = (image: string) =>
-            resolvedSetupJobImages.get(image) ?? image;
-          const dbSetupImages: LegacyStartDbSetupImages = {
-            realtime: resolveSetupJobImage(rawSetupJobImages.realtime),
-            storage: resolveSetupJobImage(rawSetupJobImages.storage),
-            auth: resolveSetupJobImage(rawSetupJobImages.auth),
-          };
 
-          yield* legacyStartSetupLocalDatabase({
+          yield* legacyStartSetupLocalDatabase(spawner, {
             session,
             fs: input.fs,
             path: input.path,
@@ -342,6 +349,7 @@ export const legacyStartDatabase = <E>(
             serviceRoleKey: setup.serviceRoleKey,
             storageTargetMigration: setup.storageTargetMigration,
             images: dbSetupImages,
+            projectEnvValues: setup.projectEnvValues,
           });
         }),
       );
