@@ -569,6 +569,20 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       legacyEnvOverrideRealtimeMaxHeaderLength(config.realtime.max_header_length, projectEnvValues),
     );
 
+    // Same gap for the entire `db.settings.*` group (`max_connections`,
+    // `track_commit_timestamp`, `session_replication_role`, etc.) — Go's `Config.Load` decodes
+    // ALL of them via the same unconditional viper `SetEnvPrefix("SUPABASE")` +
+    // `AutomaticEnv()` pass as Realtime/Edge Runtime above (`pkg/config/config.go:749-756`),
+    // regardless of whether this eager battery itself ever reads them.
+    // `legacyResolveDbSettingsEnvOverrides` is only otherwise called below, building
+    // `legacyStartDatabase`'s `postgresSpec.db.settings`, which never runs on the
+    // already-running short-circuit right after this block — so a malformed override (e.g.
+    // `SUPABASE_DB_SETTINGS_MAX_CONNECTIONS=bogus`) would otherwise be silently accepted
+    // whenever Postgres is already running, unlike Go (review: PRRT_kwDOErm0O86Vn3Hw).
+    yield* wrapDbConfigOverride("db.settings", () =>
+      legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+    );
+
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
     // stderr and return nil (exit 0). Already native — see this module's header. Runs AFTER
     // the config load/validation above, matching Go's `start.Run` (`flags.LoadConfig` before
