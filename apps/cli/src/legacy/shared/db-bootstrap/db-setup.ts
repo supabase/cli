@@ -224,9 +224,9 @@ const legacyResolveDbSetupImages = Effect.fnUntraced(function* (
 });
 
 /**
- * Resolves JWKS (lazily, only when `realtimeEnabledForSetup`) + the PG15+ one-shot job images
- * (via {@link legacyResolveDbSetupImages}) — the exact prelude BOTH {@link
- * legacyRunFreshDbSetup} (the real local `db` container) and `shadow-database.ts`'s
+ * Resolves JWKS (lazily, only when `majorVersion >= 15` AND `realtimeEnabledForSetup`) + the
+ * PG15+ one-shot job images (via {@link legacyResolveDbSetupImages}) — the exact prelude BOTH
+ * {@link legacyRunFreshDbSetup} (the real local `db` container) and `shadow-database.ts`'s
  * `legacySetupShadowDatabase`/`legacyMigrateShadowDatabase` need before calling {@link
  * legacySetupDatabase}. Hoisted here (CLI-1956 review follow-up) so the shadow path shares
  * this exact resolution instead of keeping its own copy, which had silently drifted (a dead,
@@ -234,6 +234,14 @@ const legacyResolveDbSetupImages = Effect.fnUntraced(function* (
  * against just the fields this needs (not the full {@link LegacyFreshDbSetupInput}) so both
  * that type and `shadow-database.ts`'s `LegacyShadowDbSetupInput` — which is itself derived
  * from it — satisfy this signature without an explicit cast.
+ *
+ * The `majorVersion >= 15` gate matters, not just an optimization: Go's `initSchema`
+ * (`apps/cli-go/internal/db/start/start.go:243-253`) returns via `InitSchema14` for
+ * `MajorVersion <= 14` WITHOUT ever calling `initSchema15`, so `Config.Auth.ResolveJWKS`
+ * (`start.go:338`, only reached from `initSchema15`) never runs at all on PG13/14 — even
+ * with realtime enabled. `ResolveJWKS` can perform live discovery/JWKS HTTP requests for
+ * configured `auth.third_party` providers, so resolving it unconditionally on PG14 is not
+ * just wasted work: it can fail (or hang) when Go's own shadow/setup never would.
  */
 export const legacyResolveDbSetupPrelude = <E>(
   spawner: Spawner,
@@ -251,7 +259,7 @@ export const legacyResolveDbSetupPrelude = <E>(
   E | LegacyImagePrepullError
 > =>
   Effect.gen(function* () {
-    const jwks = setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
+    const jwks = setup.majorVersion >= 15 && setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
     const images: LegacyStartDbSetupImages = yield* legacyResolveDbSetupImages(spawner, {
       majorVersion: setup.majorVersion,
       realtimeEnabledForSetup: setup.realtimeEnabledForSetup,
@@ -933,7 +941,7 @@ export interface LegacyFreshDbSetupInput<E> {
   readonly experimental: boolean;
   readonly dbUrl: string;
   readonly jwtSecret: string;
-  /** Lazy — evaluated only when reached AND `realtimeEnabledForSetup`. See `start-database.ts`'s header for why this is caller-supplied rather than resolved here unconditionally. */
+  /** Lazy — evaluated only when reached AND `majorVersion >= 15` AND `realtimeEnabledForSetup` (see {@link legacyResolveDbSetupPrelude}'s own doc comment for the Go citation). See `start-database.ts`'s header for why this is caller-supplied rather than resolved here unconditionally. */
   readonly jwks: Effect.Effect<string, E>;
   readonly apiUrl: string;
   readonly authExternalUrl: string | undefined;

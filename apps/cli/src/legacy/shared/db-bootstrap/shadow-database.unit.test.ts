@@ -450,6 +450,99 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
   );
 
   it.effect(
+    "does not resolve JWKS on PG14 even when realtime is enabled (Go's initSchema never reaches ResolveJWKS for MajorVersion <= 14)",
+    () => {
+      const { session } = fakeSession();
+      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+      const mock = mockSpawner();
+      let jwksEvaluated = false;
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* legacySetupShadowDatabase(mock.spawner, {
+          fs,
+          path,
+          workdir,
+          container: "shadow-container-id-0123456789abcdef",
+          networkId: "supabase_network_proj",
+          connConfig: {
+            host: "127.0.0.1",
+            port: 54320,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          },
+          setup: baseShadowSetup({
+            majorVersion: 14,
+            realtimeEnabledForSetup: true,
+            jwks: Effect.sync(() => {
+              jwksEvaluated = true;
+              return '{"keys":[]}';
+            }),
+          }),
+        });
+        expect(jwksEvaluated).toBe(false);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            mockOutput().layer,
+            mockDockerRun(),
+            mockRuntimeInfo(),
+            mockDbConnection(session),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("resolves JWKS on PG15+ when realtime is enabled", () => {
+    const { session } = fakeSession();
+    const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+    const mock = mockSpawner();
+    let jwksEvaluated = false;
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* legacySetupShadowDatabase(mock.spawner, {
+        fs,
+        path,
+        workdir,
+        container: "shadow-container-id-0123456789abcdef",
+        networkId: "supabase_network_proj",
+        connConfig: {
+          host: "127.0.0.1",
+          port: 54320,
+          user: "postgres",
+          password: "postgres",
+          database: "postgres",
+        },
+        setup: baseShadowSetup({
+          majorVersion: 17,
+          realtimeEnabledForSetup: true,
+          jwks: Effect.sync(() => {
+            jwksEvaluated = true;
+            return '{"keys":[]}';
+          }),
+        }),
+      });
+      expect(jwksEvaluated).toBe(true);
+      rmSync(workdir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          mockOutput().layer,
+          mockDockerRun(),
+          mockRuntimeInfo(),
+          mockDbConnection(session),
+        ),
+      ),
+    );
+  });
+
+  it.effect(
     "legacyMigrateShadowDatabase lists local migrations BEFORE connecting, tolerating a missing migrations directory as an empty list rather than a failure",
     () => {
       const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
