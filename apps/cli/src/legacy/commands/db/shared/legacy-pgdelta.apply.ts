@@ -51,7 +51,13 @@ export interface LegacyPgDeltaApplyIssue {
     readonly id?: string;
     readonly sql?: string;
     readonly statementClass?: string;
-  };
+    // `| null` (not just `?`): Go's `Statement *ApplyStatement` is a pointer, so a JSON
+    // `"statement":null` entry (e.g. `{"statement":null,"message":"failed"}`) unmarshals to a
+    // nil pointer — `formatApplyIssue`'s `issue.Statement == nil` (`apply.go:202`) treats that
+    // identically to a missing field. `legacyFormatApplyIssue`'s guard below must check for
+    // `null` as well as `undefined`, or a `JSON.parse`'d `null` reaches `issue.statement.*` and
+    // throws a `TypeError` instead of rendering the message.
+  } | null;
   readonly code?: string;
   readonly message?: string;
   readonly isDependencyError?: boolean;
@@ -210,10 +216,18 @@ function legacyFormatApplyIssueMessage(issue: LegacyPgDeltaApplyIssue): string {
  * method (`.trim()`, `legacyFormatStatementSql`'s `.split()`) that throws a `TypeError` on
  * anything else — turning an actionable SQL error into an unhandled defect, the worst place for
  * a rendering bug to exist, since this only ever runs on an ALREADY-FAILED apply.
+ *
+ * The no-statement guard checks both `undefined` and `null`: Go's `Statement *ApplyStatement`
+ * is a pointer, so `{"statement":null,...}` unmarshals to `nil` and `issue.Statement == nil`
+ * (`apply.go:202`) treats it exactly like a missing field. A `JSON.parse`'d `null` is not
+ * `=== undefined`, so checking only `undefined` would fall through to `issue.statement.*` and
+ * throw a `TypeError` instead of rendering the message.
  */
 function legacyFormatApplyIssue(rawIssue: LegacyPgDeltaApplyIssue | string | null): string {
   const issue = legacyNormalizeApplyIssue(rawIssue);
-  if (issue.statement === undefined) return `- ${legacyFormatApplyIssueMessage(issue)}`;
+  if (issue.statement === undefined || issue.statement === null) {
+    return `- ${legacyFormatApplyIssueMessage(issue)}`;
+  }
   const statementClass = String(issue.statement.statementClass ?? "");
   const classSuffix = statementClass.length > 0 ? ` [${statementClass}]` : "";
   const lines: Array<string> = [

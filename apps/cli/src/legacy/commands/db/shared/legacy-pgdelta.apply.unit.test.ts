@@ -148,6 +148,22 @@ describe("legacyFormatApplyFailure", () => {
     expect(message).not.toContain("undefined");
   });
 
+  test("renders an issue with a null `statement` field as its message, without throwing", () => {
+    // Reproduces feeding a real pg-delta subprocess's stdout
+    // (`{"errors":[{"statement":null,"message":"failed"}]}`) through
+    // `legacyApplyDeclarativePgDelta` — Go's `Statement *ApplyStatement` is a pointer, so
+    // `"statement":null` unmarshals to `nil` and `formatApplyIssue`'s `issue.Statement == nil`
+    // (`apply.go:202`) treats it identically to a missing field. A no-statement guard that only
+    // checks `=== undefined` would fall through to `issue.statement.statementClass` on `null`
+    // and throw a `TypeError` instead of rendering the message.
+    const parsed = JSON.parse(
+      '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":[{"statement":null,"message":"failed"}]}',
+    ) as LegacyPgDeltaApplyResult;
+    expect(() => legacyFormatApplyFailure(parsed, false)).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, false);
+    expect(message).toContain("Errors:\n- failed");
+  });
+
   test("renders an issue whose detail/hint/sql/statementClass arrived as non-strings without throwing", () => {
     // A malformed pg-delta payload can hand any of these fields a non-string value (e.g. a
     // future release that reports a numeric `detail`) — a bare `?? ""` guard (rather than
