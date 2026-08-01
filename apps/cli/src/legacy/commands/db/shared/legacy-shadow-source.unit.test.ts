@@ -84,6 +84,32 @@ describe("legacyShouldApplyDeclarativeWithPgDelta", () => {
       );
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it.effect(
+    "on POSIX, a backslash in schema_paths is a literal character, not a path separator",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        // Go's `filepath.Clean`/`ToSlash` only treat `\` as a separator on a Windows build —
+        // on darwin/linux it's untouched, so a `foo\bar` schema_paths entry (which
+        // `legacyResolveSeedSqlPath` joins under `supabase/` unresolved) must NOT be treated
+        // as equivalent to the slash-separated declarative dir `supabase/foo/bar`.
+        const configured = pgDelta({ declarativeSchemaPath: Option.some("supabase/foo/bar") });
+        expect(
+          legacyShouldApplyDeclarativeWithPgDelta(path, true, ["foo\\bar"], configured, "darwin"),
+        ).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("on win32, a backslash in schema_paths normalizes as a path separator", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const configured = pgDelta({ declarativeSchemaPath: Option.some("supabase/foo/bar") });
+      expect(
+        legacyShouldApplyDeclarativeWithPgDelta(path, true, ["foo\\bar"], configured, "win32"),
+      ).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
 
 describe("legacyLoadDeclaredSchemas", () => {
@@ -182,6 +208,31 @@ describe("legacyLoadDeclaredSchemas", () => {
       rmSync(workdir, { recursive: true, force: true });
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.effect(
+    'an empty schema_paths entry matches nothing, not the entire project (Go\'s fs.Glob(""))',
+    () => {
+      // Go's `io/fs.Glob` never matches an empty pattern — its literal-pattern branch calls
+      // `Stat(fsys, "")`, which fails on a real OS filesystem, so `Glob.SQLFiles` reports
+      // `no files matched pattern: ` for it (verified empirically against the real
+      // `config.Glob.SQLFiles` fed `""` over an `afero.NewOsFs()`). Without this guard,
+      // `legacyGlobPattern`'s literal-pattern branch resolves `""` to the workdir itself
+      // (which always exists) and recursively collects every `.sql` file in the project,
+      // including files well outside any declared schema path.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "migrations"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "migrations", "001_init.sql"), "select 1;\n");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [""], pgDelta()).pipe(
+          Effect.exit,
+        );
+        expect(exit._tag).toBe("Failure");
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 
   it.effect("a glob schema_paths entry matching nothing is silently skipped, not an error", () => {
     const workdir = makeWorkdir();

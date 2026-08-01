@@ -408,11 +408,27 @@ function legacyGlobDeclaredSchemaPaths(
         problems.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
         continue;
       }
+      // Go's `io/fs.Glob` never matches an empty pattern: its literal (no-metacharacter)
+      // branch calls `Stat(fsys, "")`, which fails on a real OS filesystem (there is no file
+      // whose path is the empty string), so `Glob` returns zero matches — verified empirically
+      // against the real `config.Glob.SQLFiles` (`apps/cli-go/pkg/config/config.go:119-133`)
+      // fed pattern `""` against an `afero.NewOsFs()`: it reports `no files matched pattern: `,
+      // the same as any other non-matching literal pattern. `legacyGlobPattern`'s own
+      // literal-pattern branch, however, resolves an empty pattern to the WORKDIR itself
+      // (`legacyResolveUnderWorkdir(path, workdir, "")` is the workdir, which always exists),
+      // so without this guard an empty `schema_paths` entry would recurse into and collect
+      // every `.sql` file in the entire project instead of matching nothing. Short-circuit
+      // before calling it, rather than fixing `legacyGlobPattern` itself, since that shared
+      // helper (`legacy-glob.ts`) also backs `[db.seed] sql_paths` (`legacy-seed.ts`) and
+      // `legacy-migrate-and-seed.ts`, both out of scope for this PR.
       // Go's `sort.Strings(matches)` (`config.go:154`) — byte order, not JS's default UTF-16
       // code-unit order; see `legacyCompareUtf8Bytes`'s own doc comment.
-      const matches = [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort(
-        legacyCompareUtf8Bytes,
-      );
+      const matches =
+        pattern.length === 0
+          ? []
+          : [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort(
+              legacyCompareUtf8Bytes,
+            );
       if (matches.length === 0) {
         if (legacyHasConfigGlobMeta(pattern)) {
           skipped.push(pattern);
@@ -578,11 +594,24 @@ export function legacyLoadDeclaredSchemas(
   });
 }
 
-/** Go's `cleanSchemaPath` (`apps/cli-go/internal/db/diff/diff.go:117-119`): `filepath.ToSlash(filepath.Clean(path))`. */
-function legacyCleanSchemaPath(rawPath: string): string {
-  const isAbsolute = rawPath.startsWith("/");
+/**
+ * Go's `cleanSchemaPath` (`apps/cli-go/internal/db/diff/diff.go:117-119`):
+ * `filepath.ToSlash(filepath.Clean(path))`. `filepath.Clean`/`ToSlash` only treat `\` as a path
+ * separator on the Windows build of the Go CLI (`filepath.Separator == '\\'` there) — on every
+ * POSIX build (darwin/linux, what this TS binary stands in for on those hosts) a backslash is
+ * just a literal filename character that survives untouched. Verified empirically:
+ * `filepath.ToSlash(filepath.Clean(\`supabase/foo\bar\`))` compiled for `GOOS=darwin` returns
+ * `supabase/foo\bar`, not `supabase/foo/bar`. Gate the separator-normalization on the host
+ * platform so this matches whichever Go build this TS binary is standing in for.
+ */
+function legacyCleanSchemaPath(
+  rawPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const normalized = platform === "win32" ? rawPath.replaceAll("\\", "/") : rawPath;
+  const isAbsolute = normalized.startsWith("/");
   const out: Array<string> = [];
-  for (const segment of rawPath.replaceAll("\\", "/").split("/")) {
+  for (const segment of normalized.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment === "..") {
       if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
@@ -608,12 +637,16 @@ export function legacyShouldApplyDeclarativeWithPgDelta(
   usePgDelta: boolean,
   schemaPaths: ReadonlyArray<string>,
   pgDelta: LegacyPgDeltaTomlConfig,
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (!usePgDelta) return false;
   if (schemaPaths.length === 0) return true;
   if (schemaPaths.length !== 1) return false;
-  const resolvedSchema = legacyCleanSchemaPath(legacyResolveSeedSqlPath(path, schemaPaths[0]!));
-  const declDir = legacyCleanSchemaPath(legacyResolveDeclarativeDir(path, pgDelta));
+  const resolvedSchema = legacyCleanSchemaPath(
+    legacyResolveSeedSqlPath(path, schemaPaths[0]!),
+    platform,
+  );
+  const declDir = legacyCleanSchemaPath(legacyResolveDeclarativeDir(path, pgDelta), platform);
   return resolvedSchema === declDir;
 }
 
