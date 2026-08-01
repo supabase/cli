@@ -49,9 +49,16 @@ export interface LegacyPgDeltaApplyIssue {
     // *ApplyIssue) UnmarshalJSON` is deliberately just as permissive about ABSENT fields,
     // while still rejecting a MISTYPED one for the whole payload — see
     // `legacyIsValidApplyIssueElement`'s own doc comment.
-    readonly id?: string;
-    readonly sql?: string;
-    readonly statementClass?: string;
+    //
+    // `| null` on each of `id`/`sql`/`statementClass` (not just `?`): these are plain,
+    // non-pointer `string` fields on Go's `ApplyStatement`, which has no custom
+    // `UnmarshalJSON` of its own — so they decode via the default `encoding/json`, which
+    // (verified empirically) accepts a JSON `null` for a non-pointer field with NO error and
+    // leaves the zero value (`""`), the same "null means absent" rule as every other scalar
+    // on this interface — see {@link LegacyPgDeltaApplyIssue.code}'s doc comment.
+    readonly id?: string | null;
+    readonly sql?: string | null;
+    readonly statementClass?: string | null;
     // `| null` (not just `?`): Go's `Statement *ApplyStatement` is a pointer, so a JSON
     // `"statement":null` entry (e.g. `{"statement":null,"message":"failed"}`) unmarshals to a
     // nil pointer — `formatApplyIssue`'s `issue.Statement == nil` (`apply.go:202`) treats that
@@ -59,12 +66,24 @@ export interface LegacyPgDeltaApplyIssue {
     // `null` as well as `undefined`, or a `JSON.parse`'d `null` reaches `issue.statement.*` and
     // throws a `TypeError` instead of rendering the message.
   } | null;
-  readonly code?: string;
-  readonly message?: string;
-  readonly isDependencyError?: boolean;
-  readonly position?: number;
-  readonly detail?: string;
-  readonly hint?: string;
+  // `| null` on every scalar below (not just `?`): `ApplyIssue`'s non-`Statement` fields
+  // (`Code`/`Message`/`IsDependencyError`/`Position`/`Detail`/`Hint`) are all plain,
+  // non-pointer Go types (`string`/`bool`/`int`) decoded via the default `encoding/json`
+  // inside `(i *ApplyIssue) UnmarshalJSON`'s `json.Unmarshal(trimmed, &parsed)` call
+  // (`apply.go:133-138`) — verified empirically that unmarshaling a JSON `null` into a
+  // non-pointer struct field produces NO error and leaves the zero value untouched (Go's
+  // documented "null means absent" rule applies to any Go type, not just pointers/maps/
+  // slices/interfaces). So `{"message":null}` is a valid, Go-accepted `ApplyIssue` element —
+  // rejecting it here would turn an otherwise-parseable pg-delta payload into a spurious
+  // "failed to parse pg-delta apply output" instead of rendering `unknown pg-delta issue`
+  // the way `legacyFormatApplyIssueMessage`'s existing `String(issue.message ?? "")` already
+  // does once this type (and `legacyIsValidApplyIssueElement`) let a null through.
+  readonly code?: string | null;
+  readonly message?: string | null;
+  readonly isDependencyError?: boolean | null;
+  readonly position?: number | null;
+  readonly detail?: string | null;
+  readonly hint?: string | null;
 }
 
 /** Go's `ApplyStatementLocation` (pg-topo's `StatementId` shape). */
@@ -75,8 +94,14 @@ export interface LegacyPgDeltaApplyStatementLocation {
 
 /** Go's `ApplyDiagnosis` — a pg-topo static-analysis diagnostic. */
 export interface LegacyPgDeltaApplyDiagnosis {
-  readonly code?: string;
-  readonly message?: string;
+  // `| null` on `code`/`message`/`suggestedFix` (not just `?`): `(d *ApplyDiagnosis)
+  // UnmarshalJSON`'s shadow `raw` struct (`apply.go:87-92`) declares these as plain,
+  // non-pointer `string` fields with no custom unmarshaler of their own, so — same
+  // empirically-verified "null means absent" `encoding/json` rule as
+  // {@link LegacyPgDeltaApplyIssue.code} — a JSON `null` for any of them decodes with no
+  // error and leaves `""`, not a rejected payload.
+  readonly code?: string | null;
+  readonly message?: string | null;
   // `| null` (not just `?`): Go's `(d *ApplyDiagnosis) UnmarshalJSON` (`apply.go:79-108`)
   // explicitly maps a JSON `"statementId":null` to a nil `*ApplyStatementLocation`, and
   // `formatStatementLocation` (`apply.go:263-274`) returns `""` for a nil pointer — so the TS
@@ -84,7 +109,7 @@ export interface LegacyPgDeltaApplyDiagnosis {
   // `legacyFormatStatementLocation`'s `resolved.filePath` and throws a `TypeError` instead of
   // rendering the rest of the diagnostic.
   readonly statementId?: LegacyPgDeltaApplyStatementLocation | string | null;
-  readonly suggestedFix?: string;
+  readonly suggestedFix?: string | null;
 }
 
 /** The JSON payload `pgdelta_declarative_apply.ts` prints on stdout. Go's `ApplyResult`. */
@@ -129,6 +154,15 @@ function legacyIsGoIntNumber(value: unknown): value is number {
  * `{"status":"success","errors":[123]}` must be rejected here too, not accepted as a (false)
  * success. Nested `statement` is checked the same way, one level deep — Go's `ApplyStatement`
  * has no custom `UnmarshalJSON`, so a mistyped `id`/`sql`/`statementClass` fails identically.
+ *
+ * A JSON `null` for any INDIVIDUAL scalar field, though — top-level (`code`/`message`/
+ * `isDependencyError`/`position`/`detail`/`hint`) or nested under `statement`
+ * (`id`/`sql`/`statementClass`) — is NOT a mistyped field: every one of these is a plain,
+ * non-pointer Go type with no custom unmarshaler, and `encoding/json` accepts `null` for those
+ * with no error, leaving the zero value (verified empirically — see
+ * {@link LegacyPgDeltaApplyIssue.code}'s doc comment). So `null` is tolerated alongside each
+ * field's declared type below, matching Go exactly instead of rejecting an otherwise
+ * Go-compatible payload like `{"message":null}`.
  */
 function legacyIsValidApplyIssueElement(value: unknown): boolean {
   if (value === null || typeof value === "string") return true;
@@ -137,19 +171,37 @@ function legacyIsValidApplyIssueElement(value: unknown): boolean {
     const statement = value.statement;
     if (statement !== null && statement !== undefined) {
       if (typeof statement !== "object" || Array.isArray(statement)) return false;
-      if ("id" in statement && typeof statement.id !== "string") return false;
-      if ("sql" in statement && typeof statement.sql !== "string") return false;
-      if ("statementClass" in statement && typeof statement.statementClass !== "string") {
+      if ("id" in statement && statement.id !== null && typeof statement.id !== "string") {
+        return false;
+      }
+      if ("sql" in statement && statement.sql !== null && typeof statement.sql !== "string") {
+        return false;
+      }
+      if (
+        "statementClass" in statement &&
+        statement.statementClass !== null &&
+        typeof statement.statementClass !== "string"
+      ) {
         return false;
       }
     }
   }
-  if ("code" in value && typeof value.code !== "string") return false;
-  if ("message" in value && typeof value.message !== "string") return false;
-  if ("isDependencyError" in value && typeof value.isDependencyError !== "boolean") return false;
-  if ("position" in value && !legacyIsGoIntNumber(value.position)) return false;
-  if ("detail" in value && typeof value.detail !== "string") return false;
-  if ("hint" in value && typeof value.hint !== "string") return false;
+  if ("code" in value && value.code !== null && typeof value.code !== "string") return false;
+  if ("message" in value && value.message !== null && typeof value.message !== "string") {
+    return false;
+  }
+  if (
+    "isDependencyError" in value &&
+    value.isDependencyError !== null &&
+    typeof value.isDependencyError !== "boolean"
+  ) {
+    return false;
+  }
+  if ("position" in value && value.position !== null && !legacyIsGoIntNumber(value.position)) {
+    return false;
+  }
+  if ("detail" in value && value.detail !== null && typeof value.detail !== "string") return false;
+  if ("hint" in value && value.hint !== null && typeof value.hint !== "string") return false;
   return true;
 }
 
@@ -165,13 +217,26 @@ function legacyIsValidApplyIssueElement(value: unknown): boolean {
  * `{"statementId":42}` and `{"statementId":{"filePath":123}}` both unmarshal with `err: <nil>`),
  * so `legacyNormalizeApplyDiagnosis`/`legacyFormatStatementLocation`'s existing defensive
  * handling is the correct (and only) place that degrades gracefully.
+ *
+ * Same "null tolerated on a scalar field" rule as {@link legacyIsValidApplyIssueElement}
+ * applies to `code`/`message`/`suggestedFix` here too: `UnmarshalJSON`'s shadow `raw` struct
+ * (`apply.go:87-92`) decodes them via the default `encoding/json`, which accepts a JSON
+ * `null` for a plain `string` field with no error (verified empirically).
  */
 function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
   if (value === null) return true;
   if (typeof value !== "object" || Array.isArray(value)) return false;
-  if ("code" in value && typeof value.code !== "string") return false;
-  if ("message" in value && typeof value.message !== "string") return false;
-  if ("suggestedFix" in value && typeof value.suggestedFix !== "string") return false;
+  if ("code" in value && value.code !== null && typeof value.code !== "string") return false;
+  if ("message" in value && value.message !== null && typeof value.message !== "string") {
+    return false;
+  }
+  if (
+    "suggestedFix" in value &&
+    value.suggestedFix !== null &&
+    typeof value.suggestedFix !== "string"
+  ) {
+    return false;
+  }
   return true;
 }
 

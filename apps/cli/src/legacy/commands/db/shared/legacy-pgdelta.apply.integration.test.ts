@@ -380,6 +380,51 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
+    "accepts a null scalar field on an errors/diagnostics element and formats it as absent (Go's encoding/json leaves the zero value)",
+    () => {
+      // `ApplyIssue`'s non-`Statement` fields (`Code`/`Message`/`IsDependencyError`/`Position`/
+      // `Detail`/`Hint`) and `ApplyDiagnosis`'s (`Code`/`Message`/`SuggestedFix`) are all plain,
+      // non-pointer Go types decoded via the default `encoding/json` — verified empirically that
+      // a JSON `null` for a non-pointer struct field produces NO error and leaves the zero value,
+      // so `{"errors":[{"message":null}]}` is a valid, Go-accepted payload, not a parse failure.
+      // The formatter's existing `String(issue.message ?? "")` already renders a zero-value
+      // message as "unknown pg-delta issue" once the guard lets the `null` through.
+      const dir = makeDeclarativeDir();
+      const payload = {
+        status: "error",
+        totalApplied: 0,
+        totalRounds: 1,
+        totalSkipped: 0,
+        errors: [{ message: null, code: null, isDependencyError: null, position: null }],
+        diagnostics: [{ message: null, code: null, suggestedFix: null }],
+      };
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(out.stderrText).toContain("- unknown pg-delta issue");
+        expect(out.stderrText).toContain("- unknown pg-delta diagnostic");
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, true),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as a number arrives as a string",
     () => {
       // Same reasoning as the array-typed-field test above, for `ApplyResult`'s numeric fields
