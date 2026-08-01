@@ -625,6 +625,31 @@ describe("legacy db start", () => {
   );
 
   it.live(
+    "an explicitly empty --network-id falls back to the generated network name, not a literal empty override",
+    () => {
+      // Go's gate is `len(viper.GetString("network-id")) > 0` (docker.go:379-383), not merely
+      // "the flag was passed" — an empty override (e.g. a shell expanding an unset var to "")
+      // must fall through to the generated `supabase_network_<projectId>` name, not produce a
+      // literal `--network ""` on the `docker create` call.
+      const { layer, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        networkId: "",
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "network" && s.args.at(-1) === "supabase_network_test",
+          ),
+        ).toBe(true);
+        const args = createArgs(child.spawned);
+        const networkIndex = args?.indexOf("--network") ?? -1;
+        expect(args?.[networkIndex + 1]).toBe("supabase_network_test");
+      });
+    },
+  );
+
+  it.live(
     "fails with a typed config error on a malformed SUPABASE_DB_HEALTH_TIMEOUT, before any container is created",
     () => {
       const { layer, child } = setup({

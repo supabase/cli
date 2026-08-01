@@ -148,10 +148,15 @@ export const legacyBuildLocalDbContainerInputs = (
 
     // Go's `DockerStart` forces every container's network mode (and the network it creates) to
     // `--network-id` when set, ahead of the generated `supabase_network_<project>` fallback
-    // (`docker.go:379-383`).
-    const networkId = Option.isSome(networkIdFlag)
-      ? networkIdFlag.value
-      : localNetworkId(projectId);
+    // (`docker.go:379-383`) — but only when the flag is genuinely non-empty: Go's own gate is
+    // `len(viper.GetString("network-id")) > 0`, not merely "the flag was passed", so an
+    // explicitly empty override (e.g. `--network-id ""`, or a shell expanding an unset var to
+    // `""`) must fall through to the generated network the same as when the flag is absent
+    // entirely, not produce a literal `--network ""` on the `docker create` call.
+    const networkId =
+      Option.isSome(networkIdFlag) && networkIdFlag.value.length > 0
+        ? networkIdFlag.value
+        : localNetworkId(projectId);
     // Go's `DockerStart` unconditionally appends the Linux-only `host.docker.internal:host-gateway`
     // extra host for every container it starts (`docker_linux.go`; empty on darwin/windows, where
     // Docker Desktop already resolves that hostname).
