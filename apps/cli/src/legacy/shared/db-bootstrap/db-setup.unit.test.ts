@@ -75,7 +75,15 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
         stderr: "",
       });
     },
-    runStream: () => Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" }),
+    // `legacyRunStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
+    // `runCapture`), matching Go's `io.Discard` writer for these one-shot jobs — this
+    // suite's `docker.runs`/`captureOptsCalls` assertions track THIS method's calls, not
+    // `runCapture`'s (which nothing under test still calls).
+    runStream: (runOpts, streamOpts) => {
+      runs.push(runOpts);
+      captureOptsCalls.push({ teeStderr: streamOpts.teeStderr });
+      return Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
+    },
   });
   return { layer, runs, captureOptsCalls };
 }

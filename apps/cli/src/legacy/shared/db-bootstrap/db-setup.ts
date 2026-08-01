@@ -319,7 +319,7 @@ const legacyStartInitSchemaPre15 = Effect.fnUntraced(function* (
  * non-zero exit fails with the same shape as Go's `error running container: <cause>`.
  *
  * Resolves `opts.image` itself, individually, right here — via `legacyEnsureImagesCached`
- * (NOT `LegacyDockerRun.runCapture`'s own ambient-only resolver, which never sees
+ * (NOT `LegacyDockerRun.runStream`'s own ambient-only resolver, which never sees
  * `opts.projectEnvValues`) — immediately before running THIS job, matching Go's
  * `DockerRunJob` -> `DockerStart` -> `DockerResolveImageIfNotCached` (`docker.go:363-365`)
  * resolving each one-shot job's own image individually, sequentially, exactly where it's
@@ -378,8 +378,14 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
     // resolver must not re-resolve it (it doesn't see `opts.projectEnvValues` at all).
     skipImageResolve: true,
   };
+  // `runStream` (not `runCapture`) so stdout is actually discarded chunk-by-chunk as it
+  // arrives, matching Go's `io.Discard` writer for this job (`start.go:352`, and this
+  // function's own doc comment above) at constant memory — `runCapture` would instead
+  // buffer the ENTIRE stdout stream into `stdoutChunks` even though nothing here ever
+  // reads it, which a large/verbose migration job's output could grow without bound
+  // (review: Codex, PR #6022).
   const result = yield* docker
-    .runCapture(runOpts, { teeStderr: opts.debug })
+    .runStream(runOpts, { onStdout: () => Effect.void, teeStderr: opts.debug })
     .pipe(Effect.mapError((cause) => new LegacyStartDbSetupError({ message: cause.message })));
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
