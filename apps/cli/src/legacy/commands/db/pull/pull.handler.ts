@@ -606,11 +606,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // For the initial pull (no local migrations) the schema filter is ignored,
         // matching Go's `diffRemoteSchema(ctx, nil, …)`.
         const diffSchema = sync.kind === "missing" ? [] : flags.schema;
-        // Go's `DiffDatabase` emits these to stderr before provisioning + diffing
-        // (`internal/db/diff/diff.go:212,223-226`); `legacyPrepareShadowSource` doesn't
-        // print its own banner, so the pull handler emits it itself to match the
-        // migration-style `db pull` output.
-        yield* output.raw("Creating shadow database...\n", "stderr");
         const pullSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const pullRuntimeInfo = yield* RuntimeInfo;
         const pullNetworkIdFlag = yield* LegacyNetworkIdFlag;
@@ -624,39 +619,52 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           connType === "linked" ? linkedRef : undefined,
         );
         const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
-        // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
-        // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a local
-        // target with declarative schema files gets a second `contrib_regression`
-        // shadow returned as the target override.
-        const shadow = yield* legacyPrepareShadowSource(pullSpawner, {
-          ...legacyShadowRunInputFromLocalContainerInputs(
-            pullLocalInputs,
-            resolvedPullShadowImage,
-            toml,
-            fs,
-            path,
-          ),
-          targetLocal: resolved.isLocal,
-          usePgDelta: usePgDeltaDiff,
-          schemaPaths: pullLocalInputs.context.config.db.migrations.schema_paths,
-          pgDelta: toml.pgDelta,
-          ctx,
-        });
-        const diffOutcome = yield* Effect.gen(function* () {
-          // Use the declarative target override when present (Go substitutes it
-          // for the diff target, `diff.go:196-197`); for remote pulls it's
-          // undefined, so this is the direct target URL as before.
-          const target = shadow.targetUrlOverride ?? targetUrl;
-          yield* output.raw(
-            diffSchema.length > 0
-              ? `Diffing schemas: ${diffSchema.join(",")}\n`
-              : "Diffing schemas...\n",
-            "stderr",
-          );
-          return yield* withPoolerFallback(target, (targetRef) =>
-            // Wrap the engine choice in a gen so both branches' error/requirement
-            // channels unify into one `Effect` the helper can retry generically.
-            Effect.gen(function* () {
+        // Go's `diffRemoteSchema` retries the ENTIRE `diff.DiffDatabase` call — shadow
+        // provisioning included — against the pooler config on an IPv6 failure, not
+        // just the diff step (`internal/db/pull/pull.go:176-190`): `DiffDatabase`
+        // prints "Creating shadow database..." and runs `PrepareShadowSource` before
+        // ever touching the remote/target connection (`internal/db/diff/diff.go:211-
+        // 217`), so a pooler retry re-prints the creation/diff banners and provisions
+        // + tears down a second, fresh shadow. Mirror that observable behavior by
+        // wrapping the full prepare-shadow-then-diff operation in the retried
+        // closure — each attempt gets its own shadow and its own teardown — instead
+        // of provisioning one shadow and only retrying the diff engine against it.
+        const runShadowDiff = (targetRef: string) =>
+          Effect.gen(function* () {
+            // Go's `DiffDatabase` emits these to stderr before provisioning + diffing
+            // (`internal/db/diff/diff.go:212,223-226`); `legacyPrepareShadowSource`
+            // doesn't print its own banner, so the pull handler emits it itself to
+            // match the migration-style `db pull` output.
+            yield* output.raw("Creating shadow database...\n", "stderr");
+            // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
+            // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a
+            // local target with declarative schema files gets a second
+            // `contrib_regression` shadow returned as the target override.
+            const shadow = yield* legacyPrepareShadowSource(pullSpawner, {
+              ...legacyShadowRunInputFromLocalContainerInputs(
+                pullLocalInputs,
+                resolvedPullShadowImage,
+                toml,
+                fs,
+                path,
+              ),
+              targetLocal: resolved.isLocal,
+              usePgDelta: usePgDeltaDiff,
+              schemaPaths: pullLocalInputs.context.config.db.migrations.schema_paths,
+              pgDelta: toml.pgDelta,
+              ctx,
+            });
+            return yield* Effect.gen(function* () {
+              // Use the declarative target override when present (Go substitutes it
+              // for the diff target, `diff.go:196-197`); for remote pulls it's
+              // undefined, so this is this attempt's resolved target URL.
+              const target = shadow.targetUrlOverride ?? targetRef;
+              yield* output.raw(
+                diffSchema.length > 0
+                  ? `Diffing schemas: ${diffSchema.join(",")}\n`
+                  : "Diffing schemas...\n",
+                "stderr",
+              );
               if (usePgDeltaDiff) {
                 // With PGDELTA_DEBUG set, capture the shadow baseline catalog so an
                 // empty diff can be inspected later (Go's DiffDatabase,
@@ -679,7 +687,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   : undefined;
                 const result = yield* legacyDiffPgDelta(ctx, {
                   sourceRef: shadow.sourceUrl,
-                  targetRef,
+                  targetRef: target,
                   schema: diffSchema,
                   formatOptions,
                 });
@@ -691,22 +699,22 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               }
               const sql = yield* legacyDiffMigra(ctx, {
                 source: shadow.sourceUrl,
-                target: targetRef,
+                target,
                 schema: diffSchema,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
               });
               return { sql, files: undefined, capture: undefined };
-            }),
-          );
-        }).pipe(
-          Effect.ensuring(
-            legacyRemoveShadowDatabase(pullSpawner, {
-              containerId: shadow.container,
-              secretDirId: shadow.secretDirId,
-              workdir: cliConfig.workdir,
-            }),
-          ),
-        );
+            }).pipe(
+              Effect.ensuring(
+                legacyRemoveShadowDatabase(pullSpawner, {
+                  containerId: shadow.container,
+                  secretDirId: shadow.secretDirId,
+                  workdir: cliConfig.workdir,
+                }),
+              ),
+            );
+          });
+        const diffOutcome = yield* withPoolerFallback(targetUrl, runShadowDiff);
 
         const out = diffOutcome.sql;
         const diffEmpty = out.trim().length === 0;

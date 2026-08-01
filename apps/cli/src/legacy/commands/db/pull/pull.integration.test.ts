@@ -1476,6 +1476,14 @@ describe("legacy db pull", () => {
     // IPv4 pooler when the direct host is unreachable over IPv6 from the container
     // (internal/db/pull/pull.go, diffRemoteSchema). The first edge run fails with
     // an IPv6 connectivity error; the retry succeeds and the migration is written.
+    //
+    // Go's `diffRemoteSchema` retries the WHOLE `diff.DiffDatabase` call on this
+    // path, not just the diff engine (`internal/db/diff/diff.go:211-217` runs
+    // `PrepareShadowSource` and prints "Creating shadow database..."/"Diffing
+    // schemas..." before ever touching the target connection) — so the pooler
+    // retry re-provisions and tears down a FRESH shadow and re-prints both
+    // banners, rather than reusing the first attempt's shadow. Assert that shape
+    // directly, not just that the migration eventually gets written.
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -1488,18 +1496,31 @@ describe("legacy db pull", () => {
       yield* legacyDbPull(
         flags({ linked: Option.some(true), diffEngine: Option.some("pg-delta") }),
       );
-      expect(streamText(s.out, "stderr")).toContain("does not support IPv6");
-      expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
+      const err = streamText(s.out, "stderr");
+      expect(err).toContain("does not support IPv6");
+      expect(err).toContain("Retrying via the IPv4 connection pooler");
       expect(s.edgeRunCount).toBe(2);
-      expect(streamText(s.out, "stderr")).toMatch(
+      expect(err).toMatch(
         /Schema written to supabase[/\\]migrations[/\\]\d{14}_remote_schema\.sql\n/u,
       );
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(2);
+      expect(
+        s.shadowSpawned.filter((c) => c.args[0] === "rm" && c.args.includes("-f")),
+      ).toHaveLength(2);
+      expect(err.split("Creating shadow database...")).toHaveLength(3);
+      expect(err.split("Diffing schemas...")).toHaveLength(3);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("retries the declarative export through the IPv4 pooler on an IPv6 error", () => {
     // Go's pullDeclarativePgDelta retries DeclarativeExportPgDelta through the
-    // pooler in the same IPv6 scenario (internal/db/pull/pull.go).
+    // pooler in the same IPv6 scenario (internal/db/pull/pull.go), but unlike
+    // diffRemoteSchema/DiffDatabase it calls `diff.PrepareRawShadow` ONCE before
+    // the retry and only re-runs the export against the same shadow
+    // (`pull.go:92-115`) — a deliberate asymmetry in Go's own code, not a gap to
+    // close. Assert the single-shadow-reuse shape so a future change doesn't
+    // accidentally "fix" this path to double-provision like the migration-style
+    // diff path correctly does.
     const s = setup(tmp.current, {
       edgeFailFirstWith: "error exporting declarative schema:\nnetwork is unreachable",
       edgeStdout: EXPORT_JSON,
@@ -1512,6 +1533,7 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         `Declarative schema written to ${join("supabase", "database")}\n`,
       );
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
