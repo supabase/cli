@@ -133,10 +133,11 @@ describe("legacyFormatApplyFailure", () => {
 
   test("renders a partially-populated statement (missing sql/statementClass) without throwing", () => {
     // Reproduces feeding a real pg-delta subprocess's malformed stdout
-    // (`{"errors":[{"message":"boom","statement":{"id":"s1"}}]}`) through the unchecked
-    // `JSON.parse(...) as LegacyPgDeltaApplyResult` cast in `legacyApplyDeclarativePgDelta` —
-    // this only ever runs on an ALREADY-FAILED apply, so a formatter crash here would turn an
-    // actionable SQL error into an unhandled defect.
+    // (`{"errors":[{"message":"boom","statement":{"id":"s1"}}]}`) through
+    // `legacyApplyDeclarativePgDelta` — that function only validates the top-level shape
+    // (`{status: string}`), not nested fields, and this only ever runs on an
+    // ALREADY-FAILED apply, so a formatter crash here would turn an actionable SQL error
+    // into an unhandled defect.
     const parsed = JSON.parse(
       '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":[{"message":"boom","statement":{"id":"s1"}}]}',
     ) as LegacyPgDeltaApplyResult;

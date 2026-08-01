@@ -42,11 +42,12 @@ const LEGACY_PG_DELTA_APPLY_CONTAINER_SCHEMA_PATH = "/declarative";
 export interface LegacyPgDeltaApplyIssue {
   readonly statement?: {
     // Optional (not required): this whole interface types an untrusted `JSON.parse` of a
-    // pg-delta subprocess's stdout (`legacyApplyDeclarativePgDelta`'s unchecked `as
-    // LegacyPgDeltaApplyResult` cast), so a partially-populated `statement` object (e.g. a
-    // future pg-delta release that only reports `id`) must render, not throw — see
-    // `legacyFormatApplyIssue`'s defensive `?? ""` handling below. Go's own
-    // `(i *ApplyIssue) UnmarshalJSON` is deliberately just as defensive, for the same reason.
+    // pg-delta subprocess's stdout — `legacyApplyDeclarativePgDelta` only structurally
+    // validates the top-level shape (`{status: string}`), not nested fields — so a
+    // partially-populated `statement` object (e.g. a future pg-delta release that only
+    // reports `id`) must render, not throw — see `legacyFormatApplyIssue`'s defensive
+    // `?? ""` handling below. Go's own `(i *ApplyIssue) UnmarshalJSON` is deliberately just
+    // as defensive, for the same reason.
     readonly id?: string;
     readonly sql?: string;
     readonly statementClass?: string;
@@ -84,6 +85,27 @@ export interface LegacyPgDeltaApplyResult {
   readonly stuckStatements?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
   readonly validationErrors?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
   readonly diagnostics?: ReadonlyArray<LegacyPgDeltaApplyDiagnosis | null>;
+}
+
+/**
+ * Structural guard for Go's `ApplyResult` JSON shape, applied to an untrusted
+ * `JSON.parse` of the pg-delta subprocess's stdout. A syntactically valid but non-object
+ * payload (`null`, an array, a bare string/number — e.g. a future pg-delta release that
+ * changes its output shape) must fail typed as {@link LegacyDeclarativeApplyError}, not
+ * crash `parsed.status` with an unhandled `TypeError`. Only the top-level shape is
+ * checked (not nested fields) — everything downstream already treats every nested field
+ * as optional/malformed-tolerant (see this module's other `String(x ?? "")` doc
+ * comments), and this is also the AGENTS.md-mandated way to narrow `unknown` without an
+ * `as` cast.
+ */
+function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApplyResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "status" in value &&
+    typeof value.status === "string"
+  );
 }
 
 /** Go's `(i *ApplyIssue) UnmarshalJSON` string/object dual shape, applied post-`JSON.parse`. */
@@ -325,7 +347,13 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     .pipe(Effect.mapError((cause) => new LegacyDeclarativeApplyError({ message: cause.message })));
 
   const parsed = yield* Effect.try({
-    try: () => JSON.parse(result.stdout) as LegacyPgDeltaApplyResult,
+    try: () => {
+      const raw: unknown = JSON.parse(result.stdout);
+      if (!legacyIsPgDeltaApplyResult(raw)) {
+        throw new Error("pg-delta apply output was not a JSON object");
+      }
+      return raw;
+    },
     catch: (cause) =>
       new LegacyDeclarativeApplyError({
         message: debug

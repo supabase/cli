@@ -165,6 +165,70 @@ describe("legacyApplyDeclarativePgDelta", () => {
   });
 
   it.effect(
+    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when stdout is syntactically valid but non-object JSON",
+    () => {
+      // A configured or future pg-delta version emitting `null`/an array is valid JSON, so a
+      // bare `JSON.parse(...) as LegacyPgDeltaApplyResult` cast would let `parsed.status` throw
+      // an unhandled TypeError instead of failing typed.
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({ stdout: "null" });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to parse pg-delta apply output",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("fails with LegacyDeclarativeApplyError when stdout is a JSON array", () => {
+    const dir = makeDeclarativeDir();
+    const edge = fakeEdgeRuntime({ stdout: "[1,2,3]" });
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+        fs,
+        declarativeDirAbs: dir,
+        target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      expect((failError(exit) as { message: string }).message).toContain(
+        "failed to parse pg-delta apply output",
+      );
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          edge.layer,
+          out.layer,
+          Layer.succeed(LegacyDebugFlag, false),
+        ),
+      ),
+    );
+  });
+
+  it.effect(
     "on a non-success status, prints the formatted failure to stderr but not the raw payload when --debug is unset",
     () => {
       const dir = makeDeclarativeDir();
