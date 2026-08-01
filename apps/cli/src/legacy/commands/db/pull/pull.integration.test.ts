@@ -1291,6 +1291,28 @@ describe("legacy db pull", () => {
     },
   );
 
+  it.effect(
+    "a repeated --experimental=false --experimental=true still hits the retirement error (last Set() wins)",
+    () => {
+      // pflag/viper bind ONE variable per flag: repeated occurrences collapse to
+      // whichever Set() call happened LAST, verified empirically against the pinned
+      // apps/cli-go cobra@v1.10.2/pflag@v1.0.10/viper@v1.21.0 versions. A resolver that
+      // only checks "does any pre-terminator token say false" gets this ordering
+      // backwards and would let the pull proceed instead of hitting the retirement
+      // error (CLI-1957 review).
+      const s = setup(tmp.current, {
+        args: ["db", "pull", "--experimental=false", "--experimental=true"],
+      });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "LegacyDbPullExperimentalRetiredError",
+          message: expect.stringContaining("--declarative"),
+        });
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
     // Go loads supabase/.env via godotenv before reading EXPERIMENTAL_PG_DELTA
     // (config.go), so a project .env must select pg-delta even when the shell
