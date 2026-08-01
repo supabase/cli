@@ -589,22 +589,30 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     );
 
     // Same gap for the fresh-volume one-shot setup jobs' own `realtime.enabled`/
-    // `storage.file_size_limit` overrides and `db.health_timeout` — Go's `Config.Load`
-    // decodes all three in the same unconditional pass as the fields above (the bool via
-    // `mapstructure`'s `decodeBool`, `pkg/config/config.go:749-756`; the byte-size and
-    // duration via their own `UnmarshalText`/`StringToTimeDurationHookFunc` hooks,
+    // `storage.enabled`/`storage.file_size_limit` overrides and `db.health_timeout` — Go's
+    // `Config.Load` decodes all four in the same unconditional pass as the fields above (the
+    // bools via `mapstructure`'s `decodeBool`, `pkg/config/config.go:749-756`; the byte-size
+    // and duration via their own `UnmarshalText`/`StringToTimeDurationHookFunc` hooks,
     // `config.go:39-49,580-586`). `legacyResolveDbBootstrapConfig` (below) is the only
-    // other place that parses `SUPABASE_REALTIME_ENABLED`/
+    // other place that parses `SUPABASE_REALTIME_ENABLED`/`SUPABASE_STORAGE_ENABLED`/
     // `SUPABASE_STORAGE_FILE_SIZE_LIMIT`/`SUPABASE_DB_HEALTH_TIMEOUT`, and it never runs
     // on the already-running short-circuit right after this block — so a malformed
     // override (e.g. `SUPABASE_DB_HEALTH_TIMEOUT=bogus`) would otherwise be silently
     // accepted whenever Postgres is already running, unlike Go (review:
-    // PRRT_kwDOErm0O86VoJnt).
+    // PRRT_kwDOErm0O86VoJnt, PRRT_kwDOErm0O86VooCL).
     yield* wrapDbConfigOverride("realtime.enabled", () =>
       legacyEnvOverrideBool(
         "SUPABASE_REALTIME_ENABLED",
         config.realtime.enabled,
         "realtime.enabled",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("storage.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_STORAGE_ENABLED",
+        config.storage.enabled,
+        "storage.enabled",
         projectEnvValues,
       ),
     );
