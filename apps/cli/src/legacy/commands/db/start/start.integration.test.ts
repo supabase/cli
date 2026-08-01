@@ -736,6 +736,7 @@ describe("legacy db start", () => {
     ["local_smtp.port", "SUPABASE_LOCAL_SMTP_PORT", "not-a-port"],
     ["analytics.port", "SUPABASE_ANALYTICS_PORT", "not-a-port"],
     ["db.pooler.pool_mode", "SUPABASE_DB_POOLER_POOL_MODE", "not-a-mode"],
+    ["db.pooler.enabled", "SUPABASE_DB_POOLER_ENABLED", "not-a-bool"],
     ["auth.web3", "SUPABASE_AUTH_WEB3_SOLANA_ENABLED", "not-a-bool"],
     ["auth.oauth_server", "SUPABASE_AUTH_OAUTH_SERVER_ENABLED", "not-a-bool"],
     ["api.enabled", "SUPABASE_API_ENABLED", "not-a-bool"],

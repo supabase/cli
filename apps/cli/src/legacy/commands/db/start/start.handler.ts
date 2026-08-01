@@ -522,9 +522,17 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
 
     // Same gap for Supavisor's pooler fields — Go's `Config.Load` applies
     // `SUPABASE_DB_POOLER_*` generically (`pkg/config/config.go:580-586`), regardless of whether
-    // `db start` itself ever reads them: it never builds the pooler container. All four throw
+    // `db start` itself ever reads them: it never builds the pooler container. All five throw
     // synchronously on a malformed override — wrapped so a bad value fails as a typed
     // `LegacyDbConfigLoadError` instead of an untyped Effect defect. Discarded.
+    yield* wrapDbConfigOverride("db.pooler.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_DB_POOLER_ENABLED",
+        config.db.pooler.enabled,
+        "db.pooler.enabled",
+        projectEnvValues,
+      ),
+    );
     yield* wrapDbConfigOverride("db.pooler.port", () =>
       legacyEnvOverridePort(
         "SUPABASE_DB_POOLER_PORT",
