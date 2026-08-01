@@ -839,6 +839,36 @@ describe("legacy db start", () => {
     },
   );
 
+  // Same gap, same shape, different fields: `edge_runtime.enabled`, `db.network_restrictions.
+  // enabled`, `studio.enabled`, and `local_smtp.enabled` were only ever resolved inside
+  // `legacyResolveLocalConfigValues` (the not-running branch's own config-values resolver, called
+  // below), which never runs once `legacyIsLocalDbRunning` short-circuits — so a malformed
+  // override was silently ignored whenever Postgres was already running, unlike Go's
+  // `flags.LoadConfig`, which decodes all four unconditionally before
+  // `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86Vo7zx).
+  it.live.each([
+    ["edge_runtime.enabled", "SUPABASE_EDGE_RUNTIME_ENABLED", "not-a-bool"],
+    ["db.network_restrictions.enabled", "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED", "not-a-bool"],
+    ["studio.enabled", "SUPABASE_STUDIO_ENABLED", "not-a-bool"],
+    ["local_smtp.enabled", "SUPABASE_LOCAL_SMTP_ENABLED", "not-a-bool"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override even when Postgres is already running",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   // Same gap, same shape, different field: `auth.jwt_expiry` (a plain `uint`,
   // `pkg/config/auth.go:155`) was only ever resolved as part of `values.authJwtExpiry`
   // (`legacyResolveLocalConfigValues`), which this handler calls ONLY in the not-running branch —

@@ -635,6 +635,51 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       ),
     );
 
+    // Same gap for the remaining plain `*.enabled` booleans Go's `Config.Load` still decodes
+    // unconditionally in the same viper `AutomaticEnv()` pass as every field above (the bools via
+    // `mapstructure`'s `decodeBool`, `pkg/config/config.go:749-756`) but this battery hadn't yet
+    // reached: `edge_runtime.enabled` (the direct sibling of `edge_runtime.policy`/
+    // `edge_runtime.inspector_port` above — same `edgeRuntime` struct, `pkg/config/config.go:279`),
+    // `db.network_restrictions.enabled` (`db.go:73`, non-pointer like `db.settings` above, unlike
+    // the presence-gated `db.ssl_enforcement`), `studio.enabled` (`config.go:260`), and
+    // `local_smtp.enabled` (Go's `Inbucket.Enabled`, `config.go:269`). None of their containers
+    // are ever built by `db start`, but a malformed override (e.g.
+    // `SUPABASE_EDGE_RUNTIME_ENABLED=bogus`) must still fail before `AssertSupabaseDbIsRunning`,
+    // matching every other field in this battery — so it would otherwise be silently accepted
+    // whenever Postgres is already running, unlike Go (review: PRRT_kwDOErm0O86Vo7zx).
+    yield* wrapDbConfigOverride("edge_runtime.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_EDGE_RUNTIME_ENABLED",
+        config.edge_runtime.enabled,
+        "edge_runtime.enabled",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("db.network_restrictions.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED",
+        config.db.network_restrictions.enabled,
+        "db.network_restrictions.enabled",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("studio.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_STUDIO_ENABLED",
+        config.studio.enabled,
+        "studio.enabled",
+        projectEnvValues,
+      ),
+    );
+    yield* wrapDbConfigOverride("local_smtp.enabled", () =>
+      legacyEnvOverrideBool(
+        "SUPABASE_LOCAL_SMTP_ENABLED",
+        config.local_smtp.enabled,
+        "local_smtp.enabled",
+        projectEnvValues,
+      ),
+    );
+
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
     // stderr and return nil (exit 0). Already native — see this module's header. Runs AFTER
     // the config load/validation above, matching Go's `start.Run` (`flags.LoadConfig` before
