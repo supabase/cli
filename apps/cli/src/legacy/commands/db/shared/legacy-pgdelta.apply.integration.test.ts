@@ -380,6 +380,46 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
+    "drops a diagnostics element's statementId when a nested field is mistyped, instead of rendering a bogus location (Go's nil fallback)",
+    () => {
+      // Unlike the mistyped-non-object/non-string `statementId` case above, this reproduces a
+      // mistyped FIELD INSIDE an otherwise object-shaped `statementId`
+      // (`{"filePath":123,...}`). Go's `(d *ApplyDiagnosis) UnmarshalJSON` (`apply.go:100-115`)
+      // tries the `ApplyStatementLocation` object shape first — the mistyped `filePath` fails
+      // that decode — then falls back to a bare string, which ALSO fails (it's an object, not a
+      // string) — so Go silently leaves `StatementID` nil rather than erroring the whole parse,
+      // verified empirically. Rendering the raw object anyway would show a bogus `(123#1)`
+      // location Go never emits.
+      const dir = makeDeclarativeDir();
+      const payload = {
+        status: "success",
+        diagnostics: [{ message: "note", statementId: { filePath: 123, statementIndex: 1 } }],
+      };
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "accepts a null scalar field on an errors/diagnostics element and formats it as absent (Go's encoding/json leaves the zero value)",
     () => {
       // `ApplyIssue`'s non-`Statement` fields (`Code`/`Message`/`IsDependencyError`/`Position`/
@@ -447,6 +487,51 @@ describe("legacyApplyDeclarativePgDelta", () => {
         }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(out.stderrText).toContain("Applied 0 statements in 0 round(s).");
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "accepts a null errors/stuckStatements/validationErrors/diagnostics array and treats it as empty (Go's encoding/json leaves a nil slice)",
+    () => {
+      // `ApplyResult`'s array fields have no custom `UnmarshalJSON` of their own, so Go's
+      // `encoding/json` accepts a JSON `null` for a `[]T` slice field with no error, leaving a
+      // nil (zero-length) slice — verified empirically:
+      // `json.Unmarshal([]byte(\`{"status":"error","errors":null}\`), &r)` returns `err == nil`
+      // with `len(r.Errors) == 0`. A payload reporting all four as `null` must format as if none
+      // were reported at all, not fail the parse.
+      const dir = makeDeclarativeDir();
+      const payload = {
+        status: "error",
+        totalApplied: 0,
+        totalRounds: 1,
+        totalSkipped: 0,
+        errors: null,
+        stuckStatements: null,
+        validationErrors: null,
+        diagnostics: null,
+      };
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(out.stderrText).toContain("No per-statement diagnostics were reported by pg-delta.");
         rmSync(dir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(

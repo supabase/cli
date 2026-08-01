@@ -18,7 +18,7 @@ describe("legacyFormatApplyFailure", () => {
       totalApplied: 3,
       totalSkipped: 1,
     };
-    const message = legacyFormatApplyFailure(result, false);
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(message).toContain('pg-delta apply returned status "error".');
     expect(message).toContain("3/4 statements applied in 2 round(s); 1 skipped.");
     expect(message).toContain("No per-statement diagnostics were reported by pg-delta.");
@@ -33,7 +33,7 @@ describe("legacyFormatApplyFailure", () => {
       totalSkipped: 1,
       stuckStatements: ["stuck one"],
     };
-    const message = legacyFormatApplyFailure(result, false);
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(message).toContain("2/4 statements applied in 1 round(s); 1 skipped.");
   });
 
@@ -51,7 +51,7 @@ describe("legacyFormatApplyFailure", () => {
       totalSkipped: 0,
       errors: [issue],
     };
-    const message = legacyFormatApplyFailure(result, false);
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(message).toContain("Errors:");
     expect(message).toContain(
       "- relation already exists (SQLSTATE 42P07, position 15, dependency error)",
@@ -66,7 +66,7 @@ describe("legacyFormatApplyFailure", () => {
       totalSkipped: 0,
       errors: ["relation already exists"],
     };
-    const message = legacyFormatApplyFailure(result, false);
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(message).toContain("Errors:\n- relation already exists");
   });
 
@@ -88,7 +88,7 @@ describe("legacyFormatApplyFailure", () => {
       totalSkipped: 0,
       errors: [issue],
     };
-    const message = legacyFormatApplyFailure(result, false);
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(message).toContain("- 001_add_column [alter_table]");
     expect(message).toContain("  column does not exist");
     expect(message).toContain("  Detail: Column c was dropped earlier in this plan.");
@@ -115,11 +115,71 @@ describe("legacyFormatApplyFailure", () => {
       totalSkipped: 0,
       errors: [issue],
     };
-    const message = legacyFormatApplyFailure(result, false);
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(sql.length).toBeLessThanOrEqual(120);
     expect(Buffer.byteLength(sql, "utf-8")).toBe(210);
     expect(message).toContain(`  SQL: ${"字".repeat(39)}...`);
     expect(message).not.toContain(sql);
+  });
+
+  test("preserves Go's exact (possibly invalid-UTF-8) truncated bytes when the byte cut lands mid-codepoint", () => {
+    // Unlike the boundary-aligned CJK-repeat case above, a single leading ASCII byte shifts
+    // every subsequent 3-byte CJK character by one, so the byte-117 cut now lands ONE byte
+    // into a character instead of exactly on a boundary — reproducing the pathological case
+    // where Go's raw `normalized[:117]` slice is intentionally invalid UTF-8. Verified against
+    // Go's own `formatStatementSQL` (`apply.go:277-283`): slicing this exact byte range
+    // produces a 120-byte result that `unicode/utf8.ValidString` reports as `false`. A naive
+    // `Buffer#toString("utf-8")` truncation would instead substitute U+FFFD for the incomplete
+    // trailing sequence, corrupting the byte-exact stderr contract.
+    const sql = `a${"字".repeat(60)}`;
+    const issue: LegacyPgDeltaApplyIssue = {
+      message: "boom",
+      statement: { id: "001_a", sql },
+    };
+    const result: LegacyPgDeltaApplyResult = {
+      status: "error",
+      totalApplied: 0,
+      totalRounds: 1,
+      totalSkipped: 0,
+      errors: [issue],
+    };
+    const message = legacyFormatApplyFailure(result, false);
+    const normalizedBytes = Buffer.from(sql, "utf-8");
+    const expectedTruncatedTail = Buffer.concat([
+      normalizedBytes.subarray(0, 117),
+      Buffer.from("...", "utf-8"),
+    ]);
+    expect(expectedTruncatedTail.byteLength).toBe(120);
+    expect(
+      message.includes(Buffer.concat([Buffer.from("  SQL: ", "utf-8"), expectedTruncatedTail])),
+    ).toBe(true);
+    // No replacement character (the tell-tale sign of a lossy UTF-8 decode/re-encode
+    // round-trip) should ever appear in the output.
+    expect(message.includes(Buffer.from("�", "utf-8"))).toBe(false);
+  });
+
+  test("treats a null errors/stuckStatements/validationErrors/diagnostics array as empty, matching Go's nil-slice decode", () => {
+    // Go's `encoding/json` accepts a JSON `null` for a `[]T` slice field with no error,
+    // leaving a nil (zero-length) slice — verified empirically:
+    // `json.Unmarshal([]byte(\`{"status":"error","errors":null}\`), &r)` returns `err == nil`
+    // with `len(r.Errors) == 0`. `legacyFormatApplyFailure` itself already treats a JS `null`/
+    // `undefined` array as empty via `?? []`; this exercises that the TYPE also tolerates it
+    // (the earlier structural-guard bug — `legacyIsPgDeltaApplyResult` — is covered by the
+    // integration test in `legacy-pgdelta.apply.integration.test.ts`, since it isn't exported).
+    const result: LegacyPgDeltaApplyResult = {
+      status: "error",
+      totalApplied: 0,
+      totalRounds: 1,
+      totalSkipped: 0,
+      errors: null,
+      stuckStatements: null,
+      validationErrors: null,
+      diagnostics: null,
+    };
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
+    expect(message).toContain("No per-statement diagnostics were reported by pg-delta.");
+    expect(message).not.toContain("Errors:");
+    expect(message).not.toContain("Stuck statements:");
   });
 
   test("stuck statements and validation errors get their own labeled sections", () => {
@@ -131,7 +191,7 @@ describe("legacyFormatApplyFailure", () => {
       stuckStatements: ["still stuck"],
       validationErrors: ["bad function body"],
     };
-    const message = legacyFormatApplyFailure(result, false);
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(message).toContain("Stuck statements:\n- still stuck");
     expect(message).toContain(
       "Validation errors (from check_function_bodies=on pass):\n- bad function body",
@@ -147,11 +207,11 @@ describe("legacyFormatApplyFailure", () => {
       errors: ["some error"],
       diagnostics: [{ message: "unused index" }, { message: "missing default" }],
     };
-    const collapsed = legacyFormatApplyFailure(result, false);
+    const collapsed = legacyFormatApplyFailure(result, false).toString("utf-8");
     expect(collapsed).toContain("2 pg-topo diagnostic(s) omitted (re-run with --debug to view).");
     expect(collapsed).not.toContain("unused index");
 
-    const verbose = legacyFormatApplyFailure(result, true);
+    const verbose = legacyFormatApplyFailure(result, true).toString("utf-8");
     expect(verbose).toContain("Diagnostics:");
     expect(verbose).toContain("- unused index");
     expect(verbose).toContain("- missing default");
@@ -167,8 +227,8 @@ describe("legacyFormatApplyFailure", () => {
     const parsed = JSON.parse(
       '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":[{"message":"boom","statement":{"id":"s1"}}]}',
     ) as LegacyPgDeltaApplyResult;
-    expect(() => legacyFormatApplyFailure(parsed, false)).not.toThrow();
-    const message = legacyFormatApplyFailure(parsed, false);
+    expect(() => legacyFormatApplyFailure(parsed, false).toString("utf-8")).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, false).toString("utf-8");
     expect(message).toContain("- s1");
     expect(message).toContain("  boom");
     expect(message).not.toContain("undefined");
@@ -185,8 +245,8 @@ describe("legacyFormatApplyFailure", () => {
     const parsed = JSON.parse(
       '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":[{"statement":null,"message":"failed"}]}',
     ) as LegacyPgDeltaApplyResult;
-    expect(() => legacyFormatApplyFailure(parsed, false)).not.toThrow();
-    const message = legacyFormatApplyFailure(parsed, false);
+    expect(() => legacyFormatApplyFailure(parsed, false).toString("utf-8")).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, false).toString("utf-8");
     expect(message).toContain("Errors:\n- failed");
   });
 
@@ -197,8 +257,8 @@ describe("legacyFormatApplyFailure", () => {
     const parsed = JSON.parse(
       '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":[{"message":"boom","statement":{"id":"s1","statementClass":42,"sql":7},"detail":123,"hint":456}]}',
     ) as LegacyPgDeltaApplyResult;
-    expect(() => legacyFormatApplyFailure(parsed, false)).not.toThrow();
-    const message = legacyFormatApplyFailure(parsed, false);
+    expect(() => legacyFormatApplyFailure(parsed, false).toString("utf-8")).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, false).toString("utf-8");
     expect(message).toContain("- s1 [42]");
     expect(message).toContain("  Detail: 123");
     expect(message).toContain("  Hint: 456");
@@ -209,22 +269,29 @@ describe("legacyFormatApplyFailure", () => {
     const parsed = JSON.parse(
       '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":["e"],"diagnostics":[{"message":123,"code":456,"suggestedFix":789}]}',
     ) as LegacyPgDeltaApplyResult;
-    expect(() => legacyFormatApplyFailure(parsed, true)).not.toThrow();
-    const message = legacyFormatApplyFailure(parsed, true);
+    expect(() => legacyFormatApplyFailure(parsed, true).toString("utf-8")).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, true).toString("utf-8");
     expect(message).toContain("[456] 123");
     expect(message).toContain("Suggested fix: 789");
   });
 
-  test("renders a diagnosis whose statementId.filePath arrived as a non-string without throwing", () => {
-    // `filePath` is typed `string | undefined`, but this whole module types an untrusted
-    // `JSON.parse` — a malformed payload can hand a non-string value at runtime, which a bare
-    // `?? ""` guard (rather than `String(...) ?? ""`) would still pass straight to `.trim()`.
+  test("drops a diagnosis's statementId when a nested field is mistyped, matching Go's nil fallback", () => {
+    // Go's `(d *ApplyDiagnosis) UnmarshalJSON` (`apply.go:79-108`) tries decoding `statementId`
+    // as an `ApplyStatementLocation` object first; a mistyped `filePath` (a number, not a
+    // string) fails that decode, and its bare-string fallback ALSO fails since the value is an
+    // object, not a string — so Go silently leaves `StatementID` nil, never erroring the whole
+    // `ApplyResult` parse. Verified empirically against Go's real struct + fallback chain:
+    // `{"statementId":{"filePath":123,"statementIndex":1}}` decodes with `StatementID == nil`.
+    // Rendering the raw object anyway (coercing `filePath` via `String(123)`) would show a
+    // bogus `(123#1)` location Go never emits.
     const parsed = JSON.parse(
       '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":["e"],"diagnostics":[{"message":"d","statementId":{"filePath":123,"statementIndex":1}}]}',
     ) as LegacyPgDeltaApplyResult;
-    expect(() => legacyFormatApplyFailure(parsed, true)).not.toThrow();
-    const message = legacyFormatApplyFailure(parsed, true);
-    expect(message).toContain("(123#1)");
+    expect(() => legacyFormatApplyFailure(parsed, true).toString("utf-8")).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, true).toString("utf-8");
+    expect(message).toContain("- d");
+    expect(message).not.toContain("123#1");
+    expect(message).not.toContain("(123");
   });
 
   test("renders a diagnosis with a null statementId as having no location, without throwing", () => {
@@ -239,8 +306,8 @@ describe("legacyFormatApplyFailure", () => {
     const parsed = JSON.parse(
       '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":["e"],"diagnostics":[{"message":"failed","statementId":null}]}',
     ) as LegacyPgDeltaApplyResult;
-    expect(() => legacyFormatApplyFailure(parsed, true)).not.toThrow();
-    const message = legacyFormatApplyFailure(parsed, true);
+    expect(() => legacyFormatApplyFailure(parsed, true).toString("utf-8")).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, true).toString("utf-8");
     expect(message).toContain("- failed");
     expect(message).not.toContain("undefined");
   });
@@ -264,7 +331,7 @@ describe("legacyFormatApplyFailure", () => {
       errors: ["some error"],
       diagnostics: [diagnosis],
     };
-    const message = legacyFormatApplyFailure(result, true);
+    const message = legacyFormatApplyFailure(result, true).toString("utf-8");
     expect(message).toContain("- [PGT001] circular dependency (001_a.sql#2)");
     expect(message).toContain("Suggested fix: Split the statement across two files.");
   });
@@ -283,5 +350,46 @@ describe("legacyFormatDebugJson", () => {
 
   test("returns empty for blank input", () => {
     expect(legacyFormatDebugJson("   ")).toBe("");
+  });
+
+  test("preserves an integer literal beyond Number.MAX_SAFE_INTEGER byte-for-byte", () => {
+    // Go's `json.Indent` (`encoding/json/indent.go`) only inserts whitespace between existing
+    // tokens — it never decodes a number into a value and re-encodes it. `JSON.parse` would
+    // decode this literal into a `float64`-backed JS number, silently rounding it (verified:
+    // `JSON.parse("9007199254740993").toString()` is `"9007199254740992"`), and
+    // `JSON.stringify` would then re-emit the ROUNDED value — corrupting the exact debug
+    // payload users are asked to attach to bug reports.
+    const raw = '{"id":9007199254740993}';
+    expect(legacyFormatDebugJson(raw)).toBe('{\n  "id": 9007199254740993\n}');
+  });
+
+  test("preserves an existing string escape's exact representation (e.g. an escaped forward slash)", () => {
+    // Go's `json.Indent` copies string tokens byte-for-byte, so an existing `\/` escape stays
+    // `\/`. `JSON.stringify(JSON.parse(...))` would instead re-escape the decoded `/` using its
+    // own (unescaped) convention, changing the payload's exact bytes.
+    const raw = '{"path":"a\\/b"}';
+    expect(legacyFormatDebugJson(raw)).toBe('{\n  "path": "a\\/b"\n}');
+  });
+
+  test("matches Go's json.Indent shape for nested objects/arrays, including empty ones", () => {
+    const raw = '{"a":1,"b":{"c":2,"d":[1,{"e":3}]},"empty":{},"emptyArr":[]}';
+    expect(legacyFormatDebugJson(raw)).toBe(
+      [
+        "{",
+        '  "a": 1,',
+        '  "b": {',
+        '    "c": 2,',
+        '    "d": [',
+        "      1,",
+        "      {",
+        '        "e": 3',
+        "      }",
+        "    ]",
+        "  },",
+        '  "empty": {},',
+        '  "emptyArr": []',
+        "}",
+      ].join("\n"),
+    );
   });
 });

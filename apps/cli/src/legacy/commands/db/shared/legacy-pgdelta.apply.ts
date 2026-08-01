@@ -86,10 +86,16 @@ export interface LegacyPgDeltaApplyIssue {
   readonly hint?: string | null;
 }
 
-/** Go's `ApplyStatementLocation` (pg-topo's `StatementId` shape). */
+/**
+ * Go's `ApplyStatementLocation` (pg-topo's `StatementId` shape). `ApplyStatementLocation`
+ * has no custom `UnmarshalJSON` of its own, so `filePath`/`statementIndex` are plain,
+ * non-pointer Go types decoded via the default `encoding/json` — same "null means absent"
+ * rule as every other scalar in this file (verified empirically, see {@link
+ * LegacyPgDeltaApplyIssue.code}'s doc comment), hence `| null` on both.
+ */
 export interface LegacyPgDeltaApplyStatementLocation {
-  readonly filePath?: string;
-  readonly statementIndex?: number;
+  readonly filePath?: string | null;
+  readonly statementIndex?: number | null;
 }
 
 /** Go's `ApplyDiagnosis` — a pg-topo static-analysis diagnostic. */
@@ -121,6 +127,15 @@ export interface LegacyPgDeltaApplyDiagnosis {
  * LegacyPgDeltaApplyIssue.code} — accepts a JSON `null` for a non-pointer `int` field with
  * NO error and leaves the zero value. So `{"status":"success","totalApplied":null}` is a
  * valid, Go-accepted `ApplyResult`, not a parse failure.
+ *
+ * `| null` on each array field too (`errors`/`stuckStatements`/`validationErrors`/
+ * `diagnostics`): these are plain, non-pointer Go `[]T` slice fields with no custom
+ * unmarshaler on `ApplyResult` itself, and `encoding/json` accepts a JSON `null` for a
+ * slice field with NO error, leaving a nil (zero-length) slice — verified empirically:
+ * `json.Unmarshal([]byte(\`{"status":"error","errors":null}\`), &r)` returns `err == nil`
+ * with `r.Errors == nil` (`len(r.Errors) == 0`). `formatApplyFailure`'s `len(result.Errors)
+ * > 0` guards treat a nil slice identically to an empty one, so `{"status":"error",
+ * "errors":null}` must be accepted here too, not rejected as a parse failure.
  */
 export interface LegacyPgDeltaApplyResult {
   readonly status: string;
@@ -128,10 +143,10 @@ export interface LegacyPgDeltaApplyResult {
   readonly totalRounds?: number | null;
   readonly totalApplied?: number | null;
   readonly totalSkipped?: number | null;
-  readonly errors?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
-  readonly stuckStatements?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
-  readonly validationErrors?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null>;
-  readonly diagnostics?: ReadonlyArray<LegacyPgDeltaApplyDiagnosis | null>;
+  readonly errors?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null> | null;
+  readonly stuckStatements?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null> | null;
+  readonly validationErrors?: ReadonlyArray<LegacyPgDeltaApplyIssue | string | null> | null;
+  readonly diagnostics?: ReadonlyArray<LegacyPgDeltaApplyDiagnosis | null> | null;
 }
 
 /**
@@ -268,6 +283,13 @@ function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
  * `ApplyResult` decode, not by skipping just that element — see those functions' own doc
  * comments for the empirical verification. This is also the AGENTS.md-mandated way to narrow
  * `unknown` without an `as` cast.
+ *
+ * Each array field also tolerates a JSON `null` (not just an absent key): `ApplyResult`'s
+ * `[]ApplyIssue`/`[]ApplyDiagnosis` fields have no custom unmarshaler of their own, and
+ * Go's `encoding/json` accepts `null` for a slice field with no error, leaving a nil
+ * (zero-length) slice — verified empirically, see {@link LegacyPgDeltaApplyResult}'s own
+ * doc comment. So `{"status":"error","errors":null}` is a valid, Go-accepted payload, not
+ * a rejected one.
  */
 function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApplyResult {
   if (
@@ -307,12 +329,12 @@ function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApply
   ) {
     return false;
   }
-  if ("errors" in value) {
+  if ("errors" in value && value.errors !== null) {
     if (!Array.isArray(value.errors) || !value.errors.every(legacyIsValidApplyIssueElement)) {
       return false;
     }
   }
-  if ("stuckStatements" in value) {
+  if ("stuckStatements" in value && value.stuckStatements !== null) {
     if (
       !Array.isArray(value.stuckStatements) ||
       !value.stuckStatements.every(legacyIsValidApplyIssueElement)
@@ -320,7 +342,7 @@ function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApply
       return false;
     }
   }
-  if ("validationErrors" in value) {
+  if ("validationErrors" in value && value.validationErrors !== null) {
     if (
       !Array.isArray(value.validationErrors) ||
       !value.validationErrors.every(legacyIsValidApplyIssueElement)
@@ -328,7 +350,7 @@ function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApply
       return false;
     }
   }
-  if ("diagnostics" in value) {
+  if ("diagnostics" in value && value.diagnostics !== null) {
     if (
       !Array.isArray(value.diagnostics) ||
       !value.diagnostics.every(legacyIsValidApplyDiagnosisElement)
@@ -348,15 +370,44 @@ function legacyNormalizeApplyIssue(
   return raw;
 }
 
+/**
+ * Go's `(d *ApplyDiagnosis) UnmarshalJSON` three-way `statementId` fallback
+ * (`apply.go:100-115`): decode into `ApplyStatementLocation` first — an object whose
+ * PRESENT `filePath`/`statementIndex` fields each match the declared type (`null`
+ * tolerated per field, same rule as {@link legacyIsValidApplyIssueElement}) — and if
+ * that fails (a non-object, or an object with a mistyped field), fall back to a bare
+ * string; if BOTH fail, Go silently leaves `StatementID` nil rather than erroring the
+ * whole `ApplyResult` parse. Verified empirically: `{"statementId":{"filePath":123,
+ * "statementIndex":1}}` decodes with `StatementID == nil` in Go — the object-shape
+ * unmarshal fails on the mistyped `filePath`, and the string fallback also fails since
+ * the value is an object, not a string. `legacyIsValidApplyDiagnosisElement` deliberately
+ * does NOT check `statementId`'s shape (see its own doc comment — Go defers this into a
+ * `json.RawMessage` that never fails the outer parse), so this is the only place that can
+ * drop a malformed location instead of `legacyFormatStatementLocation`'s `String(...)`
+ * coercion rendering a bogus location (e.g. `123#1`) Go would never have shown.
+ */
+function legacyNormalizeApplyStatementId(
+  raw: LegacyPgDeltaApplyStatementLocation | string | null | undefined,
+): LegacyPgDeltaApplyStatementLocation | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw === "string") return { filePath: raw };
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const filePathOk =
+    !("filePath" in raw) || raw.filePath === null || typeof raw.filePath === "string";
+  const indexOk =
+    !("statementIndex" in raw) ||
+    raw.statementIndex === null ||
+    legacyIsGoIntNumber(raw.statementIndex);
+  if (filePathOk && indexOk) return raw;
+  return undefined;
+}
+
 /** Go's `(d *ApplyDiagnosis) UnmarshalJSON` defensive `statementId` handling. */
 function legacyNormalizeApplyDiagnosis(
   raw: LegacyPgDeltaApplyDiagnosis | null | undefined,
 ): LegacyPgDeltaApplyDiagnosis {
   if (raw === null || raw === undefined) return {};
-  if (typeof raw.statementId === "string") {
-    return { ...raw, statementId: { filePath: raw.statementId } };
-  }
-  return raw;
+  return { ...raw, statementId: legacyNormalizeApplyStatementId(raw.statementId) };
 }
 
 /**
@@ -388,30 +439,161 @@ function legacyFormatStatementLocation(
  * both count/slice raw bytes, so a statement with multibyte (e.g. non-ASCII identifier)
  * characters can be far longer in bytes than in UTF-16 units — a `.length`/`.slice()` guard
  * would under-truncate (or not truncate at all) relative to Go's 120-byte limit, changing the
- * legacy stderr contract for an already-failed apply. `Buffer.subarray` slices at the same byte
- * offset Go's `[:maxLen-3]` would, including landing mid-codepoint on a multibyte boundary —
- * matching Go's own raw byte slice rather than rounding to the nearest whole character.
+ * legacy stderr contract for an already-failed apply.
+ *
+ * Returns a `Buffer`, not a `string`: Go's `[:maxLen-3]` is a raw byte slice with no regard
+ * for codepoint boundaries, so a multibyte (e.g. non-ASCII identifier) character straddling
+ * byte 117 is cut mid-sequence, leaving an intentionally INVALID trailing UTF-8 fragment —
+ * exactly what Go writes to stderr, unvalidated. `Buffer#toString("utf-8")` on that same
+ * fragment does NOT reproduce it: Node's UTF-8 decoder substitutes U+FFFD for the incomplete
+ * sequence, and re-encoding that string back to bytes for output yields a DIFFERENT (and
+ * differently-sized) byte sequence than Go's raw slice — verified empirically: slicing Go's
+ * own `formatStatementSQL` at a non-boundary-aligned cut produces a 120-byte, deliberately
+ * invalid-UTF-8 result (`utf8.ValidString` reports `false`), while
+ * `Buffer.from(sql,"utf-8").subarray(...).toString("utf-8")` on that exact byte range
+ * decodes+re-encodes to a 121-byte result containing U+FFFD instead. Keeping this a `Buffer`
+ * all the way to `output.rawBytes` (see {@link legacyFormatApplyFailure}) avoids that
+ * lossy string round-trip and reproduces Go's bytes exactly, valid or not.
  */
-function legacyFormatStatementSql(sql: string): string {
+function legacyFormatStatementSql(sql: string): Buffer {
   const normalized = sql
     .split(/\s+/u)
     .filter((part) => part.length > 0)
     .join(" ");
   const maxLen = 120;
   const normalizedBytes = Buffer.from(normalized, "utf-8");
-  if (normalizedBytes.byteLength <= maxLen) return normalized;
-  return `${normalizedBytes.subarray(0, maxLen - 3).toString("utf-8")}...`;
+  if (normalizedBytes.byteLength <= maxLen) return normalizedBytes;
+  return Buffer.concat([normalizedBytes.subarray(0, maxLen - 3), Buffer.from("...", "utf-8")]);
 }
 
-/** Go's `formatDebugJSON` (`apply.go:285-294`): pretty-print if parseable, else the trimmed raw bytes. */
+/**
+ * Joins Buffer "lines" with `\n` — a Buffer-safe equivalent of `Array#join("\n")`, used so
+ * {@link legacyFormatApplyIssue}/{@link legacyFormatApplyFailure} can embed
+ * {@link legacyFormatStatementSql}'s raw (possibly invalid-UTF-8) bytes without ever
+ * decoding them back into a JS string.
+ */
+function legacyJoinLines(lines: ReadonlyArray<Buffer>): Buffer {
+  const newline = Buffer.from("\n", "utf-8");
+  const parts: Array<Buffer> = [];
+  lines.forEach((line, index) => {
+    if (index > 0) parts.push(newline);
+    parts.push(line);
+  });
+  return Buffer.concat(parts);
+}
+
+/**
+ * Go's `json.Indent` (`encoding/json/indent.go`): re-flows compact/pretty JSON by inserting
+ * whitespace between tokens ONLY — every token (string, number, `true`/`false`/`null`) is
+ * copied byte-for-byte from `src`, never decoded into a value and re-encoded. This is NOT the
+ * same as `JSON.parse` + `JSON.stringify`: parsing a number decodes it into a JS `float64`,
+ * which silently loses precision for an integer literal beyond
+ * `Number.MAX_SAFE_INTEGER` (e.g. a snowflake-style id), and re-stringifying a string
+ * re-escapes it using `JSON.stringify`'s own rules, which can change an existing escape's
+ * representation (e.g. `\/` becomes a literal `/`) — both would corrupt the exact debug
+ * payload users are asked to attach to bug reports. `legacyGoJsonIndentTokens` instead scans
+ * `src` as a token stream (only tracking string boundaries, via backslash-escape skipping, to
+ * avoid misreading punctuation inside a string as structural) and reproduces Go's exact
+ * spacing rules: verified empirically against `encoding/json.Indent` for nested objects/
+ * arrays, empty `{}`/`[]` (no inserted newline), a `\/`-escaped string, an emoji (multi-UTF-16
+ * code point) string, and an integer literal beyond `Number.MAX_SAFE_INTEGER` — all byte-
+ * identical to Go's own output. Caller ({@link legacyFormatDebugJson}) is responsible for
+ * validating `src` is well-formed JSON first; this function assumes it and does not itself
+ * detect malformed input.
+ */
+function legacyGoJsonIndentTokens(src: string): string {
+  let out = "";
+  let depth = 0;
+  let needIndent = false;
+  let i = 0;
+  const n = src.length;
+  const newline = (): void => {
+    out += `\n${"  ".repeat(depth)}`;
+  };
+  const openIndentIfNeeded = (): void => {
+    if (!needIndent) return;
+    needIndent = false;
+    depth++;
+    newline();
+  };
+  while (i < n) {
+    const c = src[i];
+    if (c === " " || c === "\t" || c === "\r" || c === "\n") {
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      const start = i;
+      i++;
+      while (i < n) {
+        if (src[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (src[i] === '"') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      openIndentIfNeeded();
+      out += src.slice(start, i);
+      continue;
+    }
+    if (c === "{" || c === "[") {
+      openIndentIfNeeded();
+      out += c;
+      needIndent = true;
+      i++;
+      continue;
+    }
+    if (c === "}" || c === "]") {
+      if (needIndent) {
+        needIndent = false;
+      } else {
+        depth--;
+        newline();
+      }
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === ",") {
+      openIndentIfNeeded();
+      out += c;
+      newline();
+      i++;
+      continue;
+    }
+    if (c === ":") {
+      openIndentIfNeeded();
+      out += ": ";
+      i++;
+      continue;
+    }
+    openIndentIfNeeded();
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Go's `formatDebugJSON` (`apply.go:285-294`): pretty-print if parseable, else the trimmed raw
+ * bytes. `JSON.parse` here is used ONLY as a well-formedness check (its result is discarded);
+ * the actual reformatting goes through {@link legacyGoJsonIndentTokens} so token values are
+ * never decoded and re-encoded — see that function's own doc comment for why
+ * `JSON.stringify(JSON.parse(...))` would corrupt the payload Go's `json.Indent` preserves.
+ */
 export function legacyFormatDebugJson(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return "";
   try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
+    JSON.parse(trimmed);
   } catch {
     return trimmed;
   }
+  return legacyGoJsonIndentTokens(trimmed);
 }
 
 /** Go's `formatApplyIssueMessage` (`apply.go:222-238`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
@@ -442,25 +624,32 @@ function legacyFormatApplyIssueMessage(issue: LegacyPgDeltaApplyIssue): string {
  * (`apply.go:202`) treats it exactly like a missing field. A `JSON.parse`'d `null` is not
  * `=== undefined`, so checking only `undefined` would fall through to `issue.statement.*` and
  * throw a `TypeError` instead of rendering the message.
+ *
+ * Returns a `Buffer`, not a `string`: the `SQL: ` line embeds {@link legacyFormatStatementSql}'s
+ * raw bytes directly (via {@link legacyJoinLines}) rather than interpolating them into a
+ * template string, so a truncation that lands mid-codepoint reaches `output.rawBytes`
+ * unmodified instead of being silently corrupted by a UTF-8 decode/re-encode round-trip.
  */
-function legacyFormatApplyIssue(rawIssue: LegacyPgDeltaApplyIssue | string | null): string {
+function legacyFormatApplyIssue(rawIssue: LegacyPgDeltaApplyIssue | string | null): Buffer {
   const issue = legacyNormalizeApplyIssue(rawIssue);
   if (issue.statement === undefined || issue.statement === null) {
-    return `- ${legacyFormatApplyIssueMessage(issue)}`;
+    return Buffer.from(`- ${legacyFormatApplyIssueMessage(issue)}`, "utf-8");
   }
   const statementClass = String(issue.statement.statementClass ?? "");
   const classSuffix = statementClass.length > 0 ? ` [${statementClass}]` : "";
-  const lines: Array<string> = [
-    `- ${String(issue.statement.id ?? "")}${classSuffix}`,
-    `  ${legacyFormatApplyIssueMessage(issue)}`,
+  const lines: Array<Buffer> = [
+    Buffer.from(`- ${String(issue.statement.id ?? "")}${classSuffix}`, "utf-8"),
+    Buffer.from(`  ${legacyFormatApplyIssueMessage(issue)}`, "utf-8"),
   ];
   const detail = String(issue.detail ?? "").trim();
-  if (detail.length > 0) lines.push(`  Detail: ${detail}`);
+  if (detail.length > 0) lines.push(Buffer.from(`  Detail: ${detail}`, "utf-8"));
   const hint = String(issue.hint ?? "").trim();
-  if (hint.length > 0) lines.push(`  Hint: ${hint}`);
+  if (hint.length > 0) lines.push(Buffer.from(`  Hint: ${hint}`, "utf-8"));
   const sql = legacyFormatStatementSql(String(issue.statement.sql ?? ""));
-  if (sql.length > 0) lines.push(`  SQL: ${sql}`);
-  return lines.join("\n");
+  if (sql.byteLength > 0) {
+    lines.push(Buffer.concat([Buffer.from("  SQL: ", "utf-8"), sql]));
+  }
+  return legacyJoinLines(lines);
 }
 
 /** Go's `formatApplyDiagnosis` (`apply.go:240-258`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
@@ -484,11 +673,19 @@ function legacyFormatApplyDiagnosis(rawDiagnosis: LegacyPgDeltaApplyDiagnosis | 
  * unsuccessful pg-delta apply, rendered on failure regardless of `--debug`. `verbose`
  * (Go's `viper.GetBool("DEBUG")`) only expands pg-topo diagnostics inline — collapsed to a
  * one-line count by default since a large schema can produce hundreds of them.
+ *
+ * Returns a `Buffer`, not a `string` — see {@link legacyFormatStatementSql}'s doc comment:
+ * an embedded truncated SQL statement can be intentionally invalid UTF-8 (matching Go's raw
+ * byte slice), and only a `Buffer` carried through to `output.rawBytes` reproduces those
+ * exact bytes instead of a lossy decode/re-encode round-trip. Callers that only need the
+ * text for display/assertions (this module's own unit tests) can `.toString("utf-8")` it —
+ * safe for every case except the one pathological truncation this return type exists to
+ * preserve exactly.
  */
 export function legacyFormatApplyFailure(
   result: LegacyPgDeltaApplyResult,
   verbose: boolean,
-): string {
+): Buffer {
   const errors = result.errors ?? [];
   const stuckStatements = result.stuckStatements ?? [];
   const validationErrors = result.validationErrors ?? [];
@@ -500,31 +697,39 @@ export function legacyFormatApplyFailure(
       (result.totalApplied ?? 0) + (result.totalSkipped ?? 0) + stuckStatements.length;
   }
 
-  const lines: Array<string> = [
-    `pg-delta apply returned status "${result.status}".`,
-    `${result.totalApplied ?? 0}/${totalStatements} statements applied in ${
-      result.totalRounds ?? 0
-    } round(s); ${result.totalSkipped ?? 0} skipped.`,
+  const lines: Array<Buffer> = [
+    Buffer.from(`pg-delta apply returned status "${result.status}".`, "utf-8"),
+    Buffer.from(
+      `${result.totalApplied ?? 0}/${totalStatements} statements applied in ${
+        result.totalRounds ?? 0
+      } round(s); ${result.totalSkipped ?? 0} skipped.`,
+      "utf-8",
+    ),
   ];
   if (errors.length > 0) {
-    lines.push("Errors:");
+    lines.push(Buffer.from("Errors:", "utf-8"));
     for (const issue of errors) lines.push(legacyFormatApplyIssue(issue));
   }
   if (stuckStatements.length > 0) {
-    lines.push("Stuck statements:");
+    lines.push(Buffer.from("Stuck statements:", "utf-8"));
     for (const issue of stuckStatements) lines.push(legacyFormatApplyIssue(issue));
   }
   if (validationErrors.length > 0) {
-    lines.push("Validation errors (from check_function_bodies=on pass):");
+    lines.push(Buffer.from("Validation errors (from check_function_bodies=on pass):", "utf-8"));
     for (const issue of validationErrors) lines.push(legacyFormatApplyIssue(issue));
   }
   if (diagnostics.length > 0) {
     if (verbose) {
-      lines.push("Diagnostics:");
-      for (const diagnosis of diagnostics) lines.push(legacyFormatApplyDiagnosis(diagnosis));
+      lines.push(Buffer.from("Diagnostics:", "utf-8"));
+      for (const diagnosis of diagnostics) {
+        lines.push(Buffer.from(legacyFormatApplyDiagnosis(diagnosis), "utf-8"));
+      }
     } else {
       lines.push(
-        `${diagnostics.length} pg-topo diagnostic(s) omitted (re-run with --debug to view).`,
+        Buffer.from(
+          `${diagnostics.length} pg-topo diagnostic(s) omitted (re-run with --debug to view).`,
+          "utf-8",
+        ),
       );
     }
   }
@@ -533,12 +738,17 @@ export function legacyFormatApplyFailure(
   // rather than leaving them with just the bare status line.
   if (errors.length === 0 && stuckStatements.length === 0 && validationErrors.length === 0) {
     lines.push(
-      "No per-statement diagnostics were reported by pg-delta.",
-      "Re-run with --debug to print the raw pg-delta payload, or open an issue at",
-      "https://github.com/supabase/pg-toolbelt/issues with the debug bundle attached.",
+      Buffer.from(
+        [
+          "No per-statement diagnostics were reported by pg-delta.",
+          "Re-run with --debug to print the raw pg-delta payload, or open an issue at",
+          "https://github.com/supabase/pg-toolbelt/issues with the debug bundle attached.",
+        ].join("\n"),
+        "utf-8",
+      ),
     );
   }
-  return lines.join("\n");
+  return legacyJoinLines(lines);
 }
 
 /**
@@ -617,7 +827,14 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
   });
 
   if (parsed.status !== "success") {
-    yield* output.raw(`${legacyFormatApplyFailure(parsed, debug)}\n`, "stderr");
+    // `output.rawBytes`, not `output.raw`: `legacyFormatApplyFailure` returns a `Buffer` that
+    // may contain intentionally-invalid trailing UTF-8 bytes (a truncated SQL statement cut
+    // mid-codepoint, matching Go's raw byte slice) — decoding it into a string here would
+    // corrupt exactly the bytes that Buffer exists to preserve. See its own doc comment.
+    yield* output.rawBytes(
+      Buffer.concat([legacyFormatApplyFailure(parsed, debug), Buffer.from("\n", "utf-8")]),
+      "stderr",
+    );
     if (debug) {
       const debugJson = legacyFormatDebugJson(result.stdout);
       if (debugJson.length > 0) {
