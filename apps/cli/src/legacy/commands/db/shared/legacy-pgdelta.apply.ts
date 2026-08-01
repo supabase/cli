@@ -92,20 +92,40 @@ export interface LegacyPgDeltaApplyResult {
  * `JSON.parse` of the pg-delta subprocess's stdout. A syntactically valid but non-object
  * payload (`null`, an array, a bare string/number — e.g. a future pg-delta release that
  * changes its output shape) must fail typed as {@link LegacyDeclarativeApplyError}, not
- * crash `parsed.status` with an unhandled `TypeError`. Only the top-level shape is
- * checked (not nested fields) — everything downstream already treats every nested field
- * as optional/malformed-tolerant (see this module's other `String(x ?? "")` doc
- * comments), and this is also the AGENTS.md-mandated way to narrow `unknown` without an
- * `as` cast.
+ * crash `parsed.status` with an unhandled `TypeError`.
+ *
+ * Every field `ApplyResult` itself declares a type for is checked when present — Go's
+ * `json.Unmarshal` rejects the whole payload with an `UnmarshalTypeError` the moment any of
+ * these doesn't match its struct field's declared type (`Errors []ApplyIssue`, `TotalApplied
+ * int`, etc., `apps/cli-go/internal/pgdelta/apply.go:27-44`), so e.g. an `errors` field that
+ * arrives as an object (`{"length":1}`) instead of an array must fail here too, not reach
+ * `legacyFormatApplyFailure`'s `for (const issue of errors)` and throw an unhandled
+ * `TypeError` defect. Only each field's OWN declared type is checked (not the shape of
+ * elements inside `errors`/`stuckStatements`/`validationErrors`/`diagnostics`) — everything
+ * downstream already treats a malformed element as optional/malformed-tolerant (see this
+ * module's other `String(x ?? "")` doc comments and `ApplyIssue`'s own dual string/object
+ * `UnmarshalJSON`), so per-element validation stays there. This is also the AGENTS.md-mandated
+ * way to narrow `unknown` without an `as` cast.
  */
 function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApplyResult {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "status" in value &&
-    typeof value.status === "string"
-  );
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    !("status" in value) ||
+    typeof value.status !== "string"
+  ) {
+    return false;
+  }
+  if ("totalStatements" in value && typeof value.totalStatements !== "number") return false;
+  if ("totalRounds" in value && typeof value.totalRounds !== "number") return false;
+  if ("totalApplied" in value && typeof value.totalApplied !== "number") return false;
+  if ("totalSkipped" in value && typeof value.totalSkipped !== "number") return false;
+  if ("errors" in value && !Array.isArray(value.errors)) return false;
+  if ("stuckStatements" in value && !Array.isArray(value.stuckStatements)) return false;
+  if ("validationErrors" in value && !Array.isArray(value.validationErrors)) return false;
+  if ("diagnostics" in value && !Array.isArray(value.diagnostics)) return false;
+  return true;
 }
 
 /** Go's `(i *ApplyIssue) UnmarshalJSON` string/object dual shape, applied post-`JSON.parse`. */

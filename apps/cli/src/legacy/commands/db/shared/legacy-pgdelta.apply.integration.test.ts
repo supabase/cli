@@ -229,6 +229,81 @@ describe("legacyApplyDeclarativePgDelta", () => {
   });
 
   it.effect(
+    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as an array arrives as an object",
+    () => {
+      // A configured or future pg-delta emitting `{"status":"error","errors":{"length":1}}` must
+      // not reach `legacyFormatApplyFailure`'s `for (const issue of errors)`, which would throw an
+      // unhandled TypeError on a non-iterable object — Go's `json.Unmarshal` rejects this the same
+      // way, since `Errors` is declared `[]ApplyIssue` (`apps/cli-go/internal/pgdelta/apply.go:33`).
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({
+        stdout: JSON.stringify({ status: "error", errors: { length: 1 } }),
+      });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to parse pg-delta apply output",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as a number arrives as a string",
+    () => {
+      // Same reasoning as the array-typed-field test above, for `ApplyResult`'s numeric fields
+      // (`TotalApplied int`, etc.) — a malformed counter must fail the parse, not be silently
+      // treated as a genuine successful-apply summary.
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({
+        stdout: JSON.stringify({ status: "success", totalApplied: "5" }),
+      });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to parse pg-delta apply output",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "on a non-success status, prints the formatted failure to stderr but not the raw payload when --debug is unset",
     () => {
       const dir = makeDeclarativeDir();
