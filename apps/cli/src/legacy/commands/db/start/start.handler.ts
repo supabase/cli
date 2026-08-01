@@ -385,6 +385,18 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     yield* wrapDbConfigOverride("api.max_rows", () =>
       legacyEnvOverrideApiMaxRows(config.api.max_rows, projectEnvValues),
     );
+    // Same gap for `api.port` — a plain `uint16` decoded in the SAME unconditional `Config.Load`
+    // pass as `api.max_rows` above (`pkg/config/api.go:29`), regardless of whether `db start`
+    // itself ever reads it: it never builds Kong or any other HTTP-facing container (this
+    // module's own header). It's only otherwise resolved as part of `values.apiPort`
+    // (`legacyResolveLocalConfigValues`), which — like `values.authJwtExpiry` above — this
+    // handler calls ONLY in the not-running branch, so a malformed `SUPABASE_API_PORT` would
+    // otherwise be silently accepted whenever Postgres is already running, unlike Go, which
+    // decodes it before `AssertSupabaseDbIsRunning` regardless (review: PRRT_kwDOErm0O86Vnmss).
+    // Discarded.
+    yield* wrapDbConfigOverride("api.port", () =>
+      legacyEnvOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues),
+    );
 
     // Same gap for `storage.vector.enabled`/`storage.s3_protocol.enabled`/`storage.analytics.
     // enabled` and their five plain-uint siblings (`storage.analytics.{max_namespaces,max_tables,
