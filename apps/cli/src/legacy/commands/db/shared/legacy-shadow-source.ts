@@ -476,7 +476,7 @@ function legacyGlobDeclaredSchemaPaths(
         const absMatch = legacyResolveUnderWorkdir(path, workdir, match);
         const statResult = yield* fs.stat(absMatch).pipe(Effect.result);
         if (Result.isFailure(statResult)) {
-          problems.push(`failed to stat matched file: ${match}`);
+          problems.push(`failed to stat matched file: ${statResult.failure.message}`);
           continue;
         }
         if (statResult.success.type !== "Directory") {
