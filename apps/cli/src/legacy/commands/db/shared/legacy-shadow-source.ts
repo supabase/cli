@@ -292,6 +292,22 @@ function legacyHasConfigGlobMeta(pattern: string): boolean {
 }
 
 /**
+ * Go's `sort.Strings` compares byte-wise over each string's UTF-8 encoding; JS's default
+ * `Array.prototype.sort()` instead compares UTF-16 CODE UNITS, which diverges from byte/codepoint
+ * order for a supplementary-plane character (encoded as a surrogate pair, code units
+ * `0xD800`-`0xDBFF` + `0xDC00`-`0xDFFF`) alongside a BMP private-use character (`0xE000`-
+ * `0xFFFF`): JS ranks the surrogate pair BEFORE the private-use character (`0xD800 < 0xE000`),
+ * while Go's UTF-8 byte order — which preserves Unicode codepoint order — ranks the
+ * supplementary-plane codepoint (`>= U+10000 > U+FFFF`) AFTER it. Verified empirically:
+ * `["a\u{1F600}.sql","a.sql"].sort()` (default) disagrees with `Buffer.compare` on the
+ * same two strings' UTF-8 bytes. Used for every `sort.Strings` this module ports so a schema
+ * directory with such filenames applies in the same order Go would.
+ */
+function legacyCompareUtf8Bytes(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
+}
+
+/**
  * Manual, no-follow-symlink directory walk shared by `legacyGlobDeclaredSchemaPaths` (Go's
  * `walkMatchedDir`/`fs.WalkDir`) and `legacyWalkSqlFilesSorted` (Go's `afero.Walk`). Both Go
  * walkers are `Lstat`-based and therefore never descend into a symlinked directory —
@@ -312,7 +328,12 @@ function legacyHasConfigGlobMeta(pattern: string): boolean {
  * `sort.Strings` over the complete set of collected paths (`config.go:186`,
  * `internal/db/diff/diff.go:75,95`), which is a full lexicographic sort over full relative paths,
  * NOT merely a per-directory-level sort — so the final `.sort()` below is required even though
- * entries are already read in sorted order at each level.
+ * entries are already read in sorted order at each level; it uses {@link legacyCompareUtf8Bytes},
+ * not JS's default comparator, to match Go's byte order — see that function's own doc comment.
+ * A per-entry `fs.stat` failure (permission denied, I/O error, a concurrent filesystem change
+ * between `readDirectory` and `stat`) is NOT swallowed: both Go walkers pass the entry's error to
+ * their callback, which returns it and aborts the whole walk — silently treating it as "file
+ * absent" here could build an incomplete declarative target instead.
  */
 function legacyWalkRegularSqlFilesNoFollow(
   fs: FileSystem.FileSystem,
@@ -333,17 +354,17 @@ function legacyWalkRegularSqlFilesNoFollow(
             Effect.orElseSucceed(() => false),
           );
           if (isSymlink) continue;
-          const entryStat = yield* fs.stat(entryAbs).pipe(Effect.orElseSucceed(() => undefined));
-          if (entryStat?.type === "Directory") {
+          const entryStat = yield* fs.stat(entryAbs);
+          if (entryStat.type === "Directory") {
             yield* visit(entryAbs, entryRel);
-          } else if (entryStat?.type === "File" && entryRel.endsWith(".sql")) {
+          } else if (entryStat.type === "File" && entryRel.endsWith(".sql")) {
             result.push(entryRel);
           }
         }
       });
 
     yield* visit(rootAbs, "");
-    return result.sort();
+    return result.sort(legacyCompareUtf8Bytes);
   });
 }
 
@@ -387,7 +408,11 @@ function legacyGlobDeclaredSchemaPaths(
         problems.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
         continue;
       }
-      const matches = [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort();
+      // Go's `sort.Strings(matches)` (`config.go:154`) — byte order, not JS's default UTF-16
+      // code-unit order; see `legacyCompareUtf8Bytes`'s own doc comment.
+      const matches = [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort(
+        legacyCompareUtf8Bytes,
+      );
       if (matches.length === 0) {
         if (legacyHasConfigGlobMeta(pattern)) {
           skipped.push(pattern);
@@ -454,6 +479,27 @@ function legacyGlobDeclaredSchemaPaths(
  * both `loadDeclaredSchemas`'s pg-delta-declarative-dir and `SchemasDir` branches,
  * `apps/cli-go/internal/db/diff/diff.go:65-76,86-96`). `legacyWalkRegularSqlFilesNoFollow` also
  * matches Go's no-follow-symlink walk semantics — see its doc comment.
+ *
+ * The walk ROOT itself is checked for being a symlink here, unlike `legacyGlobDeclaredSchemaPaths`'s
+ * directory branch (Go's `fs.WalkDir`, whose own doc comment says "if root itself is a symbolic
+ * link, its target will be walked" — so a symlinked `schema_paths` match is deliberately followed,
+ * matching `legacyWalkRegularSqlFilesNoFollow`'s existing never-checks-its-own-root behavior).
+ * `afero.Walk` is the opposite: its `Walk(fs, root, walkFn)` entry point `Lstat`s the root BEFORE
+ * ever calling `walkFn`, so a symlinked root is treated as a non-directory and produces zero files
+ * silently, never descending into the target — verified against `afero`'s own source
+ * (`path.go`'s `Walk`/`lstatIfPossible`). The PRECEDING `fs.stat`-based existence check in
+ * `legacyLoadDeclaredSchemas` (which follows symlinks, matching Go's `afero.DirExists` — also
+ * `fs.Stat`-based) can't substitute for this: existence and walkability are different checks in
+ * Go, and only the latter uses `Lstat`.
+ *
+ * Paths are joined with the injected `Path` service (not a literal `/` template) so a symlink-free
+ * result matches Go's own `filepath.Join`-built path on every platform — on Windows this yields
+ * native backslashes (Go's `afero.Walk` never calls `filepath.ToSlash` on this branch, unlike
+ * `walkMatchedDir`'s `schema_paths` branch, which does), and `path.join` normalizes ANY `/`
+ * `legacyWalkRegularSqlFilesNoFollow`'s own relative-path construction produced internally, not
+ * just the outer `dirRel`/`relative` join (verified: `path.win32.join("supabase/database",
+ * "sub/dir/file.sql")` returns `"supabase\\database\\sub\\dir\\file.sql"`, not a mixed-separator
+ * string) — on POSIX this is a no-op (`path.posix.join` is byte-identical to the old template).
  */
 function legacyWalkSqlFilesSorted(
   fs: FileSystem.FileSystem,
@@ -463,13 +509,18 @@ function legacyWalkSqlFilesSorted(
 ): Effect.Effect<ReadonlyArray<string>, LegacyDeclarativeShadowDbError> {
   return Effect.gen(function* () {
     const dirAbs = legacyResolveUnderWorkdir(path, workdir, dirRel);
+    const isSymlinkRoot = yield* fs.readLink(dirAbs).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (isSymlinkRoot) return [];
     const sqlRelative = yield* legacyWalkRegularSqlFilesNoFollow(fs, path, dirAbs).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyDeclarativeShadowDbError({ message: `failed to walk dir: ${cause.message}` }),
       ),
     );
-    return sqlRelative.map((relative) => `${dirRel}/${relative}`);
+    return sqlRelative.map((relative) => path.join(dirRel, relative));
   });
 }
 

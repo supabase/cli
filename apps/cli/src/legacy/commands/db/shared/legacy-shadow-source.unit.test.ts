@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import {
   legacyLoadDeclaredSchemas,
@@ -352,6 +352,123 @@ describe("legacyLoadDeclaredSchemas", () => {
         expect(result).toEqual([]);
         rmSync(workdir, { recursive: true, force: true });
       }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
+    "returns [] (does not follow) when the pg-delta declarative dir itself is a symlink",
+    () => {
+      // Go's `afero.Walk(fsys, declDir, ...)` Lstat's the ROOT before ever calling `walkFn`
+      // (`afero`'s own `Walk`/`lstatIfPossible`) — a symlinked root is treated as a
+      // non-directory and produces zero files, silently, never descending into the target.
+      // The PRECEDING `afero.DirExists`-equivalent existence check (which follows symlinks,
+      // matching Go's own `fs.Stat`-based `DirExists`) reports the symlinked dir as present, so
+      // only the WALK itself (not the existence check) must reject it.
+      const workdir = makeWorkdir();
+      const realDir = join(workdir, "real-database");
+      mkdirSync(realDir, { recursive: true });
+      writeFileSync(join(realDir, "t.sql"), "select 1;\n");
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      symlinkSync(realDir, join(workdir, "supabase", "database"), "dir");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          [],
+          pgDelta({ enabled: true }),
+        );
+        expect(result).toEqual([]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect("returns [] (does not follow) when supabase/schemas itself is a symlink", () => {
+    const workdir = makeWorkdir();
+    const realDir = join(workdir, "real-schemas");
+    mkdirSync(realDir, { recursive: true });
+    writeFileSync(join(realDir, "t.sql"), "select 1;\n");
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    symlinkSync(realDir, join(workdir, "supabase", "schemas"), "dir");
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const result = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [], pgDelta());
+      expect(result).toEqual([]);
+      rmSync(workdir, { recursive: true, force: true });
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect(
+    "sorts declared schema paths by UTF-8 byte order, not JS's default UTF-16 code-unit order",
+    () => {
+      // A supplementary-plane character (U+1F600, a surrogate pair in UTF-16) alongside a BMP
+      // private-use character (U+E000) is the textbook case where JS's default `.sort()`
+      // (UTF-16 code units) disagrees with Go's `sort.Strings` (UTF-8 bytes, which preserves
+      // codepoint order): JS ranks the surrogate pair first (0xD800 < 0xE000), Go ranks the
+      // supplementary-plane codepoint last (it's numerically > U+FFFF). Verified empirically
+      // against `Buffer.compare` on the two filenames' UTF-8 encodings.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "schemas"), { recursive: true });
+      const supplementary = "a\u{1F600}.sql";
+      const privateUse = "a.sql";
+      writeFileSync(join(workdir, "supabase", "schemas", supplementary), "select 1;\n");
+      writeFileSync(join(workdir, "supabase", "schemas", privateUse), "select 2;\n");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [], pgDelta());
+        expect(result).toEqual([
+          `supabase/schemas/${privateUse}`,
+          `supabase/schemas/${supplementary}`,
+        ]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
+    "propagates (rather than silently drops) a per-entry stat failure during the pg-delta/schemas walk",
+    () => {
+      // Both Go walkers (`afero.Walk`, `fs.WalkDir`) pass a per-entry stat/lstat error to their
+      // callback, which returns it and aborts the whole walk — an entry that can't be statted
+      // after its parent was listed (permissions, I/O error, a concurrent filesystem change)
+      // must not be silently omitted, which could build an incomplete declarative target.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "schemas"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "schemas", "a.sql"), "select 1;\n");
+      const brokenAbs = join(workdir, "supabase", "schemas", "broken.sql");
+      writeFileSync(brokenAbs, "select 2;\n");
+      const statFs = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (real) => ({
+          ...real,
+          stat: (statPath: string) =>
+            statPath === brokenAbs
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "FileSystem",
+                    method: "stat",
+                    description: "simulated stat failure",
+                    pathOrDescriptor: statPath,
+                  }),
+                )
+              : real.stat(statPath),
+        })),
+      ).pipe(Layer.provideMerge(BunServices.layer));
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyLoadDeclaredSchemas(fs, path, workdir, [], pgDelta()).pipe(
+          Effect.exit,
+        );
+        expect(exit._tag).toBe("Failure");
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(statFs));
     },
   );
 
