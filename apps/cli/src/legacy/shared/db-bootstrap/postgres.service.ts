@@ -430,6 +430,16 @@ export interface LegacyShadowPostgresContainerSpecInput {
   readonly rootKey?: string;
   /** `utils.Config.Db.ShadowPort` — the shadow's own host port, published to `5432/tcp` in-container. */
   readonly shadowPort: number;
+  /**
+   * `[db] password` (already resolved from `config.toml`, `DEFAULT_DB_PASSWORD`/"postgres" when
+   * unset) — matches Go's `NewContainerConfig`, which sources `POSTGRES_PASSWORD` from the SAME
+   * `utils.Config.Db.Password` for both the real local container and the shadow
+   * (`CreateShadowDatabase` reuses `NewContainerConfig` verbatim, `diff.go:140`). Must be threaded
+   * through so the shadow's actual Postgres password matches what
+   * `legacyShadowRunInputFromLocalContainerInputs`'s caller connects with — otherwise a
+   * non-default `[db] password` authenticates against the wrong secret.
+   */
+  readonly password: string;
 }
 
 /**
@@ -471,7 +481,7 @@ export function legacyBuildShadowPostgresContainerSpec(
   const isPg14OrEarlier = input.db.major_version <= 14;
 
   const env: Record<string, string> = {
-    POSTGRES_PASSWORD: LEGACY_POSTGRES_PASSWORD,
+    POSTGRES_PASSWORD: input.password,
     POSTGRES_HOST: "/var/run/postgresql",
     JWT_SECRET: input.jwtSecret,
     JWT_EXP: String(input.jwtExpiry),

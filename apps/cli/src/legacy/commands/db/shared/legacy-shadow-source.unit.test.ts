@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, PlatformError } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import {
   legacyLoadDeclaredSchemas,
@@ -261,6 +261,15 @@ describe("legacyLoadDeclaredSchemas", () => {
       // `schema_paths` entry does) must be forward-slashed first, or `legacyPathMatch`/
       // `legacyGlobPattern` (which only recognize `/` as a segment separator, and treat `\`
       // as a glob escape) mis-parse it entirely.
+      //
+      // NOT gated on platform, unlike `legacyCleanSchemaPath`'s own win32-only conversion:
+      // verified empirically against the real `config.Glob.SQLFiles`
+      // (`apps/cli-go/pkg/config/config.go:119-192`) on darwin that Go's own `path.Match`
+      // treats `\` as an escape metacharacter on every platform, not a literal filename byte —
+      // a `foo\bar/x.sql` pattern matched `foobar/x.sql`, never a directory actually named
+      // `foo\bar`. A POSIX Go build can therefore never glob-match a literal backslash in a
+      // `schema_paths` entry either way, so "preserving" it here wouldn't reproduce Go's real
+      // behavior; it would just swap one non-parity result for a different one.
       const workdir = makeWorkdir();
       mkdirSync(join(workdir, "supabase", "custom"), { recursive: true });
       writeFileSync(join(workdir, "supabase", "custom", "x.sql"), "select 1;\n");
@@ -524,12 +533,14 @@ describe("legacyLoadDeclaredSchemas", () => {
   );
 
   it.effect.skipIf(isRoot)(
-    "fails (rather than silently treating as empty) when a matched schema directory can't be read",
+    "fails (rather than silently treating as empty) when a matched schema directory can't be read, and keeps the underlying cause in the message",
     () => {
       // Go's `walkMatchedDir` (`pkg/config/config.go:194-211`) propagates ANY `fs.WalkDir`
       // error as `failed to walk matched directory: <err>` — an unreadable directory must
       // surface as a failure, not silently contribute zero files (which could compare a
-      // local-target diff against the wrong target or generate an incomplete migration).
+      // local-target diff against the wrong target or generate an incomplete migration), and
+      // the reported message must carry the real underlying error (permission denied, here),
+      // not just the directory name — otherwise a user can't tell WHY the walk failed.
       const workdir = makeWorkdir();
       const locked = join(workdir, "supabase", "locked");
       mkdirSync(locked, { recursive: true });
@@ -544,7 +555,12 @@ describe("legacyLoadDeclaredSchemas", () => {
           ["locked"],
           pgDelta(),
         ).pipe(Effect.exit);
-        expect(exit._tag).toBe("Failure");
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("failed to walk matched directory:");
+          expect(errorJson).not.toContain("failed to walk matched directory: locked");
+        }
         chmodSync(locked, 0o755);
         rmSync(workdir, { recursive: true, force: true });
       }).pipe(Effect.provide(BunServices.layer));

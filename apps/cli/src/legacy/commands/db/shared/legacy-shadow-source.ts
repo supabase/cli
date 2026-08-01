@@ -127,7 +127,21 @@ export function legacyShadowRunInputFromLocalContainerInputs(
     setup: {
       majorVersion: localInputs.setup.majorVersion,
       config: localInputs.setup.config,
-      dbUrl: localInputs.setup.dbUrl,
+      // NOT `localInputs.setup.dbUrl` — that carries the REGULAR local container's own
+      // hardcoded-"postgres" password (`legacy-local-config-values.ts`'s `DEFAULT_DB_PASSWORD`),
+      // for a DIFFERENT container. The shadow's own one-shot setup jobs
+      // (`legacyBuildShadowSetupDatabaseInput`) only ever consume this `dbUrl` to extract a
+      // password (`legacyStartInternalDbPassword`) for the SHADOW they actually run against, so
+      // it must carry the SAME resolved `toml.password` the shadow container itself is
+      // initialized with (see `legacyBuildShadowPostgresContainerSpec`) — otherwise a non-default
+      // `[db] password` authenticates against the wrong secret and every setup job fails.
+      dbUrl: legacyToPostgresURL({
+        host: localInputs.context.hostname,
+        port: toml.shadowPort,
+        user: "postgres",
+        password: toml.password,
+        database: "postgres",
+      }),
       jwtSecret: localInputs.setup.jwtSecret,
       jwks: localInputs.setup.jwks,
       apiUrl: localInputs.setup.apiUrl,
@@ -403,6 +417,23 @@ function legacyGlobDeclaredSchemaPaths(
       // `C:\repo\schema.sql` must become `C:/repo/schema.sql` before `legacyPathMatch`/
       // `legacyGlobPattern` (which only recognize `/` as a segment separator) ever see it.
       // Mirrors `legacy-seed-ops.ts`'s identical `toSlash` step for `[db.seed] sql_paths`.
+      //
+      // NOT gated on `platform === "win32"` the way `legacyCleanSchemaPath` below gates its
+      // OWN `\`->`/` conversion: verified empirically against the real
+      // `config.Glob.SQLFiles` (`apps/cli-go/pkg/config/config.go:119-192`) on darwin, fed a
+      // pattern containing a literal `\` (`supabase/foo\bar/x.sql`) — Go's `path.Match`
+      // (which `fs.Glob` compiles down to) treats `\` as an ESCAPE metacharacter on every
+      // platform, not a literal filename byte, so it matched `supabase/foobar/x.sql` (the
+      // backslash consumed, "b" required literally), never a real directory named `foo\bar`.
+      // A POSIX build of Go can therefore NEVER glob-match a literal backslash in a
+      // `schema_paths` entry either way — "preserving" it here wouldn't reproduce that
+      // escape semantics (this port's own `legacyPathMatch`/`legacyGlobPattern` don't
+      // segment-join an unslashed `\` the same way Go's chunked matcher does), it would just
+      // swap one non-parity POSIX result for a different, no-more-correct one. Left
+      // unconditional pending a real fix to `legacyPathMatch`/`legacyGlobPattern`'s own
+      // cross-segment escape handling, which is a pre-existing gap in that shared module
+      // (also used by `[db.seed] sql_paths`), not something specific to this PR's shadow
+      // provisioning.
       const pattern = legacyResolveSeedSqlPath(path, rawPattern).replaceAll("\\", "/");
       if (legacyPathMatch(pattern, "").badPattern) {
         problems.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
@@ -465,7 +496,7 @@ function legacyGlobDeclaredSchemaPaths(
           Effect.result,
         );
         if (Result.isFailure(sqlRelativeResult)) {
-          problems.push(`failed to walk matched directory: ${match}`);
+          problems.push(`failed to walk matched directory: ${sqlRelativeResult.failure.message}`);
           continue;
         }
         for (const relative of sqlRelativeResult.success) {

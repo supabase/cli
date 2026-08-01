@@ -105,6 +105,7 @@ function baseCreateInput(
     image: "public.ecr.aws/supabase/postgres:17.4.1.030",
     configImage: "supabase/postgres:17.4.1.030",
     shadowPort: 54320,
+    password: "postgres",
     projectId: "proj",
     isBitbucketPipeline: false,
     workdir: mkdtempSync(join(tmpdir(), "legacy-shadow-database-")),

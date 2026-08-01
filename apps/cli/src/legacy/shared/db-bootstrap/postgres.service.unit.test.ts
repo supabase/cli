@@ -393,6 +393,7 @@ function baseShadowInput(
     image: "public.ecr.aws/supabase/postgres:17.4.1.030",
     configImage: "supabase/postgres:17.4.1.030",
     shadowPort: 54320,
+    password: "postgres",
     ...overrides,
   };
 }
@@ -444,5 +445,10 @@ describe("legacyBuildShadowPostgresContainerSpec", () => {
   test("labels are still applied (empty map here — the caller merges project/compose labels in, same as every other container)", () => {
     const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput());
     expect(spec.labels).toEqual({});
+  });
+
+  test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal — matching Go's NewContainerConfig, which sources it from utils.Config.Db.Password for both the real container and the shadow", () => {
+    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput({ password: "hunter2" }));
+    expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
   });
 });
