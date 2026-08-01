@@ -21,7 +21,7 @@ export normally (see the Notes/Delegation section below).
 
 | Path                                   | Format     | When                                                |
 | -------------------------------------- | ---------- | --------------------------------------------------- |
-| `<workdir>/supabase/config.toml`       | TOML       | always (db port/password, `[experimental.pgdelta]`) |
+| `<workdir>/supabase/config.toml`       | TOML       | always, except a retired non-declarative `--experimental` pull (the fast-fail check at `pull.handler.ts:203-210` returns before the `legacyReadDbToml` call, so no read happens) |
 | `<workdir>/supabase/migrations/*.sql`  | SQL        | history reconciliation + shadow provisioning        |
 | `~/.supabase/access-token`             | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`       |
 | `<workdir>/supabase/.temp/project-ref` | plain text | linked ref resolution                               |
