@@ -949,6 +949,11 @@ describe("legacy db start", () => {
       expect(createArgs(child.spawned)).not.toBeUndefined();
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["status"]).toBe("started");
+      // Go's `StartDatabase` (`start.go:168-175`) writes "Starting database..." (or "...from
+      // backup..." on a pre-existing volume, as here — see `defaultRoute`) to stderr
+      // unconditionally — no output-format concept gates it in Go, so the `--output-format json`
+      // run must still see it on stderr (review: PRRT_kwDOErm0O86VmHkn).
+      expect(out.stderrText).toContain("Starting database from backup...\n");
     });
   });
 });

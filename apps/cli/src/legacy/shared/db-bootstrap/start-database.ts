@@ -229,14 +229,17 @@ export const legacyStartDatabase = <E>(
       );
     }
 
-    if (output.format === "text") {
-      yield* output.raw(
-        isFreshVolume
-          ? LEGACY_START_STARTING_DATABASE_MESSAGE
-          : LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
-        "stderr",
-      );
-    }
+    // Go's `StartDatabase` (`start.go:168-175`) prints this unconditionally to stderr — Go has
+    // no output-format concept for this seam at all. Matches every other progress line in this
+    // same pipeline (`db-setup.ts`'s "Initialising schema..."/"Seeding globals...",
+    // `legacy-migrate-and-seed.ts`'s "Applying migration ..."), which are also unguarded
+    // (review: PRRT_kwDOErm0O86VmHkn).
+    yield* output.raw(
+      isFreshVolume
+        ? LEGACY_START_STARTING_DATABASE_MESSAGE
+        : LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
+      "stderr",
+    );
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
 
