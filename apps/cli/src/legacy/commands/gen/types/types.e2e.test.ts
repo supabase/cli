@@ -223,10 +223,11 @@ async function ensurePgmetaImage(deadline?: number) {
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
   const networkName = localNetworkId(input.projectId);
-  // Sized so a slow-but-healthy Postgres pull cannot starve pg-meta's
-  // resolution; the local test's own timeout includes this allowance.
+  // One shared window (already counted in the local test's timeout), with
+  // pg-meta's slice reserved up front: Postgres may spend the window only up
+  // to the point that still leaves pg-meta the default budget.
   const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
-  const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline);
+  const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS);
   await ensurePgmetaImage(imageDeadline);
 
   await expectDockerSucceeded(["network", "create", networkName], 30_000);
