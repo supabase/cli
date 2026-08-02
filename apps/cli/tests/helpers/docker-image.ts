@@ -71,8 +71,12 @@ async function resolveImage(image: string): Promise<string> {
       console.error(
         `[ensureImage] pulling ${candidate} (attempt ${attemptIndex + 1}/${PULL_ATTEMPTS})`,
       );
+      // stdout carries the (unbounded) layer-progress stream — ignore it so a
+      // large healthy pull can never die on ENOBUFS; docker writes errors to
+      // stderr, which stays small and is all the failure text needs.
       const pull = spawnSync("docker", ["pull", candidate], {
         encoding: "utf8",
+        stdio: ["ignore", "ignore", "pipe"],
         timeout: Math.min(PULL_ATTEMPT_TIMEOUT_MS, remainingMs),
         killSignal: "SIGKILL",
         maxBuffer: PULL_MAX_BUFFER,
@@ -81,7 +85,7 @@ async function resolveImage(image: string): Promise<string> {
         throw new Error(`failed to run docker: ${pull.error?.message ?? "unknown spawn error"}`);
       }
       if (pull.status === 0) return candidate;
-      const output = `${pull.stdout ?? ""}${pull.stderr ?? ""}`.trim();
+      const output = (pull.stderr ?? "").trim();
       const reason =
         pull.signal !== null && pull.signal !== undefined
           ? `killed by ${pull.signal} after ${PULL_ATTEMPT_TIMEOUT_MS}ms`
