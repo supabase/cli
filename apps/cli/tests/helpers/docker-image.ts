@@ -10,7 +10,7 @@ const PULL_ATTEMPT_TIMEOUT_MS = 120_000;
 // Overall per-image ceiling. Deliberately BELOW the tightest e2e test budget
 // (120s): a stalled registry must leave the caller room to run its test body,
 // and vitest cannot preempt a blocked synchronous spawn to enforce that itself.
-const RESOLVE_DEADLINE_MS = 90_000;
+export const RESOLVE_BUDGET_MS = 90_000;
 const PULL_MAX_BUFFER = 16 * 1024 * 1024;
 const PULL_ATTEMPTS = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length + 1;
 
@@ -43,7 +43,7 @@ export function ensureImage(image: string, deadline = resolveDeadline()): Promis
  * deadlines would otherwise stack beyond the test budget. Callers with roomier
  * test timeouts can size the budget to their own setup window.
  */
-export function resolveDeadline(budgetMs = RESOLVE_DEADLINE_MS): number {
+export function resolveDeadline(budgetMs = RESOLVE_BUDGET_MS): number {
   return Date.now() + budgetMs;
 }
 
@@ -54,10 +54,13 @@ function spawnFailed(result: { error?: Error; signal: NodeJS.Signals | null }): 
 async function resolveImage(image: string, deadline: number): Promise<string> {
   const candidates = legacyGetRegistryImageUrlCandidates(image);
   for (const candidate of candidates) {
+    // Bounded by the shared deadline too: a cached hit still answers in
+    // milliseconds, but a stalled daemon can no longer stack 15s inspects
+    // past a budget an earlier image already consumed.
     const inspect = spawnSync("docker", ["image", "inspect", candidate], {
       encoding: "utf8",
       stdio: ["ignore", "ignore", "pipe"],
-      timeout: INSPECT_TIMEOUT_MS,
+      timeout: Math.min(INSPECT_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
       killSignal: "SIGKILL",
     });
     if (spawnFailed(inspect)) {
