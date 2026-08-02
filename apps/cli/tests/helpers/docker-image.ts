@@ -60,13 +60,18 @@ async function resolveImage(image: string): Promise<string> {
   }
 
   const deadline = Date.now() + RESOLVE_DEADLINE_MS;
+  // Equal split so a candidate that stalls (accepts the connection but never
+  // completes) can never starve the fallbacks that come after it — every
+  // registry is guaranteed its share of the overall deadline.
+  const perCandidateBudgetMs = Math.floor(RESOLVE_DEADLINE_MS / candidates.length);
   const failures: Array<string> = [];
   for (const candidate of candidates) {
+    const candidateDeadline = Math.min(Date.now() + perCandidateBudgetMs, deadline);
     for (let attemptIndex = 0; attemptIndex < PULL_ATTEMPTS; attemptIndex += 1) {
-      const remainingMs = deadline - Date.now();
+      const remainingMs = candidateDeadline - Date.now();
       if (remainingMs <= 0) {
-        failures.push(`resolution deadline exceeded (${RESOLVE_DEADLINE_MS}ms budget)`);
-        return allRegistriesFailed(image, failures);
+        failures.push(`${candidate}: candidate budget exhausted (${perCandidateBudgetMs}ms)`);
+        break;
       }
       console.error(
         `[ensureImage] pulling ${candidate} (attempt ${attemptIndex + 1}/${PULL_ATTEMPTS})`,
@@ -94,7 +99,9 @@ async function resolveImage(image: string): Promise<string> {
             : `exit ${pull.status ?? "unknown"}`;
       failures.push(`${candidate} attempt ${attemptIndex + 1}: ${reason}`);
       const delay = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
-      if (delay !== undefined) await sleep(delay);
+      if (delay === undefined) continue;
+      if (Date.now() + delay >= candidateDeadline) break;
+      await sleep(delay);
     }
   }
   return allRegistriesFailed(image, failures);
