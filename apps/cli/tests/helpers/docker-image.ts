@@ -69,17 +69,21 @@ async function resolveImage(image: string, deadline: number): Promise<string> {
     }
   }
 
-  // Equal split so a candidate that stalls (accepts the connection but never
-  // completes) can never starve the fallbacks that come after it — every
-  // registry is guaranteed its share of the remaining deadline.
-  const perCandidateBudgetMs = Math.max(1, Math.floor((deadline - Date.now()) / candidates.length));
   const failures: Array<string> = [];
-  for (const candidate of candidates) {
-    const candidateDeadline = Math.min(Date.now() + perCandidateBudgetMs, deadline);
+  for (const [candidateIndex, candidate] of candidates.entries()) {
+    // Recomputed per candidate: remaining time split across the candidates
+    // still to run. A stalled candidate can never starve the fallbacks after
+    // it, and a fast-failing one carries its unused budget forward — the last
+    // candidate gets all remaining time.
+    const candidateBudgetMs = Math.max(
+      1,
+      Math.floor((deadline - Date.now()) / (candidates.length - candidateIndex)),
+    );
+    const candidateDeadline = Math.min(Date.now() + candidateBudgetMs, deadline);
     for (let attemptIndex = 0; attemptIndex < PULL_ATTEMPTS; attemptIndex += 1) {
       const remainingMs = candidateDeadline - Date.now();
       if (remainingMs <= 0) {
-        failures.push(`${candidate}: candidate budget exhausted (${perCandidateBudgetMs}ms)`);
+        failures.push(`${candidate}: candidate budget exhausted (${candidateBudgetMs}ms)`);
         break;
       }
       console.error(
