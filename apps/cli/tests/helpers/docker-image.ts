@@ -7,6 +7,9 @@ import { legacyIsDockerDaemonUnreachable } from "../../src/legacy/shared/legacy-
 
 const INSPECT_TIMEOUT_MS = 15_000;
 const PULL_ATTEMPT_TIMEOUT_MS = 120_000;
+// Overall per-image ceiling, matched to the tightest e2e test budget: a stalled
+// registry eats at most one test's worth of wall clock, never attempts × 120s.
+const RESOLVE_DEADLINE_MS = 120_000;
 const PULL_MAX_BUFFER = 16 * 1024 * 1024;
 const PULL_ATTEMPTS = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length + 1;
 
@@ -55,15 +58,21 @@ async function resolveImage(image: string): Promise<string> {
     }
   }
 
+  const deadline = Date.now() + RESOLVE_DEADLINE_MS;
   const failures: Array<string> = [];
   for (const candidate of candidates) {
     for (let attemptIndex = 0; attemptIndex < PULL_ATTEMPTS; attemptIndex += 1) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        failures.push(`resolution deadline exceeded (${RESOLVE_DEADLINE_MS}ms budget)`);
+        return allRegistriesFailed(image, failures);
+      }
       console.error(
         `[ensureImage] pulling ${candidate} (attempt ${attemptIndex + 1}/${PULL_ATTEMPTS})`,
       );
       const pull = spawnSync("docker", ["pull", candidate], {
         encoding: "utf8",
-        timeout: PULL_ATTEMPT_TIMEOUT_MS,
+        timeout: Math.min(PULL_ATTEMPT_TIMEOUT_MS, remainingMs),
         killSignal: "SIGKILL",
         maxBuffer: PULL_MAX_BUFFER,
       });
@@ -83,6 +92,10 @@ async function resolveImage(image: string): Promise<string> {
       if (delay !== undefined) await sleep(delay);
     }
   }
+  return allRegistriesFailed(image, failures);
+}
+
+function allRegistriesFailed(image: string, failures: ReadonlyArray<string>): never {
   throw new Error(
     `failed to pull ${image} from all registries (set SUPABASE_INTERNAL_IMAGE_REGISTRY to pin one):\n${failures.join("\n")}`,
   );
