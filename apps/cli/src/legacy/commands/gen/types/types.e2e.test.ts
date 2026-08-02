@@ -10,7 +10,11 @@ import {
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import { ensureImage, resolveDeadline } from "../../../../../tests/helpers/docker-image.ts";
+import {
+  RESOLVE_BUDGET_MS,
+  ensureImage,
+  resolveDeadline,
+} from "../../../../../tests/helpers/docker-image.ts";
 import { resolvePgmetaImage } from "./types.shared.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
@@ -19,6 +23,10 @@ type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 const LOCAL_POSTGRES_IMAGE = legacyGetRegistryImageUrl(dockerfileServiceImage("pg"));
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
+// Image resolution happens inside the test bodies, ahead of the startup and
+// per-language windows the test timeouts already budget — so each timeout has
+// to include its own image setup allowance on top.
+const LOCAL_IMAGE_BUDGET_MS = LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS;
 const REMOTE_E2E_FLAG = "SUPABASE_TYPEGEN_E2E_REMOTE";
 const REMOTE_PROJECT_REF_ENV = "SUPABASE_TEST_PROJECT_REF";
 const OUTPUT_TAIL_LENGTH = 4_000;
@@ -215,10 +223,9 @@ async function ensurePgmetaImage(deadline?: number) {
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
   const networkName = localNetworkId(input.projectId);
-  // The outer test budget is LOCAL_POSTGRES_TIMEOUT_MS + a typegen window per
-  // language, so image setup can afford a roomier budget than the default —
-  // a slow-but-healthy Postgres pull must not starve pg-meta's resolution.
-  const imageDeadline = resolveDeadline(LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS);
+  // Sized so a slow-but-healthy Postgres pull cannot starve pg-meta's
+  // resolution; the local test's own timeout includes this allowance.
+  const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
   const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline);
   await ensurePgmetaImage(imageDeadline);
 
@@ -328,7 +335,10 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
 describe("legacy gen types e2e", () => {
   test(
     "generates all supported languages from a tokenless local stack",
-    { timeout: LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
+    {
+      timeout:
+        LOCAL_IMAGE_BUDGET_MS + LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length,
+    },
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-typegen-local-e2e-");
