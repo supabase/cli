@@ -215,7 +215,10 @@ async function ensurePgmetaImage(deadline?: number) {
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
   const networkName = localNetworkId(input.projectId);
-  const imageDeadline = resolveDeadline();
+  // The outer test budget is LOCAL_POSTGRES_TIMEOUT_MS + a typegen window per
+  // language, so image setup can afford a roomier budget than the default —
+  // a slow-but-healthy Postgres pull must not starve pg-meta's resolution.
+  const imageDeadline = resolveDeadline(LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS);
   const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline);
   await ensurePgmetaImage(imageDeadline);
 

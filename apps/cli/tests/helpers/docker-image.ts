@@ -38,12 +38,13 @@ export function ensureImage(image: string, deadline = resolveDeadline()): Promis
 
 /**
  * One deadline for a whole test's image setup: pass the same value to every
- * `ensureImage` call so multi-image tests pay at most one RESOLVE_DEADLINE_MS
- * total — the synchronous spawns serialize regardless of Promise.all, so
- * per-image deadlines would otherwise stack beyond the test budget.
+ * `ensureImage` call so multi-image tests pay at most one budget in total —
+ * the synchronous spawns serialize regardless of Promise.all, so per-image
+ * deadlines would otherwise stack beyond the test budget. Callers with roomier
+ * test timeouts can size the budget to their own setup window.
  */
-export function resolveDeadline(): number {
-  return Date.now() + RESOLVE_DEADLINE_MS;
+export function resolveDeadline(budgetMs = RESOLVE_DEADLINE_MS): number {
+  return Date.now() + budgetMs;
 }
 
 function spawnFailed(result: { error?: Error; signal: NodeJS.Signals | null }): boolean {
