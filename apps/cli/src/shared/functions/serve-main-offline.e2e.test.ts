@@ -34,7 +34,10 @@ function hasDocker(): boolean {
 
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
-const SERVE_OFFLINE_TEST_TIMEOUT_MS = 120_000;
+// Cold-cache image resolution (up to one shared 90s resolveDeadline budget)
+// runs inside the test body, ahead of the 60s startup wait — the test budget
+// must cover both stacked, or a healthy near-cap pull trips vitest first.
+const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
 const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
     entrypointPath: "/tmp/test/index.ts",
