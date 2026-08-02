@@ -35,7 +35,6 @@ function hasDocker(): boolean {
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 120_000;
-const LEGACY_KONG_IMAGE = `public.ecr.aws/supabase/${dockerfileServiceImage("kong").replace(/^.*\//, "")}`;
 const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
     entrypointPath: "/tmp/test/index.ts",
@@ -280,7 +279,7 @@ describe("functions serve runtime template (offline)", () => {
     async () => {
       const [runtimeImage, kongImage] = await Promise.all([
         ensureImage(LEGACY_EDGE_RUNTIME_IMAGE),
-        ensureImage(LEGACY_KONG_IMAGE),
+        ensureImage(dockerfileServiceImage("kong")),
       ]);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));
       const network = `supabase-serve-kong-e2e-${process.pid.toString()}`;
