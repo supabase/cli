@@ -10,6 +10,7 @@ import {
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
+import { ensureImage } from "../../../../../tests/helpers/docker-image.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
@@ -202,6 +203,7 @@ async function waitForLocalPostgres(containerName: string) {
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
   const networkName = localNetworkId(input.projectId);
+  const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE);
 
   await expectDockerSucceeded(["network", "create", networkName], 30_000);
   await expectDockerSucceeded(
@@ -219,7 +221,7 @@ async function startLocalPostgres(input: { readonly projectId: string; readonly 
       `${input.dbPort}:5432`,
       "-e",
       "POSTGRES_PASSWORD=postgres",
-      LOCAL_POSTGRES_IMAGE,
+      postgresImage,
       "postgres",
       "-D",
       "/etc/postgresql",
