@@ -28,19 +28,29 @@ const resolvedImages = new Map<string, Promise<string>>();
  * never re-pay the retry ladder. Every subprocess call is timeout-bounded —
  * vitest's own testTimeout cannot preempt a hung synchronous spawn.
  */
-export function ensureImage(image: string): Promise<string> {
+export function ensureImage(image: string, deadline = resolveDeadline()): Promise<string> {
   const memo = resolvedImages.get(image);
   if (memo !== undefined) return memo;
-  const resolving = resolveImage(image);
+  const resolving = resolveImage(image, deadline);
   resolvedImages.set(image, resolving);
   return resolving;
+}
+
+/**
+ * One deadline for a whole test's image setup: pass the same value to every
+ * `ensureImage` call so multi-image tests pay at most one RESOLVE_DEADLINE_MS
+ * total — the synchronous spawns serialize regardless of Promise.all, so
+ * per-image deadlines would otherwise stack beyond the test budget.
+ */
+export function resolveDeadline(): number {
+  return Date.now() + RESOLVE_DEADLINE_MS;
 }
 
 function spawnFailed(result: { error?: Error; signal: NodeJS.Signals | null }): boolean {
   return result.error !== undefined && (result.signal === null || result.signal === undefined);
 }
 
-async function resolveImage(image: string): Promise<string> {
+async function resolveImage(image: string, deadline: number): Promise<string> {
   const candidates = legacyGetRegistryImageUrlCandidates(image);
   for (const candidate of candidates) {
     const inspect = spawnSync("docker", ["image", "inspect", candidate], {
@@ -59,11 +69,10 @@ async function resolveImage(image: string): Promise<string> {
     }
   }
 
-  const deadline = Date.now() + RESOLVE_DEADLINE_MS;
   // Equal split so a candidate that stalls (accepts the connection but never
   // completes) can never starve the fallbacks that come after it — every
-  // registry is guaranteed its share of the overall deadline.
-  const perCandidateBudgetMs = Math.floor(RESOLVE_DEADLINE_MS / candidates.length);
+  // registry is guaranteed its share of the remaining deadline.
+  const perCandidateBudgetMs = Math.max(1, Math.floor((deadline - Date.now()) / candidates.length));
   const failures: Array<string> = [];
   for (const candidate of candidates) {
     const candidateDeadline = Math.min(Date.now() + perCandidateBudgetMs, deadline);

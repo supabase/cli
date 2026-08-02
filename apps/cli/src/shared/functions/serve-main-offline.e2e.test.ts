@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { LEGACY_EDGE_RUNTIME_IMAGE } from "../../legacy/shared/legacy-edge-runtime-image.ts";
-import { ensureImage } from "../../../tests/helpers/docker-image.ts";
+import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 
@@ -277,9 +277,10 @@ describe("functions serve runtime template (offline)", () => {
     "preserves function CORS headers and exposes JWT errors through Kong",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
+      const imageDeadline = resolveDeadline();
       const [runtimeImage, kongImage] = await Promise.all([
-        ensureImage(LEGACY_EDGE_RUNTIME_IMAGE),
-        ensureImage(dockerfileServiceImage("kong")),
+        ensureImage(LEGACY_EDGE_RUNTIME_IMAGE, imageDeadline),
+        ensureImage(dockerfileServiceImage("kong"), imageDeadline),
       ]);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));
       const network = `supabase-serve-kong-e2e-${process.pid.toString()}`;
