@@ -7,9 +7,10 @@ import { legacyIsDockerDaemonUnreachable } from "../../src/legacy/shared/legacy-
 
 const INSPECT_TIMEOUT_MS = 15_000;
 const PULL_ATTEMPT_TIMEOUT_MS = 120_000;
-// Overall per-image ceiling, matched to the tightest e2e test budget: a stalled
-// registry eats at most one test's worth of wall clock, never attempts × 120s.
-const RESOLVE_DEADLINE_MS = 120_000;
+// Overall per-image ceiling. Deliberately BELOW the tightest e2e test budget
+// (120s): a stalled registry must leave the caller room to run its test body,
+// and vitest cannot preempt a blocked synchronous spawn to enforce that itself.
+const RESOLVE_DEADLINE_MS = 90_000;
 const PULL_MAX_BUFFER = 16 * 1024 * 1024;
 const PULL_ATTEMPTS = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length + 1;
 
