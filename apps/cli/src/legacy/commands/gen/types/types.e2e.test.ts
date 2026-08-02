@@ -10,7 +10,7 @@ import {
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import { ensureImage } from "../../../../../tests/helpers/docker-image.ts";
+import { ensureImage, resolveDeadline } from "../../../../../tests/helpers/docker-image.ts";
 import { resolvePgmetaImage } from "./types.shared.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
@@ -201,18 +201,23 @@ async function waitForLocalPostgres(containerName: string) {
   );
 }
 
+// `gen types` starts pg-meta itself (local AND remote non-ts languages) via a
+// single-registry rewrite with no fallback (`resolvePgmetaImage`), so pre-resolve
+// it and retag the winning candidate onto the exact reference the CLI will run.
+async function ensurePgmetaImage(deadline?: number) {
+  const expected = resolvePgmetaImage();
+  const resolved = await ensureImage(dockerfileServiceImage("pgmeta"), deadline);
+  if (resolved !== expected) {
+    await expectDockerSucceeded(["tag", resolved, expected], 30_000);
+  }
+}
+
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
   const networkName = localNetworkId(input.projectId);
-  const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE);
-  // `gen types --local` starts pg-meta itself via a single-registry rewrite
-  // with no fallback (`resolvePgmetaImage`), so pre-resolve it here and retag
-  // the winning candidate onto the exact reference the CLI will `docker run`.
-  const pgmetaExpected = resolvePgmetaImage();
-  const pgmetaResolved = await ensureImage(dockerfileServiceImage("pgmeta"));
-  if (pgmetaResolved !== pgmetaExpected) {
-    await expectDockerSucceeded(["tag", pgmetaResolved, pgmetaExpected], 30_000);
-  }
+  const imageDeadline = resolveDeadline();
+  const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline);
+  await ensurePgmetaImage(imageDeadline);
 
   await expectDockerSucceeded(["network", "create", networkName], 30_000);
   await expectDockerSucceeded(
@@ -382,6 +387,8 @@ describe("legacy gen types e2e", () => {
           `Set ${REMOTE_E2E_FLAG}=1, ${REMOTE_PROJECT_REF_ENV}, and SUPABASE_ACCESS_TOKEN to run remote typegen e2e.`,
         );
       }
+
+      await ensurePgmetaImage();
 
       for (const lang of TYPEGEN_LANGS) {
         const result = await runSupabase(
