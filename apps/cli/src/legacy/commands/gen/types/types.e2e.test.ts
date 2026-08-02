@@ -337,7 +337,9 @@ describe("legacy gen types e2e", () => {
     "generates all supported languages from a tokenless local stack",
     {
       timeout:
-        LOCAL_IMAGE_BUDGET_MS + LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length,
+        LOCAL_IMAGE_BUDGET_MS +
+        LOCAL_POSTGRES_TIMEOUT_MS +
+        TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length,
     },
     async () => {
       const home = makeTempHome();
@@ -386,7 +388,7 @@ describe("legacy gen types e2e", () => {
 
   remoteTest(
     "generates all supported languages from a remote project",
-    { timeout: TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
+    { timeout: RESOLVE_BUDGET_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-typegen-remote-e2e-");
