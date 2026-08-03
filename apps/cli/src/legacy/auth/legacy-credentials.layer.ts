@@ -2,7 +2,10 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted, Result } from "effec
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
-import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
+import {
+  LegacyDebugLogger,
+  type LegacyDebugLoggerShape,
+} from "../shared/legacy-debug-logger.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacySupabaseHome } from "../config/legacy-profile-file.ts";
 import { LEGACY_ACCESS_TOKEN_PATTERN, validateLegacyAccessToken } from "./legacy-access-token.ts";
@@ -345,6 +348,113 @@ const deleteAllKeyringEntries = (
     }
   });
 
+// `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches `next/`'s
+// credentials layer and the cli-e2e harness, which sets it). Without this, any
+// unconditional keyring access — e.g. `unlink`'s credential delete — blocks on a
+// Keychain authorization prompt in non-interactive / CI contexts.
+const loadKeyringModule = (
+  fs: FileSystem.FileSystem,
+): Effect.Effect<Option.Option<KeyringModule>> =>
+  Effect.gen(function* () {
+    const noKeyring = process.env["SUPABASE_NO_KEYRING"] === "1";
+    const wsl = yield* detectWsl(fs);
+    return wsl || noKeyring
+      ? Option.none<KeyringModule>()
+      : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
+  });
+
+// Keyring chain for a given profile account: profile key first, then the
+// legacy `access-token` key. The account parameter matters because Go keys
+// the read on the RECONCILED `CurrentProfile.Name` (`access_token.go:43`).
+const readKeyringForAccount = (
+  keyringModule: Option.Option<KeyringModule>,
+  profileAccount: string,
+  platform: RuntimePlatform,
+  debugLogger: LegacyDebugLoggerShape,
+): Effect.Effect<Option.Option<string>> =>
+  Effect.gen(function* () {
+    if (Option.isNone(keyringModule)) return Option.none<string>();
+    const profileResult = yield* tryKeyringRead(keyringModule.value, profileAccount, platform);
+    if (Option.isSome(profileResult)) {
+      yield* debugLogger.debug(`Using access token for profile: ${profileAccount}`);
+      return profileResult;
+    }
+    const legacyResult = yield* tryKeyringRead(
+      keyringModule.value,
+      LEGACY_KEYRING_ACCOUNT,
+      platform,
+    );
+    if (Option.isSome(legacyResult)) {
+      yield* debugLogger.debug("Using access token from credentials store...");
+    }
+    return legacyResult;
+  });
+
+const readFallbackFile = (
+  fs: FileSystem.FileSystem,
+  fallbackPath: string,
+): Effect.Effect<Option.Option<string>> =>
+  Effect.gen(function* () {
+    const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) return Option.none<string>();
+    const content = yield* fs.readFileString(fallbackPath).pipe(Effect.orElseSucceed(() => ""));
+    const trimmed = content.trim();
+    return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
+  });
+
+/**
+ * Token resolution for an explicit profile account, mirroring the service's
+ * `getAccessToken` chain exactly: env token → keyring (profile account, then
+ * legacy account) → fallback file. Go resolves credentials AFTER
+ * `LoadProfile`, so the keyring account is the reconciled
+ * `CurrentProfile.Name` (`access_token.go:43`) — but the `LegacyCredentials`
+ * service captures the config layer's profile at construction. Commands that
+ * reconcile a pflag-effective profile (sso add/update, PR #5974 round 9)
+ * resolve their token through this instead, keyed on the reconciled name.
+ * Fails with the same validation error as the service; callers absorb it the
+ * same way `resolveLegacyAccessToken` does.
+ */
+export const legacyAccessTokenForProfile = Effect.fnUntraced(function* (profileAccount: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runtimeInfo = yield* RuntimeInfo;
+  const cliConfig = yield* LegacyCliConfig;
+  // `serviceOption` keeps the logger optional (no-op outside the real CLI
+  // tree), same as the sso pflag-reconcile module's optional services.
+  const debugLogger: LegacyDebugLoggerShape = Option.getOrElse(
+    yield* Effect.serviceOption(LegacyDebugLogger),
+    () => ({ debug: () => Effect.void, http: () => Effect.void }),
+  );
+
+  if (Option.isSome(cliConfig.accessToken)) {
+    yield* debugLogger.debug("Using access token from env var...");
+    yield* validateLegacyAccessToken(Redacted.value(cliConfig.accessToken.value));
+    return Option.some(cliConfig.accessToken.value);
+  }
+
+  const keyringModule = yield* loadKeyringModule(fs);
+  const keyringValue = yield* readKeyringForAccount(
+    keyringModule,
+    profileAccount,
+    runtimeInfo.platform,
+    debugLogger,
+  );
+  if (Option.isSome(keyringValue)) {
+    yield* validateLegacyAccessToken(keyringValue.value);
+    return Option.some(Redacted.make(keyringValue.value));
+  }
+
+  const fallbackPath = path.join(legacySupabaseHome(runtimeInfo.homeDir), "access-token");
+  const fileValue = yield* readFallbackFile(fs, fallbackPath);
+  if (Option.isSome(fileValue)) {
+    yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
+    yield* validateLegacyAccessToken(fileValue.value);
+    return Option.some(Redacted.make(fileValue.value));
+  }
+
+  return Option.none<Redacted.Redacted<string>>();
+});
+
 const makeLegacyCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -357,46 +467,16 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const fallbackDir = legacySupabaseHome(runtimeInfo.homeDir);
   const fallbackPath = path.join(fallbackDir, "access-token");
 
-  // `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches `next/`'s
-  // credentials layer and the cli-e2e harness, which sets it). Without this, any
-  // unconditional keyring access — e.g. `unlink`'s credential delete — blocks on a
-  // Keychain authorization prompt in non-interactive / CI contexts.
-  const noKeyring = process.env["SUPABASE_NO_KEYRING"] === "1";
-  const wsl = yield* detectWsl(fs);
-  const keyringModule =
-    wsl || noKeyring
-      ? Option.none<KeyringModule>()
-      : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
+  const keyringModule = yield* loadKeyringModule(fs);
 
-  const readKeyring = Effect.gen(function* () {
-    if (Option.isNone(keyringModule)) return Option.none<string>();
-    const profileResult = yield* tryKeyringRead(
-      keyringModule.value,
-      profileAccount,
-      runtimeInfo.platform,
-    );
-    if (Option.isSome(profileResult)) {
-      yield* debugLogger.debug(`Using access token for profile: ${profileAccount}`);
-      return profileResult;
-    }
-    const legacyResult = yield* tryKeyringRead(
-      keyringModule.value,
-      LEGACY_KEYRING_ACCOUNT,
-      runtimeInfo.platform,
-    );
-    if (Option.isSome(legacyResult)) {
-      yield* debugLogger.debug("Using access token from credentials store...");
-    }
-    return legacyResult;
-  });
+  const readKeyring = readKeyringForAccount(
+    keyringModule,
+    profileAccount,
+    runtimeInfo.platform,
+    debugLogger,
+  );
 
-  const readFile = Effect.gen(function* () {
-    const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) return Option.none<string>();
-    const content = yield* fs.readFileString(fallbackPath).pipe(Effect.orElseSucceed(() => ""));
-    const trimmed = content.trim();
-    return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
-  });
+  const readFile = readFallbackFile(fs, fallbackPath);
 
   return LegacyCredentials.of({
     getAccessToken: Effect.gen(function* () {
