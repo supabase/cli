@@ -27,13 +27,13 @@ linked/remote Postgres database.
 
 ## Database Mutations
 
-| Statement                                                                                                                                | When                                                                                                   |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `RESET ALL` + `BEGIN` … migration statements … `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` … `COMMIT` | per pending migration (after confirmation)                                                             |
-| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                                              | once before applying migrations (idempotent)                                                           |
-| `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                                                 | per `--include-roles` globals file (after confirmation)                                                |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets and migrations are applied                                      |
-| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …`                      | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash |
+| Statement                                                                                                                                | When                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `RESET ALL` + `BEGIN` … migration statements … `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` … `COMMIT` | per pending migration (after confirmation); pipeline-incompatible statements run standalone between batches — see Notes |
+| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                                              | once before applying migrations (idempotent)                                                                            |
+| `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                                                 | per `--include-roles` globals file (after confirmation)                                                                 |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets and migrations are applied                                                       |
+| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …`                      | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                  |
 
 ## API Routes
 
@@ -101,6 +101,21 @@ stdout is payload-only. A single `result` object is emitted:
   skip notice naming the project ref (empty for local/db-url).
 - **Vault**: non-empty, non-`env()` `[db.vault]` values are synced after config
   load, including decrypted `encrypted:` values.
+- **Pipeline-incompatible statements**: `CREATE [UNIQUE] INDEX CONCURRENTLY`,
+  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, and `CLUSTER` cannot run inside a
+  transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs
+  the statement standalone outside any transaction, then resumes batching; the history
+  insert stays in the final batch so the migration is recorded only after every
+  statement succeeds. Atomicity is therefore lost at each flush boundary: statements
+  committed in an earlier batch are **not** rolled back if a later statement fails,
+  leaving the database partially migrated with **no history row** — a re-run replays
+  the whole file from the top (which may then fail on already-applied statements).
+  Prefer idempotent forms (`CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and isolating
+  such statements in their own migration file. Intentional fix for supabase/cli#5139:
+  the reference design is the **closed, unmerged** Go PR supabase/cli#5156, adopted
+  directly into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`) and
+  back-ported to the pinned `apps/cli-go` oracle under the CLI-1989 parity ruling
+  (2026-07-30).
 - **Migrations catalog cache**: ported (Go's best-effort `pgcache.TryCacheMigrationsCatalog`).
   After a successful migration apply, when pg-delta is enabled, exports the target's
   pg-delta catalog via the edge-runtime stack and writes it under

@@ -287,6 +287,20 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("reports up to date when an 8-digit and 14-digit version share a prefix (#6036)", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { ...migrationFile("20260420"), ...migrationFile("20260420010000") },
+      remoteMigrations: ["20260420", "20260420010000"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stdoutText).toBe("Local database is up to date.\n");
+      expect(conn.execs).not.toContain("BEGIN");
+    });
+  });
+
   it.live("emits a json result for an up-to-date run", () => {
     const { layer, out } = setup(tmp.current, { toml: 'project_id = "test"\n', format: "json" });
     return Effect.gen(function* () {

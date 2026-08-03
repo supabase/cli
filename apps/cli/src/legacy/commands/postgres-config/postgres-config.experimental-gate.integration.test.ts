@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
+import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
@@ -128,5 +129,51 @@ describe("legacy postgres-config experimental gate (Go PersistentPreRunE parity)
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     });
+  }
+
+  // Go parity (CLI-2005): pflag's `readAsCSV` error aborts cobra's
+  // `ParseFlags` BEFORE `PersistentPreRunE`'s experimental-gate check, so the
+  // parse error must win even with `--experimental` unset. The rendered line
+  // byte-matches the real Go CLI (pflag v1.0.10 `errors.go:116` wrapping
+  // `encoding/csv`) — same prior art as network-bans/network-restrictions
+  // (CLI-1983).
+  const malformedCsvCases: ReadonlyArray<{
+    readonly name: string;
+    readonly args: ReadonlyArray<string>;
+    readonly message: string;
+  }> = [
+    {
+      name: "update",
+      args: ["postgres-config", "update", "--config", 'a"b'],
+      message:
+        'invalid argument "a\\"b" for "--config" flag: parse error on line 1, column 2: bare " in non-quoted-field',
+    },
+    {
+      name: "delete",
+      args: ["postgres-config", "delete", "--config", '"max_connections'],
+      // `"max_connections` is 16 bytes → EOF at column 17.
+      message:
+        'invalid argument "\\"max_connections" for "--config" flag: parse error on line 1, column 17: extraneous or missing " in quoted-field',
+    },
+  ];
+
+  for (const { name, args, message } of malformedCsvCases) {
+    it.live(
+      `${name}: malformed --config CSV fails at parse time with pflag's exact diagnostic, before the gate`,
+      () => {
+        const { layer, api } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            Command.runWith(testRoot, { version: "0.0.0-test" })(args),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).not.toContain("LegacyExperimentalRequiredError");
+            expect(normalizeCause(exit.cause).message).toBe(message);
+          }
+          expect(api.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   }
 });

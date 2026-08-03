@@ -1,25 +1,30 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result, Stdio } from "effect";
+import { Effect, Option, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  hasExplicitValueFlag,
+  PERSISTENT_VALUE_FLAG_NAMES,
+  PERSISTENT_VALUE_FLAG_SHORTHANDS,
+  pflagArgvScan,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeGoJson, encodeGoStructJsonBody } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeGoJson,
-  encodeGoStructJsonBody,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
+import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
+import { legacyAccessTokenForProfile } from "../../../auth/legacy-credentials.layer.ts";
+import { legacyMissingAccessTokenMessage } from "../../../auth/legacy-access-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -27,16 +32,33 @@ import {
   legacySuggestUpgrade,
 } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
+  LegacySsoFlagNeedsArgumentError,
+  LegacySsoInvalidFlagValueError,
   LegacySsoMutexFlagError,
+  LegacySsoUpdateArityError,
   LegacySsoUpdateAttributeMappingFileError,
   LegacySsoUpdateMetadataFileError,
   LegacySsoUpdateNetworkError,
   LegacySsoUpdateNotFoundError,
   LegacySsoUpdateUnexpectedStatusError,
+  LegacySsoAccessTokenError,
+  LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import { readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
+import {
+  legacySsoPflagBoolValue,
+  legacySsoPflagEnumValue,
+  legacySsoPflagSliceValue,
+  legacySsoPflagStringValue,
+  legacySsoResolvePflagProfile,
+  legacySsoValidatePflagWorkdir,
+} from "../sso.pflag-reconcile.ts";
+import {
+  LEGACY_SSO_NAME_ID_FORMATS,
+  readAttributeMappingFile,
+  readMetadataFile,
+} from "../sso.saml.ts";
 import type { LegacySsoUpdateFlags } from "./update.command.ts";
 
 const readMetadata = readMetadataFile({
@@ -72,22 +94,29 @@ const SSO_UPDATE_MUTEX_GROUPS = [
 ] as const;
 
 /**
- * Every value-taking (non-boolean) flag `sso update` declares
- * (`update.command.ts`) — tells `hasExplicitValueFlag` which bare tokens
- * consume the next argv token as their value. `--skip-url-validation` is this
- * command's only boolean flag and is deliberately excluded; booleans never
- * consume a following token.
+ * Every value-taking (non-boolean) flag reachable when `sso update` parses:
+ * the command's own (`update.command.ts`) plus the root's persistent value
+ * flags — these tell `pflagArgvScan` which bare tokens consume the next argv
+ * token as their value (and therefore which tokens are pflag-effective
+ * positionals). `--skip-url-validation` is this command's only boolean flag
+ * and is deliberately excluded; booleans never consume a following token.
+ * `sso update` declares no shorthands of its own (`cmd/sso.go:170-176`), so
+ * only the persistent `-o` is mapped.
  */
-const SSO_UPDATE_VALUE_FLAG_NAMES = new Set([
-  "project-ref",
-  "domains",
-  "add-domains",
-  "remove-domains",
-  "metadata-file",
-  "metadata-url",
-  "attribute-mapping-file",
-  "name-id-format",
-]);
+const SSO_UPDATE_SCAN_SPEC = {
+  valueFlagNames: new Set([
+    "project-ref",
+    "domains",
+    "add-domains",
+    "remove-domains",
+    "metadata-file",
+    "metadata-url",
+    "attribute-mapping-file",
+    "name-id-format",
+    ...PERSISTENT_VALUE_FLAG_NAMES,
+  ]),
+  valueFlagShorthands: PERSISTENT_VALUE_FLAG_SHORTHANDS,
+} as const;
 
 const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
@@ -112,6 +141,28 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
 
 interface ExistingDomainItem {
   readonly domain?: string;
+}
+
+/**
+ * Narrows a raw GET-provider JSON body to the `domains` shape `mergeDomains`
+ * consumes — the untyped counterpart of the generated client's provider
+ * schema, for the reconciled-profile GET path.
+ */
+function extractDomainItems(parsed: unknown): ReadonlyArray<ExistingDomainItem> | undefined {
+  if (parsed === null || typeof parsed !== "object") {
+    return undefined;
+  }
+  const domains = (parsed as Record<string, unknown>)["domains"];
+  if (!Array.isArray(domains)) {
+    return undefined;
+  }
+  return domains.map((item): ExistingDomainItem => {
+    if (item === null || typeof item !== "object") {
+      return {};
+    }
+    const domain = (item as Record<string, unknown>)["domain"];
+    return typeof domain === "string" ? { domain } : {};
+  });
 }
 
 function mergeDomains(
@@ -148,15 +199,17 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
+  const identityStitch = yield* Effect.serviceOption(LegacyIdentityStitch);
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
 
   yield* Effect.gen(function* () {
-    // cobra runs `ValidateFlagGroups` (`command.go:1010`) before `RunE`
-    // (`command.go:1014`), and Go's provider-ID format check lives inside
-    // `RunE` (`cmd/sso.go:90-91`) — so a mutex violation must win over an
-    // invalid provider ID when both apply. Keep this block ahead of
-    // `validateUuid` below to match that precedence.
+    // cobra runs `ValidateArgs` (`command.go:968`, before every hook), then
+    // `ValidateFlagGroups` (`command.go:1010`), before `RunE`
+    // (`command.go:1015`), and Go's provider-ID format check lives inside
+    // `RunE` (`cmd/sso.go:90-91`) — so an arity violation must win over a
+    // mutex violation, and both must win over an invalid provider ID. Keep
+    // this block ahead of `validateUuid` below to match that precedence.
     //
     // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
     // all — not the resulting value. `--domains`/`--add-domains`/
@@ -165,20 +218,122 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // miss it, the same "changed vs truthy" gap CLI-1860 fixed for
     // `functions download`'s `--use-docker`.
     //
-    // `hasExplicitValueFlag` (not the simpler `hasExplicitLongFlag`) is
-    // required here because every flag in these groups takes a value: a bare
-    // `--metadata-file --metadata-url` is pflag consuming `--metadata-url` as
-    // `metadata-file`'s (oddly named) value, not two flags being set — see
-    // that function's doc comment.
-    for (const group of SSO_UPDATE_MUTEX_GROUPS) {
-      const changed = group.filter((flagName) =>
-        hasExplicitValueFlag(
-          rawArgs,
-          SSO_UPDATE_COMMAND_PATH,
-          SSO_UPDATE_VALUE_FLAG_NAMES,
-          flagName,
-        ),
+    // The scan is pflag-faithful: a bare `--metadata-file --metadata-url` is
+    // pflag consuming `--metadata-url` as `metadata-file`'s (oddly named)
+    // value, not two flags being set — see `pflagArgvScan`.
+    const scan = pflagArgvScan(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
+    const occurrences = scan.occurrences;
+
+    // pflag calls `Value.Set` for every occurrence in argv order, and an
+    // invalid value fails `ParseFlags` (cobra `command.go:919`) before
+    // `ValidateArgs`, every hook, and `RunE` — reachable here because the
+    // Effect parser resolves repeated flags first-wins without validating
+    // later occurrences (`--name-id-format=<valid> --name-id-format=bogus`
+    // parses) and accepts `yes`/`no`, which `strconv.ParseBool` rejects
+    // (binary-verified, PR #5974 review round 4). These checks precede the
+    // missing-value check because a missing value can only arise at the
+    // final argv token, so every recorded occurrence pflag would reject sits
+    // earlier in its sequential walk (binary-verified:
+    // `--skip-url-validation=yes --domains` names the invalid argument, not
+    // the missing one). Flags are checked in Go registration order
+    // (`cmd/sso.go:170-176`); when a single argv holds invalid occurrences
+    // of BOTH flags, pflag names whichever comes first in argv — a
+    // divergence this fixed order cannot see, accepted as unreachable
+    // through sane usage. The same helpers yield the pflag-effective
+    // (last-occurrence) values the handler acts on below.
+    const skipUrlValidation = yield* Result.match(
+      legacySsoPflagBoolValue(occurrences, "skip-url-validation"),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+    const nameIdFormat = yield* Result.match(
+      legacySsoPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+
+    // pflag fails `ParseFlags` (cobra `command.go:919`) when a bare
+    // value-taking flag is the final token (`sso update <id> --domains`) —
+    // before `ValidateArgs`, every hook, and `RunE`, so Go reports the
+    // missing argument even when the arg count is also wrong
+    // (binary-verified: `sso update a b --domains`). The Effect parser
+    // accepts that argv (the flag parses as unset), so no GET/PUT may happen
+    // here either. Keep this ahead of the arity check.
+    if (scan.missingValueError !== undefined) {
+      return yield* Effect.fail(
+        new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
       );
+    }
+
+    // `ExactArgs(1)` (`cmd/sso.go:87`) counts pflag-effective positionals,
+    // which shift away from what the Effect parser saw whenever pflag
+    // consumed a flag token as a value: `--domains --metadata-url u <id>` is
+    // pflag handing `--metadata-url` to `--domains` and leaving BOTH `u` and
+    // `<id>` positional — Go rejects the arg count before any hook, flag
+    // validation, or request. The parser's own arity check can't see this,
+    // so re-count from the scan (gated on `anchored`: an unscoped scan has
+    // no positional information).
+    if (scan.anchored && scan.positionals.length !== 1) {
+      return yield* Effect.fail(
+        new LegacySsoUpdateArityError({
+          message: `accepts 1 arg(s), received ${scan.positionals.length}`,
+        }),
+      );
+    }
+
+    // Go's root `PersistentPreRunE` loads the pflag/viper-effective
+    // `--profile`/`SUPABASE_PROFILE` (`LoadProfile`, `cmd/root.go:98-102`)
+    // immediately BEFORE `ChangeWorkDir`, so an unloadable profile loses to
+    // an arity violation but beats the workdir check, the mutex checks, and
+    // any GET/PUT — and a loadable one decides which API host receives them.
+    // Reachable exactly where the scan and the parser disagree (see
+    // `add.handler.ts` and `legacySsoResolvePflagProfile` — PR #5974
+    // review round 7); where they agree this is `none` and the config
+    // layer's client/apiUrl below are already pflag-effective.
+    const reconciledProfile = yield* legacySsoResolvePflagProfile(scan);
+    const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
+    // Reconciled-profile credentials, resolved ONCE for the main request and
+    // every auxiliary call (linked-project cache fill, upgrade-gate fallback
+    // GETs): Go's reconciled `CurrentProfile` + `GetAccessToken` apply
+    // process-wide (`access_token.go:43`, review r3684524241). `undefined`
+    // when the scan and the parser agree — every consumer then resolves from
+    // the config-layer services as before.
+    // Reconciled-profile credentials, resolved LAZILY (memoized) so the first
+    // read happens at the request site — Go's token gate is `GetSupabase`
+    // inside RunE (`api.go:119-124`), AFTER required/mutex/workdir
+    // validation, so a missing or invalid reconciled token must not pre-empt
+    // those errors (review r3686720488). Missing → Go's ErrMissingToken;
+    // invalid → ErrInvalidToken (the validation failure propagates). The
+    // auxiliary calls (cache fill, upgrade-gate GETs) use the absorbed
+    // variant: failures skip like Go's best-effort `ensureProjectGroupsCached`.
+    const reconciledTokenCached = Option.isSome(reconciledProfile)
+      ? yield* Effect.cached(legacyAccessTokenForProfile(reconciledProfile.value.name))
+      : undefined;
+    const reconciledTokenForAux =
+      reconciledTokenCached === undefined
+        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
+        : Effect.catch(reconciledTokenCached, () =>
+            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+          );
+
+    // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
+    // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
+    // `internal/utils/misc.go:238-257`) after `ValidateArgs` and before
+    // `ValidateFlagGroups` (`command.go:1010`), so a missing directory loses
+    // to an arity violation but beats a mutex violation and any GET/PUT
+    // (binary-verified: `sso update a b --workdir /missing` reports the
+    // arity error; `sso update <id> --workdir /missing --domains a
+    // --add-domains b` reports the chdir failure — PR #5974 review round 6).
+    yield* legacySsoValidatePflagWorkdir(scan);
+
+    for (const group of SSO_UPDATE_MUTEX_GROUPS) {
+      const changed = group.filter((flagName) => occurrences.has(flagName));
       if (changed.length > 1) {
         return yield* Effect.fail(
           new LegacySsoMutexFlagError({
@@ -188,30 +343,161 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       }
     }
 
+    // Reconcile everything the handler acts on to the pflag-effective values
+    // from the same scan — the Effect parser refuses to consume flag-shaped
+    // tokens as values while pflag consumes them unconditionally, and
+    // resolves repeated flags first-wins while pflag is last-wins, so the
+    // two can disagree on which flags are set and what they hold. See
+    // `add.handler.ts` and `sso.pflag-reconcile.ts` for the full rationale
+    // (CLI-1982). `--name-id-format` and `--skip-url-validation` were
+    // reconciled above, alongside their pflag value validation.
+    const projectRefFlag = legacySsoPflagStringValue(occurrences, "project-ref");
+    const metadataFile = legacySsoPflagStringValue(occurrences, "metadata-file");
+    const metadataUrl = legacySsoPflagStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = legacySsoPflagStringValue(occurrences, "attribute-mapping-file");
+    const domains = legacySsoPflagSliceValue(occurrences, "domains", flags.domains);
+    const addDomains = legacySsoPflagSliceValue(occurrences, "add-domains", flags.addDomains);
+    const removeDomains = legacySsoPflagSliceValue(
+      occurrences,
+      "remove-domains",
+      flags.removeDomains,
+    );
+
     const providerId = yield* validateUuid(flags.providerId).pipe(
       Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
     );
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolver.resolve(projectRefFlag);
+
+    // Effective API base URL: the pflag-reconciled profile's when the scan
+    // and the parser disagreed on `--profile`, the config layer's otherwise.
+    const apiUrl = Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl);
 
     yield* Effect.gen(function* () {
       const fetching =
         output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
 
+      // The typed client bakes the layer's apiUrl in at construction
+      // (`legacy-platform-api.layer.ts:73`), so when the reconciled profile
+      // differs the GET must be issued raw against the effective host — Go
+      // GETs and PUTs the same viper-effective profile host (`update.go:42`),
+      // and a GET to the layer's host would be a request Go never makes. The
+      // error mapping and the spinner-fail/suggestion stderr ordering mirror
+      // the typed path (`handleGetError`) exactly.
+      const rawGetProvider = Effect.gen(function* () {
+        const tokenOpt =
+          reconciledTokenCached !== undefined
+            ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
+                Option.isSome(resolved)
+                  ? Effect.succeed(resolved)
+                  : Effect.fail(
+                      new LegacySsoAccessTokenError({ message: legacyMissingAccessTokenMessage() }),
+                    ),
+              )
+            : yield* resolveLegacyAccessToken;
+        const request = HttpClientRequest.get(
+          `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+        ).pipe(
+          Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
+          HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+        );
+        const response = yield* httpClient.execute(request).pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.mapError(
+            (cause) =>
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${String(cause)}`,
+              }),
+          ),
+        );
+        // Go's `identityTransport` wraps EVERY Management API response
+        // (`cmd/root.go:146-154`); the typed client stitches via its response
+        // transform (`legacy-platform-api.layer.ts`), so this raw GET must
+        // stitch through the same once-per-command guard — before the status
+        // gate, like the linked-project cache's raw GET. `serviceOption`:
+        // absent outside the real CLI tree (handler-level tests), where no
+        // telemetry runtime exists to stitch into.
+        if (Option.isSome(identityStitch)) {
+          yield* identityStitch.value.stitch(response);
+        }
+        // Go's generated `ParseV1GetASsoProviderResponse` reads the body up
+        // front; the read error surfaces as `failed to get sso provider: %w`
+        // (`update.go:42-45`).
+        const rawBody = yield* response.text.pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.mapError(
+            (cause) =>
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${String(cause)}`,
+              }),
+          ),
+        );
+        const contentType = response.headers["content-type"] ?? "";
+        if (response.status === 200 && contentType.includes("json")) {
+          // Go unmarshals a 200 JSON body and exits with the unmarshal error
+          // before any PUT (`update.go:42-45`); detail text is JS
+          // `JSON.parse`'s, not encoding/json's (documented micro-divergence
+          // — both CLIs exit 1 with no PUT).
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(rawBody);
+          } catch (cause) {
+            yield* fetching?.fail() ?? Effect.void;
+            return yield* Effect.fail(
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
+              }),
+            );
+          }
+          return { domains: extractDomainItems(parsed) };
+        }
+        // Non-200 — or a 200 without a JSON content type, which leaves Go's
+        // `JSON200` nil and falls into the same branch (`update.go:47-55`):
+        // gate check, then 404 / unexpected-status.
+        yield* fetching?.fail() ?? Effect.void;
+        const bodyText = sanitizeLegacyErrorBody(rawBody);
+        yield* legacySuggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: response.status,
+          response,
+          apiUrl,
+          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
+        });
+        if (response.status === 404) {
+          return yield* Effect.fail(
+            new LegacySsoUpdateNotFoundError({
+              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+            }),
+          );
+        }
+        return yield* Effect.fail(
+          new LegacySsoUpdateUnexpectedStatusError({
+            status: response.status,
+            body: bodyText,
+            message: `unexpected error fetching identity provider: ${bodyText}`,
+          }),
+        );
+      });
+
       // Go's `update.go:42` always GETs first, regardless of which flags are set.
-      const existing = yield* api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch((cause) => handleGetError(ref, providerId, cause)),
-      );
+      const existing = yield* Option.isSome(profileApiUrl)
+        ? rawGetProvider
+        : api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
+            Effect.tapError(() => fetching?.fail() ?? Effect.void),
+            Effect.catch((cause) => handleGetError(ref, providerId, cause)),
+          );
 
       const body: Record<string, unknown> = {};
 
-      if (Option.isSome(flags.metadataFile)) {
-        const xml = yield* readMetadata(flags.metadataFile.value);
+      if (Option.isSome(metadataFile)) {
+        const xml = yield* readMetadata(metadataFile.value);
         body["metadata_xml"] = xml;
-      } else if (Option.isSome(flags.metadataUrl)) {
-        if (!flags.skipUrlValidation) {
-          yield* validateMetadataUrl(flags.metadataUrl.value).pipe(
+      } else if (Option.isSome(metadataUrl)) {
+        if (!skipUrlValidation) {
+          yield* validateMetadataUrl(metadataUrl.value).pipe(
             // Go's `update.go:69` wraps the cause with `%w Use --skip-url-validation to
             // suppress this error.` — note the single space between cause and `Use` and
             // the trailing period. Go's `create.go:47` uses the same format minus the
@@ -224,16 +510,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
             ),
           );
         }
-        body["metadata_url"] = flags.metadataUrl.value;
+        body["metadata_url"] = metadataUrl.value;
       }
 
-      if (Option.isSome(flags.attributeMappingFile)) {
-        const mapping = yield* readAttributeMapping(flags.attributeMappingFile.value);
+      if (Option.isSome(attributeMappingFile)) {
+        const mapping = yield* readAttributeMapping(attributeMappingFile.value);
         body["attribute_mapping"] = mapping;
       }
 
-      if (flags.domains.length > 0) {
-        body["domains"] = [...flags.domains];
+      if (domains.length > 0) {
+        body["domains"] = [...domains];
       } else {
         // Go's `update.go:84` reads as gating the merge on
         // `params.AddDomains != nil || params.RemoveDomains != nil`, but
@@ -244,18 +530,27 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         // is a non-nil `*[]string` under `json:"domains,omitempty"`, so an
         // empty merged set serializes as `"domains":[]`, never omitted
         // (CLI-1981; live-captured against the Go binary).
-        body["domains"] = mergeDomains(existing.domains, flags.addDomains, flags.removeDomains);
+        body["domains"] = mergeDomains(existing.domains, addDomains, removeDomains);
       }
 
-      if (Option.isSome(flags.nameIdFormat)) {
-        body["name_id_format"] = flags.nameIdFormat.value;
+      if (Option.isSome(nameIdFormat)) {
+        body["name_id_format"] = nameIdFormat.value;
       }
 
-      const tokenOpt = yield* resolveLegacyAccessToken;
+      const tokenOpt =
+        reconciledTokenCached !== undefined
+          ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
+              Option.isSome(resolved)
+                ? Effect.succeed(resolved)
+                : Effect.fail(
+                    new LegacySsoAccessTokenError({ message: legacyMissingAccessTokenMessage() }),
+                  ),
+            )
+          : yield* resolveLegacyAccessToken;
 
       // See `add.handler.ts` for the rationale behind `bearerToken(Redacted)`.
       const request = HttpClientRequest.put(
-        `${cliConfig.apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+        `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
       ).pipe(
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
         HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
@@ -283,6 +578,10 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           featureKey: "auth.saml_2",
           statusCode: response.status,
           response,
+          apiUrl,
+          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
         });
         yield* fetching?.fail() ?? Effect.void;
         return yield* Effect.fail(
@@ -305,11 +604,20 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(parsedJson));
+        yield* output.raw(encodeLegacyGoYaml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeToml(parsedJson) + "\n");
+        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
+        // rejects the payload (review r3684270640) — same pattern as list/show.
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          catch: (cause) =>
+            new LegacySsoTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
         return;
       }
       if (goFmt === "env") {
@@ -327,6 +635,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       }
 
       yield* output.raw(renderSingleProvider(toLegacySsoProviderView(parsedJson)));
-    }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+    }).pipe(
+      // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through the
+      // process-wide `CurrentProfile` — the reconciled host, never the layer's.
+      Effect.ensuring(
+        // Resolved INSIDE the ensuring effect — the memoized token read must
+        // not run before the handler body (Go's gate order, see above).
+        Effect.flatMap(reconciledTokenForAux, (token) =>
+          linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl), token),
+        ),
+      ),
+    );
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

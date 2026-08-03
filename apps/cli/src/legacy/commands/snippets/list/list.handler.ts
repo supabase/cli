@@ -6,7 +6,18 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoBool,
+  legacyGoFloat32,
+  legacyGoNullable,
+  legacyGoPtr,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -15,6 +26,7 @@ import {
   LegacySnippetsEnvNotSupportedError,
   LegacySnippetsListNetworkError,
   LegacySnippetsListUnexpectedStatusError,
+  LegacySnippetsTomlEncodeError,
 } from "../snippets.errors.ts";
 import { renderSnippetsTable, type SnippetRow } from "../snippets.format.ts";
 import type { LegacySnippetsListFlags } from "./list.command.ts";
@@ -38,6 +50,51 @@ function readString(obj: unknown, key: string): string {
 function asRecord(obj: unknown): Record<string, unknown> {
   return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
 }
+
+/**
+ * Mirror of Go's `api.SnippetList` (`apps/cli-go/pkg/api/types.gen.go`). The
+ * `description` field is a `nullable.Nullable[string]` — yaml.v3 renders it as
+ * a `map[bool]string`, and BurntSushi refuses it whenever present (CLI-1975).
+ */
+const LEGACY_GO_SNIPPET_LIST = legacyGoStruct([
+  ["cursor", legacyGoPtr(legacyGoString)],
+  [
+    "data",
+    legacyGoSlice(
+      legacyGoStruct([
+        ["description", legacyGoNullable(legacyGoString)],
+        ["favorite", legacyGoBool],
+        ["id", legacyGoString],
+        ["inserted_at", legacyGoString],
+        ["name", legacyGoString],
+        [
+          "owner",
+          legacyGoStruct([
+            ["id", legacyGoFloat32],
+            ["username", legacyGoString],
+          ]),
+        ],
+        [
+          "project",
+          legacyGoStruct([
+            ["id", legacyGoFloat32],
+            ["name", legacyGoString],
+          ]),
+        ],
+        ["type", legacyGoString],
+        ["updated_at", legacyGoString],
+        [
+          "updated_by",
+          legacyGoStruct([
+            ["id", legacyGoFloat32],
+            ["username", legacyGoString],
+          ]),
+        ],
+        ["visibility", legacyGoString],
+      ]),
+    ),
+  ],
+]);
 
 interface SnippetsResponseBody {
   readonly data: ReadonlyArray<unknown>;
@@ -145,11 +202,21 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(rawBody));
+        yield* output.raw(encodeLegacyGoYaml(rawBody, LEGACY_GO_SNIPPET_LIST));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeToml(asRecord(rawBody)) + "\n");
+        // BurntSushi cannot encode the `nullable.Nullable[string]` description
+        // field (`map[bool]string`), so Go fails whenever any snippet carries a
+        // `description` key. Mirror the failure byte-for-byte.
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(rawBody, LEGACY_GO_SNIPPET_LIST),
+          catch: (cause) =>
+            new LegacySnippetsTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
         return;
       }
 
