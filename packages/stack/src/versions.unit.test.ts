@@ -12,6 +12,8 @@ import {
   normalizeServiceVersion,
   type VersionManifest,
 } from "./versions.ts";
+import { SERVICE_ARTIFACTS } from "./ServiceArtifacts.ts";
+import { SERVICE_NAMES } from "./versions.ts";
 
 const sampleDockerfile = `
 FROM supabase/postgres:17.0.0.1 AS pg
@@ -89,6 +91,10 @@ after`;
 });
 
 describe("dockerImageForService", () => {
+  it("defines artifact capabilities for every stack service", () => {
+    expect(Object.keys(SERVICE_ARTIFACTS).sort()).toEqual([...SERVICE_NAMES].sort());
+  });
+
   it("returns correct image for postgres", () => {
     expect(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres)).toBe(
       `public.ecr.aws/supabase/postgres:${DEFAULT_VERSIONS.postgres}`,
@@ -125,6 +131,21 @@ describe("dockerImageForService", () => {
     expect(dockerImageCandidatesForService("imgproxy", DEFAULT_VERSIONS.imgproxy)).toEqual([
       `darthsim/imgproxy:${DEFAULT_VERSIONS.imgproxy}`,
     ]);
+  });
+
+  it("keeps non-managed services Docker-only", () => {
+    expect(SERVICE_ARTIFACTS.imgproxy).toMatchObject({
+      runtimeSupport: "docker-only",
+      docker: { ownership: "upstream", repository: "darthsim/imgproxy" },
+    });
+    expect(SERVICE_ARTIFACTS.mailpit).toMatchObject({
+      runtimeSupport: "docker-only",
+      docker: { ownership: "upstream", repository: "axllent/mailpit" },
+    });
+    expect(SERVICE_ARTIFACTS.vector).toMatchObject({
+      runtimeSupport: "docker-only",
+      docker: { ownership: "upstream", repository: "timberio/vector" },
+    });
   });
 });
 

@@ -6,7 +6,7 @@ FROM axllent/mailpit:v1.30.2 AS mailpit
 FROM postgrest/postgrest:v14.15 AS postgrest
 FROM supabase/postgres-meta:v0.96.6 AS pgmeta
 FROM supabase/studio:2026.07.27-sha-cbb076d AS studio
-FROM darthsim/imgproxy:v3.8.0 AS imgproxy
+FROM darthsim/imgproxy:v3.27.2 AS imgproxy
 FROM supabase/edge-runtime:v1.74.2 AS edgeruntime
 FROM timberio/vector:0.53.0-alpine AS vector
 FROM supabase/supavisor:2.9.7 AS supavisor

@@ -1,3 +1,9 @@
+import {
+  dockerImageCandidatesForArtifact,
+  dockerImageForArtifact,
+  imageTagPrefixForService,
+} from "./ServiceArtifacts.ts";
+
 export type ServiceName =
   | "postgres"
   | "postgrest"
@@ -52,7 +58,7 @@ export const DEFAULT_VERSIONS: VersionManifest = {
   "edge-runtime": "1.74.2",
   realtime: "2.120.3",
   storage: "1.67.20",
-  imgproxy: "v3.8.0",
+  imgproxy: "v3.27.2",
   mailpit: "v1.30.2",
   pgmeta: "0.96.6",
   studio: "2026.07.27-sha-cbb076d",
@@ -61,48 +67,12 @@ export const DEFAULT_VERSIONS: VersionManifest = {
   pooler: "2.9.7",
 } as const;
 
-/** Default registry. Matches the Go CLI default (`public.ecr.aws`). */
-const DEFAULT_REGISTRY = "public.ecr.aws/supabase";
-const DOCKER_HUB_SUPABASE_REGISTRY = "supabase";
-const GHCR_SUPABASE_REGISTRY = "ghcr.io/supabase";
-
-const IMAGE_REPOSITORIES: Record<ServiceName, string> = {
-  postgres: "postgres",
-  postgrest: "postgrest",
-  auth: "gotrue",
-  "edge-runtime": "edge-runtime",
-  realtime: "realtime",
-  storage: "storage-api",
-  imgproxy: "darthsim/imgproxy",
-  mailpit: "axllent/mailpit",
-  pgmeta: "postgres-meta",
-  studio: "studio",
-  analytics: "logflare",
-  vector: "timberio/vector",
-  pooler: "supavisor",
-};
-
-const SUPABASE_REGISTRY_SERVICES = new Set<ServiceName>([
-  "postgres",
-  "postgrest",
-  "auth",
-  "edge-runtime",
-  "realtime",
-  "storage",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "pooler",
-]);
-
-export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = {
-  postgrest: "v",
-  auth: "v",
-  "edge-runtime": "v",
-  realtime: "v",
-  storage: "v",
-  pgmeta: "v",
-};
+export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = Object.fromEntries(
+  SERVICE_NAMES.flatMap((service) => {
+    const prefix = imageTagPrefixForService(service);
+    return prefix === undefined ? [] : [[service, prefix]];
+  }),
+);
 
 /**
  * Returns the full Docker image URL for a service.
@@ -111,27 +81,14 @@ export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = {
  * `public.ecr.aws/supabase/` by default (faster than Docker Hub).
  */
 export function dockerImageForService(service: ServiceName, version: string): string {
-  const repository = IMAGE_REPOSITORIES[service];
-  if (SUPABASE_REGISTRY_SERVICES.has(service)) {
-    return `${DEFAULT_REGISTRY}/${repository}:${IMAGE_TAG_PREFIX[service] ?? ""}${version}`;
-  }
-  return `${repository}:${IMAGE_TAG_PREFIX[service] ?? ""}${version}`;
+  return dockerImageForArtifact(service, version);
 }
 
 export function dockerImageCandidatesForService(
   service: ServiceName,
   version: string,
 ): ReadonlyArray<string> {
-  const repository = IMAGE_REPOSITORIES[service];
-  const tag = `${IMAGE_TAG_PREFIX[service] ?? ""}${version}`;
-  if (!SUPABASE_REGISTRY_SERVICES.has(service)) {
-    return [`${repository}:${tag}`];
-  }
-  return [
-    `${DEFAULT_REGISTRY}/${repository}:${tag}`,
-    `${DOCKER_HUB_SUPABASE_REGISTRY}/${repository}:${tag}`,
-    `${GHCR_SUPABASE_REGISTRY}/${repository}:${tag}`,
-  ];
+  return dockerImageCandidatesForArtifact(service, version);
 }
 
 function assertFullVersions(
