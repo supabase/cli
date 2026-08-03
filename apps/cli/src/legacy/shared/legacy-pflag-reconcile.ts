@@ -1,13 +1,31 @@
-import { Effect, FileSystem, Option, Path, Result } from "effect";
+import { Data, Effect, FileSystem, Option, Path, Result } from "effect";
 
-import type { PflagArgvScan } from "../../../shared/cli/cobra-flag-groups.ts";
-import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../../shared/legacy/global-flags.ts";
-import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { legacyProfileFilePath } from "../../config/legacy-profile-file.ts";
-import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
-import { LegacySsoWorkdirError } from "./sso.errors.ts";
-import { legacySsoLoadProfile, type LegacySsoLoadedProfile } from "./sso.load-profile.ts";
+import type { PflagArgvScan } from "../../shared/cli/cobra-flag-groups.ts";
+import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { legacyProfileFilePath } from "../config/legacy-profile-file.ts";
+import { legacyLoadProfile, type LegacyLoadedProfile } from "./legacy-profile-load.ts";
+import { legacyParseStringSliceFlag } from "./legacy-string-slice-flag.ts";
+import { legacyValidateWorkdirIsDirectory } from "./legacy-workdir-validation.ts";
+
+/**
+ * Go's `ChangeWorkDir` (`internal/utils/misc.go:238-257`), run from the root
+ * `PersistentPreRunE` (`cmd/root.go:104`) — after `ParseFlags` and
+ * `ValidateArgs`, before `ValidateRequiredFlags`, `ValidateFlagGroups`, and
+ * `RunE` — so a missing workdir directory aborts with no API call ever made.
+ * Emulated for the pflag/viper-effective `--workdir`/`SUPABASE_WORKDIR` the
+ * Effect layer never validates (and, when `--workdir` consumed a flag-shaped
+ * token, never even saw — PR #5974 review round 6). Shared across add +
+ * update; message byte-matches Go's template.
+ *
+ * Flows through {@link legacyValidatePflagWorkdir}'s inferred Effect error
+ * channel; no call site imports the class by name.
+ *
+ * @public
+ */
+export class LegacyPflagWorkdirError extends Data.TaggedError("LegacyPflagWorkdirError")<{
+  readonly message: string;
+}> {}
 
 /**
  * Reconciles an Effect-parsed option flag with pflag semantics
@@ -25,7 +43,7 @@ import { legacySsoLoadProfile, type LegacySsoLoadedProfile } from "./sso.load-pr
  * never makes. When the scan and the parser agree (every normal invocation),
  * the scan's value is byte-identical to the parsed one.
  */
-export function legacySsoPflagStringValue(
+export function legacyPflagStringValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
 ): Option.Option<string> {
@@ -34,7 +52,7 @@ export function legacySsoPflagStringValue(
 }
 
 /**
- * Like `legacySsoPflagStringValue`, but for pflag `StringSliceVar` flags:
+ * Like `legacyPflagStringValue`, but for pflag `StringSliceVar` flags:
  * every occurrence is CSV-split and accumulated, matching pflag's
  * `stringSliceValue.Set`. An absent flag reconciles to `[]` even when the
  * Effect parser produced values (its tokens were consumed by another flag).
@@ -44,7 +62,7 @@ export function legacySsoPflagStringValue(
  * same raw values and rejects the command at parse time before the handler
  * runs; the fallback just keeps a handler-level disagreement from crashing.
  */
-export function legacySsoPflagSliceValue(
+export function legacyPflagSliceValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
   parsedFallback: ReadonlyArray<string>,
@@ -82,12 +100,12 @@ export function legacySsoPflagSliceValue(
  *   sso add …`), which cobra's `Find`/`stripFlags` routes to the same
  *   persistent flag.
  */
-export function legacySsoPflagWorkdirValue(
+export function legacyPflagWorkdirValue(
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
   parsedWorkdir: Option.Option<string>,
   envWorkdir: string | undefined,
 ): Option.Option<string> {
-  const scanned = legacySsoPflagStringValue(scan.occurrences, "workdir");
+  const scanned = legacyPflagStringValue(scan.occurrences, "workdir");
   // Same last-wins order as the profile resolver: post-path occurrence →
   // pre-path occurrence (pflag parses persistent flags before the command
   // path and repeats resolve last-wins, while the Effect parser is
@@ -115,7 +133,7 @@ export function legacySsoPflagWorkdirValue(
 
 /**
  * Emulates Go's `ChangeWorkDir` (`cmd/root.go:104`, `internal/utils/
- * misc.go:238-257`) for the workdir {@link legacySsoPflagWorkdirValue}
+ * misc.go:238-257`) for the workdir {@link legacyPflagWorkdirValue}
  * resolves: `os.Chdir` on a missing path or a non-directory aborts the
  * command from the root `PersistentPreRunE` — after `ParseFlags` and
  * `ValidateArgs`, before `ValidateRequiredFlags`, `ValidateFlagGroups`, and
@@ -129,19 +147,19 @@ export function legacySsoPflagWorkdirValue(
  * config layer keeps the workdir it resolved from the parsed flag — both
  * sides then issue the identical request for these inputs.
  */
-export const legacySsoValidatePflagWorkdir = Effect.fnUntraced(function* (
+export const legacyValidatePflagWorkdir = Effect.fnUntraced(function* (
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
 ) {
   // `serviceOption`: absent outside the real CLI tree (handler-level tests
   // provide argv via `Stdio.layerTest`, not the global flag settings).
   const parsedWorkdir = Option.flatten(yield* Effect.serviceOption(LegacyWorkdirFlag));
-  const workdir = legacySsoPflagWorkdirValue(scan, parsedWorkdir, process.env["SUPABASE_WORKDIR"]);
+  const workdir = legacyPflagWorkdirValue(scan, parsedWorkdir, process.env["SUPABASE_WORKDIR"]);
   if (Option.isNone(workdir)) {
     return;
   }
   const fs = yield* FileSystem.FileSystem;
   yield* legacyValidateWorkdirIsDirectory(workdir.value, fs).pipe(
-    Effect.mapError((cause) => new LegacySsoWorkdirError({ message: cause.message })),
+    Effect.mapError((cause) => new LegacyPflagWorkdirError({ message: cause.message })),
   );
 });
 
@@ -151,7 +169,7 @@ export const legacySsoValidatePflagWorkdir = Effect.fnUntraced(function* (
  * `Option.none` means Go would fall through to the persisted
  * `~/.supabase/profile` file and then the `supabase` default.
  *
- * Resolution order mirrors {@link legacySsoPflagWorkdirValue} (same viper
+ * Resolution order mirrors {@link legacyPflagWorkdirValue} (same viper
  * semantics, binary-verified for `--profile` in PR #5974 review round 7):
  * - the scan's last `--profile` occurrence wins — pflag consumes flag-shaped
  *   tokens the Effect parser refuses (`--profile --metadata-url` binds
@@ -168,12 +186,12 @@ export const legacySsoValidatePflagWorkdir = Effect.fnUntraced(function* (
  *   flag's default, so that value is treated as unset — the same proxy the
  *   config layer uses (`legacy-cli-config.layer.ts`).
  */
-export function legacySsoPflagProfileValue(
+export function legacyPflagProfileValue(
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
   parsedProfile: Option.Option<string>,
   envProfile: string | undefined,
 ): Option.Option<string> {
-  const scanned = legacySsoPflagStringValue(scan.occurrences, "profile");
+  const scanned = legacyPflagStringValue(scan.occurrences, "profile");
   // pflag's effective value is the LAST parsed occurrence anywhere in argv:
   // a post-path occurrence wins outright; otherwise a persistent pre-path
   // occurrence (`--profile A sso add …`) stays effective even when a later
@@ -223,7 +241,7 @@ export function legacySsoPflagProfileValue(
  * provide argv via `Stdio.layerTest`) the flag settings and `RuntimeInfo`
  * may be absent; the emulation then only acts on what the scan itself shows.
  */
-export const legacySsoResolvePflagProfile = Effect.fnUntraced(function* (
+export const legacyResolvePflagProfile = Effect.fnUntraced(function* (
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
 ) {
   const parsedRaw = yield* Effect.serviceOption(LegacyProfileFlag);
@@ -235,7 +253,7 @@ export const legacySsoResolvePflagProfile = Effect.fnUntraced(function* (
   // (`resolveProfile`, `legacy-cli-config.layer.ts`: parsed flag ≠ default →
   // env). When both agree on a non-empty explicit token, the layer resolved
   // the exact same profile the Go binary would target.
-  const goExplicit = legacySsoPflagProfileValue(scan, parsedProfile, envProfile);
+  const goExplicit = legacyPflagProfileValue(scan, parsedProfile, envProfile);
   const layerExplicit = Option.isSome(parsedProfile)
     ? parsedProfile
     : envProfile !== undefined
@@ -247,14 +265,14 @@ export const legacySsoResolvePflagProfile = Effect.fnUntraced(function* (
     goExplicit.value === layerExplicit.value &&
     goExplicit.value !== ""
   ) {
-    return Option.none<LegacySsoLoadedProfile>();
+    return Option.none<LegacyLoadedProfile>();
   }
 
   const fs = yield* Effect.serviceOption(FileSystem.FileSystem);
   const path = yield* Effect.serviceOption(Path.Path);
   const runtimeInfo = yield* Effect.serviceOption(RuntimeInfo);
   if (Option.isNone(fs) || Option.isNone(path) || Option.isNone(runtimeInfo)) {
-    return Option.none<LegacySsoLoadedProfile>();
+    return Option.none<LegacyLoadedProfile>();
   }
 
   // Lowest precedence: the persisted `~/.supabase/profile` file. Go uses the
@@ -282,9 +300,9 @@ export const legacySsoResolvePflagProfile = Effect.fnUntraced(function* (
       });
 
   if (goToken === layerToken && goToken !== "") {
-    return Option.none<LegacySsoLoadedProfile>();
+    return Option.none<LegacyLoadedProfile>();
   }
-  return Option.some(yield* legacySsoLoadProfile(goToken, fs.value));
+  return Option.some(yield* legacyLoadProfile(goToken, fs.value));
 });
 
 /** Go's `strconv.ParseBool` accepted literals (`strconv/atob.go:10-19`). */
@@ -304,7 +322,7 @@ const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
 ]);
 
 /**
- * Like `legacySsoPflagStringValue`, but for pflag `BoolVar` flags. pflag
+ * Like `legacyPflagStringValue`, but for pflag `BoolVar` flags. pflag
  * calls `Value.Set` for every occurrence in argv order: a bare occurrence
  * sets `NoOptDefVal` (`"true"`), an inline `=value` goes through
  * `strconv.ParseBool`, an invalid literal aborts `ParseFlags` with
@@ -329,7 +347,7 @@ const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
  * `--skip-url-validation=false --skip-url-validation=` aborts Go's
  * ParseFlags before any request; the parser accepts the argv).
  */
-export function legacySsoPflagBoolValue(
+export function legacyPflagBoolValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
 ): Result.Result<boolean, string> {
@@ -351,7 +369,7 @@ export function legacySsoPflagBoolValue(
 }
 
 /**
- * Like `legacySsoPflagStringValue`, but for Go enum-valued flags
+ * Like `legacyPflagStringValue`, but for Go enum-valued flags
  * (`ssoProviderType`, `ssoNameIDFormat` — `cmd/sso.go:157-158,176`), whose
  * `Value.Set` rejects anything outside the allowed set. pflag Sets every
  * occurrence in argv order and aborts `ParseFlags` on the first invalid one
@@ -362,7 +380,7 @@ export function legacySsoPflagBoolValue(
  * `flagLabel` is how pflag names the flag in the error: `--name` without a
  * shorthand, `-s, --name` with one (pflag `errors.go:39-41`).
  */
-export function legacySsoPflagEnumValue(
+export function legacyPflagEnumValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
   allowed: ReadonlyArray<string>,

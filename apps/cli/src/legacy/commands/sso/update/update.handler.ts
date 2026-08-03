@@ -32,6 +32,14 @@ import {
   legacySuggestUpgrade,
 } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
+  legacyPflagBoolValue,
+  legacyPflagEnumValue,
+  legacyPflagSliceValue,
+  legacyPflagStringValue,
+  legacyResolvePflagProfile,
+  legacyValidatePflagWorkdir,
+} from "../../../shared/legacy-pflag-reconcile.ts";
+import {
   LegacySsoFlagNeedsArgumentError,
   LegacySsoInvalidFlagValueError,
   LegacySsoMutexFlagError,
@@ -45,14 +53,6 @@ import {
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import {
-  legacySsoPflagBoolValue,
-  legacySsoPflagEnumValue,
-  legacySsoPflagSliceValue,
-  legacySsoPflagStringValue,
-  legacySsoResolvePflagProfile,
-  legacySsoValidatePflagWorkdir,
-} from "../sso.pflag-reconcile.ts";
 import {
   LEGACY_SSO_NAME_ID_FORMATS,
   readAttributeMappingFile,
@@ -241,7 +241,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // through sane usage. The same helpers yield the pflag-effective
     // (last-occurrence) values the handler acts on below.
     const skipUrlValidation = yield* Result.match(
-      legacySsoPflagBoolValue(occurrences, "skip-url-validation"),
+      legacyPflagBoolValue(occurrences, "skip-url-validation"),
       {
         onFailure: (message: string) =>
           Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
@@ -249,7 +249,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       },
     );
     const nameIdFormat = yield* Result.match(
-      legacySsoPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
+      legacyPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
       {
         onFailure: (message: string) =>
           Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
@@ -292,10 +292,10 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // an arity violation but beats the workdir check, the mutex checks, and
     // any GET/PUT — and a loadable one decides which API host receives them.
     // Reachable exactly where the scan and the parser disagree (see
-    // `add.handler.ts` and `legacySsoResolvePflagProfile` — PR #5974
+    // `add.handler.ts` and `legacyResolvePflagProfile` — PR #5974
     // review round 7); where they agree this is `none` and the config
     // layer's client/apiUrl below are already pflag-effective.
-    const reconciledProfile = yield* legacySsoResolvePflagProfile(scan);
+    const reconciledProfile = yield* legacyResolvePflagProfile(scan);
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Reconciled-profile credentials, resolved ONCE for the main request and
     // every auxiliary call (linked-project cache fill, upgrade-gate fallback
@@ -329,7 +329,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // (binary-verified: `sso update a b --workdir /missing` reports the
     // arity error; `sso update <id> --workdir /missing --domains a
     // --add-domains b` reports the chdir failure — PR #5974 review round 6).
-    yield* legacySsoValidatePflagWorkdir(scan);
+    yield* legacyValidatePflagWorkdir(scan);
 
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
       const changed = group.filter((flagName) => occurrences.has(flagName));
@@ -347,20 +347,16 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // tokens as values while pflag consumes them unconditionally, and
     // resolves repeated flags first-wins while pflag is last-wins, so the
     // two can disagree on which flags are set and what they hold. See
-    // `add.handler.ts` and `sso.pflag-reconcile.ts` for the full rationale
+    // `add.handler.ts` and `legacy-pflag-reconcile.ts` for the full rationale
     // (CLI-1982). `--name-id-format` and `--skip-url-validation` were
     // reconciled above, alongside their pflag value validation.
-    const projectRefFlag = legacySsoPflagStringValue(occurrences, "project-ref");
-    const metadataFile = legacySsoPflagStringValue(occurrences, "metadata-file");
-    const metadataUrl = legacySsoPflagStringValue(occurrences, "metadata-url");
-    const attributeMappingFile = legacySsoPflagStringValue(occurrences, "attribute-mapping-file");
-    const domains = legacySsoPflagSliceValue(occurrences, "domains", flags.domains);
-    const addDomains = legacySsoPflagSliceValue(occurrences, "add-domains", flags.addDomains);
-    const removeDomains = legacySsoPflagSliceValue(
-      occurrences,
-      "remove-domains",
-      flags.removeDomains,
-    );
+    const projectRefFlag = legacyPflagStringValue(occurrences, "project-ref");
+    const metadataFile = legacyPflagStringValue(occurrences, "metadata-file");
+    const metadataUrl = legacyPflagStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = legacyPflagStringValue(occurrences, "attribute-mapping-file");
+    const domains = legacyPflagSliceValue(occurrences, "domains", flags.domains);
+    const addDomains = legacyPflagSliceValue(occurrences, "add-domains", flags.addDomains);
+    const removeDomains = legacyPflagSliceValue(occurrences, "remove-domains", flags.removeDomains);
 
     const providerId = yield* validateUuid(flags.providerId).pipe(
       Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
