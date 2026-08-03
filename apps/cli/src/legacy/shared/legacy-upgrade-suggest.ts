@@ -1,7 +1,7 @@
 import { styleText } from "node:util";
 
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Effect, Option, type Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -91,6 +91,26 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly statusCode: number;
   readonly response?: HttpClientResponse.HttpClientResponse;
   /**
+   * Overrides the API base URL of the fallback project + entitlement GETs.
+   * Go's `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
+   * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
+   * profile differing from the config layer's (sso add/update, PR #5974
+   * round 7) pass that profile's URL so the gate requests hit the same host
+   * as their main calls. Defaults to `LegacyCliConfig.apiUrl`.
+   */
+  readonly apiUrl?: string;
+  /**
+   * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
+   * Go resolves credentials for the process-wide reconciled `CurrentProfile`
+   * (`access_token.go:43`), so callers that pass a reconciled `apiUrl` must
+   * pass the reconciled profile's token too — otherwise the stale profile's
+   * bearer token would be sent to the reconciled host (review r3684524241).
+   * `Some` uses that token, `None` sends unauthenticated (the reconciled
+   * profile has no token — matching Go, which fails its token lookup and
+   * never attaches the stale one), `undefined` resolves from the service.
+   */
+  readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
+  /**
    * Set false where the Go twin fires no `TrackUpgradeSuggested` (vanity
    * check-availability), keeping telemetry 1:1.
    */
@@ -126,16 +146,18 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       return;
     }
 
-    const tokenOpt = yield* resolveLegacyAccessToken;
+    const tokenOpt = opts.accessToken ?? (yield* resolveLegacyAccessToken);
     const authHeader: (
       req: HttpClientRequest.HttpClientRequest,
     ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
       ? HttpClientRequest.bearerToken(tokenOpt.value)
       : (req) => req;
 
-    const projectReq = HttpClientRequest.get(
-      `${cliConfig.apiUrl}/v1/projects/${opts.projectRef}`,
-    ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
+    const apiUrl = opts.apiUrl ?? cliConfig.apiUrl;
+    const projectReq = HttpClientRequest.get(`${apiUrl}/v1/projects/${opts.projectRef}`).pipe(
+      authHeader,
+      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+    );
     const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
     if (projectResp._tag === "None" || projectResp.value.status !== 200) {
       return;
@@ -149,9 +171,10 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       return;
     }
 
-    const entReq = HttpClientRequest.get(
-      `${cliConfig.apiUrl}/v1/organizations/${orgSlug}/entitlements`,
-    ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
+    const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
+      authHeader,
+      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+    );
     const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
     if (entResp._tag === "None" || entResp.value.status !== 200) {
       return;

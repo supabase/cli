@@ -113,8 +113,10 @@ written to `<workdir>/supabase/.temp/start-secrets/<containerName>/` (directory 
 `0700`, files mode `0644` — world-readable, since Kong (uid 100) and Postgres's
 post-privilege-drop `postgres` user read these bind-mounted files as non-root, and a
 Linux/Podman bind mount preserves the host file's mode verbatim) and
-bind-mounted `:ro` into the container at the exact path each container's
-entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
+bind-mounted `:ro,Z` into the container at the exact path each container's
+entrypoint/`Cmd` expects (`Z` — private SELinux relabel of these CLI-generated files so
+the confined container can read them on SELinux-enforcing hosts; no-op elsewhere) —
+see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
 doc comment for the full rationale (CWE-214/522: keeping secret content out of the
 `docker create` argv the host can see via `ps`/`/proc/<pid>/cmdline`) and for why this
 directory is a DETERMINISTIC, PERSISTENT path under the project's own workdir rather
@@ -132,7 +134,7 @@ script + value files, and bootstrap `index.ts` template (`shared/functions/serve
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) are
 staged the same way, under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
 containerName>/{env,multiline-env,main}/` (directory mode `0700`, files mode `0600`),
-bind-mounted `:ro` into the container — a deterministic, persistent path rather than
+bind-mounted `:ro,Z` into the container — a deterministic, persistent path rather than
 `os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
 `legacyCleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
 them on `stop` or a failed-start rollback, exactly like the Kong/Postgres/Supavisor
@@ -178,7 +180,7 @@ not implemented.
 | `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                  |
 | `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                 |
-| `1`  | image pull exhausted across every registry candidate                                                                                                                                                                                                                                                           |
+| `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (intentional divergence from Go's exit-0 swallow quirk; see the CLI-1987 note under "Notes")                                                            |
 | `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                               |
 | `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                          |
 | `1`  | Postgres itself fails to start or its own health wait times out, **without** `--ignore-health-check` — rolls back                                                                                                                                                                                              |
@@ -274,6 +276,30 @@ prose, not structured data.
   healthy, buckets are seeded anyway — a failure in THAT seed step still rolls back and
   fails the command despite the flag (see "Storage bucket seeding" and the `Exit Codes`
   table).
+- **Intentional divergence from Go — image-pull/daemon failure under
+  `--ignore-health-check` (CLI-1987, ruled 2026-07-30):** Go's `start.IsUnhealthyError`
+  (`internal/db/start/start.go:227-231`) classifies ANY `errors.Join`-shaped error as
+  "unhealthy", which accidentally also matches `ensureImagesCached`'s joined pull errors
+  (`internal/start/start.go:257-260`). So in Go, with `--ignore-health-check` set, a
+  total image-pull failure — every registry candidate exhausted, or the Docker daemon
+  becoming unreachable during the pre-pull — is swallowed: Go prints the error, skips
+  rollback, prints `Started supabase local development setup.` + the status table + the
+  security notice, and exits 0 even though no container ever started. That is an
+  unintended quirk of Go's shape-based check (its own comment reads "Health check always
+  returns a joinError"), and it is deliberately NOT reproduced here — enforced by
+  control flow, not by a classifier: unlike Go's single outer check on the whole `run()`
+  result, this port consults `legacyIsUnhealthyStartError` (`start.rollback.ts`) only
+  inside its two health-wait failure branches, and the image pre-pull runs before
+  bring-up, so its failure propagates out without ever reaching a downgrade branch. The
+  same scenario exits 1 with no success banner and no status table, flag or no flag.
+  `--ignore-health-check` downgrades health-check timeouts only. Rollback is NOT part of
+  the divergence — the pre-pull runs before any container/network is created, so there
+  is nothing to roll back in either CLI; the observable delta is exit code + success
+  banner + status table + security notice (Go prints all three of the latter
+  unconditionally at `Run()`'s tail, `start.go:84-87`; this port's failure exits before
+  any of them). Note the flag's own help text ("Ignore unhealthy services and exit 0",
+  byte-matched to Go's) over-promises in this scenario — a pre-pull failure is not an
+  "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
 - `--preview` is a hidden, parsed-but-inert flag, matching Go exactly (never read by
   Go's own `start.Run`).
 - The already-running check uses `docker container inspect` on the Postgres container,

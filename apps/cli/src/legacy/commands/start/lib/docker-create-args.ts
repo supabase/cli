@@ -159,7 +159,7 @@ export interface LegacyStartContainerSpec {
    * non-root in-container user reading it (e.g. Kong, Postgres) doesn't hit
    * `EACCES` once the bind mount preserves this host mode verbatim; see
    * `legacyStageStartSecretFiles`'s doc comment — in a fresh temp
-   * directory) and appends a `<tempHostPath>:<containerPath>:ro` bind (the
+   * directory) and appends a `<tempHostPath>:<containerPath>:ro,Z` bind (the
    * bind's SOURCE is a generated temp-file path, never the secret itself —
    * safe in argv) to {@link binds} BEFORE this builder ever sees the spec,
    * then removes the temp file/directory once the container is created and

@@ -48,20 +48,25 @@ The seam subprocesses run with `SUPABASE_TELEMETRY_DISABLED=1`, stderr inherited
 
 ### Remote path (native, in TS)
 
-| Statement                                                                                       | When                                                         |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations) | always, first                                                |
-| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                  | when `[db.vault]` has syncable secrets                       |
-| migration statements + `schema_migrations` history insert (per file, transactional)             | when `[db.migrations].enabled`, for migrations `≤ --version` |
-| seed statements + `seed_files` hash upsert                                                      | when `[db.seed].enabled` and not `--no-seed`                 |
+| Statement                                                                                                                                        | When                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                                  | always, first                                                |
+| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                       |
+| migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | when `[db.migrations].enabled`, for migrations `≤ --version` |
+| seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed`                 |
 
 ### Local path (inside the Go seam)
 
 The recreate seam drops & recreates the `postgres`/`_supabase` databases (PG≤14) or
 removes & recreates the db container/volume (PG15), applies the initial schema +
 roles, then runs `MigrateAndSeed` (migrations `≤ --version`, seed unless `--no-seed`)
-and restarts the storage/auth/realtime/pooler containers. Bucket objects are then
-seeded over the Storage gateway (reusing the `seed buckets` local path).
+and restarts the storage/auth/realtime/pooler containers, then reloads Kong
+(`kong reload`, skipped when the gateway is absent or stopped) so its nginx
+re-resolves the restarted containers' addresses — otherwise routes to a moved
+container keep returning 502 after the reset succeeds (issue #6016). Bucket
+objects are then seeded over the Storage gateway (reusing the `seed buckets`
+local path); the in-place reload keeps Kong serving throughout, so this never
+races a restarting gateway.
 
 ## API Routes
 
@@ -133,6 +138,10 @@ path has no confirmation prompt.
 
 - **Target/local split** follows Go's `IsLocalDatabase(resolved config)`, not the
   flag name: a `--db-url` pointing at the local stack is treated as a local reset.
+- **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
+  standalone outside the per-file transaction batch, with the same non-atomic flush
+  behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
+  closed Go PR supabase/cli#5156, CLI-1989 parity ruling).
 - `--no-seed` forces seeding off (Go sets `Config.Db.Seed.Enabled = false`); on the
   local path it is forwarded to the recreate seam so `MigrateAndSeed` skips the seed.
 - `--sql-paths` overrides `[db.seed].sql_paths` for one reset and force-enables seeding

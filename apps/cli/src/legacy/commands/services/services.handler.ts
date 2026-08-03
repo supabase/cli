@@ -74,7 +74,25 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       return Option.none<string>();
     }
 
-    const content = yield* fs.readFileString(projectRefPath).pipe(Effect.orElseSucceed(() => ""));
+    // Go's `Run` warns on a ref-file READ error (as opposed to the file simply
+    // not existing) and keeps going as unlinked (`internal/services/
+    // services.go:18-20`: `fmt.Fprintln(os.Stderr, err)` with `LoadProjectRef`'s
+    // `failed to load project ref: %w`, `project_ref.go:71-72`). A NotFound
+    // between the exists() check above and this read (TOCTOU) maps to Go's
+    // `os.ErrNotExist` → `ErrNotLinked` branch: silent, no warning. The
+    // warning's error suffix is Effect's description, not Go's `*PathError`
+    // text — the prefix is the parity-bearing part.
+    const content = yield* fs
+      .readFileString(projectRefPath)
+      .pipe(
+        Effect.catch((cause) =>
+          cause._tag === "PlatformError" && cause.reason._tag === "NotFound"
+            ? Effect.succeed("")
+            : output
+                .raw(`failed to load project ref: ${String(cause)}\n`, "stderr")
+                .pipe(Effect.as("")),
+        ),
+      );
     const trimmed = content.trim();
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });

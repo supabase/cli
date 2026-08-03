@@ -1,5 +1,6 @@
 import { Option } from "effect";
 
+import { legacyGoFormatFloat } from "../../../shared/legacy-go-float.ts";
 import { legacyStringWidth } from "../../../shared/legacy-rune-width.ts";
 
 // `JSON.rawJSON` (ES2025, present in Bun) wraps a string so `JSON.stringify` emits it
@@ -20,35 +21,6 @@ declare global {
  */
 
 /**
- * Render a number the way Go's `fmt.Sprintf("%v", float64)` does — JSON numbers
- * decode to `float64`, so Go uses shortest `%g`: exponent form when the decimal
- * exponent is `< -4` or `>= 6` (e.g. `1000000` → `1e+06`, `1.5e8` → `1.5e+08`,
- * `1e-5` → `1e-05`), fixed notation otherwise. The exponent is signed and at least
- * two digits. JS fixed notation matches Go for the `[-4, 6)` range, so only the
- * exponent cases need reformatting.
- */
-function goFormatFloat(n: number): string {
-  if (Number.isNaN(n)) return "NaN";
-  if (!Number.isFinite(n)) return n > 0 ? "+Inf" : "-Inf";
-  // Go's `%v` preserves the sign of negative zero (`-0`); `n === 0` is true for
-  // both `+0` and `-0`, so distinguish them with `Object.is` before the shortcut.
-  if (Object.is(n, -0)) return "-0";
-  if (n === 0) return "0";
-  const neg = n < 0;
-  const abs = Math.abs(n);
-  const [mantissa, eRaw] = abs.toExponential().split("e");
-  const exp = Number.parseInt(eRaw!, 10);
-  let out: string;
-  if (exp < -4 || exp >= 6) {
-    const mag = Math.abs(exp).toString().padStart(2, "0");
-    out = `${mantissa}e${exp < 0 ? "-" : "+"}${mag}`;
-  } else {
-    out = abs.toString();
-  }
-  return neg ? `-${out}` : out;
-}
-
-/**
  * Reproduce Go's `fmt.Sprintf("%v", v)` for JSON-decoded (`interface{}`) values:
  * objects → `map[k:v ...]` with byte-sorted keys, arrays → `[a b ...]`
  * (space-separated, recursive), booleans → `true`/`false`, numbers via Go's
@@ -58,7 +30,7 @@ function goFormatValue(value: unknown): string {
   if (value === null || value === undefined) return "<nil>";
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") return goFormatFloat(value);
+  if (typeof value === "number") return legacyGoFormatFloat(value);
   // `bytea` columns: pgx scans them into a Go `[]byte`, so `fmt.Sprintf("%v")`
   // prints the decimal byte values space-separated in brackets (`[222 173]`).
   // node-postgres returns a `Buffer` (a `Uint8Array`), which would otherwise hit
@@ -231,7 +203,7 @@ export function legacyMakeLocalCellFormatter(
     // Defensive: native rows may still carry a `Date`; render it like Go's `%v`.
     if (value instanceof Date) return formatGoTime(value);
     if (typeof value === "number" && (oid === PG_FLOAT4_OID || oid === PG_FLOAT8_OID)) {
-      return goFormatFloat(value);
+      return legacyGoFormatFloat(value);
     }
     return legacyFormatValue(value);
   };

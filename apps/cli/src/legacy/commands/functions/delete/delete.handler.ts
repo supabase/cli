@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
 import { deleteFunction } from "../../../../shared/functions/delete.ts";
+import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -27,6 +28,10 @@ export const legacyFunctionsDelete = Effect.fn("legacy.functions.delete")(functi
             }),
           ),
         ),
+      // Go: `fmt.Printf("Deleted Function %s from project %s.\n", utils.Aqua(slug),
+      // utils.Aqua(projectRef))` (`internal/functions/delete/delete.go:20`) —
+      // stdout-bound, so the TTY gate must check stdout.
+      styleIdentifier: (text) => legacyAqua(text, process.stdout),
     },
   ).pipe(
     Effect.ensuring(
