@@ -995,6 +995,59 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live(
+    "forwards --query-timeout and --swift-access-control to pg-meta for implicit linked non-TypeScript generation",
+    () =>
+      Effect.tryPromise({
+        try: () =>
+          withSslProbeServer(async (port) => {
+            const docker = captureDockerRun();
+            const { layer, dbConfig } = setup({
+              args: [
+                "gen",
+                "types",
+                "--lang",
+                "go",
+                "--query-timeout",
+                "20s",
+                "--swift-access-control",
+                "public",
+              ],
+              projectId: Option.some(LEGACY_VALID_REF),
+              childStdout: ["type PublicMovies struct {}"],
+              dbConfigResolve: () =>
+                Effect.succeed(
+                  remoteResolvedConfig({
+                    host: "127.0.0.1",
+                    port,
+                    user: "postgres",
+                    password: "workdir-password",
+                    database: "postgres",
+                  }),
+                ),
+              onSpawn: docker.onSpawn,
+            });
+
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({ lang: "go", queryTimeout: "20s", swiftAccessControl: "public" }),
+              ).pipe(Effect.provide(layer)),
+            );
+
+            // Unlike an explicit --linked/--project-id, the implicit fallback never
+            // sets the "linked"/"project-id" mutex keys, so --query-timeout and
+            // --swift-access-control clear every guard here and reach pg-meta — the
+            // SIDE_EFFECTS.md defaults-invariant note is scoped to the explicit
+            // paths for exactly this reason.
+            expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
+            expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
+            expect(docker.env.has("PG_CONN_TIMEOUT_SECS=20")).toBe(true);
+            expect(docker.env.has("PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=public")).toBe(true);
+          }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
+  );
+
   it.live("prefers the --postgrest-v9-compat guard over mutex group errors", () => {
     const { layer } = setup({
       args: ["gen", "types", "--local", "--linked", "--postgrest-v9-compat"],

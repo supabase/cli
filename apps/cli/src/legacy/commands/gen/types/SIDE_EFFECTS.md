@@ -117,22 +117,32 @@ Not applicable.
 using --db-url flag instead.` (`internal/gen/types/types.go:44-46`) and never runs
   pg-meta for a project ref. This permissiveness is deliberate — it resolves the
   user-filed CLI-1623 complaint — and was blessed in the CLI-1988 ruling. Do not
-  "fix" it back to Go's error. Because Go's mutex groups are enforced unchanged, the
-  pg-meta tuning flags (`--swift-access-control`, `--postgrest-v9-compat`,
-  `--query-timeout`) cannot be combined with `--linked`/`--project-id`, so this
-  project-ref pg-meta path always runs with pg-meta defaults (`internal` access
-  control, one-to-one detection on, 15s timeout); use `--db-url` to tune them.
+  "fix" it back to Go's error. Go's mutex groups key off pflag `Changed`, so they only
+  block `--swift-access-control` / `--query-timeout` when `--linked`/`--project-id` is
+  passed _explicitly_ — that combination still always runs pg-meta with defaults
+  (`internal` access control, one-to-one detection on, 15s timeout). On the **implicit**
+  linked fallback (none of `--local`/`--linked`/`--project-id`/`--db-url` passed),
+  neither mutex key is set, so `--swift-access-control public` / `--query-timeout 20s`
+  clear every guard and ARE forwarded to pg-meta for `--lang go`/`--lang swift`/
+  `--lang python` — the defaults-only claim above holds only for the explicit
+  `--linked`/`--project-id` paths. `--postgrest-v9-compat` is unaffected by this corner:
+  its own PreRunE gate requires `--db-url` regardless of how the project ref is
+  resolved, so it stays blocked on every project-ref path. Use `--db-url` for
+  guaranteed control over any of these three flags.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
 - `--swift-access-control` accepts `internal` (default) or `public`. Matching Go, it is
-  mutually exclusive with `--linked`/`--project-id`; on the `--local` and `--db-url`
-  paths it is always forwarded to pg-meta regardless of `--lang`.
+  mutually exclusive with an _explicit_ `--linked`/`--project-id`; on the `--local`,
+  `--db-url`, and implicit-linked-fallback paths it is always forwarded to pg-meta
+  regardless of `--lang`.
 - `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below.
   Matching Go's PreRun guard, it must be used together with `--db-url` (error:
   `--postgrest-v9-compat must used together with --db-url` — Go's typo included).
   `--local` still forces v9 compat when the local PostgREST image tag contains `v9`.
 - `--query-timeout` sets the maximum timeout for pg-meta database queries (default 15s).
-  Matching Go, it is mutually exclusive with `--linked`/`--project-id`; on the implicit
-  linked TypeScript fallback it is accepted and silently unused.
+  Matching Go, it is mutually exclusive with an _explicit_ `--linked`/`--project-id`; on
+  the implicit linked fallback it is accepted, and forwarded to pg-meta for
+  `--lang go`/`--lang swift`/`--lang python` (silently unused only for the implicit
+  linked TypeScript case, since that path never runs pg-meta).
 - The legacy positional language argument (`supabase gen types typescript`) is still accepted;
   any other positional language requires an explicit `--lang` flag.
 - The linked-project telemetry cache is written only when a project ref is resolved
