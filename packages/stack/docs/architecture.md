@@ -799,6 +799,12 @@ Before the orchestrator exists, it publishes synthetic service states derived fr
 why `getAllStates()` and `allStateChanges()` can surface `Downloading` during cold-cache startup
 even though no process has been spawned yet.
 
+`ServiceActivation.ts` is the central policy for service reachability. It distinguishes services
+reached through the HTTP or WebSocket proxy from direct listeners and internal companions. The
+coordinator also expands public activation into required companion targets: Storage activates
+imgproxy, and Analytics activates Vector, when those services are enabled. Process dependencies
+remain the responsibility of the process graph.
+
 #### StackInfo
 
 ```ts

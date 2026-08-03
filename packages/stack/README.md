@@ -181,6 +181,10 @@ await stack.startService("auth"); // Restart it (blocks until ready)
 await stack.restartService("auth"); // Stop + start in one call
 ```
 
+Service activation is dependency-aware. Starting Storage also starts imgproxy when enabled, and
+starting Analytics also starts Vector when enabled, so a public service never comes up without the
+companion it calls or feeds.
+
 Common service names include `"postgres"`, `"postgrest"`, `"auth"`, `"realtime"`, `"storage"`,
 `"imgproxy"`, `"mailpit"`, `"pgmeta"`, `"studio"`, `"analytics"`, `"vector"`, and `"pooler"`.
 

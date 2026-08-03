@@ -18,6 +18,7 @@ import { cleanupLocalStackResources } from "./cleanup.ts";
 import { StackBuildError } from "./errors.ts";
 import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import { activationTargetsForService } from "./ServiceActivation.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
@@ -31,6 +32,7 @@ import {
 import { changedProjectedStates, projectStackStates } from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
+import { SERVICE_NAMES, type ServiceName } from "./versions.ts";
 
 type LifecyclePhase =
   | "idle"
@@ -194,6 +196,7 @@ export class StackLifecycleCoordinator extends Context.Service<
         const scope = yield* Effect.scope;
 
         const info = stackInfoFor(config);
+        const enabledServices = enabledServicesForConfig(config);
         const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
 
@@ -219,6 +222,17 @@ export class StackLifecycleCoordinator extends Context.Service<
               return yield* Effect.fail(new ServiceNotFoundError({ name }));
             }
             return match;
+          });
+        const requireKnownServiceName = (
+          name: string,
+        ): Effect.Effect<ServiceName, ServiceNotFoundError> =>
+          Effect.gen(function* () {
+            yield* requireKnownService(name);
+            const service = SERVICE_NAMES.find((candidate) => candidate === name);
+            if (service === undefined) {
+              return yield* Effect.fail(new ServiceNotFoundError({ name }));
+            }
+            return service;
           });
 
         let preparedArtifacts: PreparedStackArtifacts | undefined;
@@ -495,6 +509,19 @@ export class StackLifecycleCoordinator extends Context.Service<
               (previous, current) => [current, changedStatesBetween(previous, current)],
             ),
           );
+        const startServices = (services: ReadonlyArray<ServiceName>) =>
+          Effect.gen(function* () {
+            const runtime = yield* ensureRuntime;
+            yield* Effect.forEach(
+              services,
+              (service) => runtime.orchestrator.startService(service),
+              { discard: true },
+            );
+            yield* Effect.forEach(services, (service) => runtime.orchestrator.waitReady(service), {
+              concurrency: "unbounded",
+              discard: true,
+            });
+          });
         const disposeOnce = () =>
           Effect.gen(function* () {
             if (disposed) {
@@ -537,16 +564,18 @@ export class StackLifecycleCoordinator extends Context.Service<
           dispose: disposeOnce,
           startService: (name) =>
             Effect.gen(function* () {
-              yield* requireKnownService(name);
-              const runtime = yield* ensureRuntime;
-              yield* runtime.orchestrator.startService(name);
-              yield* runtime.orchestrator.waitReady(name);
+              const service = yield* requireKnownServiceName(name);
+              yield* startServices(activationTargetsForService(enabledServices, service));
             }),
           stopService: (name) =>
             Effect.gen(function* () {
-              yield* requireKnownService(name);
+              const service = yield* requireKnownServiceName(name);
               const runtime = yield* ensureRuntime;
-              yield* runtime.orchestrator.stopService(name);
+              yield* Effect.forEach(
+                activationTargetsForService(enabledServices, service).toReversed(),
+                (target) => runtime.orchestrator.stopService(target),
+                { discard: true },
+              );
             }),
           restartService: (name) =>
             Effect.gen(function* () {

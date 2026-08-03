@@ -7,6 +7,7 @@ import {
   FiberMap,
   Layer,
   Context,
+  Semaphore,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -119,6 +120,7 @@ export class Orchestrator extends Context.Service<
 
         // FiberMap to track running service fibers — auto-interrupted on scope close
         const fibers = yield* FiberMap.make<string>();
+        const startServiceLock = Semaphore.makeUnsafe(1);
 
         // Helper: send a validated FSM event — only does the state transition
         const sendEvent = (
@@ -538,7 +540,10 @@ export class Orchestrator extends Context.Service<
             }
           };
           collectDependents(name);
-          return graph.startOrder.filter((def) => names.has(def.name));
+          return graph.startOrder.filter(
+            (def) =>
+              names.has(def.name) && (def.name === name || FiberMap.hasUnsafe(fibers, def.name)),
+          );
         };
 
         const waitReadySingle = (def: ServiceDef): Effect.Effect<void, ServiceReadyError> =>
@@ -547,7 +552,6 @@ export class Orchestrator extends Context.Service<
             if (!svc) return Effect.void;
             const restartPolicy = def.restart ?? defaults.restart;
 
-            // Check if already failed
             const current = SubscriptionRef.getUnsafe(svc.state);
             if (current.status === "Failed") {
               return Effect.fail(
@@ -575,11 +579,20 @@ export class Orchestrator extends Context.Service<
               );
             }
 
-            // Long-running: race healthy vs failure
+            if (current.status === "Stopped") {
+              return Effect.fail(
+                new ServiceReadyError({
+                  name: def.name,
+                  reason: "Service stopped before becoming ready",
+                }),
+              );
+            }
+
+            // Long-running: race healthy vs a terminal state
             return Effect.race(
               Deferred.await(svc.healthy),
               SubscriptionRef.changes(svc.state).pipe(
-                Stream.filter((s) => s.status === "Failed"),
+                Stream.filter((s) => s.status === "Failed" || s.status === "Stopped"),
                 Stream.take(1),
                 Stream.runDrain,
                 Effect.andThen(
@@ -588,7 +601,10 @@ export class Orchestrator extends Context.Service<
                     return yield* Effect.fail(
                       new ServiceReadyError({
                         name: def.name,
-                        reason: current.error ?? "Service entered Failed state",
+                        reason:
+                          current.status === "Stopped"
+                            ? "Service stopped before becoming ready"
+                            : (current.error ?? "Service entered Failed state"),
                       }),
                     );
                   }),
@@ -612,10 +628,72 @@ export class Orchestrator extends Context.Service<
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
               const order = graph.startOrderFor(name);
+              const orderNames = new Set(order.map((service) => service.name));
+              const resetNames = new Set<string>();
+              let dependencySignalsReset = false;
               for (const d of order) {
+                const service = services.get(d.name);
+                const state = service?.state;
+                const status =
+                  state === undefined ? undefined : SubscriptionRef.getUnsafe(state).status;
+                const restartPolicy = d.restart ?? defaults.restart;
+
+                // A successful one-shot remains a satisfied dependency after its
+                // process exits. Naturally stopped long-running services can be
+                // started again even when their restart policy did not relaunch them.
+                if (
+                  status === "Stopped" &&
+                  d.name !== name &&
+                  service?.stoppedByUser !== true &&
+                  restartPolicy === "no"
+                ) {
+                  continue;
+                }
+
+                if (status === "Failed") {
+                  // The failed fiber may still be unwinding its process scope.
+                  // Remove it before replacing the signals used by the retry.
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  resetNames.add(d.name);
+                  dependencySignalsReset = true;
+                } else if (status === "Stopped") {
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  resetNames.add(d.name);
+                  dependencySignalsReset = true;
+                } else if (dependencySignalsReset && status === "Pending") {
+                  // This fiber may be waiting on Deferreds replaced by a retried dependency.
+                  // Relaunch it so it observes the dependency's new signal generation.
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  resetNames.add(d.name);
+                }
                 yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
               }
-            }),
+
+              // A caller may retry a dependency directly while dependents started by an
+              // earlier request are still waiting on its old Deferred generation.
+              for (const d of graph.startOrder) {
+                if (orderNames.has(d.name)) continue;
+                const dependsOnResetService = graph
+                  .startOrderFor(d.name)
+                  .some((dependency) => resetNames.has(dependency.name));
+                const service = services.get(d.name);
+                if (
+                  dependsOnResetService &&
+                  service !== undefined &&
+                  FiberMap.hasUnsafe(fibers, d.name) &&
+                  SubscriptionRef.getUnsafe(service.state).status === "Pending"
+                ) {
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  yield* FiberMap.run(fibers, d.name, runServiceSafe(d), {
+                    onlyIfMissing: true,
+                  });
+                }
+              }
+            }).pipe(startServiceLock.withPermit),
 
           stop: () =>
             Effect.gen(function* () {
