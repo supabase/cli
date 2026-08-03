@@ -533,8 +533,15 @@ const DEFAULT_SUPABASE_ENV = "development";
 /**
  * Keys {@link legacyApplyProjectEnv} copies from the project `.env` into
  * `process.env`. Kept to an allowlist of values that are read *only* via
- * `process.env` (no project-env map path) and must reflect `supabase/.env` —
- * currently just `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`).
+ * `process.env` (no project-env map path) and must reflect `supabase/.env`:
+ * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`) and
+ * `PGDELTA_NPM_REGISTRY` (`legacyPgDeltaNpmRegistryOption`, read straight from
+ * `process.env` for every pg-delta edge-runtime invocation — diff, declarative
+ * export/sync, and the push/pull/dump migrations-catalog cache). Go's
+ * `godotenv.Load` (`loadNestedEnv`) `os.Setenv`s every key from the project
+ * `.env`, so both readers see a `.env`-only value there; omitting either here
+ * would leave that one process.env-only reader blind to a project-`.env`-scoped
+ * override the shell never set.
  * Everything else is read from {@link legacyLoadProjectEnv}'s returned map
  * (`envLookup`, `legacyResolveYesWithProjectEnv`, `resolveDbPassword`) or resolved
  * eagerly from the shell before any `.env` load — Go's root globals (workdir /
@@ -542,7 +549,10 @@ const DEFAULT_SUPABASE_ENV = "development";
  * writing them here would let our lazily-built resolvers diverge from Go (retarget
  * the project, switch the env-file set, or leak into the Go `--experimental` proxy).
  */
-const LEGACY_PROCESS_ENV_APPLY_KEYS = ["SUPABASE_INTERNAL_IMAGE_REGISTRY"] as const;
+const LEGACY_PROCESS_ENV_APPLY_KEYS = [
+  "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+  "PGDELTA_NPM_REGISTRY",
+] as const;
 
 /**
  * Load the project's nested `.env` files into a lookup map. **Pure**: it reads the
@@ -613,10 +623,11 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
 /**
  * Apply the allowlisted project-`.env` keys (see {@link LEGACY_PROCESS_ENV_APPLY_KEYS})
  * to `process.env` **for the duration of the current scope**, then revert. This is
- * the opt-in counterpart to the pure {@link legacyLoadProjectEnv}: `db dump` /
- * `db pull` run it around their pg_dump / diff container work so a
- * `SUPABASE_INTERNAL_IMAGE_REGISTRY` set in `supabase/.env` reaches
- * `legacyGetRegistryImageUrl` (which reads `process.env` synchronously) — mirroring
+ * the opt-in counterpart to the pure {@link legacyLoadProjectEnv}: `bootstrap` /
+ * `db push` / `db pull` / `db dump` run it around their pg_dump / migration / pg-delta
+ * container work so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` or `PGDELTA_NPM_REGISTRY` set
+ * only in `supabase/.env` still reaches `legacyGetRegistryImageUrl` /
+ * `legacyPgDeltaNpmRegistryOption` (both read `process.env` synchronously) — mirroring
  * the `os.Setenv` half of Go's `loadNestedEnv`. Kept out of the shared loader so
  * SUPABASE_YES / db-password reads stay side-effect-free.
  *
