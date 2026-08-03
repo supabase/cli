@@ -3,7 +3,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -50,6 +50,10 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
   const runtimeInfo = yield* RuntimeInfo;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
+  // Threaded into `legacyRollbackStart`'s own `legacyDockerRemoveAll` teardown — Go's
+  // `--debug` gates that function's `Pruned …:` stderr reports (`docker.go:123-143`,
+  // `viper.GetBool("DEBUG")`), matching `supabase start`'s own handler.
+  const debug = yield* LegacyDebugFlag;
 
   const body = Effect.gen(function* () {
     // Go's `flags.LoadConfig(fsys)` runs first thing in `start.Run`
@@ -167,7 +171,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       },
     }).pipe(
       Effect.onError(() =>
-        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
       ),
     );
 
