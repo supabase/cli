@@ -44,7 +44,7 @@ function serializeLegacyTelemetryState(state: State): string {
   return JSON.stringify({ ...fields, schema_version: JSON.rawJSON(schemaVersionToken) });
 }
 
-interface PriorState {
+export interface PriorState {
   readonly enabled: boolean;
   readonly device_id: string;
   readonly session_id: string;
@@ -341,7 +341,7 @@ function lastNonNullString(
  * `time.UnixMilli` — the state is preserved and the far-future comparison
  * simply never expires the session.)
  */
-function readExistingState(text: string): PriorState | undefined {
+export function readExistingState(text: string): PriorState | undefined {
   try {
     const parsed: unknown = JSON.parse(text);
     if (!isRecord(parsed)) return undefined;
@@ -433,29 +433,6 @@ function readExistingState(text: string): PriorState | undefined {
   } catch {
     return undefined;
   }
-}
-
-/**
- * Exact raw token of the effective (last non-null) `schema_version` in a
- * telemetry.json document, when it is a Go-decodable non-zero int64 token.
- * For the identity-stitch writer (`legacy-identity-stitch.ts`), which
- * re-persists the field independently of this layer and must not round it
- * through `Number` — Go re-encodes the decoded 64-bit `int` verbatim, while
- * `Number` rounds magnitudes above 2^53 (review r3683813242). Returns
- * `undefined` for invalid JSON, non-object roots, non-int64 tokens, and zero
- * (where Go falls back to the `SchemaVersion` constant, `state.go:103-106`).
- */
-export function legacyTelemetrySchemaVersionToken(text: string): string | undefined {
-  try {
-    JSON.parse(text); // the scanner below assumes well-formed JSON
-  } catch {
-    return undefined;
-  }
-  const entries = scanRootJsonEntries(text);
-  if (entries === undefined) return undefined;
-  const token = lastNonNullToken(entries, "schema_version");
-  if (token === undefined || !isInt64Token(token) || BigInt(token) === 0n) return undefined;
-  return token;
 }
 
 export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.loadOrCreateState")(

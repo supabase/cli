@@ -4,7 +4,7 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../../shared/telemetry/identity.ts";
-import { legacyTelemetrySchemaVersionToken } from "../telemetry/legacy-telemetry-state.layer.ts";
+import { readExistingState } from "../telemetry/legacy-telemetry-state.layer.ts";
 
 /**
  * Session identity stitching, a 1:1 port of Go's `identityTransport` +
@@ -50,26 +50,6 @@ function gotrueIdFromResponse(response: HttpClientResponse.HttpClientResponse): 
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
-}
-
-function fieldValue(value: unknown, key: string): unknown {
-  if (typeof value !== "object" || value === null) return undefined;
-  return Reflect.get(value, key);
-}
-
-function stringField(value: unknown, key: string): string | undefined {
-  const field = fieldValue(value, key);
-  return typeof field === "string" && field.length > 0 ? field : undefined;
-}
-
-function boolField(value: unknown, key: string): boolean | undefined {
-  const field = fieldValue(value, key);
-  return typeof field === "boolean" ? field : undefined;
-}
-
-function numberField(value: unknown, key: string): number | undefined {
-  const field = fieldValue(value, key);
-  return typeof field === "number" && Number.isFinite(field) ? field : undefined;
 }
 
 /**
@@ -123,26 +103,17 @@ const makeLegacyIdentityStitcher: Effect.Effect<
 
       const telemetryPath = path.join(runtime.configDir, "telemetry.json");
       const existing = yield* fs.readFileString(telemetryPath).pipe(Effect.option);
+      // Reuses the same all-or-nothing decode as `loadOrCreateLegacyTelemetryState`
+      // (Go's `decodeState`, `state.go:87-115`) instead of a second tolerant
+      // per-field parser: Go's `StitchLogin` only ever mutates the state that
+      // `LoadOrCreateState` already decoded, it never re-parses the file itself.
+      // This also fixes a prior bug where a `consent: "denied"` file (no
+      // `enabled` key) was treated as `enabled: true`.
       const prior = Option.match(existing, {
         onNone: () => undefined,
-        onSome: (content) => {
-          try {
-            const parsed: unknown = JSON.parse(content);
-            return parsed;
-          } catch {
-            return undefined;
-          }
-        },
+        onSome: readExistingState,
       });
-      // Exact int64 token of the prior schema_version, when there is one:
-      // `numberField` below rounds valid tokens above 2^53 through `Number`
-      // (9007199254740993 → …992), and this writer re-persists the field —
-      // Go decodes and re-encodes the 64-bit `int` verbatim.
-      const priorSchemaVersionToken = Option.match(existing, {
-        onNone: () => undefined,
-        onSome: legacyTelemetrySchemaVersionToken,
-      });
-      const enabled = boolField(prior, "enabled") ?? true;
+      const enabled = prior?.enabled ?? true;
       if (!enabled) return;
 
       // The in-memory stamp always happens so subsequent captures in this process
@@ -157,19 +128,26 @@ const makeLegacyIdentityStitcher: Effect.Effect<
 
       const state: LegacyTelemetryState = {
         enabled,
-        device_id: stringField(prior, "device_id") ?? runtime.deviceId,
-        session_id: stringField(prior, "session_id") ?? runtime.sessionId,
+        device_id: prior?.device_id ?? runtime.deviceId,
+        session_id: prior?.session_id ?? runtime.sessionId,
         session_last_active: new Date().toISOString(),
         distinct_id: gotrueId,
-        schema_version: numberField(prior, "schema_version") ?? TELEMETRY_SCHEMA_VERSION,
+        schema_version:
+          prior?.schemaVersionToken !== undefined
+            ? Number(prior.schemaVersionToken)
+            : TELEMETRY_SCHEMA_VERSION,
       };
 
       yield* fs.makeDirectory(runtime.configDir, { recursive: true });
       yield* fs.writeFileString(
         telemetryPath,
-        priorSchemaVersionToken === undefined
+        // Exact int64 token of the prior schema_version, when there is one:
+        // re-serializing `state.schema_version` directly would round tokens
+        // above 2^53 through `Number` (9007199254740993 → …992) — Go decodes
+        // and re-encodes the 64-bit `int` verbatim.
+        prior?.schemaVersionToken === undefined
           ? JSON.stringify(state)
-          : JSON.stringify({ ...state, schema_version: JSON.rawJSON(priorSchemaVersionToken) }),
+          : JSON.stringify({ ...state, schema_version: JSON.rawJSON(prior.schemaVersionToken) }),
       );
     });
 
