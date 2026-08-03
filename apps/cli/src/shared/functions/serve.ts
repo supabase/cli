@@ -940,7 +940,9 @@ export ${name}="\${${name}%x}"`;
   await writeFile(path, script, { mode: 0o600 });
 
   return {
-    bind: `${dir}:${containerDir}:ro`,
+    // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
+    // single-consumer bind, no-op without SELinux.
+    bind: `${dir}:${containerDir}:ro,Z`,
     scriptPath: join(containerDir, scriptName).replaceAll("\\", "/"),
   };
 }
@@ -1357,7 +1359,8 @@ async function writeServeMainTemplateFile(template: string, dir: string) {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const pathname = join(dir, "index.ts");
   await writeFile(pathname, template);
-  return { bind: `${pathname}:${serveMainContainerPath}:ro` } as const;
+  // `Z` — same SELinux relabel rationale as `writeDockerMultilineEnvScript`'s bind.
+  return { bind: `${pathname}:${serveMainContainerPath}:ro,Z` } as const;
 }
 
 function edgeRuntimeImageTag(version: string) {

@@ -13,6 +13,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyDebugFlag } from "../../../shared/legacy/global-flags.ts";
 import { legacyStop } from "./stop.handler.ts";
 import type { LegacyStopFlags } from "./stop.command.ts";
 
@@ -184,6 +185,8 @@ interface SetupOpts {
   readonly skipConfig?: boolean;
   /** Defaults to `tempRoot.current` — override for `--workdir`-resolution tests. */
   readonly workdir?: string;
+  /** `--debug` — gates `legacyDockerRemoveAll`'s `Pruned …:` stderr reports. */
+  readonly debug?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -208,6 +211,7 @@ function setup(opts: SetupOpts = {}) {
     cliConfig,
     telemetry.layer,
     child.layer,
+    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
   );
 
   return { workdir, out, telemetry, child, layer };
@@ -1254,5 +1258,57 @@ enabled = true
       expect(out.stdoutText).toContain("Stopped");
       expect(out.stderrText).not.toContain("Local data are backed up");
     }).pipe(Effect.provide(layer));
+  });
+
+  // `legacyDockerRemoveAll`'s `--debug` prune reports (`legacy-docker-remove-all.ts`'s
+  // `reportPruned`) write straight to `process.stderr`, bypassing the mocked `Output`
+  // service entirely — a raw `vi.spyOn` on `process.stderr.write` is the only way to
+  // observe them, same boundary the file already spies at for `console.error` above.
+  const pruneReportRoutes = (args: ReadonlyArray<string>): RouteResult => {
+    if (args[0] === "container" && args[1] === "prune") {
+      return { stdout: ["Deleted Containers:", "abc123", "", "Total reclaimed space: 42B"] };
+    }
+    if (args[0] === "volume" && args[1] === "prune") {
+      return { stdout: ["vol1"] };
+    }
+    if (args[0] === "network" && args[1] === "prune") {
+      return { stdout: ["Deleted Networks:", "net1"] };
+    }
+    return defaultRoute()(args);
+  };
+
+  it.live("reports Go's --debug Pruned lines to stderr, in stage order", () => {
+    const { layer } = setup({
+      debug: true,
+      configuredProjectId: "demo",
+      route: pruneReportRoutes,
+    });
+    const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return Effect.gen(function* () {
+      yield* legacyStop(flags({ noBackup: true }));
+      const prunedWrites = writeSpy.mock.calls
+        .map((call) => call[0])
+        .filter((chunk): chunk is string => typeof chunk === "string" && chunk.includes("Pruned"));
+      expect(prunedWrites).toEqual([
+        "Pruned containers: [abc123]\n",
+        "Pruned volumes: [vol1]\n",
+        "Pruned network: [net1]\n",
+      ]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => writeSpy.mockRestore())));
+  });
+
+  it.live("never writes Go's Pruned lines to stderr without --debug", () => {
+    const { layer } = setup({
+      configuredProjectId: "demo",
+      route: pruneReportRoutes,
+    });
+    const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return Effect.gen(function* () {
+      yield* legacyStop(flags({ noBackup: true }));
+      const prunedWrites = writeSpy.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("Pruned"),
+      );
+      expect(prunedWrites).toEqual([]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => writeSpy.mockRestore())));
   });
 });

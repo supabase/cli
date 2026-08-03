@@ -5,6 +5,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { legacyStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { LEGACY_SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { legacySsoUpdate } from "./update.handler.ts";
 
 const NAME_ID_FORMATS = [
@@ -63,7 +64,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  nameIdFormat: Flag.choice("name-id-format", NAME_ID_FORMATS).pipe(
+  nameIdFormat: Flag.choice("name-id-format", LEGACY_SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
     ),

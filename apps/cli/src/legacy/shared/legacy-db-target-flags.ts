@@ -7,10 +7,14 @@
  * parsed flag values don't carry a `Changed` bit, so we re-derive it from the
  * raw `process.argv` slice.
  *
- * cobra's `MarkFlagsMutuallyExclusive` sorts the conflicting names before
- * building the error string (`apps/cli-go/.../flag_groups.go:204`), hence the
- * FIXED insertion order ["db-url","linked","local"] — alphabetical — for the
- * `setFlags` array.
+ * cobra's `MarkFlagsMutuallyExclusive` error has TWO bracketed lists: the
+ * group list keeps REGISTRATION order (`strings.Join(flagNames, " ")`,
+ * `flag_groups.go:73`) and is NOT sorted, while the "were all set" list IS
+ * sorted (`sort.Strings(set)`, `flag_groups.go:203-204`). The FIXED insertion
+ * order ["db-url","linked","local"] — alphabetical — for the `setFlags` array
+ * matches only that second, sorted list; each command must hardcode its own
+ * group list in its own Go registration order (e.g. seed `[local linked]`
+ * vs storage `[linked local]`).
  *
  * pflag accepts `--flag value` (space form) for non-boolean flags: the token
  * after a value-consuming flag is its value, not a separate flag. The scan
