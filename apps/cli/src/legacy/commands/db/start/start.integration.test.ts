@@ -870,6 +870,63 @@ describe("legacy db start", () => {
     },
   );
 
+  // Regression test for the review thread this fix closes: `studio.api_url` was resolved
+  // (`studioApiUrlForValidation`) but never parsed with `legacyGoUrlParse` in this eager battery —
+  // only `legacyResolveLocalConfigValues` (the not-running branch, called well after the
+  // already-running short-circuit below) ever validated it. Go's `Config.Validate` parses
+  // `studio.api_url` with `net/url.Parse` immediately after the `studio.port` check, still inside
+  // `if c.Studio.Enabled` (`pkg/config/config.go:1074-1078`) — so a malformed
+  // `SUPABASE_STUDIO_API_URL` would otherwise be silently accepted whenever Postgres is already
+  // running, unlike Go (review: PRRT_kwDOErm0O86WEBfl).
+  it.live(
+    "fails with a typed config error on a malformed SUPABASE_STUDIO_API_URL override even when Postgres is already running",
+    () => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_STUDIO_API_URL=http://[::1\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("Invalid config for studio.api_url");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Regression test for the sibling review thread: `local_smtp.port` was resolved
+  // (`localSmtpPortForValidation`) but the `local_smtp.enabled`-gated zero check never ran in this
+  // eager battery — only `legacyResolveLocalConfigValues`'s `mailpitEnabled`/`mailpitPort` pair
+  // (the not-running branch, called well after the already-running short-circuit below) ever
+  // checked it. Go's `Config.Validate` rejects `local_smtp.port === 0` ONLY when
+  // `local_smtp.enabled` (`pkg/config/config.go:1081-1085`) — so an enabled `[local_smtp]` section
+  // with a zero port would otherwise be silently accepted whenever Postgres is already running,
+  // unlike Go (review: PRRT_kwDOErm0O86WEBfq).
+  it.live(
+    "fails with a typed config error when local_smtp is enabled with a zero port even when Postgres is already running",
+    () => {
+      const { layer, child } = setup({
+        running: true,
+        configContents: 'project_id = "test"\n[local_smtp]\nenabled = true\nport = 0\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("Missing required field in config: local_smtp.port");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   // Same gap, same shape, different field: `auth.jwt_expiry` (a plain `uint`,
   // `pkg/config/auth.go:155`) was only ever resolved as part of `values.authJwtExpiry`
   // (`legacyResolveLocalConfigValues`), which this handler calls ONLY in the not-running branch —

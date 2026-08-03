@@ -52,6 +52,7 @@ import {
   legacyResolveHealthTimeoutSeconds,
 } from "../../../shared/legacy-go-duration.ts";
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
+import { legacyGoUrlParse } from "../../../shared/legacy-storage-url.ts";
 import { legacyLoadLocalProjectContext } from "../../../shared/legacy-local-project-context.ts";
 import { legacyResolveDbBootstrapConfig } from "../../../shared/db-bootstrap/bootstrap-config.ts";
 import { legacyEnsureImagesCached } from "../../../shared/db-bootstrap/image-prepull.ts";
@@ -561,8 +562,10 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // generically (`pkg/config/config.go:580-586`), regardless of whether `db start` itself ever
     // reads them: it never builds Mailpit or Logflare. `smtp_port`/`pop3_port`/`vector_port` have
     // no TOML default (Go's zero-value `uint16`), matching `commands/start/start.handler.ts`'s own
-    // `?? 0` fallback. Discarded.
-    yield* wrapDbConfigOverride("local_smtp.port", () =>
+    // `?? 0` fallback. `smtp_port`/`pop3_port` are discarded; `local_smtp.port` itself is captured
+    // — see the `local_smtp.enabled`-gated zero check further below (review:
+    // PRRT_kwDOErm0O86WEBfq).
+    const localSmtpPortForValidation = yield* wrapDbConfigOverride("local_smtp.port", () =>
       legacyEnvOverridePort(
         "SUPABASE_LOCAL_SMTP_PORT",
         config.local_smtp.port,
@@ -789,7 +792,30 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         }),
       );
     }
-    yield* wrapDbConfigOverride("local_smtp.enabled", () =>
+    // Same enabled-gated shape as `studio.port` above, immediately after it in Go: `Config.Validate`
+    // parses `studio.api_url` with `net/url.Parse` right after the port check, still inside the
+    // same `if c.Studio.Enabled` (`pkg/config/config.go:1074-1078`). `legacy-config-validate.ts`'s
+    // scope table marks `studio.api_url` "L-only — D has no studio section" too, and
+    // `legacyResolveLocalConfigValues`'s `studioApiUrl` resolution is the only other place this
+    // parses — called ONLY in the not-running branch below — so a malformed
+    // `SUPABASE_STUDIO_API_URL` (e.g. an unterminated IPv6 literal like `http://[::1`) would
+    // otherwise be silently accepted whenever Postgres is already running, unlike Go (review:
+    // PRRT_kwDOErm0O86WEBfl). Reuses `legacyGoUrlParse`, the same `net/url.Parse` port
+    // `legacy-config-validate.ts`'s own `studio.api_url` check and the storage-URL commands share,
+    // rather than re-deriving parse semantics here.
+    const studioApiUrlForValidation =
+      legacyEnvOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+      config.studio.api_url;
+    if (studioEnabledForValidation) {
+      yield* Effect.try({
+        try: () => legacyGoUrlParse(studioApiUrlForValidation),
+        catch: (cause) =>
+          new LegacyDbConfigLoadError({
+            message: `Invalid config for studio.api_url: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      });
+    }
+    const localSmtpEnabledForValidation = yield* wrapDbConfigOverride("local_smtp.enabled", () =>
       legacyEnvOverrideBool(
         "SUPABASE_LOCAL_SMTP_ENABLED",
         config.local_smtp.enabled,
@@ -797,6 +823,21 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Same enabled-gated shape as `studio.port` above — Go's `Config.Validate` rejects
+    // `local_smtp.port === 0`/`SUPABASE_LOCAL_SMTP_PORT=0` ONLY when `local_smtp.enabled`
+    // (`pkg/config/config.go:1081-1085`), still unconditionally inside `flags.LoadConfig`, before
+    // `AssertSupabaseDbIsRunning`. `legacy-config-validate.ts`'s scope table marks this "L-only"
+    // too, and `legacyResolveLocalConfigValues`'s `mailpitEnabled`/`mailpitPort` pair is the only
+    // other place this is checked — called ONLY in the not-running branch below — so a malformed/
+    // zero `SUPABASE_LOCAL_SMTP_PORT` would otherwise be silently accepted whenever Postgres is
+    // already running, unlike Go (review: PRRT_kwDOErm0O86WEBfq).
+    if (localSmtpEnabledForValidation && localSmtpPortForValidation === 0) {
+      yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: "Missing required field in config: local_smtp.port",
+        }),
+      );
+    }
 
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
     // stderr and return nil (exit 0). Already native — see this module's header. Runs AFTER
