@@ -295,6 +295,25 @@ export const legacyLoadLocalVersions = (
 /** Basename of a path, handling both `/` and `\` separators (keeps the helper pure). */
 const baseName = (filePath: string): string => filePath.split(/[\\/]/u).pop() ?? filePath;
 
+/**
+ * Orders local migration paths by version so they line up with
+ * `schema_migrations` (`ORDER BY version`) before a two-pointer walk compares
+ * the two lists. Go sorts these by file name and compares by version, which
+ * only agrees while versions are the same width: `20260420010000_b.sql` sorts
+ * before `20260420_a.sql` by name (`'0'` < `'_'`) but after it by version,
+ * desynchronising the walk (supabase/cli#6036). Stable and keyed on the version
+ * alone, so same-width sets keep the exact name order Go produced.
+ */
+export function legacySortMigrationPathsByVersion(
+  localPaths: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return [...localPaths].sort((a, b) => {
+    const versionA = MIGRATE_FILE_PATTERN.exec(baseName(a))?.[1] ?? "";
+    const versionB = MIGRATE_FILE_PATTERN.exec(baseName(b))?.[1] ?? "";
+    return versionA < versionB ? -1 : versionA > versionB ? 1 : 0;
+  });
+}
+
 /** Outcome of `legacyFindPendingMigrations` — Go's `(slice, error)` as a tagged union. */
 export type LegacyPendingMigrations =
   | { readonly kind: "pending"; readonly paths: ReadonlyArray<string> }
@@ -309,19 +328,21 @@ export type LegacyPendingMigrations =
  * paths, or flags a remote version missing from local (`missing-local`) or an
  * out-of-order local migration (`missing-remote`). `localPaths` are full paths
  * whose basenames match `<version>_<name>.sql`; `remoteVersions` are sorted.
+ * Both sides must agree on ordering, so `localPaths` is re-sorted by version.
  */
 export function legacyFindPendingMigrations(
   localPaths: ReadonlyArray<string>,
   remoteVersions: ReadonlyArray<string>,
 ): LegacyPendingMigrations {
+  const sortedLocal = legacySortMigrationPathsByVersion(localPaths);
   const unapplied: Array<string> = [];
   const missing: Array<string> = [];
   let i = 0;
   let j = 0;
-  while (i < remoteVersions.length && j < localPaths.length) {
+  while (i < remoteVersions.length && j < sortedLocal.length) {
     const remote = remoteVersions[i]!;
     // `legacyListLocalMigrations` guarantees the basename matches the pattern.
-    const local = MIGRATE_FILE_PATTERN.exec(baseName(localPaths[j]!))?.[1] ?? "";
+    const local = MIGRATE_FILE_PATTERN.exec(baseName(sortedLocal[j]!))?.[1] ?? "";
     if (remote === local) {
       i++;
       j++;
@@ -330,17 +351,17 @@ export function legacyFindPendingMigrations(
       i++;
     } else {
       // Out-of-order local migration (older than an applied remote one).
-      unapplied.push(localPaths[j]!);
+      unapplied.push(sortedLocal[j]!);
       j++;
     }
   }
   // Any remote versions past the end of local are also missing.
-  if (j === localPaths.length) {
+  if (j === sortedLocal.length) {
     for (let k = i; k < remoteVersions.length; k++) missing.push(remoteVersions[k]!);
   }
   if (missing.length > 0) return { kind: "missing-local", versions: missing };
   if (unapplied.length > 0) return { kind: "missing-remote", paths: unapplied };
-  return { kind: "pending", paths: localPaths.slice(remoteVersions.length) };
+  return { kind: "pending", paths: sortedLocal.slice(remoteVersions.length) };
 }
 
 /**

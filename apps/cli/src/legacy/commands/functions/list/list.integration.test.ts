@@ -185,12 +185,13 @@ describe("legacy functions list integration", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* legacyFunctionsList({ projectRef: Option.none() });
+      // BurntSushi indents array-of-table keys by 2 spaces (CLI-1975).
       expect(out.stdoutText).toContain(`[[functions]]
-CreatedAt = 1687423025152
-EntrypointPath = "functions/hello-world/index.ts"
-Id = "11111111-2222-3333-4444-555555555555"
-ImportMap = false
-Name = "Hello World"`);
+  CreatedAt = 1687423025152
+  EntrypointPath = "functions/hello-world/index.ts"
+  Id = "11111111-2222-3333-4444-555555555555"
+  ImportMap = false
+  Name = "Hello World"`);
       expect(out.stdoutText).not.toContain("created_at");
       expect(out.stdoutText).not.toContain("entrypoint_path");
       expect(out.stdoutText.endsWith("\n\n")).toBe(false);

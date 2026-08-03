@@ -55,7 +55,7 @@ Glamour-styled ASCII table with columns `TYPE`, `IDENTITY PROVIDER ID`, `DOMAINS
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Encoded `{providers: items}` (Go-compatible alphabetised keys for JSON).
+Encoded `{providers: items}` matching the Go binary byte-for-byte (CLI-1975): JSON keeps snake_case tags with alphabetised keys; YAML/TOML derive item keys from the Go struct field names (yaml.v3 lowercases them, BurntSushi keeps PascalCase).
 
 ### `--output env`
 

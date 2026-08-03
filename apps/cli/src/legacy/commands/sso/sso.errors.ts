@@ -9,6 +9,14 @@ export class LegacySsoInvalidUuidError extends Data.TaggedError("LegacySsoInvali
   readonly message: string;
 }> {}
 
+// Shared across list / show: mirrors Go's `utils.EncodeOutput` TOML failure
+// ("failed to output toml: %w") — reachable when an `attribute_mapping`
+// `default` value cannot be encoded by BurntSushi (e.g. an array with a nil
+// element).
+export class LegacySsoTomlEncodeError extends Data.TaggedError("LegacySsoTomlEncodeError")<{
+  readonly message: string;
+}> {}
+
 // `sso list`
 export class LegacySsoListNetworkError extends Data.TaggedError("LegacySsoListNetworkError")<{
   readonly message: string;

@@ -56,7 +56,7 @@ Glamour-styled property/value markdown table showing the removed provider's deta
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Response verbatim (Go-compatible alphabetised keys for JSON).
+Response re-encoded per format, matching the Go binary byte-for-byte (CLI-1975): JSON keeps the snake_case JSON tags with alphabetised keys and Go's HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses yaml.v3's lowercased Go struct field names (`metadataxml`, explicit `null` for nil pointers); TOML uses BurntSushi's PascalCase Go struct field names (`MetadataXml`) with nil pointers omitted.
 
 ### `--output env`
 

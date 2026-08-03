@@ -1344,6 +1344,26 @@ describe("legacy start integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.live("brings the stack up when podman rejects re-creating preserved volumes (#6020)", () => {
+      const route = defaultRoute();
+      const { layer, analytics } = setup({
+        route: (args) => {
+          if (args[0] === "volume" && args[1] === "create") {
+            const name = args[args.length - 1] ?? "";
+            return {
+              exitCode: 125,
+              stderr: [`Error: volume with name ${name} already exists: volume already exists`],
+            };
+          }
+          return route(args);
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.live(
       "reuses the bring-up-resolved local config values for the final status print instead of re-deriving them",
       () => {

@@ -10,7 +10,7 @@ import { legacyGetRegistryImageUrlCandidates } from "./legacy-docker-registry.ts
 
 type Spawner = ChildProcessSpawner["Service"];
 
-const DOCKER_PULL_RETRY_DELAYS_MS = [4_000, 8_000] as const;
+export const LEGACY_DOCKER_PULL_RETRY_DELAYS_MS = [4_000, 8_000] as const;
 
 const spawnError = () =>
   // Never embed the spawn error verbatim: it can leak the full argv and
@@ -45,7 +45,7 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  * unconditionally — Go retries on any non-nil error as long as the context
  * wasn't canceled, with no message-pattern gating — up to 2 times per
  * candidate (3 total attempts) with an escalating 4s/8s backoff
- * (`DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds for `i` in
+ * (`LEGACY_DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds for `i` in
  * `0,1`. A spawn failure (the Docker/Podman binary itself couldn't be run) is
  * a different, non-retryable case — see `spawnError` below. Used by both the
  * foreground `db dump`-style run-to-completion containers
@@ -169,7 +169,7 @@ export function legacyMakeDockerImageResolver(
       for (const candidate of candidates) {
         for (
           let attemptIndex = 0;
-          attemptIndex <= DOCKER_PULL_RETRY_DELAYS_MS.length;
+          attemptIndex <= LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length;
           attemptIndex += 1
         ) {
           const attempt = attemptIndex + 1;
@@ -183,7 +183,7 @@ export function legacyMakeDockerImageResolver(
                 ? result.value.stderr
                 : `docker pull exited with code ${result.value.exitCode}`;
             failures.push(`${candidate} attempt ${attempt}: ${message}`);
-            if (attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
+            if (attemptIndex === LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length) {
               break;
             }
           } else {
@@ -197,7 +197,7 @@ export function legacyMakeDockerImageResolver(
             return yield* Effect.fail(spawnError());
           }
 
-          const delay = DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
+          const delay = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
           if (delay === undefined) {
             break;
           }

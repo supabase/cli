@@ -15,12 +15,12 @@ import {
   pflagArgvScan,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeGoJson, encodeGoStructJsonBody } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeGoJson,
-  encodeGoStructJsonBody,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
+import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { legacyAccessTokenForProfile } from "../../../auth/legacy-credentials.layer.ts";
@@ -50,6 +50,7 @@ import {
   LegacySsoUpdateNotFoundError,
   LegacySsoUpdateUnexpectedStatusError,
   LegacySsoAccessTokenError,
+  LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
@@ -599,11 +600,20 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(parsedJson));
+        yield* output.raw(encodeLegacyGoYaml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeToml(parsedJson) + "\n");
+        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
+        // rejects the payload (review r3684270640) — same pattern as list/show.
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          catch: (cause) =>
+            new LegacySsoTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
         return;
       }
       if (goFmt === "env") {

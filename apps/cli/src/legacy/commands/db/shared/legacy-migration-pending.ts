@@ -1,4 +1,5 @@
 import { legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacySortMigrationPathsByVersion } from "../../../shared/legacy-migration-history.ts";
 
 /**
  * `pkg/migration/file.go` — local migration filenames are `<digits>_<name>.sql`.
@@ -43,22 +44,22 @@ export type LegacyPendingMigrations =
 
 /**
  * Two-pointer reconciliation of local migration paths vs remote applied versions.
- * Mirrors Go's `FindPendingMigrations` exactly, including its **string**
- * comparison of versions (`remote == local` / `remote < local`) — version
- * prefixes are fixed-width timestamps, so lexical order equals chronological
- * order, matching Go.
+ * Mirrors Go's `FindPendingMigrations`, including its **string** comparison of
+ * versions (`remote == local` / `remote < local`).
+ * Both sides must agree on ordering, so `localMigrations` is re-sorted by version.
  */
 export function legacyFindPendingMigrations(
   localMigrations: ReadonlyArray<string>,
   remoteMigrations: ReadonlyArray<string>,
 ): LegacyPendingMigrations {
+  const sortedLocal = legacySortMigrationPathsByVersion(localMigrations);
   const unapplied: Array<string> = [];
   const missing: Array<string> = [];
   let i = 0;
   let j = 0;
-  while (i < remoteMigrations.length && j < localMigrations.length) {
+  while (i < remoteMigrations.length && j < sortedLocal.length) {
     const remote = remoteMigrations[i]!;
-    const filename = baseName(localMigrations[j]!);
+    const filename = baseName(sortedLocal[j]!);
     // ListLocalMigrations guarantees a match, so the capture group is present.
     const local = MIGRATE_FILE_PATTERN.exec(filename)![1]!;
     if (remote === local) {
@@ -69,12 +70,12 @@ export function legacyFindPendingMigrations(
       i++;
     } else {
       // Include out-of-order local migrations.
-      unapplied.push(localMigrations[j]!);
+      unapplied.push(sortedLocal[j]!);
       j++;
     }
   }
   // Ensure all remote versions exist on local.
-  if (j === localMigrations.length) {
+  if (j === sortedLocal.length) {
     missing.push(...remoteMigrations.slice(i));
   }
   if (missing.length > 0) {
@@ -84,7 +85,7 @@ export function legacyFindPendingMigrations(
   if (unapplied.length > 0) {
     return { kind: "missing-remote", paths: unapplied };
   }
-  return { kind: "ok", pending: localMigrations.slice(remoteMigrations.length) };
+  return { kind: "ok", pending: sortedLocal.slice(remoteMigrations.length) };
 }
 
 /**
@@ -98,7 +99,11 @@ export function legacyIncludeAllPending(
   remoteCount: number,
   diff: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  return [...diff, ...localMigrations.slice(remoteCount + diff.length)];
+  // Slices the same version-ordered list `diff` was taken from — indexing a
+  // name-ordered list with a version-ordered offset would skip a pending
+  // migration and re-apply an already-applied one.
+  const sortedLocal = legacySortMigrationPathsByVersion(localMigrations);
+  return [...diff, ...sortedLocal.slice(remoteCount + diff.length)];
 }
 
 /** Go's `suggestIgnoreFlag` (`internal/migration/up/up.go:63-67`). */
