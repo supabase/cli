@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createStack, type StackHandle } from "../src/node.ts";
-import { toPlainRows } from "./helpers/e2e.ts";
 import { hasDockerDaemon } from "./helpers/warmup.ts";
 
 const DEV_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
@@ -44,7 +43,9 @@ async function queryMarkerRows(dbPort: number): Promise<ReadonlyArray<{ note: st
     const result = await sql.unsafe<{ note: string }[]>(
       `SELECT note FROM public.persistence_marker ORDER BY id`,
     );
-    return toPlainRows(result);
+    // `SQLResultArray` carries extra own properties alongside the rows, which
+    // breaks `toEqual` against a plain array literal, so coerce to one here.
+    return Array.from(result);
   } finally {
     sql.close();
   }
@@ -117,7 +118,6 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
   describe("phase 2: docker postgres reusing the native dataDir", () => {
     let stack: StackHandle;
     let apiPort: string;
-    let startFailureDiagnostics: string | undefined;
 
     beforeAll(async () => {
       stack = await createStack({
@@ -159,7 +159,7 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
           status = `(failed to capture getStatus(): ${String(statusError)})`;
         }
 
-        startFailureDiagnostics = [
+        const startFailureDiagnostics = [
           "stack2.start() failed while reusing the native dataDir in docker mode.",
           `Original error: ${startError instanceof Error ? (startError.stack ?? startError.message) : String(startError)}`,
           `getStatus(): ${status}`,
@@ -170,6 +170,7 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
         ].join("\n");
 
         await stack.dispose().catch(() => {});
+        throw new Error(startFailureDiagnostics);
       }
     }, DOCKER_SETUP_TIMEOUT_MS);
 
@@ -177,22 +178,7 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
       await stack?.dispose();
     }, TEARDOWN_TIMEOUT_MS);
 
-    test(
-      "starts postgres successfully by reusing the native dataDir",
-      { timeout: TEST_TIMEOUT_MS },
-      () => {
-        if (startFailureDiagnostics !== undefined) {
-          throw new Error(startFailureDiagnostics);
-        }
-      },
-    );
-
     test("runs postgres as a Docker container this time", { timeout: TEST_TIMEOUT_MS }, () => {
-      if (startFailureDiagnostics !== undefined) {
-        throw new Error(
-          "Skipped: stack2 never started successfully. See the preceding test failure for diagnostics.",
-        );
-      }
       expect(runningContainerIds(apiPort)).not.toBe("");
     });
 
@@ -206,11 +192,6 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
       "the native-mode marker row survives the transition to Docker",
       { timeout: TEST_TIMEOUT_MS },
       async () => {
-        if (startFailureDiagnostics !== undefined) {
-          throw new Error(
-            "Skipped: stack2 never started successfully. See the preceding test failure for diagnostics.",
-          );
-        }
         const dbPort = parseInt(new URL(stack.dbUrl).port);
         const rows = await queryMarkerRows(dbPort);
         expect(rows).toEqual([{ note: "native-e2e-marker" }]);

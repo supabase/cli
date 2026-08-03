@@ -46,20 +46,6 @@ export async function fetchFunctionWhenReady(
 }
 
 /**
- * Convert a `Bun.SQL` query result into a plain array of rows.
- *
- * The result of `sql.unsafe()`/a tagged-template query is a decorated `Array`
- * subclass (`SQLResultArray`) that also carries extra own properties
- * (`count`, `command`, `lastInsertRowid`, `affectedRows`) alongside the real
- * rows, which makes it fail `toEqual`/structural-equality assertions against
- * a plain array literal even when the rows themselves match exactly. Individual
- * row objects are already plain, so copying the container is enough.
- */
-export function toPlainRows<T>(result: Iterable<T>): T[] {
-  return Array.from(result);
-}
-
-/**
  * Create the test table (todos) with RLS and seed data.
  */
 export async function setupTestTable(dbPort: number): Promise<void> {
