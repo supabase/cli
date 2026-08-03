@@ -534,7 +534,9 @@ major_version = 15
       yield* legacyServices({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("[[services]]");
-      expect(out.stdoutText).toContain('name = "supabase/postgres"');
+      // Go's hand-written imageVersion struct emits PascalCase field names in
+      // declaration order (Name, Local, Remote) with 2-space indent (CLI-1975).
+      expect(out.stdoutText).toContain('  Name = "supabase/postgres"');
     });
   });
 

@@ -147,11 +147,72 @@ describe("legacy branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a YAML array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_BRANCH] });
+  it.live("emits Go-byte-exact YAML for --output yaml", () => {
+    // Second branch has every optional (Go pointer) field absent: Go
+    // zero-fills the value fields and emits explicit nulls for nil pointers.
+    const zeroBranch: Branches[number] = {
+      id: "00000000-0000-0000-0000-000000000000",
+      name: "Production",
+      project_ref: "production-project-ref",
+      parent_project_ref: "production-project-ref",
+      is_default: true,
+      persistent: false,
+      status: "FUNCTIONS_DEPLOYED",
+      created_at: "0001-01-01T00:00:00Z",
+      updated_at: "0001-01-01T00:00:00Z",
+      with_data: false,
+    };
+    const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_BRANCH, zeroBranch] });
     return Effect.gen(function* () {
       yield* legacyBranchesList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("name: feat-1");
+      // Byte-exact Go parity: yaml.v3 lowercases the Go field names, renders
+      // nil pointers as null, and leaves time.Time timestamps unquoted
+      // (CLI-1975; golden shape verified against apps/cli-go).
+      expect(out.stdoutText).toBe(`- createdat: 2026-05-27T01:02:03Z
+  deletionscheduledat: null
+  gitbranch: feat-1
+  id: 11111111-2222-3333-4444-555555555555
+  isdefault: false
+  latestcheckrunid: null
+  name: feat-1
+  notifyurl: null
+  parentprojectref: bbbbbbbbbbbbbbbbbbbb
+  persistent: false
+  prnumber: null
+  previewprojectstatus: null
+  projectref: aaaaaaaaaaaaaaaaaaaa
+  reviewrequestedat: null
+  status: MIGRATIONS_PASSED
+  updatedat: 2026-05-27T01:02:04Z
+  withdata: true
+- createdat: 0001-01-01T00:00:00Z
+  deletionscheduledat: null
+  gitbranch: null
+  id: 00000000-0000-0000-0000-000000000000
+  isdefault: true
+  latestcheckrunid: null
+  name: Production
+  notifyurl: null
+  parentprojectref: production-project-ref
+  persistent: false
+  prnumber: null
+  previewprojectstatus: null
+  projectref: production-project-ref
+  reviewrequestedat: null
+  status: FUNCTIONS_DEPLOYED
+  updatedat: 0001-01-01T00:00:00Z
+  withdata: false
+`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits nothing for --output toml when the branch list is empty (Go nil slice)", () => {
+    const { layer, out } = setup({ goOutput: "toml", response: [] });
+    return Effect.gen(function* () {
+      yield* legacyBranchesList({ projectRef: Option.none() });
+      // Go builds the list with append, so an empty list stays a nil slice
+      // and BurntSushi writes no bytes at all.
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
@@ -159,8 +220,22 @@ describe("legacy branches list integration", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* legacyBranchesList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("[[branches]]");
-      expect(out.stdoutText).toContain('name = "feat-1"');
+      // Byte-exact Go parity: BurntSushi emits PascalCase Go field names,
+      // 2-space indentation, native TOML datetimes, and omits nil pointers
+      // (CLI-1975; golden shape verified against apps/cli-go).
+      expect(out.stdoutText).toBe(`[[branches]]
+  CreatedAt = 2026-05-27T01:02:03Z
+  GitBranch = "feat-1"
+  Id = "11111111-2222-3333-4444-555555555555"
+  IsDefault = false
+  Name = "feat-1"
+  ParentProjectRef = "bbbbbbbbbbbbbbbbbbbb"
+  Persistent = false
+  ProjectRef = "aaaaaaaaaaaaaaaaaaaa"
+  Status = "MIGRATIONS_PASSED"
+  UpdatedAt = 2026-05-27T01:02:04Z
+  WithData = true
+`);
     }).pipe(Effect.provide(layer));
   });
 

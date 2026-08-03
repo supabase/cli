@@ -6,12 +6,14 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeEnv, encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoPtr,
+  legacyGoString,
+  legacyGoStruct,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
@@ -19,6 +21,12 @@ import {
   LegacyVanitySubdomainsGetUnexpectedStatusError,
 } from "../vanity-subdomains.errors.ts";
 import type { LegacyVanitySubdomainsGetFlags } from "./get.command.ts";
+
+/** Mirror of Go's `api.VanitySubdomainConfigResponse` (`types.gen.go`). */
+const LEGACY_GO_VANITY_CONFIG_RESPONSE = legacyGoStruct([
+  ["custom_domain", legacyGoPtr(legacyGoString)],
+  ["status", legacyGoString],
+]);
 
 const mapGetError = mapLegacyHttpError({
   networkError: LegacyVanitySubdomainsGetNetworkError,
@@ -56,18 +64,11 @@ export const legacyVanitySubdomainsGet = Effect.fn("legacy.vanity-subdomains.get
         return;
       }
       if (legacyOutput === "yaml") {
-        yield* output.raw(encodeYaml(response));
+        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_VANITY_CONFIG_RESPONSE));
         return;
       }
       if (legacyOutput === "toml") {
-        yield* output.raw(
-          encodeToml({
-            Status: response.status,
-            ...(response.custom_domain === undefined
-              ? {}
-              : { CustomDomain: response.custom_domain }),
-          }) + "\n",
-        );
+        yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_VANITY_CONFIG_RESPONSE));
         return;
       }
       if (legacyOutput === "env") {

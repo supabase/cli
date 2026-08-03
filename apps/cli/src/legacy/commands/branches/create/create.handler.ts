@@ -11,14 +11,14 @@ import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
+import { encodeEnv, encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
+import { LEGACY_GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
   LegacyBranchesCreateCancelledError,
   LegacyBranchesCreateNetworkError,
@@ -123,12 +123,12 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
     }
     if (goFmt === "yaml") {
       yield* output.raw("Created preview branch:\n");
-      yield* output.raw(encodeYaml(created));
+      yield* output.raw(encodeLegacyGoYaml(created, LEGACY_GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "toml") {
       yield* output.raw("Created preview branch:\n");
-      yield* output.raw(encodeToml(created) + "\n");
+      yield* output.raw(encodeLegacyGoToml(created, LEGACY_GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "env") {
