@@ -109,10 +109,18 @@ export interface LegacyDbPushCoreInput {
   /**
    * `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
    * top precedence tier of the pg-delta Docker-volume id. Combined internally
-   * with `toml.projectId` and a workdir-basename default via
+   * with `toml.projectId`, `projectRef`, and a workdir-basename default via
    * {@link legacyResolveLocalProjectId}, mirroring Go's `Config.ProjectId`
-   * resolution (env override → config.toml `project_id` → workdir basename) —
-   * passing this env-only tier straight through as the id (as bootstrap's own
+   * resolution: env override → config.toml `project_id` → `flags.ProjectRef`
+   * (when non-empty) → workdir basename. That third tier comes from
+   * `flags.LoadConfig` (`internal/utils/flags/config_path.go:11`) seeding
+   * `utils.Config.ProjectId = ProjectRef` *before* `Config.Load` runs, so on
+   * the linked path (default `db push`, and bootstrap — both resolve
+   * `ProjectRef` before loading config) a config.toml that omits `project_id`
+   * (e.g. a downloaded bootstrap template's own file) keeps the linked ref
+   * rather than falling to the workdir basename; only `--local`/`--db-url`
+   * (where Go never seeds `ProjectRef`) fall straight to the basename.
+   * Passing this env-only tier straight through as the id (as bootstrap's own
    * `config.toml` is scaffolded fresh mid-handler, after `LegacyCliConfig` was
    * already built) would bind the pg-delta edge-runtime cache volume to the
    * generic `supabase_edge_runtime_` name shared by every unrelated project.
@@ -311,10 +319,20 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             toml.pgDelta.enabled ||
             legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
           const pgDeltaCtx: LegacyPgDeltaContext = {
+            // Go's `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` before
+            // `Config.Load` runs, so an absent config.toml `project_id` retains the
+            // linked ref, not the workdir basename — that fallback only applies when
+            // `flags.ProjectRef` is unset (`--local`/`--db-url`, where `projectRef` is
+            // `""` here too, see `LegacyDbPushCoreInput.projectId`'s doc comment).
+            // `legacyResolveLocalProjectId` itself only knows the env/toml/basename
+            // tiers, so splice this third tier in by feeding it as `tomlProjectId`'s
+            // own fallback rather than widening that helper's signature for its two
+            // other (local-only, `projectRef`-less) callers.
             projectId: legacySanitizeProjectId(
               legacyResolveLocalProjectId(
                 Option.getOrUndefined(projectId),
-                Option.getOrUndefined(toml.projectId),
+                Option.getOrUndefined(toml.projectId) ??
+                  (projectRef !== "" ? projectRef : undefined),
                 workdir,
               ),
             ),

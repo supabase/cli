@@ -443,6 +443,38 @@ describe("legacy db push", () => {
     },
   );
 
+  it.live(
+    "falls back to the linked project ref for the pg-delta volume when config.toml has no project_id",
+    () => {
+      // Go's `flags.LoadConfig` (`internal/utils/flags/config_path.go:11`) seeds
+      // `Config.ProjectId = ProjectRef` BEFORE `Config.Load` runs, so on the
+      // linked path (the default target here — no `--local`/`--db-url`) an
+      // absent `project_id` retains the linked ref rather than falling to the
+      // workdir basename; only `--local`/`--db-url` (the previous test, where
+      // `ProjectRef` is never seeded) fall through to the basename.
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: "[experimental.pgdelta]\nenabled = true\n",
+        args: ["db", "push", "--linked"],
+        isLocal: false,
+        projectRef: LEGACY_VALID_REF,
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+          Effect.provide(layer),
+        );
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        expect(edgeRunCalls[0]?.binds).toContain(
+          `supabase_edge_runtime_${LEGACY_VALID_REF}:/root/.cache/deno:rw`,
+        );
+      });
+    },
+  );
+
   it.live("sanitizes an invalid config.toml project_id before naming the pg-delta volume", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {
       toml: 'project_id = "my app"\n[experimental.pgdelta]\nenabled = true\n',
