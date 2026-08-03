@@ -6,22 +6,25 @@ import { BunServices } from "@effect/platform-bun";
 import { afterAll, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 
-import type { LegacySsoProfileError } from "./sso.errors.ts";
-import { legacyPadGoErrorBlock, legacySsoLoadProfile } from "./sso.load-profile.ts";
+import {
+  legacyLoadProfile,
+  legacyPadGoErrorBlock,
+  type LegacyProfileLoadError,
+} from "./legacy-profile-load.ts";
 
-const tempRoot = mkdtempSync(join(tmpdir(), "supabase-sso-load-profile-"));
+const tempRoot = mkdtempSync(join(tmpdir(), "supabase-profile-load-"));
 afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 
 const load = (token: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    return (yield* legacySsoLoadProfile(token, fs)).apiUrl;
+    return (yield* legacyLoadProfile(token, fs)).apiUrl;
   }).pipe(Effect.provide(BunServices.layer));
 
 const loadError = (token: string) =>
   load(token).pipe(
     Effect.flip,
-    Effect.map((error: LegacySsoProfileError) => error.message),
+    Effect.map((error: LegacyProfileLoadError) => error.message),
   );
 
 const writeProfile = (name: string, content: string): string => {
@@ -30,7 +33,7 @@ const writeProfile = (name: string, content: string): string => {
   return filePath;
 };
 
-describe("legacySsoLoadProfile", () => {
+describe("legacyLoadProfile", () => {
   it.effect("resolves built-in profile names case-insensitively (Go strings.EqualFold)", () =>
     Effect.gen(function* () {
       // Binary-verified: `--profile SUPABASE-LOCAL` targets localhost:8080.
@@ -117,7 +120,7 @@ describe("legacySsoLoadProfile", () => {
           "Project_Host: supabase.co",
         ].join("\n"),
       );
-      const profile = yield* legacySsoLoadProfile(file, fs);
+      const profile = yield* legacyLoadProfile(file, fs);
       expect(profile.apiUrl).toBe("http://127.0.0.1:44444");
       expect(profile.name).toBe("harness");
     }).pipe(Effect.provide(BunServices.layer)),
@@ -146,7 +149,7 @@ describe("legacySsoLoadProfile", () => {
         const fs = yield* FileSystem.FileSystem;
         // Built-in: EqualFold match resolves to the canonical (lower-case)
         // table name — the keyring account Go reads (`access_token.go:43`).
-        expect((yield* legacySsoLoadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
+        expect((yield* legacyLoadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
         // File profile: `UnmarshalExact` populates Name from the required
         // `name:` key, NOT from the file path.
         const file = writeProfile(
@@ -158,7 +161,7 @@ describe("legacySsoLoadProfile", () => {
             "project_host: supabase.co",
           ].join("\n"),
         );
-        expect((yield* legacySsoLoadProfile(file, fs)).name).toBe("harness");
+        expect((yield* legacyLoadProfile(file, fs)).name).toBe("harness");
       }).pipe(Effect.provide(BunServices.layer)),
   );
 

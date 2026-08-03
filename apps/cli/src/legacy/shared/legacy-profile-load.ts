@@ -1,8 +1,20 @@
-import { Effect, FileSystem } from "effect";
+import { Data, Effect, FileSystem } from "effect";
 import { parse as parseYaml } from "yaml";
 
-import { legacyApiUrl, legacyIsBuiltinProfileName } from "../../shared/legacy-profile.ts";
-import { LegacySsoProfileError } from "./sso.errors.ts";
+import { legacyApiUrl, legacyIsBuiltinProfileName } from "./legacy-profile.ts";
+
+// Go's `LoadProfile` (`internal/utils/profile.go:94-118`), run from the root
+// `PersistentPreRunE` (`cmd/root.go:98-102`) immediately BEFORE
+// `ChangeWorkDir` — so a profile Go cannot load aborts before the workdir
+// check, `ValidateRequiredFlags`, `ValidateFlagGroups`, and `RunE`, with no
+// API call ever made. Emulated for the pflag/viper-effective `--profile`/
+// `SUPABASE_PROFILE` whenever it differs from the token the Effect config
+// layer resolved (PR #5974 review round 7). Shared across add + update;
+// message byte-matches Go for the deterministic failure classes (see
+// `legacy-profile-load.ts`).
+export class LegacyProfileLoadError extends Data.TaggedError("LegacyProfileLoadError")<{
+  readonly message: string;
+}> {}
 
 /**
  * Emulates Go's `LoadProfile` (`apps/cli-go/internal/utils/profile.go:94-118`)
@@ -60,7 +72,7 @@ import { LegacySsoProfileError } from "./sso.errors.ts";
  *   go-playground/validator with WHATWG `URL` parsing and the validator's own
  *   published regexes.
  */
-export interface LegacySsoLoadedProfile {
+export interface LegacyLoadedProfile {
   readonly apiUrl: string;
   /**
    * Go's `CurrentProfile.Name` — the canonical built-in name (EqualFold
@@ -72,10 +84,10 @@ export interface LegacySsoLoadedProfile {
   readonly name: string;
 }
 
-export function legacySsoLoadProfile(
+export function legacyLoadProfile(
   token: string,
   fs: FileSystem.FileSystem,
-): Effect.Effect<LegacySsoLoadedProfile, LegacySsoProfileError> {
+): Effect.Effect<LegacyLoadedProfile, LegacyProfileLoadError> {
   return Effect.gen(function* () {
     // Go: `strings.EqualFold(p.Name, prof)` — the built-in names are all
     // ASCII lower-case, so folding is plain lower-casing here.
@@ -184,7 +196,7 @@ export function legacySsoLoadProfile(
   });
 }
 
-const fail = (message: string) => Effect.fail(new LegacySsoProfileError({ message }));
+const fail = (message: string) => Effect.fail(new LegacyProfileLoadError({ message }));
 
 const failRead = (detail: string) => fail(`failed to read profile: ${detail}`);
 
