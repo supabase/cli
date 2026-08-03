@@ -58,39 +58,6 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
         Effect.mapError((cause) => new LegacyMigrationNewWriteError({ message: cause.message })),
       );
 
-    // Go's `CopyStdinIfExists` opens the migration file first, then streams stdin into it
-    // with `io.Copy` (`internal/migration/new/new.go:19,28,41`) — a fixed-size buffer, so a
-    // large `pg_dump | supabase migration new` runs in constant memory. Mirror that: create
-    // the file (mode 0644, like Go's O_CREATE|O_TRUNC), then stream piped stdin into the open
-    // handle rather than buffering the whole pipe. A TTY (char device) writes nothing → empty
-    // file; an empty pipe streams nothing → empty file, both matching Go.
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        // Go fails with "failed to open migration file" if the open fails (`new.go:21`)...
-        const handle = yield* fs.open(migrationPath, { flag: "w", mode: 0o644 }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LegacyMigrationNewWriteError({
-                message: `failed to open migration file: ${cause.message}`,
-              }),
-          ),
-        );
-        // ...and with "failed to copy from stdin" if the copy fails (`new.go:42`). A piped
-        // stdin read error must abort here, not silently leave a truncated/empty file.
-        if (!stdin.isTTY) {
-          yield* stdin.pipedBytesStream.pipe(
-            Stream.runForEach((chunk) => handle.writeAll(chunk)),
-            Effect.mapError(
-              (cause) =>
-                new LegacyMigrationNewWriteError({
-                  message: `failed to copy from stdin: ${cause.message}`,
-                }),
-            ),
-          );
-        }
-      }),
-    );
-
     // Go prints the RELATIVE path: `utils.MigrationsDir` is `supabase/migrations`
     // and Go chdir's into `--workdir` in its persistent pre-run, so the printed
     // path is workdir-independent. Reproduce that exactly while still writing to
@@ -100,8 +67,53 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
       "migrations",
       `${timestamp}_${flags.migrationName}.sql`,
     );
+    // stdout-bound line, so the colour TTY gate must check stdout (see
+    // `legacy-colors.ts`'s doc comment — the CLI-1546 bug class).
+    const printCreated =
+      output.format === "text"
+        ? output.raw(`Created new migration at ${legacyBold(relativePath, process.stdout)}\n`)
+        : Effect.void;
+
+    // Go's `CopyStdinIfExists` opens the migration file first, then streams stdin into it
+    // with `io.Copy` (`internal/migration/new/new.go:19,28,41`) — a fixed-size buffer, so a
+    // large `pg_dump | supabase migration new` runs in constant memory. Mirror that: create
+    // the file (mode 0644, like Go's O_CREATE|O_TRUNC), then stream piped stdin into the open
+    // handle rather than buffering the whole pipe. A TTY (char device) writes nothing → empty
+    // file; an empty pipe streams nothing → empty file, both matching Go.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Go fails with "failed to open migration file" if the open fails (`new.go:21`) —
+        // BEFORE its deferred Created-line print is registered, so no line on open failure...
+        const handle = yield* fs.open(migrationPath, { flag: "w", mode: 0o644 }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyMigrationNewWriteError({
+                message: `failed to open migration file: ${cause.message}`,
+              }),
+          ),
+        );
+        // ...and with "failed to copy from stdin" if the copy fails (`new.go:42`). A piped
+        // stdin read error must abort here, not silently leave a truncated/empty file — but
+        // Go's `defer fmt.Println("Created new migration at …")` (`new.go:24-27`) is already
+        // registered by then, so the Created line still prints (stdout) BEFORE the copy
+        // error surfaces (stderr, exit 1).
+        if (!stdin.isTTY) {
+          yield* stdin.pipedBytesStream.pipe(
+            Stream.runForEach((chunk) => handle.writeAll(chunk)),
+            Effect.mapError(
+              (cause) =>
+                new LegacyMigrationNewWriteError({
+                  message: `failed to copy from stdin: ${cause.message}`,
+                }),
+            ),
+            Effect.tapError(() => printCreated),
+          );
+        }
+      }),
+    );
+
     if (output.format === "text") {
-      yield* output.raw(`Created new migration at ${legacyBold(relativePath)}\n`);
+      yield* printCreated;
     } else {
       yield* output.success("Migration created", { path: migrationPath });
     }

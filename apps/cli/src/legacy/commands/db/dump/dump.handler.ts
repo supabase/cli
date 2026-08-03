@@ -224,6 +224,12 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
           } as const);
     const modeEnv = mode.buildEnv(conn, opt);
 
+    // Go keys every `--file` branch off `len(path) > 0`, not flag presence
+    // (`internal/db/dump/dump.go:20-32`; `cmd/db.go:152-159` for the PostRun
+    // print): an explicit `--file ""` means stdout, with no file open and no
+    // `Dumped schema to …` line.
+    const fileFlag = Option.filter(flags.file, (file) => file.length > 0);
+
     // 5. Dry-run: print the env-expanded script to stdout (no container).
     if (flags.dryRun) {
       yield* output.raw("DRY RUN: *only* printing the pg_dump script to console.\n", "stderr");
@@ -235,8 +241,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       // stderr line here WITHOUT creating/truncating the file — Go never touches it on
       // a dry-run (`internal/db/dump/dump.go:23-32`). Resolve the path like the real
       // path (Go's `filepath.Abs` after the PreRun chdir into the workdir).
-      if (Option.isSome(flags.file)) {
-        const dryRunFile = path.resolve(cliConfig.workdir, flags.file.value);
+      if (Option.isSome(fileFlag)) {
+        const dryRunFile = path.resolve(cliConfig.workdir, fileFlag.value);
         yield* output.raw(`Dumped schema to ${legacyBold(dryRunFile)}.\n`, "stderr");
       }
       return;
@@ -258,7 +264,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // in PersistentPreRunE before opening the file (`cmd/root.go:104` →
     // `internal/utils/misc.go`), so `--workdir /repo db dump -f out.sql` writes
     // `/repo/out.sql`. `path.resolve` leaves absolute paths unchanged.
-    const resolvedFile = Option.map(flags.file, (file) => path.resolve(cliConfig.workdir, file));
+    const resolvedFile = Option.map(fileFlag, (file) => path.resolve(cliConfig.workdir, file));
 
     // Open (create + truncate) the output file up front so an unwritable `--file`
     // path fails before the dump runs, matching Go's `OpenFile(O_WRONLY|O_CREATE|

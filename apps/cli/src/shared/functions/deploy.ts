@@ -71,6 +71,16 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  /**
+   * Optional shell-specific styling hooks. Both default to identity (plain
+   * text); the legacy shell injects Go's aqua/bold here so the next shell
+   * stays isolated from `legacy/`-specific rendering.
+   * - `styleIdentifier`: the project ref in the stdout success line.
+   * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and
+   *   the functions dir in the no-functions error.
+   */
+  readonly styleIdentifier?: (text: string) => string;
+  readonly styleEmphasis?: (text: string) => string;
 }
 
 export interface ResolvedDeployFunctionConfig {
@@ -1342,9 +1352,13 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   config: ResolvedDeployFunctionConfig,
   dockerNetworkId?: string,
   verbose = false,
+  styleEmphasis: (text: string) => string = (text) => text,
 ) {
   const output = yield* Output;
-  yield* output.raw(`Bundling Function: ${config.slug}\n`, "stderr");
+  // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
+  // (`internal/functions/deploy/bundle.go:30`) — the legacy handler injects
+  // the bold styling via `styleEmphasis`; next stays plain.
+  yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
   const outputRoot = resolve(functionsDir, "..", ".temp");
   yield* Effect.tryPromise(() => mkdir(outputRoot, { recursive: true }));
@@ -2036,6 +2050,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
   api: ApiClient,
   dockerNetworkId?: string,
   verbose = false,
+  styleEmphasis: (text: string) => string = (text) => text,
 ) {
   const output = yield* Output;
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
@@ -2055,6 +2070,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
       config,
       dockerNetworkId,
       verbose,
+      styleEmphasis,
     );
     const current = remoteBySlug.get(config.slug);
     if (
@@ -2143,6 +2159,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
 ) {
   return Effect.gen(function* () {
     const output = yield* Output;
+    const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
+    const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
     const commandPath = ["functions", "deploy"] as const;
     // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — mirrors
     // cobra's `Changed()`-driven `MarkFlagsMutuallyExclusive`, so it's only used for the
@@ -2231,7 +2249,16 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     if (slugs.length === 0) {
       return yield* Effect.fail(
         new NoFunctionsToDeployError({
-          message: `No Functions specified or found in ${SUPABASE_FUNCTIONS_DIR}`,
+          // Go: `errors.Errorf("No Functions specified or found in %s",
+          // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`) —
+          // the legacy handler injects the bold styling via `styleEmphasis`. Styling is
+          // text-mode only: in `--output-format json`/`stream-json` this message lands in
+          // the structured error payload, which must stay free of ANSI escapes.
+          message: `No Functions specified or found in ${
+            output.format === "text"
+              ? styleEmphasis(SUPABASE_FUNCTIONS_DIR)
+              : SUPABASE_FUNCTIONS_DIR
+          }`,
         }),
       );
     }
@@ -2289,6 +2316,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             dependencies.api,
             explicitStringFlag(dependencies.rawArgs, "network-id"),
             debugEnabled,
+            styleEmphasis,
           );
           return true;
         })
@@ -2299,7 +2327,15 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     }
 
     if (output.format === "text") {
-      yield* output.raw(`Deployed Functions on project ${projectRef}: ${uniqueSlugs.join(", ")}\n`);
+      // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
+      // utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))`
+      // (`internal/functions/deploy/deploy.go:70`) — the legacy handler injects
+      // the aqua styling via `styleIdentifier` (stdout-bound, so its TTY gate
+      // must check stdout); next stays plain. Go joins the raw `slugs` list, not
+      // the deduped set, so `functions deploy foo foo` prints "foo, foo".
+      yield* output.raw(
+        `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
+      );
       yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
     } else {
       yield* output.success("Deployed Functions.", {

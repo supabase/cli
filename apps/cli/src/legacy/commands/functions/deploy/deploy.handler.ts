@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
 import { deployFunctions } from "../../../../shared/functions/deploy.ts";
+import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -56,6 +57,14 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
           }),
         ),
       ),
+    // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
+    // utils.Aqua(flags.ProjectRef), …)` (`internal/functions/deploy/deploy.go:70`)
+    // — stdout-bound, so the TTY gate must check stdout.
+    styleIdentifier: (text) => legacyAqua(text, process.stdout),
+    // Go: `utils.Bold` on the `Bundling Function:` slug (`bundle.go:30`, stderr)
+    // and the no-functions error dir (`deploy.go:35`, rendered on stderr) —
+    // both stderr-bound, matching `legacyBold`'s default TTY gate.
+    styleEmphasis: (text) => legacyBold(text),
   }).pipe(
     Effect.ensuring(
       Effect.suspend(() =>

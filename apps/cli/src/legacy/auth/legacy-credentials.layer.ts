@@ -517,7 +517,10 @@ const makeLegacyCredentials = Effect.gen(function* () {
           );
           if (ok) return;
         }
-        yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 }).pipe(Effect.orDie);
+        // Go's `fallbackSaveToken` creates the dir via `MkdirIfNotExistFS` →
+        // `MkdirAll(path, 0755)` (`access_token.go:91`, `misc.go:273`); only
+        // the token FILE itself is private (0600, `access_token.go:94`).
+        yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o755 }).pipe(Effect.orDie);
         yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 }).pipe(Effect.orDie);
       }),
 

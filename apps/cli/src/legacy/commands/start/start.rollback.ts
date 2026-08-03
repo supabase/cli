@@ -66,12 +66,27 @@ export const legacyRollbackStart = (
   filterValue: string,
   deleteVolumes: boolean,
   workdir: string,
+  debug: boolean,
 ): Effect.Effect<void, never> =>
   Effect.gen(function* () {
+    // Go's `DockerRemoveAll` prints "Stopping containers..." to the writer its
+    // caller passes (`internal/utils/docker.go:97`); the start-failure path
+    // passes `os.Stderr` (`internal/start/start.go:77`). The TS port moved that
+    // line out of `legacyDockerRemoveAll` and into each caller (`stop` prints
+    // it to its own status writer), so the rollback path prints it here.
+    yield* Effect.sync(() => {
+      globalThis.process.stderr.write("Stopping containers...\n");
+    });
     let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-    yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes, (containers) => {
-      removedContainers = containers;
-    }).pipe(
+    yield* legacyDockerRemoveAll(
+      spawner,
+      filterValue,
+      deleteVolumes,
+      (containers) => {
+        removedContainers = containers;
+      },
+      debug,
+    ).pipe(
       Effect.catch((error) =>
         Effect.sync(() => {
           globalThis.process.stderr.write(`${error.message}\n`);
