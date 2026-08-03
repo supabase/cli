@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -79,6 +79,16 @@ describe("legacy test new integration", () => {
       expect(out.stdoutText).toContain("Created new pgtap test at ");
       expect(out.stdoutText).toContain("supabase/tests/pet_test.sql");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("pins the created test file to Go's exact 0644 mode under a permissive umask", () => {
+    const { layer, workdir } = setup();
+    const prevUmask = process.umask(0);
+    return Effect.gen(function* () {
+      yield* legacyTestNew(flags("modepin"));
+      const target = join(workdir, "supabase", "tests", "modepin_test.sql");
+      expect(statSync(target).mode & 0o777).toBe(0o644);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
   });
 
   it.live("defaults the template to pgtap when --template is omitted", () => {

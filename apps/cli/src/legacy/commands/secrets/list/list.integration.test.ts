@@ -167,8 +167,9 @@ describe("legacy secrets list integration", () => {
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("[[secrets]]");
-      expect(out.stdoutText).toContain('name = "BAR"');
-      expect(out.stdoutText).toContain('value = "digest-bar"');
+      // Go field names (PascalCase) with BurntSushi's 2-space indent (CLI-1975).
+      expect(out.stdoutText).toContain('  Name = "BAR"');
+      expect(out.stdoutText).toContain('  Value = "digest-bar"');
     }).pipe(Effect.provide(layer));
   });
 

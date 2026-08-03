@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 
 import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { legacySanitizeProjectId } from "../../shared/legacy-docker-ids.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -64,6 +65,61 @@ describeLive("supabase stop (live)", () => {
       // The real Docker daemon must agree: no container carrying this project's
       // label survives `stop` — the actual behavior under test, not just the
       // cli's own exit code.
+      const { stdout: remaining } = await execFileAsync("docker", [
+        "ps",
+        "-a",
+        "--filter",
+        `label=com.supabase.cli.project=${projectId}`,
+        "--format",
+        "{{.ID}}",
+      ]);
+      expect(remaining.trim()).toBe("");
+    },
+  );
+
+  test(
+    "stop --no-backup --debug reports real pruned containers, volumes, and network",
+    { timeout: START_TIMEOUT_MS },
+    async () => {
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-stop-live-"));
+      // Sanitizing is a no-op for a `mkdtemp`-generated basename (already
+      // alphanumeric/`-`), but mirrors the port's actual resolution rather
+      // than assuming that stays true (same note as `start.live.test.ts`).
+      projectId = legacySanitizeProjectId(path.basename(projectDir));
+
+      const init = await runSupabaseLive(["init"], { cwd: projectDir });
+      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+
+      const start = await runSupabaseLive(
+        ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
+        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+      );
+      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+
+      // `--no-backup` exercises the volume-prune branch; `--debug` turns on
+      // Go's `Pruned …:` stderr reports (`docker.go:123-143`), which are
+      // backed by parsing REAL `docker`/`podman` prune stdout — the format
+      // assumption (`Deleted …:` headers, `Total reclaimed space:` trailer)
+      // that mocked integration fixtures cannot validate by construction.
+      const stop = await runSupabaseLive(["stop", "--no-backup", "--debug"], { cwd: projectDir });
+      expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
+      expect(stop.stdout).toContain("Stopped");
+
+      // Containers: real Docker reports full hex IDs — the list must be
+      // non-empty, since the started stack's containers were just removed.
+      expect(stop.stderr).toMatch(/^Pruned containers: \[[0-9a-f][^\]]*\]$/mu);
+      // Volumes: the db volume always exists (db is never excluded), so the
+      // report must name it. Other project volumes may also appear.
+      const volumesLine = stop.stderr
+        .split("\n")
+        .find((line) => line.startsWith("Pruned volumes: ["));
+      expect(volumesLine, `stderr:\n${stop.stderr}`).toContain(`supabase_db_${projectId}`);
+      // Network: exactly the project network; Go's label is singular
+      // "network" (`docker.go:143`), unlike the other two reports.
+      expect(stop.stderr).toContain(`Pruned network: [supabase_network_${projectId}]`);
+
+      // The real Docker daemon must agree with the report: nothing carrying
+      // this project's label survives.
       const { stdout: remaining } = await execFileAsync("docker", [
         "ps",
         "-a",

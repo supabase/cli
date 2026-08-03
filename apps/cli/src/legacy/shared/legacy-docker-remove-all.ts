@@ -3,6 +3,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 
 import {
   containerCliExitCode,
+  legacyContainerCliExitCodeAndStdout,
   legacyDescribeContainerCliFailure,
   legacyDockerSupportsVolumePruneAllFlag,
 } from "./legacy-container-cli.ts";
@@ -47,6 +48,34 @@ class LegacyDockerRemoveAllNetworkPruneError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
+/**
+ * Extracts the deleted-object IDs/names from `docker`/`podman` `… prune`
+ * stdout. Docker prints a `Deleted Containers:`/`Deleted Volumes:`/`Deleted
+ * Networks:` header, one ID/name per line, then a `Total reclaimed space: …`
+ * summary; Podman prints the bare IDs/names only. Keep the bare-value lines,
+ * dropping headers and the summary.
+ */
+function parsePrunedNames(stdout: string): ReadonlyArray<string> {
+  return stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(
+      (line) => line.length > 0 && !line.endsWith(":") && !line.startsWith("Total reclaimed space"),
+    );
+}
+
+/**
+ * Go's `--debug` prune reports (`docker.go:123,136,143`): `fmt.Fprintln(os.Stderr,
+ * "Pruned containers:", report.ContainersDeleted)` and siblings — the `[]string`
+ * renders as `[a b c]` (empty: `[]`), always on stderr regardless of the writer
+ * the caller passed, and only when `viper.GetBool("DEBUG")` is set.
+ */
+const reportPruned = (debug: boolean, label: string, stdout: string) =>
+  Effect.sync(() => {
+    if (!debug) return;
+    globalThis.process.stderr.write(`${label} [${parsePrunedNames(stdout).join(" ")}]\n`);
+  });
+
 /** Every failure {@link legacyDockerRemoveAll} can produce. */
 export type LegacyDockerRemoveAllError =
   | LegacyDockerRemoveAllListError
@@ -88,6 +117,7 @@ export const legacyDockerRemoveAll = (
   filterValue: string,
   deleteVolumes: boolean,
   onContainersRemoved?: (containers: ReadonlyArray<LegacyContainerIdName>) => void,
+  debug = false,
 ): Effect.Effect<void, LegacyDockerRemoveAllError> =>
   Effect.gen(function* () {
     const containers = yield* legacyListContainerIdsAndNames(spawner, {
@@ -101,12 +131,13 @@ export const legacyDockerRemoveAll = (
     // Go stops containers concurrently via `WaitAll`, joining every failure rather than
     // short-circuiting on the first one (`docker.go:96-146`).
     //
-    // `stdout`/`stderr: "ignore"` on every exit-code-only call below: none of these read the
+    // `stdout`/`stderr: "ignore"` on the exit-code-only `stop` calls below: they never read the
     // child's own output, and the default `"pipe"` stdio otherwise leaves an OS pipe unread —
-    // once `docker`/`podman` write enough to it (e.g. `container prune`'s "Deleted Containers"
-    // ID list on a host with many stale containers, most likely under `stop --all`), the child
-    // blocks on write() and this hangs. Matches the existing `stdio: "ignore"` precedent for the
-    // same "exit-code-only" shape in `legacy-pgdelta.seam.layer.ts`.
+    // once `docker`/`podman` write enough to it, the child blocks on write() and this hangs.
+    // Matches the existing `stdio: "ignore"` precedent for the same "exit-code-only" shape in
+    // `legacy-pgdelta.seam.layer.ts`. The prune calls further down instead COLLECT stdout (via
+    // `legacyContainerCliExitCodeAndStdout`, which reads the pipe, equally avoiding the hang)
+    // because their deleted-ID reports back Go's `--debug` `Pruned …:` stderr lines.
     const stopResults = yield* Effect.all(
       containerIds.map((id) =>
         containerCliExitCode(spawner, ["stop", id], {
@@ -132,11 +163,17 @@ export const legacyDockerRemoveAll = (
       );
     }
 
-    const containerPruneExitCode = yield* containerCliExitCode(
-      spawner,
-      ["container", "prune", "--force", "--filter", `label=${filterValue}`],
-      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
-    ).pipe(
+    // The prune calls collect stdout (the CLI's deleted-ID report) instead of
+    // ignoring it — reading the pipe equally avoids the unread-pipe hang the
+    // exit-code-only calls above dodge with `stdout: "ignore"`, and the report
+    // backs Go's `--debug` `Pruned …:` stderr lines (`docker.go:123-143`).
+    const containerPrune = yield* legacyContainerCliExitCodeAndStdout(spawner, [
+      "container",
+      "prune",
+      "--force",
+      "--filter",
+      `label=${filterValue}`,
+    ]).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyDockerRemoveAllContainerPruneError({
@@ -144,11 +181,12 @@ export const legacyDockerRemoveAll = (
           }),
       ),
     );
-    if (containerPruneExitCode !== 0) {
+    if (containerPrune.exitCode !== 0) {
       return yield* Effect.fail(
         new LegacyDockerRemoveAllContainerPruneError({ message: "failed to prune containers" }),
       );
     }
+    yield* reportPruned(debug, "Pruned containers:", containerPrune.stdout);
     // Containers are now CONFIRMED removed — see `onContainersRemoved`'s doc comment for why this
     // must fire here rather than at the listing above, and why it still must fire even if a later
     // stage (volume/network prune, below) goes on to fail.
@@ -173,7 +211,7 @@ export const legacyDockerRemoveAll = (
       // Podman-only host. Podman already prunes every unused volume by default, so omitting
       // `--all` on the Podman fallback is a lossless fix.
       const dockerSupportsAll = yield* legacyDockerSupportsVolumePruneAllFlag(spawner);
-      const volumePruneExitCode = yield* containerCliExitCode(
+      const volumePrune = yield* legacyContainerCliExitCodeAndStdout(
         spawner,
         [
           "volume",
@@ -183,7 +221,6 @@ export const legacyDockerRemoveAll = (
           "--filter",
           `label=${filterValue}`,
         ],
-        { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
         ["volume", "prune", "--force", "--filter", `label=${filterValue}`],
       ).pipe(
         Effect.mapError(
@@ -193,18 +230,23 @@ export const legacyDockerRemoveAll = (
             }),
         ),
       );
-      if (volumePruneExitCode !== 0) {
+      if (volumePrune.exitCode !== 0) {
         return yield* Effect.fail(
           new LegacyDockerRemoveAllVolumePruneError({ message: "failed to prune volumes" }),
         );
       }
+      // Inside the `deleteVolumes` branch, like Go's report inside the
+      // `NoBackupVolume` block (`docker.go:126-138`).
+      yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
 
-    const networkPruneExitCode = yield* containerCliExitCode(
-      spawner,
-      ["network", "prune", "--force", "--filter", `label=${filterValue}`],
-      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
-    ).pipe(
+    const networkPrune = yield* legacyContainerCliExitCodeAndStdout(spawner, [
+      "network",
+      "prune",
+      "--force",
+      "--filter",
+      `label=${filterValue}`,
+    ]).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyDockerRemoveAllNetworkPruneError({
@@ -212,9 +254,11 @@ export const legacyDockerRemoveAll = (
           }),
       ),
     );
-    if (networkPruneExitCode !== 0) {
+    if (networkPrune.exitCode !== 0) {
       return yield* Effect.fail(
         new LegacyDockerRemoveAllNetworkPruneError({ message: "failed to prune networks" }),
       );
     }
+    // Go: singular "network" (`docker.go:143`), unlike the other two reports.
+    yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);
   });

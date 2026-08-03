@@ -335,7 +335,8 @@ describe("legacy projects create integration", () => {
         dbPassword: Option.some("s3cret-pass"),
         region: Option.some("us-east-1"),
       });
-      expect(out.stdoutText).toContain('name = "alpha"');
+      // Go field names (PascalCase) at the top level — no table header (CLI-1975).
+      expect(out.stdoutText).toContain('Name = "alpha"');
     }).pipe(Effect.provide(layer));
   });
 

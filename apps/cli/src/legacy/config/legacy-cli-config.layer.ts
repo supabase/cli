@@ -3,7 +3,9 @@ import { parse as parseYaml } from "yaml";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import {
+  legacyApiUrl,
   legacyDashboardUrl,
+  legacyIsBuiltinProfileName,
   legacyPoolerHost,
   legacyProjectHost,
 } from "../shared/legacy-profile.ts";
@@ -23,24 +25,14 @@ interface ResolvedProfile {
   readonly dashboardUrl: string;
 }
 
-const BUILTIN_PROFILE_API_URLS: Record<LegacyProfileName, string> = {
-  supabase: "https://api.supabase.com",
-  "supabase-staging": "https://api.supabase.green",
-  "supabase-local": "http://localhost:8080",
-  snap: "https://cloudapi.snap.com",
-};
-
-function isBuiltinProfileName(value: string): value is LegacyProfileName {
-  return value in BUILTIN_PROFILE_API_URLS;
-}
-
-// `projectHost` is sourced from `legacy-profile.ts` (the single source of truth that
-// mirrors Go's `allProfiles` table and is also consumed by `branches get`), so the
-// per-profile host mapping is not duplicated here.
+// All per-profile endpoints are sourced from `legacy-profile.ts` (the single
+// source of truth that mirrors Go's `allProfiles` table and is also consumed
+// by `branches get` and the sso pflag-profile reconciliation), so no mapping
+// is duplicated here.
 function resolvedBuiltin(name: LegacyProfileName): ResolvedProfile {
   return {
     name,
-    apiUrl: BUILTIN_PROFILE_API_URLS[name],
+    apiUrl: legacyApiUrl(name),
     projectHost: legacyProjectHost(name),
     poolerHost: legacyPoolerHost(name),
     dashboardUrl: legacyDashboardUrl(name),
@@ -133,7 +125,7 @@ function resolveProfile(
       });
     }
 
-    if (isBuiltinProfileName(token)) {
+    if (legacyIsBuiltinProfileName(token)) {
       return resolvedBuiltin(token);
     }
 

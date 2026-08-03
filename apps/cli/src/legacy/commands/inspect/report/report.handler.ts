@@ -109,8 +109,10 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   if (!path.isAbsolute(outDir)) {
     outDir = path.join(runtimeInfo.cwd, outDir);
   }
+  // Go pins the output dir to 0755 (`MkdirIfNotExistFS`, `report.go:32`,
+  // `misc.go:273`) and each CSV to 0644 (`report.go:66`).
   yield* fs
-    .makeDirectory(outDir, { recursive: true })
+    .makeDirectory(outDir, { recursive: true, mode: 0o755 })
     .pipe(
       Effect.mapError(
         (error) => new LegacyInspectReportMkdirError({ message: `failed to mkdir: ${error}` }),
@@ -136,7 +138,7 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
           legacyWrapReportQuery(sql, ignoreSchemas, dbLiteral),
         );
         const filePath = path.join(outDir, `${fileName}.csv`);
-        yield* fs.writeFile(filePath, bytes).pipe(
+        yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
           Effect.mapError(
             (error) =>
               new LegacyInspectReportWriteError({

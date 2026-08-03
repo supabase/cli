@@ -47,7 +47,7 @@ describe("supabase seed buckets (legacy)", () => {
     );
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain(
-      "if any flags in the group [linked local] are set none of the others can be",
+      "if any flags in the group [local linked] are set none of the others can be",
     );
   });
 
@@ -76,7 +76,7 @@ describe("supabase seed buckets (legacy)", () => {
     );
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain(
-      "if any flags in the group [linked local] are set none of the others can be",
+      "if any flags in the group [local linked] are set none of the others can be",
     );
   });
 });

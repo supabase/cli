@@ -71,6 +71,16 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  /**
+   * Optional shell-specific styling hooks. Both default to identity (plain
+   * text); the legacy shell injects Go's aqua/bold here so the next shell
+   * stays isolated from `legacy/`-specific rendering.
+   * - `styleIdentifier`: the project ref in the stdout success line.
+   * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and
+   *   the functions dir in the no-functions error.
+   */
+  readonly styleIdentifier?: (text: string) => string;
+  readonly styleEmphasis?: (text: string) => string;
 }
 
 export interface ResolvedDeployFunctionConfig {
@@ -261,7 +271,14 @@ const dockerComposeProjectLabel = "com.docker.compose.project";
  * directory using its OWN workdir rather than the caller's cwd.
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
-const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"] as const;
+/**
+ * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`): the eszip
+ * bundler container receives only `NPM_CONFIG_REGISTRY` from the host
+ * environment. `NPM_AUTH_TOKEN` is deliberately NOT forwarded — the Go-side PR
+ * proposing it (supabase/cli#4933) was closed unmerged, and CLI-1985 ruled
+ * strict parity over the TS-only forwarding that #5645 had added.
+ */
+const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY"] as const;
 
 export function dockerProjectLabels(projectId: string) {
   return {
@@ -310,6 +327,21 @@ function isContainedPath(root: string, candidate: string) {
 
 function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
   return roots.some((root) => isContainedPath(root, candidate));
+}
+
+/**
+ * Go parity (`apps/cli-go/pkg/function/deploy.go:251-284`, via
+ * `afero.IOFS.Open` → `fs.ValidPath`): `writeForm`'s `addFile` opens every
+ * uploaded path through an `fs.FS`, which rejects any path containing a `..`
+ * element before the read (and thus the upload) happens. A workdir≠git-root
+ * layout can otherwise produce a multipart `File` name like
+ * `../packages/shared/src/index.ts` that escapes the anchor dir — reject it
+ * the same way Go does, before any upload is attempted.
+ */
+function hasParentPathSegment(relativePath: string) {
+  return toSlash(relativePath)
+    .split("/")
+    .some((segment) => segment === "..");
 }
 
 async function realpathIfExists(pathname: string) {
@@ -890,6 +922,7 @@ async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: 
 
 async function writeSourceDeployForm(
   sourceRoot: string,
+  workdir: string,
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
   outputRaw: (text: string) => Effect.Effect<void, never>,
@@ -905,7 +938,13 @@ async function writeSourceDeployForm(
       return;
     }
     uploadedAssets.add(realPathname);
-    const relativePath = toApiRelativePath(sourceRoot, pathname);
+    // Uploaded file names are anchored at the workdir like Go's `toRelPath`
+    // (`apps/cli-go/pkg/function/deploy.go:94-103`, relative to `os.Getwd()`),
+    // NOT at `sourceRoot` — see the CLI-1985 note in `deployViaApi`.
+    const relativePath = toApiRelativePath(workdir, pathname);
+    if (hasParentPathSegment(relativePath)) {
+      throw new Error(`failed to read file: open ${relativePath}: invalid argument`);
+    }
     await Effect.runPromise(outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`));
     form.append("file", new File([contents], relativePath));
   };
@@ -952,7 +991,7 @@ async function writeSourceDeployForm(
         importMap,
         pathname,
         importMapAllowedRoots,
-        sourceRoot,
+        workdir,
         uploadImportMapTargetAsset,
         async (message) => {
           await Effect.runPromise(outputRaw(message));
@@ -1006,7 +1045,7 @@ async function writeSourceDeployForm(
     importMap,
     config.entrypoint,
     [realSourceRoot],
-    sourceRoot,
+    workdir,
     uploadAsset,
     async (message) => {
       await Effect.runPromise(outputRaw(message));
@@ -1017,8 +1056,14 @@ async function writeSourceDeployForm(
   return form;
 }
 
+/**
+ * Server-recorded metadata paths are anchored at the workdir, matching Go's
+ * `toRelPath` (`apps/cli-go/pkg/function/deploy.go:42-57,94-103`): relative to
+ * `os.Getwd()` (the Go CLI chdirs to the workdir), forward slashes via
+ * `filepath.ToSlash` — see the CLI-1985 note in `deployViaApi`.
+ */
 function createSourceMetadata(
-  sourceRoot: string,
+  workdir: string,
   config: ResolvedDeployFunctionConfig,
   remote?: RemoteFunction,
 ): SourceDeployMetadata {
@@ -1026,10 +1071,10 @@ function createSourceMetadata(
   return {
     name: config.slug,
     ...(verifyJwt === undefined ? {} : { verify_jwt: verifyJwt }),
-    entrypoint_path: toApiRelativePath(sourceRoot, config.entrypoint),
+    entrypoint_path: toApiRelativePath(workdir, config.entrypoint),
     import_map_path:
-      config.importMap.length > 0 ? toApiRelativePath(sourceRoot, config.importMap) : "",
-    static_patterns: config.staticFiles.map((pathname) => toApiRelativePath(sourceRoot, pathname)),
+      config.importMap.length > 0 ? toApiRelativePath(workdir, config.importMap) : "",
+    static_patterns: config.staticFiles.map((pathname) => toApiRelativePath(workdir, pathname)),
   };
 }
 
@@ -1342,9 +1387,13 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   config: ResolvedDeployFunctionConfig,
   dockerNetworkId?: string,
   verbose = false,
+  styleEmphasis: (text: string) => string = (text) => text,
 ) {
   const output = yield* Output;
-  yield* output.raw(`Bundling Function: ${config.slug}\n`, "stderr");
+  // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
+  // (`internal/functions/deploy/bundle.go:30`) — the legacy handler injects
+  // the bold styling via `styleEmphasis`; next stays plain.
+  yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
   const outputRoot = resolve(functionsDir, "..", ".temp");
   yield* Effect.tryPromise(() => mkdir(outputRoot, { recursive: true }));
@@ -1545,6 +1594,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   sourceRoot: string,
+  workdir: string,
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
   bundleOnly: boolean,
@@ -1552,7 +1602,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   const output = yield* Output;
   const files = yield* Effect.tryPromise({
     try: async () => {
-      const form = await writeSourceDeployForm(sourceRoot, config, metadata, (text) =>
+      const form = await writeSourceDeployForm(sourceRoot, workdir, config, metadata, (text) =>
         output.raw(text, "stderr"),
       );
       return form.getAll("file").flatMap((part) => (part instanceof Blob ? [part] : []));
@@ -1940,6 +1990,18 @@ const deployViaApi = Effect.fnUntraced(function* (
   jobs: number,
 ) {
   const output = yield* Output;
+  // CLI-1985: uploaded file names and the server-recorded metadata paths
+  // (`entrypoint_path`, `import_map_path`, `static_patterns`) are anchored at the
+  // workdir (`projectRoot`), matching the pinned Go CLI's `toRelPath`, which is
+  // relative to `os.Getwd()` after the CLI chdirs to the workdir
+  // (`apps/cli-go/pkg/function/deploy.go:94-103`, `internal/utils/misc.go:238`).
+  // Upstream Go never anchored deploy paths at the git root — that was a TS-only
+  // divergence introduced by #5755. The import-walk *boundary* (which files may
+  // be uploaded at all) intentionally stays at the nearest git root: the boundary
+  // itself is a TS-only safeguard with no Go equivalent (Go's `WalkImportPaths`
+  // uploads any reachable import unbounded; #5755 widened the TS boundary from
+  // the workdir to the git root so monorepo imports outside the workdir deploy).
+  // Such files upload with Go-`toRelPath`-style `../`-relative names.
   const sourceRoot = yield* Effect.tryPromise({
     try: () => resolveFunctionsSourceRoot(projectRoot),
     catch: (error) => (error instanceof Error ? error : new Error(String(error))),
@@ -1965,8 +2027,9 @@ const deployViaApi = Effect.fnUntraced(function* (
       api,
       projectRef,
       sourceRoot,
+      projectRoot,
       config,
-      createSourceMetadata(sourceRoot, config, remoteBySlug.get(config.slug)),
+      createSourceMetadata(projectRoot, config, remoteBySlug.get(config.slug)),
       false,
     );
     return;
@@ -1986,8 +2049,9 @@ const deployViaApi = Effect.fnUntraced(function* (
             api,
             projectRef,
             sourceRoot,
+            projectRoot,
             config,
-            createSourceMetadata(sourceRoot, config, remoteBySlug.get(config.slug)),
+            createSourceMetadata(projectRoot, config, remoteBySlug.get(config.slug)),
             true,
           ),
         );
@@ -2036,6 +2100,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
   api: ApiClient,
   dockerNetworkId?: string,
   verbose = false,
+  styleEmphasis: (text: string) => string = (text) => text,
 ) {
   const output = yield* Output;
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
@@ -2055,6 +2120,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
       config,
       dockerNetworkId,
       verbose,
+      styleEmphasis,
     );
     const current = remoteBySlug.get(config.slug);
     if (
@@ -2143,6 +2209,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
 ) {
   return Effect.gen(function* () {
     const output = yield* Output;
+    const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
+    const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
     const commandPath = ["functions", "deploy"] as const;
     // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — mirrors
     // cobra's `Changed()`-driven `MarkFlagsMutuallyExclusive`, so it's only used for the
@@ -2231,7 +2299,16 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     if (slugs.length === 0) {
       return yield* Effect.fail(
         new NoFunctionsToDeployError({
-          message: `No Functions specified or found in ${SUPABASE_FUNCTIONS_DIR}`,
+          // Go: `errors.Errorf("No Functions specified or found in %s",
+          // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`) —
+          // the legacy handler injects the bold styling via `styleEmphasis`. Styling is
+          // text-mode only: in `--output-format json`/`stream-json` this message lands in
+          // the structured error payload, which must stay free of ANSI escapes.
+          message: `No Functions specified or found in ${
+            output.format === "text"
+              ? styleEmphasis(SUPABASE_FUNCTIONS_DIR)
+              : SUPABASE_FUNCTIONS_DIR
+          }`,
         }),
       );
     }
@@ -2289,6 +2366,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             dependencies.api,
             explicitStringFlag(dependencies.rawArgs, "network-id"),
             debugEnabled,
+            styleEmphasis,
           );
           return true;
         })
@@ -2299,7 +2377,15 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     }
 
     if (output.format === "text") {
-      yield* output.raw(`Deployed Functions on project ${projectRef}: ${uniqueSlugs.join(", ")}\n`);
+      // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
+      // utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))`
+      // (`internal/functions/deploy/deploy.go:70`) — the legacy handler injects
+      // the aqua styling via `styleIdentifier` (stdout-bound, so its TTY gate
+      // must check stdout); next stays plain. Go joins the raw `slugs` list, not
+      // the deduped set, so `functions deploy foo foo` prints "foo, foo".
+      yield* output.raw(
+        `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
+      );
       yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
     } else {
       yield* output.success("Deployed Functions.", {
