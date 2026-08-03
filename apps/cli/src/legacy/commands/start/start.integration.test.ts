@@ -2808,6 +2808,7 @@ content_path = "./templates/custom_notice.html"
             expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
           }
           expect(out.stderrText).not.toContain("Started");
+          expect(out.stderrText).not.toContain("Local dev security notice");
           expect(out.stdoutText).toBe("");
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
