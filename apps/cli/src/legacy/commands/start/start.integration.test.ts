@@ -1506,7 +1506,7 @@ describe("legacy start integration", () => {
       "brings up the stack with every optional config.toml section populated (bigquery analytics, session pool mode, passkey/webauthn, external provider, SMTP, email templates)",
       () => {
         // Exercises the config-document-shape branches `start.handler.ts` itself owns
-        // (`resolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
+        // (`legacyResolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
         // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass, none of
         // which interact with each other. A malformed `db.health_timeout` is exercised
         // separately below (it now hard-fails the whole command, matching Go, so it can't
@@ -1989,8 +1989,8 @@ content_path = "./templates/custom_notice.html"
       () => {
         // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
         // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
-        // `resolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw reasoning as
-        // the web3/oauth_server tests above, except the malformed value lives directly in
+        // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw
+        // reasoning as the web3/oauth_server tests above, except the malformed value lives directly in
         // config.toml here since `@supabase/config` never sees (or rejects) this unmodeled field —
         // there's no schema-level bool coercion to catch it first.
         const { layer, child } = setup({
@@ -2726,8 +2726,16 @@ content_path = "./templates/custom_notice.html"
         const pullAttempts = new Map<string, number>();
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
-          // Force every image through the pull path instead of the "already cached" shortcut.
-          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+          // Force every image through the pull path instead of the "already cached" shortcut —
+          // a confirmed "no such image" (not merely a non-zero exit) is what tells
+          // `hasLocalImage` this is a genuine cache miss rather than some other inspect
+          // failure, which now fails fast instead of falling through to a pull.
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: [`Error response from daemon: No such image: ${args[2]}`],
+            };
+          }
           if (args[0] === "pull") {
             const image = args[1] ?? "";
             if (image.includes("kong")) {
@@ -2765,7 +2773,12 @@ content_path = "./templates/custom_notice.html"
         // unlike a failure inside `bringUp` itself (see the "rollback" describe block below).
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
-          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: [`Error response from daemon: No such image: ${args[2]}`],
+            };
+          }
           if (args[0] === "pull") {
             const image = args[1] ?? "";
             if (image.includes("kong")) {
@@ -3478,6 +3491,32 @@ content_path = "./templates/custom_notice.html"
         const networkFlagIndex = kongCreate?.args.indexOf("--network") ?? -1;
         expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
       }).pipe(Effect.provide(layer));
+    });
+
+    it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () => {
+      // Go's `network-id` is a persistent flag bound to viper under `SetEnvPrefix("SUPABASE")`
+      // + `AutomaticEnv()` (`apps/cli-go/cmd/root.go:318-334`), and `DockerStart` reads
+      // `viper.GetString("network-id")` fresh at its own call site — well after `Config.Load`'s
+      // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is effective when the flag
+      // itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
+      const previous = process.env["SUPABASE_NETWORK_ID"];
+      process.env["SUPABASE_NETWORK_ID"] = "env-net";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const networkCreate = child.spawned.find(
+          (s) => s.args[0] === "network" && s.args[1] === "create",
+        );
+        expect(networkCreate?.args.at(-1)).toBe("env-net");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+            else process.env["SUPABASE_NETWORK_ID"] = previous;
+          }),
+        ),
+      );
     });
   });
 

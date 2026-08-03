@@ -33,7 +33,7 @@ import type { GlobalFlag } from "effect/unstable/cli";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { legacyResolveExperimentalWithProjectEnv } from "../../../shared/legacy/global-flags.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
-import { localDbContainerId, localNetworkId } from "../legacy-docker-ids.ts";
+import { localDbContainerId, legacyResolveNetworkId } from "../legacy-docker-ids.ts";
 import { legacyIsBitbucketPipeline } from "../legacy-bitbucket-pipeline.ts";
 import {
   legacyResolveAuthExternalUrl,
@@ -102,6 +102,7 @@ export const legacyBuildLocalDbContainerInputs = (
   workdir: string,
   networkIdFlag: Option.Option<string>,
   platform: string,
+  debug: boolean,
 ): Effect.Effect<
   LegacyLocalDbContainerInputs,
   LegacyDbConfigLoadError,
@@ -140,10 +141,16 @@ export const legacyBuildLocalDbContainerInputs = (
 
     // Go's `DockerStart` forces every container's network mode (and the network it creates) to
     // `--network-id` when set, ahead of the generated `supabase_network_<project>` fallback
-    // (`docker.go:379-383`).
-    const networkId = Option.isSome(networkIdFlag)
-      ? networkIdFlag.value
-      : localNetworkId(projectId);
+    // (`docker.go:379-383`) — and `--network-id` falls back to the `SUPABASE_NETWORK_ID`
+    // shell/project-dotenv env var when the flag itself is omitted, via the same
+    // `viper`/`AutomaticEnv` mechanism as `SUPABASE_YES`/`SUPABASE_EXPERIMENTAL` (review:
+    // PRRT_kwDOErm0O86VlqIL; see {@link legacyResolveNetworkId}'s doc comment for why this is NOT
+    // the same freeze-at-package-init shape as `utils.Config.Hostname`).
+    const networkId = legacyResolveNetworkId(
+      Option.getOrUndefined(networkIdFlag),
+      projectId,
+      projectEnvValues,
+    );
     // Go's `DockerStart` unconditionally appends the Linux-only `host.docker.internal:host-gateway`
     // extra host for every container it starts (`docker_linux.go`; empty on darwin/windows, where
     // Docker Desktop already resolves that hostname).
@@ -230,6 +237,7 @@ export const legacyBuildLocalDbContainerInputs = (
       authEnabledForSetup: bootstrapConfig.authEnabledForSetup,
       serviceVersionOverrides: bootstrapConfig.serviceVersionOverrides,
       projectEnvValues,
+      debug,
     };
 
     return {

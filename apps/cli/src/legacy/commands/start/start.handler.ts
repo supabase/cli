@@ -1,8 +1,4 @@
-import {
-  inferFunctionsManifest,
-  resolveProjectSubtree,
-  type ProjectConfig,
-} from "@supabase/config";
+import { inferFunctionsManifest, resolveProjectSubtree } from "@supabase/config";
 import { join } from "node:path";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -50,10 +46,10 @@ import {
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
 import {
   legacyCliProjectFilterValue,
+  legacyResolveNetworkId,
   legacyServiceContainerIds,
   legacyServiceContainerName,
   localDbContainerId,
-  localNetworkId,
 } from "../../shared/legacy-docker-ids.ts";
 import {
   legacyInspectContainerState,
@@ -72,7 +68,6 @@ import {
   legacyEnvOverridePoolMode,
   legacyEnvOverridePort,
   legacyEnvOverrideUint,
-  legacyRawUnmodeledBool,
   legacyResolveAuthCaptcha,
   legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
@@ -83,9 +78,13 @@ import {
   legacyResolveConfiguredSigningKeys,
   legacyResolveAuthExternalUrl,
   legacyResolveDbSettingsEnvOverrides,
+  legacyResolveGotrueOAuthServer,
+  legacyResolveGotruePasskeyWebauthn,
+  legacyResolveGotrueRateLimit as resolveGotrueRateLimit,
+  legacyResolveGotrueSessions as resolveGotrueSessions,
+  legacyResolveGotrueWeb3,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
-  legacyStrToArr,
   type LegacyLocalConfigValues,
   type LegacyResolvedAuthEmail,
 } from "../../shared/legacy-local-config-values.ts";
@@ -231,237 +230,6 @@ function wrapConfigOverride<T>(
 }
 
 /**
- * Go's `appendGotruePasskeyEnv`/`Auth.Passkey`/`Auth.Webauthn` presence gate
- * (`start.go:1427-1440`, `pkg/config/config.go:1117-1134`): `@supabase/config`
- * has no `auth.passkey`/`auth.webauthn` schema fields at all, so presence and
- * every field must come from the raw, pre-schema TOML document instead — same
- * document-based approach `legacy-local-config-values.ts` already uses for
- * these two sections.
- */
-/**
- * `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other
- * nested field once `[auth.passkey]`/`[auth.webauthn]` are present in
- * config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
- * so `SUPABASE_AUTH_PASSKEY_ENABLED`/`SUPABASE_AUTH_WEBAUTHN_{RP_ID,
- * RP_DISPLAY_NAME,RP_ORIGINS}` overrides apply before `appendGotruePasskeyEnv`
- * (`start.go:1427-1436`) builds GoTrue's env — same reasoning, and same
- * presence-gating (an absent section is never synthesized from an env
- * override alone), as `legacy-local-config-values.ts`'s identical
- * `Config.Validate`-parity resolution for this raw-document pair.
- * `rp_display_name` has no validation-path precedent (Go's `Config.Validate`
- * never checks it), but GoTrue's env does consume it, so it gets the same
- * treatment here.
- */
-function resolveGotruePasskeyWebauthn(
-  document: Readonly<Record<string, unknown>> | undefined,
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): {
-  readonly passkeyEnabled: boolean | undefined;
-  readonly webauthn:
-    | {
-        readonly rpId: string;
-        readonly rpDisplayName: string;
-        readonly rpOrigins: ReadonlyArray<string>;
-      }
-    | undefined;
-} {
-  const authDoc = asRecord(document?.["auth"]);
-  const passkeyDoc = asRecord(authDoc?.["passkey"]);
-  const webauthnDoc = asRecord(authDoc?.["webauthn"]);
-  const passkeyEnabled =
-    passkeyDoc !== undefined
-      ? legacyEnvOverrideBool(
-          "SUPABASE_AUTH_PASSKEY_ENABLED",
-          legacyRawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
-          "auth.passkey.enabled",
-          projectEnvValues,
-        )
-      : undefined;
-  const rpOriginsOverride =
-    webauthnDoc !== undefined
-      ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
-      : undefined;
-  const webauthn =
-    webauthnDoc !== undefined
-      ? {
-          rpId:
-            legacyEnvOverride(
-              "SUPABASE_AUTH_WEBAUTHN_RP_ID",
-              typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
-              projectEnvValues,
-            ) ?? "",
-          rpDisplayName:
-            legacyEnvOverride(
-              "SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME",
-              typeof webauthnDoc["rp_display_name"] === "string"
-                ? webauthnDoc["rp_display_name"]
-                : "",
-              projectEnvValues,
-            ) ?? "",
-          // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")`
-          // unconditionally to every `[]string`-typed field (`config.go:775-784`) — a raw or
-          // `env(...)`-resolved `rp_origins` string (this section has no `@supabase/config`
-          // schema at all) is comma-split, not silently dropped to `[]`.
-          rpOrigins: (() => {
-            if (rpOriginsOverride !== undefined) return legacyStrToArr(rpOriginsOverride);
-            const raw = webauthnDoc["rp_origins"];
-            if (Array.isArray(raw)) {
-              return raw.filter((item): item is string => typeof item === "string");
-            }
-            return typeof raw === "string" ? legacyStrToArr(raw) : [];
-          })(),
-        }
-      : undefined;
-  return { passkeyEnabled, webauthn };
-}
-
-/**
- * Go's `Auth.Sessions` (`pkg/config/auth.go:330-333`) is a value-typed struct,
- * always merged with a Viper default (empty durations) regardless of
- * `[auth.sessions]` presence in config.toml — so
- * `SUPABASE_AUTH_SESSIONS_{TIMEBOX,INACTIVITY_TIMEOUT}` overrides always apply
- * before `start.go` builds `GOTRUE_SESSIONS_*`, no raw-document presence gate
- * needed (same reasoning as {@link resolveGotrueRateLimit}/mfa below).
- * `@supabase/config`'s `sessions` schema is `Schema.optionalKey` at the
- * `auth` level though (`config.auth.sessions` can be `undefined`), unlike
- * Go's always-present struct — an env override must still be able to
- * introduce a value even when the section was never in config.toml at all,
- * matching Go's real behavior.
- */
-function resolveGotrueSessions(
-  sessions: ProjectConfig["auth"]["sessions"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["sessions"] {
-  const timebox = legacyEnvOverride(
-    "SUPABASE_AUTH_SESSIONS_TIMEBOX",
-    sessions?.timebox,
-    projectEnvValues,
-  );
-  const inactivityTimeout = legacyEnvOverride(
-    "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
-    sessions?.inactivity_timeout,
-    projectEnvValues,
-  );
-  if (timebox === undefined && inactivityTimeout === undefined) return sessions;
-  return { timebox, inactivity_timeout: inactivityTimeout };
-}
-
-/**
- * Go's `Auth.RateLimit` (`pkg/config/auth.go:200-208`) is a value-typed
- * struct of plain `uint`s, always Viper-bound regardless of `[auth.rate_
- * limit]` presence, so every `SUPABASE_AUTH_RATE_LIMIT_*` override applies
- * before `start.go` builds `GOTRUE_RATE_LIMIT_*` — no raw-document presence
- * gate needed, matching the existing `db.pooler`/SMS numeric-field precedent.
- */
-function resolveGotrueRateLimit(
-  rateLimit: ProjectConfig["auth"]["rate_limit"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["rate_limit"] {
-  return {
-    anonymous_users: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
-      "auth.rate_limit.anonymous_users",
-      rateLimit.anonymous_users,
-      projectEnvValues,
-    ),
-    token_refresh: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
-      "auth.rate_limit.token_refresh",
-      rateLimit.token_refresh,
-      projectEnvValues,
-    ),
-    sign_in_sign_ups: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
-      "auth.rate_limit.sign_in_sign_ups",
-      rateLimit.sign_in_sign_ups,
-      projectEnvValues,
-    ),
-    token_verifications: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
-      "auth.rate_limit.token_verifications",
-      rateLimit.token_verifications,
-      projectEnvValues,
-    ),
-    email_sent: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
-      "auth.rate_limit.email_sent",
-      rateLimit.email_sent,
-      projectEnvValues,
-    ),
-    sms_sent: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
-      "auth.rate_limit.sms_sent",
-      rateLimit.sms_sent,
-      projectEnvValues,
-    ),
-    web3: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_WEB3",
-      "auth.rate_limit.web3",
-      rateLimit.web3,
-      projectEnvValues,
-    ),
-  };
-}
-
-/**
- * Go's `Auth.Web3` (`pkg/config/auth.go:379-382`) is a value-typed struct —
- * same no-presence-gate reasoning as {@link resolveGotrueRateLimit}.
- */
-function resolveGotrueWeb3(
-  web3: ProjectConfig["auth"]["web3"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["web3"] {
-  return {
-    solana: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
-        web3.solana.enabled,
-        "auth.web3.solana.enabled",
-        projectEnvValues,
-      ),
-    },
-    ethereum: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_WEB3_ETHEREUM_ENABLED",
-        web3.ethereum.enabled,
-        "auth.web3.ethereum.enabled",
-        projectEnvValues,
-      ),
-    },
-  };
-}
-
-/**
- * Go's `Auth.OAuthServer` (`pkg/config/auth.go:394-398`) is a value-typed
- * struct — same no-presence-gate reasoning as {@link resolveGotrueRateLimit}.
- */
-function resolveGotrueOAuthServer(
-  oauthServer: ProjectConfig["auth"]["oauth_server"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["oauth_server"] {
-  return {
-    enabled: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
-      oauthServer.enabled,
-      "auth.oauth_server.enabled",
-      projectEnvValues,
-    ),
-    authorization_url_path:
-      legacyEnvOverride(
-        "SUPABASE_AUTH_OAUTH_SERVER_AUTHORIZATION_URL_PATH",
-        oauthServer.authorization_url_path,
-        projectEnvValues,
-      ) ?? oauthServer.authorization_url_path,
-    allow_dynamic_registration: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION",
-      oauthServer.allow_dynamic_registration,
-      "auth.oauth_server.allow_dynamic_registration",
-      projectEnvValues,
-    ),
-  };
-}
-
-/**
  * Every value {@link legacyBuildGotrueContainerSpec} needs from `config`/
  * `values`, minus `dbHost`/`dbPassword` (which that builder derives itself
  * from `projectId`/`dbUrl`). See this module's header for the `@supabase/
@@ -542,7 +310,10 @@ function resolveGotrueEnvInput(params: {
         }
       : undefined;
 
-  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document, projectEnvValues);
+  const { passkeyEnabled, webauthn } = legacyResolveGotruePasskeyWebauthn(
+    document,
+    projectEnvValues,
+  );
   const externalProviders = legacyResolveAuthExternalProviders(
     asRecord(document?.["auth"]),
     config.auth.external,
@@ -573,8 +344,8 @@ function resolveGotrueEnvInput(params: {
     sessions: resolveGotrueSessions(config.auth.sessions, projectEnvValues),
     mfa: legacyResolveAuthMfa(config.auth.mfa, projectEnvValues),
     rateLimit: resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
-    web3: resolveGotrueWeb3(config.auth.web3, projectEnvValues),
-    oauthServer: resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+    web3: legacyResolveGotrueWeb3(config.auth.web3, projectEnvValues),
+    oauthServer: legacyResolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     hooks: legacyResolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
     captcha: legacyResolveAuthCaptcha(
       asRecord(document?.["auth"]),
@@ -785,7 +556,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `auth.web3.*.enabled`/`auth.oauth_server.{enabled,allow_dynamic_registration}` (plain
     // `bool`s) are all decoded unconditionally in Go's single `Config.Load` pass
     // (`pkg/config/auth.go:200-208,371-382,394-398`), regardless of `auth.enabled`/`--exclude
-    // gotrue`. `resolveGotrueRateLimit`/`resolveGotrueWeb3`/`resolveGotrueOAuthServer` already
+    // gotrue`. `resolveGotrueRateLimit`/`legacyResolveGotrueWeb3`/`legacyResolveGotrueOAuthServer` already
     // throw internally on a bad override, so — unlike the duration fields above — calling each
     // whole (pure) function once here is simpler than re-deriving every field individually;
     // `resolveGotrueEnvInput` below re-resolves them a second time for the real container build,
@@ -795,10 +566,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.web3", () =>
-      resolveGotrueWeb3(config.auth.web3, projectEnvValues),
+      legacyResolveGotrueWeb3(config.auth.web3, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.oauth_server", () =>
-      resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+      legacyResolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     );
     // Same gap for `auth.passkey.enabled`/`auth.webauthn.*` and per-provider `auth.external.
     // <name>.{enabled,skip_nonce_check,email_optional}` — Go decodes these raw (unmodeled by
@@ -809,7 +580,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // itself gated on auth being enabled and gotrue not excluded — so calling each here, once,
     // eagerly and discarding the result, closes the same "validates but doesn't reach it" gap.
     yield* wrapConfigOverride("auth.passkey", () =>
-      resolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
+      legacyResolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.external", () =>
       legacyResolveAuthExternalProviders(
@@ -1137,11 +908,18 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
     // Go's `DockerStart` forces every container's network mode (and the
     // network it creates) to `--network-id` when set, ahead of the generated
-    // `supabase_network_<project>` fallback (`docker.go:379-383`).
+    // `supabase_network_<project>` fallback (`docker.go:379-383`) — and `--network-id` falls
+    // back to the `SUPABASE_NETWORK_ID` shell/project-dotenv env var when the flag itself is
+    // omitted, via the same `viper`/`AutomaticEnv` mechanism as `SUPABASE_YES`/
+    // `SUPABASE_EXPERIMENTAL` (review: PRRT_kwDOErm0O86VlqIL). See
+    // {@link legacyResolveNetworkId}'s doc comment (shared with `db start`, which computes this
+    // identically).
     const networkIdFlag = yield* LegacyNetworkIdFlag;
-    const networkId = Option.isSome(networkIdFlag)
-      ? networkIdFlag.value
-      : localNetworkId(projectId);
+    const networkId = legacyResolveNetworkId(
+      Option.getOrUndefined(networkIdFlag),
+      projectId,
+      projectEnvValues,
+    );
     // Go's `DockerStart` unconditionally appends the Linux-only
     // `host.docker.internal:host-gateway` extra host for every container it
     // starts (`docker_linux.go`; empty on darwin/windows, where Docker
@@ -1776,6 +1554,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // falls through to that SAME unconditional tail (`start.go:74-87`) rather
     // than returning early from the whole command.
     const bringUp = Effect.gen(function* () {
+      // `--debug` — threaded into `setup.debug` below so a failed fresh-volume
+      // Realtime/Storage/Auth migrate job (see `db-setup.ts`'s `legacyRunStartMigrateJob`
+      // doc comment) tees its own stderr, matching Go's `initSchema15` passing
+      // `utils.GetDebugLogger()` as that job's stderr writer (`start.go:349-353`).
+      const bringUpDebug = yield* LegacyDebugFlag;
+
       // Runs the exact Go `StartDatabase` sequence (network -> volume probe -> container
       // create+start -> health wait -> fresh-volume setup -> `_current_branch`) — shared
       // with `db start`'s own native container bootstrap, see `legacyStartDatabase`'s own
@@ -1883,6 +1667,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           authEnabledForSetup,
           serviceVersionOverrides,
           projectEnvValues,
+          debug: bringUpDebug,
         },
         onFreshVolumeResolved: (resolved) => {
           isFreshVolume = resolved;

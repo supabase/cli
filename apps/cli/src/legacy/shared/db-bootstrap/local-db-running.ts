@@ -61,8 +61,14 @@ export function legacyIsLocalDbRunning(
 ): Effect.Effect<boolean, LegacyLocalDbRunningError> {
   return Effect.scoped(
     Effect.gen(function* () {
+      // `warnOnUnresolvedEnv: false` — this doc comment's own `resolveDbToml` note:
+      // the caller has already run Go's `LoadConfig` validation (and, if the config
+      // has an OrioleDB project with an unresolved S3 `env(VAR)`, already printed
+      // Go's single `assertEnvLoaded` WARN) before reaching this probe. Re-printing
+      // it here would diverge from Go's exactly-once `flags.LoadConfig` call.
       const tomlProjectId = yield* legacyReadDbToml(fs, path, workdir, undefined, {
         validate: false,
+        warnOnUnresolvedEnv: false,
       }).pipe(
         Effect.map((toml) => toml.projectId),
         Effect.orElseSucceed(() => Option.none<string>()),

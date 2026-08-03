@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { Data, Effect, FileSystem, Path } from "effect";
+import { Data, Effect, FileSystem, Path, Result } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
-import { legacyGlobPattern, legacyResolveUnderWorkdir } from "./legacy-glob.ts";
+import { legacyGlobPattern, legacyResolveUnderWorkdir, legacyWalkSqlFiles } from "./legacy-glob.ts";
 import {
   legacyCreateSeedTable,
   legacyReadSeedTable,
@@ -34,7 +34,22 @@ interface LegacyPendingSeed {
   readonly dirty: boolean;
 }
 
-/** Go's `config.Glob.Files`: glob each pattern, sort, dedup; warn on bad/no-match. */
+/**
+ * Port of Go's `Glob.SQLFiles` (`pkg/config/config.go:122-128` → `files`/`walkMatchedDir`) as
+ * called by `GetPendingSeeds` (`locals.SQLFiles(fsys)`, `pkg/migration/seed.go:35`) — the SAME
+ * method `db.migrations.schema_paths` resolves through (`legacyResolveSchemaPathFiles` in
+ * `legacy-migrate-and-seed.ts`), not the plainer `Glob.Files`: each pattern is glob-matched via
+ * {@link legacyGlobPattern}, and a matched DIRECTORY is expanded to its sorted, regular `.sql`
+ * files, recursively (via the shared {@link legacyWalkSqlFiles}), rather than kept as-is — a
+ * plain glob match (e.g. `[db.seed] sql_paths = ["./seeds"]` with no metacharacters) previously
+ * resolved a directory entry to itself, which then failed reading it as a seed file. A matched
+ * plain file is kept as-is, even a non-`.sql` one, matching `expandDir`'s `IsDir()`-only gate.
+ *
+ * Unlike `legacyResolveSchemaPathFiles`, a bad pattern, an empty match, or a directory-walk
+ * failure is NEVER a hard failure here — `GetPendingSeeds` only ever warns
+ * (`fmt.Fprintln(os.Stderr, "WARN:", err)`) and proceeds with whatever it already collected,
+ * even if that ends up empty (`len(locals) == 0` just means no pending seeds, not an error).
+ */
 const resolveSeedFiles = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -57,14 +72,39 @@ const resolveSeedFiles = (
       const matches = [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort();
       if (matches.length === 0) unmatched.push(`no files matched pattern: ${pattern}`);
       for (const match of matches) {
-        if (!seen.has(match)) {
-          seen.add(match);
-          result.push(match);
+        const absMatch = legacyResolveUnderWorkdir(path, workdir, match);
+        const statResult = yield* fs.stat(absMatch).pipe(Effect.result);
+        if (Result.isFailure(statResult)) {
+          unmatched.push(`failed to stat matched file: ${match}`);
+          continue;
+        }
+        if (statResult.success.type !== "Directory") {
+          if (!seen.has(match)) {
+            seen.add(match);
+            result.push(match);
+          }
+          continue;
+        }
+        // Go's `walkMatchedDir`: recursively list the matched directory, keep only regular
+        // `.sql` files, sorted (a global sort over the full relative-to-fsys-root path, not
+        // per-directory — matches `sort.Strings(files)` running once after the whole walk).
+        const namesResult = yield* legacyWalkSqlFiles(fs, absMatch, "").pipe(Effect.result);
+        if (Result.isFailure(namesResult)) {
+          unmatched.push(`failed to walk matched directory: ${match}`);
+          continue;
+        }
+        const sqlRelative = [...namesResult.success].sort();
+        for (const relative of sqlRelative) {
+          const relativeToWorkdir = `${match}/${relative}`;
+          if (!seen.has(relativeToWorkdir)) {
+            seen.add(relativeToWorkdir);
+            result.push(relativeToWorkdir);
+          }
         }
       }
     }
-    // Go collects all glob errors into one `errors.Join` and prints a single
-    // `WARN: <joined>` line (`config.Glob.Files` → `seed.go:37`), not one per pattern.
+    // Go collects all glob/walk errors into one `errors.Join` and prints a single
+    // `WARN: <joined>` line (`Glob.SQLFiles` → `seed.go:35-36`), not one per pattern.
     if (unmatched.length > 0) yield* output.raw(`WARN: ${unmatched.join("\n")}\n`, "stderr");
     return result;
   });

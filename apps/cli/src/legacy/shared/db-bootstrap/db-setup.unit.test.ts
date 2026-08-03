@@ -5,7 +5,8 @@ import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
@@ -62,19 +63,57 @@ function fakeSession() {
 
 function mockDockerRun(opts: { exitCode?: number } = {}) {
   const runs: Array<LegacyDockerRunOpts> = [];
+  const captureOptsCalls: Array<{ readonly teeStderr?: boolean } | undefined> = [];
   const layer = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.succeed(opts.exitCode ?? 0),
-    runCapture: (runOpts) => {
+    runCapture: (runOpts, captureOpts) => {
       runs.push(runOpts);
+      captureOptsCalls.push(captureOpts);
       return Effect.succeed({
         exitCode: opts.exitCode ?? 0,
         stdout: new Uint8Array(),
         stderr: "",
       });
     },
-    runStream: () => Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" }),
+    // `legacyRunStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
+    // `runCapture`), matching Go's `io.Discard` writer for these one-shot jobs — this
+    // suite's `docker.runs`/`captureOptsCalls` assertions track THIS method's calls, not
+    // `runCapture`'s (which nothing under test still calls).
+    runStream: (runOpts, streamOpts) => {
+      runs.push(runOpts);
+      captureOptsCalls.push({ teeStderr: streamOpts.teeStderr });
+      return Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
+    },
   });
-  return { layer, runs };
+  return { layer, runs, captureOptsCalls };
+}
+
+/**
+ * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0 (image
+ * already cached) — feeds `legacyRunStartMigrateJob`'s own per-image `legacyEnsureImagesCached`
+ * resolve (see `db-setup.ts`), so every job's `image` resolves to the SAME raw string this
+ * suite's `baseInput` already asserts on, without needing a real Docker daemon.
+ */
+function mockAlwaysCachedSpawner(): ChildProcessSpawner.ChildProcessSpawner["Service"] {
+  return ChildProcessSpawner.make((_command) =>
+    Effect.gen(function* () {
+      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        exitCode: Deferred.await(exitDeferred),
+        isRunning: Effect.succeed(false),
+        stdin: Sink.drain,
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
 }
 
 function mockDockerRunFails() {
@@ -124,6 +163,8 @@ function baseInput(
       storage: "public.ecr.aws/supabase/storage-api:v1.0.0",
       auth: "public.ecr.aws/supabase/gotrue:v2.170.0",
     },
+    projectEnvValues: undefined,
+    debug: false,
     version: "",
     seedFlags: { noSeed: false, sqlPaths: [] },
     ...overrides,
@@ -138,7 +179,11 @@ const run = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* legacyStartSetupLocalDatabase({ ...input, fs, path });
+    return yield* legacyStartSetupLocalDatabase(mockAlwaysCachedSpawner(), {
+      ...input,
+      fs,
+      path,
+    });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -262,6 +307,33 @@ describe("legacyStartSetupLocalDatabase", () => {
     });
 
     it.effect(
+      "labels every one-shot job with the project's Docker labels, matching Go's DockerStart (review: Codex, PR #6022)",
+      () => {
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        // Default config: realtime, storage, and auth are all enabled — 3 jobs.
+        return run(
+          baseInput(workdir, session, { majorVersion: 15, projectId: "labeled-proj" }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            expect(docker.runs.length).toBe(3);
+            for (const job of docker.runs) {
+              expect(job.labels).toEqual({
+                "com.supabase.cli.project": "labeled-proj",
+                "com.docker.compose.project": "labeled-proj",
+              });
+            }
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
       "the realtime job's env matches `legacyBuildRealtimeEnv` on the internal db address + jwks",
       () => {
         const workdir = makeWorkdir();
@@ -360,6 +432,51 @@ describe("legacyStartSetupLocalDatabase", () => {
         );
       },
     );
+
+    it.effect(
+      "--debug tees every one-shot job's stderr, matching Go's utils.GetDebugLogger()",
+      () => {
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const config = decodeConfig({
+          realtime: { enabled: true },
+          storage: { enabled: false },
+          auth: { enabled: true },
+        });
+        return run(
+          baseInput(workdir, session, { majorVersion: 15, config, debug: true }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            expect(docker.runs.length).toBe(2);
+            expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect("without --debug, one-shot jobs run with teeStderr off", () => {
+      const workdir = makeWorkdir();
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
+      return run(
+        baseInput(workdir, session, { majorVersion: 15, config, debug: false }),
+        out,
+        docker,
+      ).pipe(
+        Effect.map(() => {
+          expect(docker.runs.length).toBe(1);
+          expect(docker.captureOptsCalls).toEqual([{ teeStderr: false }]);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
 
     it.effect("a non-zero exit from a one-shot job fails the whole pipeline", () => {
       const workdir = makeWorkdir();

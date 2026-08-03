@@ -98,6 +98,13 @@ interface LegacyDbTomlValues {
   readonly baseline: LegacyBaselineTomlConfig;
   /** `[db.migrations] enabled` (default true) — gates `up`/`down` migration apply. */
   readonly migrationsEnabled: boolean;
+  /**
+   * `[db.migrations] schema_paths`, default `[]` — resolved (supabase-prefixed when
+   * relative, Go's `path.Join`/`path.Clean`) and `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`
+   * env-overridable exactly like `seed.sqlPaths` below. Only consumed by the
+   * `--experimental` declarative-schema-files branch of `legacyMigrateAndSeed`.
+   */
+  readonly schemaPaths: ReadonlyArray<string>;
   /** `[db.seed]` enabled + supabase-prefixed `sql_paths` globs — used by `down`. */
   readonly seed: LegacyDbSeedTomlConfig;
   /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
@@ -174,6 +181,8 @@ const DEFAULT_SHADOW_PORT = 54320;
 const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
 const DEFAULT_API_SCHEMAS = ["public", "graphql_public"] as const;
+/** `[db.migrations] schema_paths` default — Go's `Glob` zero value (`pkg/config/db.go:101`). */
+const DEFAULT_SCHEMA_PATHS: ReadonlyArray<string> = [];
 /** `[edge_runtime] deno_version` default (`config.toml` template). 2 → the current edge-runtime image. */
 const DEFAULT_DENO_VERSION = 2;
 
@@ -283,6 +292,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.shadow_port",
   "db.major_version",
   "db.migrations.enabled",
+  "db.migrations.schema_paths",
   "db.seed.enabled",
   "db.seed.sql_paths",
   "auth.enabled",
@@ -516,11 +526,14 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
 }
 
 /**
- * Resolves a single seed `sql_paths` entry to Go's config-load form: a relative
- * pattern is joined under `supabase/` (Go's `path.Join`, `config.go:918-921`); an
- * absolute (or empty) pattern is returned verbatim. Used by the reader for
- * `[db.seed].sql_paths` and by `db reset` for its `--sql-paths` override (Go's
- * `resolveSeedSqlPaths`, `cmd/db.go`) so both feed the glob the same resolved paths.
+ * Resolves a single seed/schema-paths entry to Go's config-load form: a relative
+ * pattern is joined under `supabase/` (Go's `path.Join`, `config.go:918-921` for
+ * `db.seed.sql_paths`, `config.go:976-978` for `db.migrations.schema_paths` — both
+ * fields go through the identical `path.Join(builder.SupabaseDirPath, pattern)`
+ * call); an absolute (or empty) pattern is returned verbatim. Used by the reader for
+ * `[db.seed].sql_paths` and `[db.migrations].schema_paths`, and by `db reset` for its
+ * `--sql-paths` override (Go's `resolveSeedSqlPaths`, `cmd/db.go`) — all three feed
+ * the glob the same resolved paths.
  */
 export const legacyResolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
   pattern.length === 0 || pathSvc.isAbsolute(pattern)
@@ -909,6 +922,19 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // wrapper uses this as its fallback after a config-load failure, mirroring the
   // best-effort behavior the container-id seam relied on before.
   ignoreConfigFile = false,
+  // Internal: gates the `assertEnvLoaded` OrioleDB S3 stderr WARN below (review:
+  // Codex, PR #6022). Go's `flags.LoadConfig` runs exactly once per command
+  // invocation, so the warning prints at most once. `start`/`db start`'s
+  // fresh-volume bootstrap calls this reader more than once in a single
+  // invocation — once purely for its Go-parity validation side effect
+  // (`start.handler.ts:614`, `db/start/start.handler.ts:125`, both discard the
+  // result), then again internally wherever a resolved value is actually needed
+  // (`legacyIsLocalDbRunning`'s best-effort `projectId` probe,
+  // `legacyStartSetupLocalDatabase`'s own accepted duplicate config-load pass —
+  // see `db-bootstrap/db-setup.ts`'s header). Those internal re-reads pass
+  // `false` so the warning still fires exactly once per invocation, matching
+  // Go, instead of two or three times.
+  warnOnUnresolvedEnv = true,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const configPath = path.join(supabaseDir, "config.toml");
@@ -1181,7 +1207,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (typeof raw !== "string") continue;
       const expanded = legacyExpandEnv(raw, lookup);
       const unset = ENV_PATTERN.exec(expanded);
-      if (unset !== null) {
+      if (unset !== null && warnOnUnresolvedEnv) {
         process.stderr.write(`WARN: environment variable is unset: ${unset[1] ?? ""}\n`);
       }
     }
@@ -1437,8 +1463,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       // `StringToSliceHookFunc(",")` mapstructure hook as every other `[]string` field
       // (`config.go:775-784`) — a raw or `env(...)`-resolved comma-separated string must be
       // split, not treated as "missing" just because it isn't already a literal TOML array.
-      // Matches `start.handler.ts`'s own `resolveGotruePasskeyWebauthn`/`legacyStrToArr` handling
-      // of this identical field.
+      // Matches `legacy-local-config-values.ts`'s own `legacyResolveGotruePasskeyWebauthn`/
+      // `legacyStrToArr` handling of this identical field.
       const rpOrigins = Array.isArray(rpOriginsRaw)
         ? rpOriginsRaw
         : legacyStrToArr(str(webauthnRaw, "rp_origins"));
@@ -1804,6 +1830,30 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       ? undefined
       : envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
   );
+  // `[db.migrations] schema_paths` — Go default `[]`; overridable by
+  // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` via viper AutomaticEnv (`config.go:494-498`) — EXCEPT
+  // when the matched remote block explicitly set it, same tiering as every other field in
+  // `LEGACY_ENV_OVERRIDABLE_KEYS`. A STRING value (the env override, or a TOML string) is
+  // env-expanded then comma-split; a TOML ARRAY is expanded element-by-element with no
+  // re-split (`resolveStringSlice`, shared with `api.schemas`). Each resulting pattern is then
+  // resolved to Go's config-load form (`path.Join(builder.SupabaseDirPath, pattern)`,
+  // `config.go:976-978`) via the same `legacyResolveSeedSqlPath` helper `db.seed.sql_paths` uses
+  // below — this is the only current TS reader of this field that needs real, Go-path-cleaned
+  // filesystem paths, so resolution happens here rather than in the declarative-schema-files
+  // consumer (`legacy-migrate-and-seed.ts`), matching where `seedSqlPaths` is resolved.
+  const rawSchemaPaths =
+    (remoteOverrideKeys.has("db.migrations.schema_paths")
+      ? undefined
+      : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS")) ?? migrationsRaw?.["schema_paths"];
+  const schemaPathPatterns = resolveStringSlice(rawSchemaPaths, DEFAULT_SCHEMA_PATHS, lookup);
+  if (schemaPathPatterns === undefined) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({
+        message: "failed to parse config: invalid db.migrations.schema_paths.",
+      }),
+    );
+  }
+  const schemaPaths = schemaPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
 
   // `[db.seed]` — Go defaults enabled true, sql_paths ["seed.sql"]; relative
   // patterns are supabase-prefixed (`config.go:801-806`). `db.seed.enabled` is
@@ -1942,6 +1992,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       vaultNames,
     },
     migrationsEnabled,
+    schemaPaths,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote,
@@ -1964,7 +2015,12 @@ export const legacyCheckDbToml = (
   path: Path.Path,
   workdir: string,
   ref?: string,
-) => readDbTomlCore(fs, path, workdir, ref, false);
+  // `warnOnUnresolvedEnv: false` — see `readDbTomlCore`'s own doc comment — for a
+  // caller known to run AFTER an earlier, same-invocation `legacyCheckDbToml`/
+  // `legacyReadDbToml` call already printed the OrioleDB S3 `assertEnvLoaded` WARN
+  // once. Omit (default `true`) for every standalone command entry point.
+  opts?: { readonly warnOnUnresolvedEnv?: boolean },
+) => readDbTomlCore(fs, path, workdir, ref, false, opts?.warnOnUnresolvedEnv ?? true);
 
 /**
  * Read `config.toml`. Defaults to Go's validating behavior (identical to
@@ -1979,17 +2035,19 @@ export const legacyReadDbToml = (
   path: Path.Path,
   workdir: string,
   ref?: string,
-  opts?: { readonly validate?: boolean },
-) =>
-  opts?.validate === false
-    ? readDbTomlCore(fs, path, workdir, ref, false).pipe(
+  opts?: { readonly validate?: boolean; readonly warnOnUnresolvedEnv?: boolean },
+) => {
+  const warnOnUnresolvedEnv = opts?.warnOnUnresolvedEnv ?? true;
+  return opts?.validate === false
+    ? readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv).pipe(
         // Fall back to the ignore-file defaults path (never re-reads the broken config)
         // so a best-effort caller gets a well-formed defaults result instead of a throw.
         Effect.catchTag("LegacyDbConfigLoadError", () =>
-          readDbTomlCore(fs, path, workdir, ref, true),
+          readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv),
         ),
       )
-    : readDbTomlCore(fs, path, workdir, ref, false);
+    : readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv);
+};
 
 /**
  * The effective declarative schema directory: the configured
