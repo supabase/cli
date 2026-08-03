@@ -21,7 +21,7 @@ export const SERVICE_ACTIVATION_POLICY: Readonly<Record<ServiceName, ServiceActi
   postgrest: { access: "proxy-http" },
   auth: { access: "proxy-http" },
   "edge-runtime": { access: "proxy-http" },
-  realtime: { access: "direct" },
+  realtime: { access: "proxy-websocket" },
   storage: { access: "proxy-http" },
   imgproxy: { access: "companion" },
   mailpit: { access: "direct" },

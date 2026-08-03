@@ -1,13 +1,15 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { NodeWS } from "@effect/platform-node/NodeSocket";
 import * as http from "node:http";
 import { gzipSync } from "node:zlib";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
+import { ApiProxy, isWebSocketUpgradeRequest, type ProxyConfig } from "./ApiProxy.ts";
 import { StackNotRunningError } from "./errors.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import type { ServiceName } from "./versions.ts";
+import { proxyWebSocketConnectorLayer } from "./ProxyWebSocket.node.ts";
 
 interface EchoServer {
   readonly port: number;
@@ -67,6 +69,60 @@ interface FlakyServer {
   readonly stop: () => Promise<void>;
 }
 
+interface WebSocketEchoServer {
+  readonly port: number;
+  readonly lastMessageWasBinary: () => boolean | undefined;
+  readonly lastRequest: () =>
+    | { readonly url: string | undefined; readonly host: string | undefined }
+    | undefined;
+  readonly stop: () => Promise<void>;
+}
+
+function startWebSocketEchoBackend(
+  opts: { initialMessage?: string; close?: { code: number; reason: string } } = {},
+): Promise<WebSocketEchoServer> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    const webSocketServer = new NodeWS.WebSocketServer({ server });
+    let lastRequest: ReturnType<WebSocketEchoServer["lastRequest"]>;
+    let lastMessageWasBinary: boolean | undefined;
+
+    webSocketServer.on("connection", (socket, request) => {
+      lastRequest = { url: request.url, host: request.headers.host };
+      if (opts.initialMessage !== undefined) {
+        socket.send(opts.initialMessage);
+      }
+      if (opts.close !== undefined) {
+        socket.close(opts.close.code, opts.close.reason);
+      }
+      socket.on("message", (data, isBinary) => {
+        lastMessageWasBinary = isBinary;
+        socket.send(data, { binary: isBinary });
+      });
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        reject(new Error("Unexpected WebSocket server address"));
+        return;
+      }
+      resolve({
+        port: address.port,
+        lastRequest: () => lastRequest,
+        lastMessageWasBinary: () => lastMessageWasBinary,
+        stop: () =>
+          new Promise<void>((res, rej) => {
+            webSocketServer.close(() => {
+              server.close((error) => (error === undefined ? res() : rej(error)));
+            });
+          }),
+      });
+    });
+    server.on("error", reject);
+  });
+}
+
 // Backend that resets the connection (transport failure) for the first
 // `failFirst` requests, then responds 200 with `body`. Mirrors an edge-runtime
 // dropping connections while it cold-boots a user worker on first request.
@@ -113,6 +169,7 @@ function buildProxyLayer(
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(activatorLayer),
+    Layer.provide(proxyWebSocketConnectorLayer),
   ) as Layer.Layer<ApiProxy, never, never>;
 }
 
@@ -153,6 +210,7 @@ describe("ApiProxy", () => {
       postgrestAdminPort: echoPort,
       edgeRuntimePort: echoPort,
       realtimePort: echoPort,
+      realtimeTenantId: "realtime-dev",
       storagePort: echoPort,
       pgmetaPort: echoPort,
       analyticsPort: echoPort,
@@ -243,6 +301,112 @@ describe("ApiProxy", () => {
       expect(res.headers.get("retry-after")).toBe("1");
     } finally {
       await proxy.dispose();
+    }
+  });
+
+  test("activates Realtime and bridges WebSocket frames", async () => {
+    const backend = await startWebSocketEchoBackend();
+    const activated: ServiceName[] = [];
+    const activatorLayer = Layer.succeed(StackServiceActivator, {
+      activate: (service) =>
+        Effect.sync(() => {
+          activated.push(service);
+        }),
+    });
+    const proxy = await startProxy(configForPort(backend.port), activatorLayer);
+    const frame = JSON.stringify(["1", "1", "realtime:public", "heartbeat", {}]);
+
+    try {
+      const echoed = await new Promise<string>((resolve, reject) => {
+        const socket = new NodeWS.WebSocket(
+          `${proxy.url.replace("http://", "ws://")}/realtime/v1/websocket?apikey=${PUBLISHABLE_KEY}&vsn=1.0.0`,
+          "phoenix",
+        );
+        socket.once("open", () => socket.send(frame));
+        socket.once("message", (data) => {
+          resolve(data.toString());
+          socket.close();
+        });
+        socket.once("error", reject);
+      });
+
+      expect(echoed).toBe(frame);
+      expect(backend.lastMessageWasBinary()).toBe(false);
+      expect(activated).toContain("realtime");
+      expect(backend.lastRequest()).toEqual({
+        url: `/socket/websocket?apikey=${ANON_JWT}&vsn=1.0.0`,
+        host: "realtime-dev",
+      });
+    } finally {
+      await proxy.dispose();
+      await backend.stop();
+    }
+  });
+
+  test("rejects non-upgrade Realtime requests without activating the service", async () => {
+    const activated: ServiceName[] = [];
+    const activatorLayer = Layer.succeed(StackServiceActivator, {
+      activate: (service) =>
+        Effect.sync(() => {
+          activated.push(service);
+        }),
+    });
+    const proxy = await startProxy(configForPort(echoServer.port), activatorLayer);
+
+    try {
+      const response = await fetch(`${proxy.url}/realtime/v1/websocket`);
+
+      expect(response.status).toBe(426);
+      expect(activated).toEqual([]);
+    } finally {
+      await proxy.dispose();
+    }
+  });
+
+  test("preserves the selected WebSocket protocol", async () => {
+    const backend = await startWebSocketEchoBackend();
+    const proxy = await startProxy(configForPort(backend.port));
+
+    try {
+      const selectedProtocol = await new Promise<string>((resolve, reject) => {
+        const socket = new NodeWS.WebSocket(
+          `${proxy.url.replace("http://", "ws://")}/realtime/v1/websocket`,
+          ["phoenix", "fallback"],
+        );
+        socket.once("open", () => {
+          resolve(socket.protocol);
+          socket.close(4001, "client shutdown");
+        });
+        socket.once("error", reject);
+      });
+
+      expect(selectedProtocol).toBe("phoenix");
+    } finally {
+      await proxy.dispose();
+      await backend.stop();
+    }
+  });
+
+  test("preserves frames emitted as soon as the upstream connects", async () => {
+    const backend = await startWebSocketEchoBackend({ initialMessage: "ready" });
+    const proxy = await startProxy(configForPort(backend.port));
+
+    try {
+      const message = await new Promise<string>((resolve, reject) => {
+        const socket = new NodeWS.WebSocket(
+          `${proxy.url.replace("http://", "ws://")}/realtime/v1/websocket`,
+        );
+        socket.once("message", (data) => {
+          resolve(data.toString());
+          socket.close();
+        });
+        socket.once("error", reject);
+      });
+
+      expect(message).toBe("ready");
+    } finally {
+      await proxy.dispose();
+      await backend.stop();
     }
   });
 
@@ -399,6 +563,7 @@ describe("ApiProxy", () => {
       postgrestAdminPort: deadPort,
       edgeRuntimePort: deadPort,
       realtimePort: deadPort,
+      realtimeTenantId: "realtime-dev",
       storagePort: deadPort,
       pgmetaPort: deadPort,
       analyticsPort: deadPort,
@@ -439,6 +604,7 @@ describe("ApiProxy", () => {
       postgrestAdminPort: port,
       edgeRuntimePort: port,
       realtimePort: port,
+      realtimeTenantId: "realtime-dev",
       storagePort: port,
       pgmetaPort: port,
       analyticsPort: port,
@@ -529,4 +695,28 @@ describe("ApiProxy", () => {
       await echoBody.stop();
     }
   });
+});
+
+describe("isWebSocketUpgradeRequest", () => {
+  const baseHeaders = {
+    connection: "upgrade",
+    upgrade: "websocket",
+    "sec-websocket-version": "13",
+  };
+
+  test("accepts a canonical 16-byte WebSocket key", () => {
+    expect(
+      isWebSocketUpgradeRequest({
+        ...baseHeaders,
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+      }),
+    ).toBe(true);
+  });
+
+  test.each(["", "not-base64", "c2hvcnQ="])(
+    "rejects malformed WebSocket key %j before activation",
+    (key) => {
+      expect(isWebSocketUpgradeRequest({ ...baseHeaders, "sec-websocket-key": key })).toBe(false);
+    },
+  );
 });

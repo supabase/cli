@@ -13,13 +13,7 @@ describe("service activation", () => {
   });
 
   it("starts direct endpoints eagerly", () => {
-    expect(eagerServices(SERVICE_NAMES)).toEqual([
-      "postgres",
-      "realtime",
-      "mailpit",
-      "studio",
-      "pooler",
-    ]);
+    expect(eagerServices(SERVICE_NAMES)).toEqual(["postgres", "mailpit", "studio", "pooler"]);
   });
 
   it("activates service companions transitively", () => {

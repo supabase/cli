@@ -2,10 +2,16 @@ import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { Layer } from "effect";
 import { runDaemon } from "./daemon.ts";
+import { proxyWebSocketConnectorLayer } from "./ProxyWebSocket.bun.ts";
 
 export function runBunDaemon(): void {
   runDaemon(
-    (apiPort) => Layer.mergeAll(BunServices.layer, BunHttpServer.layer({ port: apiPort })),
+    (apiPort) =>
+      Layer.mergeAll(
+        BunServices.layer,
+        BunHttpServer.layer({ port: apiPort }),
+        proxyWebSocketConnectorLayer,
+      ),
     (socketPath) => BunHttpServer.layer({ idleTimeout: 0, unix: socketPath }),
   );
 }

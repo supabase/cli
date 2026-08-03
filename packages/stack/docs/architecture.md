@@ -812,6 +812,11 @@ forwards the request, and concurrent activation remains single-flight in the orc
 requests made before startup or after shutdown receive `503 Service Unavailable`. `waitAllReady()`
 waits for the set of services activated so far instead of blocking on intentionally dormant ones.
 
+Realtime WebSocket upgrades use the same activation boundary. The proxy rewrites the public
+`/realtime/v1/websocket` path to Realtime's `/socket/websocket` endpoint, translates opaque API
+keys in the query string, preserves negotiated subprotocols, supplies the configured tenant host,
+and bridges text and binary frames in both Node.js and Bun runtimes.
+
 #### StackInfo
 
 ```ts
@@ -880,7 +885,7 @@ metadata persisted separately for crash recovery.
 
 **File:** `src/createStack.ts`
 
-`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function `(apiPort: number) => PlatformLayer` — so the platform-specific HTTP server (Bun or Node.js) can be bound to the already-resolved port. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
+`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function `(apiPort: number) => PlatformLayer` — so the platform-specific HTTP server (Bun or Node.js) can be bound to the already-resolved port. The platform layer also supplies the proxy's `ProxyWebSocketConnector`; custom factories can import that service contract from `@supabase/stack/effect`. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`, and their WebSocket connectors) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
 
 `createStack` also owns `resolveConfig()`, the internal async function that turns a raw
 `StackConfig` into a `ResolvedStackConfig`: it allocates ports via `PortAllocator`, generates JWTs
@@ -905,7 +910,8 @@ export type PlatformServices =
   | FileSystem.FileSystem
   | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
-  | HttpServer.HttpServer;
+  | HttpServer.HttpServer
+  | ProxyWebSocketConnector;
 
 export type PlatformLayer = Layer.Layer<PlatformServices>;
 ```

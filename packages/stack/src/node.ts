@@ -18,6 +18,7 @@ import {
   type PrefetchResult,
 } from "./prefetch.ts";
 import { defaultCacheRoot } from "./paths.ts";
+import { proxyWebSocketConnectorLayer } from "./ProxyWebSocket.node.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackConfig } from "./StackBuilder.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
@@ -122,6 +123,7 @@ export const platformFactory: PlatformFactory = (apiPort) =>
   Layer.mergeAll(
     NodeServices.layer,
     NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie),
+    proxyWebSocketConnectorLayer,
   );
 
 /** Path to the Node daemon entry point for use with daemonLayer. */

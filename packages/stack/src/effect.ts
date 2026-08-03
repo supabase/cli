@@ -51,6 +51,8 @@ export {
 
 export type { ProxyConfig } from "./ApiProxy.ts";
 export { ApiProxy } from "./ApiProxy.ts";
+export type { ProxyWebSocket, ProxyWebSocketConnectOptions } from "./ProxyWebSocket.ts";
+export { ProxyWebSocketConnector, ProxyWebSocketError } from "./ProxyWebSocket.ts";
 
 export type {
   AnalyticsConfig,

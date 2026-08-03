@@ -1,4 +1,5 @@
-import { Effect, Layer, Option, Context, Schedule, Result } from "effect";
+import { Deferred, Effect, Layer, Option, Context, Queue, Schedule, Result } from "effect";
+import { Buffer } from "node:buffer";
 import {
   Headers,
   HttpBody,
@@ -9,6 +10,8 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import * as Socket from "effect/unstable/socket/Socket";
+import { ProxyWebSocketConnector } from "./ProxyWebSocket.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import type { ServiceName } from "./versions.ts";
 
@@ -19,6 +22,7 @@ export interface ProxyConfig {
   readonly postgrestAdminPort: number;
   readonly edgeRuntimePort: number;
   readonly realtimePort: number;
+  readonly realtimeTenantId: string;
   readonly storagePort: number;
   readonly pgmetaPort: number;
   readonly analyticsPort: number;
@@ -213,6 +217,213 @@ function makeProxyHandler(
     );
 }
 
+const realtimeWebSocketBackendUrl = (requestUrl: string, config: ProxyConfig): string => {
+  const url = new URL(requestUrl, "http://127.0.0.1");
+  const apiKey = url.searchParams.get("apikey");
+  if (apiKey === config.publishableKey) {
+    url.searchParams.set("apikey", config.anonJwt);
+  } else if (apiKey === config.secretKey) {
+    url.searchParams.set("apikey", config.serviceRoleJwt);
+  }
+  const strippedPath = url.pathname.startsWith("/realtime/v1")
+    ? url.pathname.slice("/realtime/v1".length)
+    : url.pathname;
+  url.pathname = `/socket${strippedPath === "" ? "/websocket" : strippedPath}`;
+  return `ws://127.0.0.1:${config.realtimePort}${url.pathname}${url.search}`;
+};
+
+const webSocketProtocols = (headers: Headers.Headers): ReadonlyArray<string> | undefined => {
+  const value = headers["sec-websocket-protocol"];
+  if (value === undefined) {
+    return undefined;
+  }
+  const protocols = value
+    .split(",")
+    .map((protocol) => protocol.trim())
+    .filter((protocol) => protocol.length > 0);
+  // Both proxy legs use their default first-match negotiation. Forwarding only
+  // the first offer guarantees that the upstream selection is the protocol
+  // already selected by the downstream server.
+  return protocols.length === 0 ? undefined : protocols.slice(0, 1);
+};
+
+export const isWebSocketUpgradeRequest = (
+  headers: Readonly<Record<string, string | undefined>>,
+): boolean => {
+  const connectionTokens = (headers.connection ?? "")
+    .split(",")
+    .map((token) => token.trim().toLowerCase());
+  const key = headers["sec-websocket-key"];
+  const validKey =
+    key !== undefined &&
+    /^[A-Za-z0-9+/]{22}==$/.test(key) &&
+    Buffer.from(key, "base64").byteLength === 16;
+  return (
+    connectionTokens.includes("upgrade") &&
+    headers.upgrade?.toLowerCase() === "websocket" &&
+    validKey &&
+    headers["sec-websocket-version"] === "13"
+  );
+};
+
+const realtimeUpstreamFrame = (data: string | Uint8Array): string | Uint8Array => {
+  if (typeof data === "string") return data;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
+    JSON.parse(text);
+    return text;
+  } catch {
+    return data;
+  }
+};
+
+function makeRealtimeWebSocketHandler(
+  config: ProxyConfig,
+  activator: StackServiceActivator["Service"],
+  connector: ProxyWebSocketConnector["Service"],
+) {
+  return (req: HttpServerRequest.HttpServerRequest) =>
+    Effect.gen(function* () {
+      if (!isWebSocketUpgradeRequest(req.headers)) {
+        return HttpServerResponse.text("WebSocket upgrade required", { status: 426 });
+      }
+
+      const activation = yield* Effect.result(activator.activate("realtime"));
+      if (Result.isFailure(activation)) {
+        return HttpServerResponse.text("Service unavailable", {
+          status: 503,
+          headers: { "retry-after": "1" },
+        });
+      }
+
+      const connection = yield* Effect.result(
+        connector.connect({
+          url: realtimeWebSocketBackendUrl(req.url, config),
+          host: config.realtimeTenantId,
+          protocols: webSocketProtocols(req.headers),
+        }),
+      );
+      if (Result.isFailure(connection)) {
+        return HttpServerResponse.text("Bad gateway: unable to connect to Realtime", {
+          status: 502,
+        });
+      }
+
+      const upstream = connection.success;
+      return yield* Effect.gen(function* () {
+        const upstreamDone = yield* Deferred.make<void>();
+        const downstreamQueue = yield* Queue.bounded<Uint8Array | string | Socket.CloseEvent>(64);
+        let upstreamFinished = false;
+        let downstreamOverflowed = false;
+        const forward = (chunk: Uint8Array | string | Socket.CloseEvent) => {
+          if (!Queue.offerUnsafe(downstreamQueue, chunk)) {
+            downstreamOverflowed = true;
+            upstream.close();
+          }
+        };
+        const finish = (event: Socket.CloseEvent) => {
+          if (upstreamFinished) return;
+          upstreamFinished = true;
+          const downstreamEvent =
+            event.code === 1005
+              ? new Socket.CloseEvent(1000, event.reason)
+              : event.code === 1006
+                ? new Socket.CloseEvent(1011, event.reason || "Realtime disconnected abnormally")
+                : event;
+          if (!Queue.offerUnsafe(downstreamQueue, downstreamEvent)) {
+            downstreamOverflowed = true;
+          }
+        };
+        // The upstream can emit immediately after connect resolves. Register
+        // listeners before awaiting the downstream upgrade and buffer until its
+        // writer is available so those first frames and close events are kept.
+        const removeMessage = upstream.onMessage(forward);
+        const removeClose = upstream.onClose((code, reason) => {
+          finish(new Socket.CloseEvent(code, reason));
+        });
+        const removeError = upstream.onError(() => {
+          finish(new Socket.CloseEvent(1011, "Realtime connection failed"));
+        });
+
+        return yield* Effect.gen(function* () {
+          const upgraded = yield* Effect.result(req.upgrade);
+          if (Result.isFailure(upgraded)) {
+            return HttpServerResponse.text("WebSocket upgrade required", { status: 426 });
+          }
+
+          const downstream = upgraded.success;
+          const writeDownstream = yield* downstream.writer;
+          const downstreamOpened = yield* Deferred.make<void>();
+          const upstreamQueue = yield* Queue.bounded<string | Uint8Array>(64);
+          yield* Effect.forkScoped(
+            Deferred.await(downstreamOpened).pipe(
+              Effect.andThen(
+                Effect.gen(function* () {
+                  while (true) {
+                    const chunk = yield* Queue.take(downstreamQueue);
+                    yield* writeDownstream(chunk).pipe(Effect.ignore);
+                    if (chunk instanceof Socket.CloseEvent) {
+                      yield* Deferred.succeed(upstreamDone, undefined);
+                      return;
+                    }
+                    if (downstreamOverflowed) {
+                      yield* writeDownstream(
+                        new Socket.CloseEvent(1011, "Realtime downstream backpressure exceeded"),
+                      ).pipe(Effect.ignore);
+                      yield* Deferred.succeed(upstreamDone, undefined);
+                      return;
+                    }
+                  }
+                }),
+              ),
+            ),
+          );
+          yield* Effect.forkScoped(
+            Effect.gen(function* () {
+              while (true) {
+                yield* upstream.send(yield* Queue.take(upstreamQueue));
+              }
+            }).pipe(
+              Effect.catch(() =>
+                Effect.sync(() => {
+                  upstream.close(1011, "Realtime upstream write failed");
+                }),
+              ),
+            ),
+          );
+          const onDownstreamOpen = Deferred.succeed(downstreamOpened, undefined);
+          const forwardUpstream = (data: string | Uint8Array) =>
+            Effect.sync(() => {
+              if (!Queue.offerUnsafe(upstreamQueue, realtimeUpstreamFrame(data))) {
+                upstream.close(1011, "Realtime upstream backpressure exceeded");
+              }
+            });
+
+          yield* Effect.raceFirst(
+            downstream.runRaw(forwardUpstream, { onOpen: onDownstreamOpen }),
+            Deferred.await(upstreamDone),
+          ).pipe(Effect.catch(() => Effect.void));
+
+          return HttpServerResponse.empty();
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              removeMessage();
+              removeClose();
+              removeError();
+            }),
+          ),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            upstream.close();
+          }),
+        ),
+      );
+    });
+}
+
 export class ApiProxy extends Context.Service<
   ApiProxy,
   {
@@ -224,16 +435,22 @@ export class ApiProxy extends Context.Service<
   ): Layer.Layer<
     ApiProxy,
     never,
-    HttpServer.HttpServer | HttpClient.HttpClient | StackServiceActivator
+    HttpServer.HttpServer | HttpClient.HttpClient | StackServiceActivator | ProxyWebSocketConnector
   > =>
     Layer.effect(ApiProxy)(
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer;
         const client = yield* HttpClient.HttpClient;
         const activator = yield* StackServiceActivator;
+        const webSocketConnector = yield* ProxyWebSocketConnector;
 
         const routes = [
           HttpRouter.route("*", "/health", HttpServerResponse.text("OK", { status: 200 })),
+          HttpRouter.route(
+            "GET",
+            "/realtime/v1/websocket",
+            makeRealtimeWebSocketHandler(config, activator, webSocketConnector),
+          ),
           HttpRouter.route(
             "*",
             "/.well-known/oauth-authorization-server",

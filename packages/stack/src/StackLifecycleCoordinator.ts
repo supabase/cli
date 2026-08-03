@@ -95,9 +95,7 @@ const stackInfoFor = (config: ResolvedStackConfig): StackInfo => {
             functions: `${apiUrl}/functions/v1`,
             edge_runtime: `${apiUrl}/functions/v1`,
           }),
-      ...(config.realtime === false
-        ? {}
-        : { realtime: `http://127.0.0.1:${config.realtime.port}` }),
+      ...(config.realtime === false ? {} : { realtime: `${apiUrl}/realtime/v1` }),
       ...(config.storage === false
         ? {}
         : {

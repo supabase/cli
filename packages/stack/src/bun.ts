@@ -15,6 +15,7 @@ import {
   type PrefetchResult,
 } from "./prefetch.ts";
 import { defaultCacheRoot } from "./paths.ts";
+import { proxyWebSocketConnectorLayer } from "./ProxyWebSocket.bun.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackConfig } from "./StackBuilder.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
@@ -43,7 +44,11 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
 
 /** Bun platform factory for use with foregroundLayer / daemonLayer. */
 export const platformFactory: PlatformFactory = (apiPort) =>
-  Layer.mergeAll(BunServices.layer, BunHttpServer.layer({ port: apiPort }));
+  Layer.mergeAll(
+    BunServices.layer,
+    BunHttpServer.layer({ port: apiPort }),
+    proxyWebSocketConnectorLayer,
+  );
 
 /** Path to the Bun daemon entry point for use with daemonLayer. */
 export const daemonEntryPoint: string = fileURLToPath(new URL("./daemon-bun.ts", import.meta.url));

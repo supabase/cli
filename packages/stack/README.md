@@ -9,7 +9,7 @@ Programmatic local Supabase stack for TypeScript. Create a local Supabase runtim
 - **Native binaries with Docker fallback** -- uses native services when available and falls back to Docker images automatically
 - **Automatic port allocation** -- all ports are optional and auto-assigned to avoid conflicts
 - **API proxy with opaque keys** -- SDKs use `publishableKey`/`secretKey` (like production), translated to JWTs internally
-- **Lazy HTTP services** -- opt into `startupMode: "lazy"` to start proxied services on their first request while keeping direct listeners reachable
+- **Lazy proxied services** -- opt into `startupMode: "lazy"` to start HTTP and Realtime WebSocket services on first use while keeping direct listeners reachable
 - **`AsyncDisposable` support** -- use `await using` for automatic cleanup
 - **Streaming logs and status** -- real-time `AsyncIterable` streams for service state changes and log output
 - **Per-service lifecycle control** -- start, stop, and restart individual services independently
@@ -79,7 +79,7 @@ await stack.dispose();
 | Field            | Type                             | Required | Default   | Description                                                                                                                                                     |
 | ---------------- | -------------------------------- | -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"`  | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
-| `startupMode`    | `"eager" \| "lazy"`              | No       | `"eager"` | In lazy mode, HTTP services start on their first proxied request. Direct TCP/HTTP listeners still start with the stack.                                         |
+| `startupMode`    | `"eager" \| "lazy"`              | No       | `"eager"` | In lazy mode, HTTP and WebSocket services start on first proxied use. Direct TCP/HTTP listeners still start with the stack.                                     |
 | `jwtSecret`      | `string`                         | No       |           | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
 | `port`           | `number`                         | No       |           | API proxy port (auto-allocated if omitted)                                                                                                                      |
 | `publishableKey` | `string`                         | No       |           | Custom opaque publishable key                                                                                                                                   |

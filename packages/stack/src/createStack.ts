@@ -37,6 +37,7 @@ import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
+import { ProxyWebSocketConnector } from "./ProxyWebSocket.ts";
 import type {
   AnalyticsConfig,
   AuthConfig,
@@ -74,9 +75,15 @@ export type PlatformServices =
   | FileSystem.FileSystem
   | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
-  | HttpServer.HttpServer;
+  | HttpServer.HttpServer
+  | ProxyWebSocketConnector;
 
 export type PlatformLayer = Layer.Layer<PlatformServices>;
+/**
+ * Supplies the platform HTTP server and WebSocket connector used by the proxy.
+ * Custom factories can implement the connector via the exported
+ * `ProxyWebSocketConnector` service from `@supabase/stack/effect`.
+ */
 export type PlatformFactory = (apiPort: number) => PlatformLayer;
 
 export interface ReadyOptions {
