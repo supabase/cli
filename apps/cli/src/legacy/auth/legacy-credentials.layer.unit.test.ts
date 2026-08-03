@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -357,12 +365,24 @@ describe("legacyCredentialsLayer.saveAccessToken", () => {
 
   it.effect("falls back to the filesystem when the keyring write throws", () => {
     throwOnSetPassword = true;
+    // Deterministic mode assertions require a permissive umask: Go pins the
+    // fallback dir to 0755 (`access_token.go:91` → `MkdirIfNotExistFS`,
+    // `misc.go:273`, changed from the prior 0700) and the token file itself to
+    // 0600 (`access_token.go:94`).
+    const prevUmask = process.umask(0);
     return Effect.gen(function* () {
       const { saveAccessToken } = yield* LegacyCredentials;
       yield* saveAccessToken(VALID_TOKEN);
-      const content = readFileSync(join(tempHome, ".supabase", "access-token"), "utf-8");
+      const fallbackDir = join(tempHome, ".supabase");
+      const fallbackPath = join(fallbackDir, "access-token");
+      const content = readFileSync(fallbackPath, "utf-8");
       expect(content).toBe(VALID_TOKEN);
-    }).pipe(Effect.provide(makeLayer()));
+      expect(statSync(fallbackDir).mode & 0o777).toBe(0o755);
+      expect(statSync(fallbackPath).mode & 0o777).toBe(0o600);
+    }).pipe(
+      Effect.provide(makeLayer()),
+      Effect.ensuring(Effect.sync(() => process.umask(prevUmask))),
+    );
   });
 
   it.effect("filesystem fallback honors SUPABASE_HOME when configured", () => {

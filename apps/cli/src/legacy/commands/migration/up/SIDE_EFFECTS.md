@@ -55,3 +55,13 @@ Same structured `applied` result delivered as an NDJSON `result` event.
 
 - `--local` (default true), `--linked`, and `--db-url` are mutually exclusive.
 - `--include-all` applies all migrations not found on the remote history table.
+- Pipeline-incompatible statements (`CREATE [UNIQUE] INDEX CONCURRENTLY`,
+  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`) run standalone outside
+  the migration's transaction batch — they fail with SQLSTATE 25001 inside one. The
+  history insert stays in the final batch, so a mid-file failure leaves earlier,
+  already-committed batches applied with **no history row**; a re-run replays the file
+  from the top. Prefer idempotent forms (`… IF NOT EXISTS`) for such statements.
+  Intentional fix for supabase/cli#5139; the reference is the closed, unmerged Go PR
+  supabase/cli#5156, adopted into TS in PR supabase/cli#5671 (landed on develop as
+  `b48fad60`) and back-ported to the pinned `apps/cli-go` oracle under the CLI-1989
+  parity ruling (2026-07-30).

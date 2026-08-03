@@ -69,7 +69,11 @@ describe("legacy encryption update-root-key integration", () => {
       // Go parity: prompt to stderr, trailing newline to stdout (defer Println),
       // finished notice to stderr.
       expect(out.stderrText).toContain("Enter a new root key: ");
-      expect(out.stderrText).toContain("Finished supabase root-key update.");
+      // The command path is wrapped in ANSI (legacyAqua) in colour-capable
+      // environments, so assert on the tokens around it — same convention as
+      // `db/reset/reset.integration.test.ts`'s aqua'd branch name.
+      expect(out.stderrText).toContain("Finished ");
+      expect(out.stderrText).toContain("supabase root-key update");
       expect(out.stdoutText).toBe("\n");
     }).pipe(Effect.provide(layer));
   });

@@ -36,14 +36,15 @@
 //   instead.
 const EXPECTED_PREFIX = "Expected ";
 
-// Go-parity passthrough (CLI-1983): legacy flags that byte-match Go pflag's
-// parse-time diagnostics (`legacyStringSliceFlag`'s malformed-CSV failure,
-// `migration down --last`) fail with the COMPLETE Go message as `expected` —
+// Go-parity passthrough (CLI-1983, CLI-1990): legacy flags that byte-match Go
+// pflag's parse-time diagnostics (`legacyStringSliceFlag`'s malformed-CSV
+// failure, `migration down --last`, and `storage cp --jobs` via
+// `Flag.mapTryCatch`) fail with the COMPLETE Go message as `expected` —
 // pflag's `invalid argument %q for %q flag: %v` (pflag v1.0.10
 // `errors.go:116`). Wrapping that in `CliError.InvalidValue`'s own
 // `Invalid value for flag --X: "V". Expected: ...` template would
-// double-frame it and break the legacy shell's stderr contract, so render it
-// verbatim instead.
+// double-frame it and break the legacy shell's stderr contract (byte-parity
+// with the Go CLI), so render it verbatim instead.
 const PFLAG_INVALID_ARGUMENT_PREFIX = "invalid argument ";
 
 export interface InvalidValueMessageFields {
@@ -56,9 +57,9 @@ export interface InvalidValueMessageFields {
 /**
  * Rebuilds a `CliError.InvalidValue` message from its own template when
  * `expected` carries the doubled "Expected" prefix, or passes `expected`
- * through verbatim when it is a complete pflag-format diagnostic. Returns
- * `undefined` when `expected` is unaffected, so callers can fall back to the
- * error's own untouched `message`.
+ * through verbatim when it is a complete pflag-format diagnostic (Go
+ * flag-parse parity). Returns `undefined` when `expected` is unaffected, so
+ * callers can fall back to the error's own untouched `message`.
  */
 export function formatInvalidValueMessage(error: InvalidValueMessageFields): string | undefined {
   if (error.expected.startsWith(PFLAG_INVALID_ARGUMENT_PREFIX)) return error.expected;

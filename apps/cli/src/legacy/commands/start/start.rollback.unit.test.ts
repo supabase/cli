@@ -73,8 +73,13 @@ describe("legacyRollbackStart", () => {
         "com.supabase.cli.project=my-app",
         false,
         "/tmp/legacy-rollback-unit-test-workdir",
+        false,
       );
-      expect(stderr).not.toHaveBeenCalled();
+      // Go's start-failure path prints "Stopping containers..." to stderr
+      // before tearing down (`docker.go:97` with `w == os.Stderr`,
+      // `start.go:77`); no other stderr output on success without --debug.
+      expect(stderr).toHaveBeenCalledTimes(1);
+      expect(stderr).toHaveBeenCalledWith("Stopping containers...\n");
       // legacyDockerRemoveAll's own list (its `onContainersListed` hook feeds
       // legacyCleanupStartSecrets the same container names, no second `ps`
       // call) -> container prune -> network prune; no stop calls (empty list)
@@ -91,6 +96,7 @@ describe("legacyRollbackStart", () => {
         "com.supabase.cli.project=my-app",
         true,
         "/tmp/legacy-rollback-unit-test-workdir",
+        false,
       );
       expect(mock.spawned.map((args) => args[0])).toEqual([
         "ps",
@@ -113,9 +119,11 @@ describe("legacyRollbackStart", () => {
         "com.supabase.cli.project=my-app",
         false,
         "/tmp/legacy-rollback-unit-test-workdir",
+        false,
       );
-      expect(stderr).toHaveBeenCalledTimes(1);
-      expect(stderr).toHaveBeenCalledWith("failed to list containers: permission denied\n");
+      expect(stderr).toHaveBeenCalledTimes(2);
+      expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
+      expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers: permission denied\n");
     });
   });
 
@@ -128,9 +136,11 @@ describe("legacyRollbackStart", () => {
         "com.supabase.cli.project=my-app",
         false,
         "/tmp/legacy-rollback-unit-test-workdir",
+        false,
       );
-      expect(stderr).toHaveBeenCalledTimes(1);
-      expect(stderr).toHaveBeenCalledWith("failed to list containers\n");
+      expect(stderr).toHaveBeenCalledTimes(2);
+      expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
+      expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers\n");
     });
   });
 });

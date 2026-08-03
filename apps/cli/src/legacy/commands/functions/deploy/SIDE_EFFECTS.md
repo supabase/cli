@@ -43,13 +43,13 @@ Docker bundling may pull or run the configured edge-runtime image and uses the
 
 ## Environment Variables
 
-| Variable                           | Purpose                                              | Required?                                               |
-| ---------------------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`            | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROJECT_ID`              | optional project ref fallback                        | no                                                      |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | selects the Functions bundler image registry         | no                                                      |
-| `NPM_CONFIG_REGISTRY`              | forwarded into Docker bundling when set              | no                                                      |
-| `DEBUG`                            | enables verbose Docker bundle output when `true`     | no                                                      |
+| Variable                           | Purpose                                                                                                         | Required?                                               |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token (bypasses credential file/keyring lookup)                                                            | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROJECT_ID`              | optional project ref fallback                                                                                   | no                                                      |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | selects the Functions bundler image registry                                                                    | no                                                      |
+| `NPM_CONFIG_REGISTRY`              | forwarded into Docker bundling when set (the only npm variable forwarded, matching Go; `NPM_AUTH_TOKEN` is not) | no                                                      |
+| `DEBUG`                            | enables verbose Docker bundle output when `true`                                                                | no                                                      |
 
 ## Exit Codes
 
@@ -81,6 +81,13 @@ Legacy `--output` / `-o` does not change deploy output, matching the Go command.
 ## Notes
 
 - If no function name is provided, deploys all functions found in `supabase/functions/`.
+- API-based deploys anchor uploaded file names and the recorded `entrypoint_path` /
+  `import_map_path` / `static_patterns` at the workdir, matching Go's `toRelPath`
+  (relative to `os.Getwd()`, forward slashes). Imports outside the workdir but inside
+  the nearest git root still upload, with `../`-relative names. The git-root
+  containment boundary is a TS-only safeguard with no Go equivalent — Go uploads any
+  reachable import unbounded; #5755 widened the TS boundary from the workdir to the
+  git root.
 - Requires a linked project unless `--project-ref` is provided.
 - Uses API/server-side bundling by default; `--use-docker` and `--legacy-bundle` select local bundling.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
