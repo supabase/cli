@@ -210,7 +210,7 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness 
   // scan; their flag names are registered by hand in
   // `VALUE_CONSUMING_LONG_FLAGS` instead.
   const commandsDir = fileURLToPath(new URL("../commands", import.meta.url));
-  const INDIRECT_NAME_FILES = new Set(["issue.command.ts", "status.command.ts"]);
+  const INDIRECT_NAME_FILES = new Set(["issue.command.ts"]);
   const VALUE_FLAG_KINDS = ["string", "integer", "choice", "choiceWithValue", "float"];
 
   function walk(dir: string): Array<string> {

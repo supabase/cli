@@ -48,6 +48,45 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
     expect(removeDomains).toEqual(["example.com", "example.org"]);
   });
 
+  test("--domains defaults to an empty array when unset", async () => {
+    const [, domains] = await Effect.runPromise(
+      legacySsoUpdateDomainsFlag
+        .parse({
+          flags: {},
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(domains).toEqual([]);
+  });
+
+  test("--add-domains defaults to an empty array when unset", async () => {
+    const [, addDomains] = await Effect.runPromise(
+      legacySsoUpdateAddDomainsFlag
+        .parse({
+          flags: {},
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(addDomains).toEqual([]);
+  });
+
+  test("--remove-domains defaults to an empty array when unset", async () => {
+    const [, removeDomains] = await Effect.runPromise(
+      legacySsoUpdateRemoveDomainsFlag
+        .parse({
+          flags: {},
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(removeDomains).toEqual([]);
+  });
+
   test("--domains= (explicit empty value) parses to an empty array, not a missing flag", async () => {
     // Backs the "changed vs truthy" mutex-check fix (CLI-1902): the handler's
     // `hasExplicitLongFlag` reads raw argv rather than this parsed value
