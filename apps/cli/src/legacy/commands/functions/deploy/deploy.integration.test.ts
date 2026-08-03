@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
@@ -325,12 +325,18 @@ describe("legacy functions deploy", () => {
     );
   });
 
-  it.live("anchors API upload paths at the workdir when the git root is an ancestor", () => {
+  it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
     // Go parity (CLI-1985): Go's `toRelPath` (`pkg/function/deploy.go:94-103`)
     // anchors uploaded file names and the server-recorded `entrypoint_path` /
     // `import_map_path` at `os.Getwd()` — the workdir — never at the git root.
-    // Monorepo imports outside the workdir (allowed since #5755) upload with
-    // Go-style `../`-relative names.
+    // A monorepo import outside the workdir but inside the git root (allowed
+    // by the source-root containment check since #5755) would otherwise
+    // upload with a Go-style `../`-relative name. Go's `writeForm`/`addFile`
+    // (`pkg/function/deploy.go:251-284`) opens every uploaded path through an
+    // `fs.FS`, which rejects any path containing a `..` element (`fs.ValidPath`)
+    // before the read — and thus the upload — happens. This asserts the CLI
+    // hard-fails the same way instead of letting the `..`-relative name reach
+    // the server.
     const repoRoot = tempRoot.current;
     const workdir = join(repoRoot, "app");
     const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
@@ -407,20 +413,15 @@ describe("legacy functions deploy", () => {
         ),
       );
 
-      yield* legacyFunctionsDeploy(baseFlags);
+      const exit = yield* Effect.exit(legacyFunctionsDeploy(baseFlags));
 
-      expect(multiparts[0]?.metadata).toContain(
-        '"entrypoint_path":"supabase/functions/hello-world/index.ts"',
-      );
-      expect(multiparts[0]?.metadata).toContain(
-        '"import_map_path":"supabase/functions/hello-world/deno.json"',
-      );
-      expect(multiparts[0]?.fileNames).toContain("supabase/functions/hello-world/index.ts");
-      expect(multiparts[0]?.fileNames).toContain("../packages/shared/src/index.ts");
-      expect(out.stderrText).toContain(
-        "Uploading asset (hello-world): ../packages/shared/src/index.ts\n",
-      );
-      expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+        );
+      }
+      expect(multiparts).toHaveLength(0);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(

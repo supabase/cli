@@ -319,6 +319,21 @@ function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
   return roots.some((root) => isContainedPath(root, candidate));
 }
 
+/**
+ * Go parity (`apps/cli-go/pkg/function/deploy.go:251-284`, via
+ * `afero.IOFS.Open` → `fs.ValidPath`): `writeForm`'s `addFile` opens every
+ * uploaded path through an `fs.FS`, which rejects any path containing a `..`
+ * element before the read (and thus the upload) happens. A workdir≠git-root
+ * layout can otherwise produce a multipart `File` name like
+ * `../packages/shared/src/index.ts` that escapes the anchor dir — reject it
+ * the same way Go does, before any upload is attempted.
+ */
+function hasParentPathSegment(relativePath: string) {
+  return toSlash(relativePath)
+    .split("/")
+    .some((segment) => segment === "..");
+}
+
 async function realpathIfExists(pathname: string) {
   try {
     return await realpath(resolve(pathname));
@@ -917,6 +932,9 @@ async function writeSourceDeployForm(
     // (`apps/cli-go/pkg/function/deploy.go:94-103`, relative to `os.Getwd()`),
     // NOT at `sourceRoot` — see the CLI-1985 note in `deployViaApi`.
     const relativePath = toApiRelativePath(workdir, pathname);
+    if (hasParentPathSegment(relativePath)) {
+      throw new Error(`failed to read file: open ${relativePath}: invalid argument`);
+    }
     await Effect.runPromise(outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`));
     form.append("file", new File([contents], relativePath));
   };
