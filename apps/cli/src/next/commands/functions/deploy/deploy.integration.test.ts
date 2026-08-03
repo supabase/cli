@@ -857,7 +857,12 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
-  it.live("uploads an explicit import map outside the project root", () => {
+  it.live("rejects an explicit import map outside the project root", () => {
+    // Go parity (CLI-1985): `--import-map` outside the workdir resolves to a
+    // `..`-relative name via Go's `toRelPath`, same as an auto-discovered
+    // monorepo import — Go's `writeForm`/`addFile` rejects any such path via
+    // `fs.ValidPath` before the upload happens, regardless of how the escaping
+    // path was reached.
     const tempDir = makeTempDir();
     const projectDir = join(tempDir, "project");
     const sharedDir = join(tempDir, "shared");
@@ -880,21 +885,26 @@ describe("functions deploy", () => {
         ],
       });
 
-      yield* functionsDeploy({
-        ...BASE_FLAGS,
-        functionNames: ["hello-world"],
-        importMap: Option.some("../shared/import_map.json"),
-      }).pipe(Effect.provide(layer));
-
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"import_map_path":"../shared/import_map.json"',
+      const exit = yield* Effect.exit(
+        functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+          importMap: Option.some("../shared/import_map.json"),
+        }).pipe(Effect.provide(layer)),
       );
-      expect(api.multiparts[0]?.fileNames).toContain("../shared/import_map.json");
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to read file: open ../shared/import_map.json: invalid argument",
+        );
+      }
+      expect(api.multiparts).toHaveLength(0);
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live(
-    "uploads local targets referenced by an explicit import map outside the project root",
+    "rejects local targets referenced by an explicit import map outside the project root",
     () => {
       const tempDir = makeTempDir();
       const projectDir = join(tempDir, "project");
@@ -933,15 +943,21 @@ describe("functions deploy", () => {
           ],
         });
 
-        yield* functionsDeploy({
-          ...BASE_FLAGS,
-          functionNames: ["hello-world"],
-          importMap: Option.some("../shared/import_map.json"),
-        }).pipe(Effect.provide(layer));
+        const exit = yield* Effect.exit(
+          functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+            importMap: Option.some("../shared/import_map.json"),
+          }).pipe(Effect.provide(layer)),
+        );
 
-        expect(api.multiparts[0]?.fileNames).toContain("../shared/import_map.json");
-        expect(api.multiparts[0]?.fileNames).toContain("../shared/lib.ts");
-        expect(api.multiparts[0]?.fileNames).toContain("../shared/helper.ts");
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "failed to read file: open ../shared/import_map.json: invalid argument",
+          );
+        }
+        expect(api.multiparts).toHaveLength(0);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
@@ -1315,62 +1331,71 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), cleanupTempDir(outsideDir)])));
   });
 
-  it.live("uploads git-root workspace imports through the API", () => {
-    const repoRoot = makeTempDir();
-    const projectRoot = join(repoRoot, "app");
-    const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
+  it.live(
+    "rejects a git-root workspace import that escapes the workdir with a `..` segment",
+    () => {
+      // Go parity (CLI-1985): names are anchored at the workdir like Go's
+      // `toRelPath` (relative to `os.Getwd()`), so a git-root workspace import
+      // outside the workdir resolves to a `..`-relative name. Go's
+      // `writeForm`/`addFile` (`pkg/function/deploy.go:251-284`) opens every
+      // uploaded path through an `fs.FS`, which rejects any path containing a
+      // `..` element (`fs.ValidPath`) before the read — and thus the upload —
+      // happens. Assert the CLI hard-fails the same way instead of letting a
+      // `..`-relative name reach the server.
+      const repoRoot = makeTempDir();
+      const projectRoot = join(repoRoot, "app");
+      const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
 
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
-      yield* Effect.promise(() =>
-        writeLocalFunction(
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+        yield* Effect.promise(() => writeProjectConfig(projectRoot));
+        yield* Effect.promise(() =>
+          writeLocalFunction(
+            projectRoot,
+            "hello-world",
+            [
+              'import { shared } from "@repo/shared"',
+              "Deno.serve(() => new Response(shared))",
+              "",
+            ].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
+        yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
+        yield* Effect.promise(() =>
+          writeFile(
+            join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+            JSON.stringify({
+              imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+            }),
+          ),
+        );
+
+        const { out, api, layer } = setup(projectRoot, {
           projectRoot,
-          "hello-world",
-          [
-            'import { shared } from "@repo/shared"',
-            "Deno.serve(() => new Response(shared))",
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
-      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
-          JSON.stringify({
-            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-          }),
-        ),
-      );
+          rawArgs: ["functions", "deploy", "hello-world"],
+        });
 
-      const { out, api, layer } = setup(projectRoot, {
-        projectRoot,
-        rawArgs: ["functions", "deploy", "hello-world"],
-      });
+        const exit = yield* Effect.exit(
+          functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+          }).pipe(Effect.provide(layer)),
+        );
 
-      yield* functionsDeploy({
-        ...BASE_FLAGS,
-        functionNames: ["hello-world"],
-      }).pipe(Effect.provide(layer));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+          );
+        }
+        expect(api.multiparts).toHaveLength(0);
+        expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
+      }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
+    },
+  );
 
-      expect(api.multiparts[0]?.fileNames).toContain("app/supabase/functions/hello-world/index.ts");
-      expect(api.multiparts[0]?.fileNames).toContain(
-        "app/supabase/functions/hello-world/deno.json",
-      );
-      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
-      );
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"import_map_path":"app/supabase/functions/hello-world/deno.json"',
-      );
-      expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
-    }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
-  });
-
-  it.live("treats a .git file as the repo root marker for API uploads", () => {
+  it.live("rejects an escaping import even when a `.git` file marks the repo root", () => {
     const repoRoot = makeTempDir();
     const projectRoot = join(repoRoot, "app");
     const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
@@ -1407,15 +1432,20 @@ describe("functions deploy", () => {
         rawArgs: ["functions", "deploy", "hello-world"],
       });
 
-      yield* functionsDeploy({
-        ...BASE_FLAGS,
-        functionNames: ["hello-world"],
-      }).pipe(Effect.provide(layer));
-
-      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
+      const exit = yield* Effect.exit(
+        functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+        }).pipe(Effect.provide(layer)),
       );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+        );
+      }
+      expect(api.multiparts).toHaveLength(0);
     }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
   });
 
@@ -1722,7 +1752,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
-  it.live("forwards npm auth environment to the Docker bundler", () => {
+  it.live("forwards only NPM_CONFIG_REGISTRY to the Docker bundler", () => {
     const tempDir = makeTempDir();
     const previousRegistry = process.env["NPM_CONFIG_REGISTRY"];
     const previousToken = process.env["NPM_AUTH_TOKEN"];
@@ -1777,9 +1807,10 @@ describe("functions deploy", () => {
         args[index - 1] === "-e" ? [arg] : [],
       );
 
-      expect(forwardedEnv).toEqual(
-        expect.arrayContaining(["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"]),
-      );
+      // Go parity (`bundle.go:68-70`, CLI-1985): only NPM_CONFIG_REGISTRY is
+      // forwarded into the bundler container; NPM_AUTH_TOKEN is not.
+      expect(forwardedEnv).toContain("NPM_CONFIG_REGISTRY");
+      expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN");
       expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN=test-token");
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), restoreEnv])));
   });

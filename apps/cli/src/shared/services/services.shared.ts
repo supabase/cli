@@ -418,10 +418,6 @@ export function formatServicesWarning(message: string, textMode: boolean): strin
   return `${prefix} ${first}\n${rest.join("\n")}\n`;
 }
 
-export function encodeLegacyTomlRows(rows: ReadonlyArray<ServiceVersionRow>) {
-  return { services: rows } as const;
-}
-
 export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
   return Effect.gen(function* () {
     const exit = yield* Effect.gen(function* () {

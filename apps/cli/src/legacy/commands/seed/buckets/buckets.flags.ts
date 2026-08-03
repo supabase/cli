@@ -20,6 +20,12 @@ export function legacySeedChangedTargetFlags(args: ReadonlyArray<string>): Reado
  * (`apps/cli-go/cmd/seed.go:32`). Go rejects this at flag validation — before
  * `RunE`/`PersistentPostRun` — so it must NOT emit `cli_command_executed`; the
  * command calls this BEFORE `withLegacyCommandInstrumentation`.
+ *
+ * The first bracket keeps seed's REGISTRATION order `[local linked]` — cobra
+ * joins the group names unsorted (`flag_groups.go:73`) and only sorts the
+ * "were all set" list (`flag_groups.go:203-204`). `storage` registers the same
+ * pair in the opposite order (`cmd/storage.go:99`), so the two commands'
+ * first brackets legitimately differ.
  */
 export const legacyAssertSeedTargetsExclusive = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
@@ -27,7 +33,7 @@ export const legacyAssertSeedTargetsExclusive = Effect.fnUntraced(function* (
   const setFlags = legacySeedChangedTargetFlags(args);
   if (setFlags.length > 1) {
     return yield* new LegacySeedMutuallyExclusiveFlagsError({
-      message: `if any flags in the group [linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+      message: `if any flags in the group [local linked] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
     });
   }
 });

@@ -22,6 +22,16 @@ export class LegacySnippetsEnvNotSupportedError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
+// Mirrors Go's `utils.EncodeOutput` TOML failure: `snippets list -o toml`
+// fails whenever a snippet carries a `description`, because BurntSushi
+// refuses the `nullable.Nullable[string]` (`map[bool]string`) field
+// ("failed to output toml: toml: cannot encode a map with non-string key type").
+export class LegacySnippetsTomlEncodeError extends Data.TaggedError(
+  "LegacySnippetsTomlEncodeError",
+)<{
+  readonly message: string;
+}> {}
+
 // Wraps `uuid.Parse` failure in `download.Run`; message preserves Go's
 // `invalid snippet ID: <cause>` prefix so callers see the same string.
 export class LegacySnippetsInvalidIdError extends Data.TaggedError("LegacySnippetsInvalidIdError")<{

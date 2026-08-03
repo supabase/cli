@@ -244,6 +244,20 @@ describe("legacy branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "keeps env-map keys verbatim for --output toml (map payload, exempt from CLI-1975)",
+    () => {
+      const { layer, out } = setup({ goOutput: "toml" });
+      return Effect.gen(function* () {
+        yield* legacyBranchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+        // Go encodes a map[string]string here — BurntSushi keeps map keys as-is
+        // (no PascalCase remap), so the CLI-1975 struct remap must NOT apply.
+        expect(out.stdoutText).toContain('SUPABASE_URL = "');
+        expect(out.stdoutText).toContain('POSTGRES_URL = "');
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("emits standard-env map for --output env (env-format encoder)", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {

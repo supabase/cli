@@ -2896,7 +2896,6 @@ const (
 	RegionsInfoAllSpecificProviderAWS       RegionsInfoAllSpecificProvider = "AWS"
 	RegionsInfoAllSpecificProviderAWSK8S    RegionsInfoAllSpecificProvider = "AWS_K8S"
 	RegionsInfoAllSpecificProviderAWSNIMBUS RegionsInfoAllSpecificProvider = "AWS_NIMBUS"
-	RegionsInfoAllSpecificProviderFLY       RegionsInfoAllSpecificProvider = "FLY"
 )
 
 // Valid indicates whether the value is a known member of the RegionsInfoAllSpecificProvider enum.
@@ -2907,8 +2906,6 @@ func (e RegionsInfoAllSpecificProvider) Valid() bool {
 	case RegionsInfoAllSpecificProviderAWSK8S:
 		return true
 	case RegionsInfoAllSpecificProviderAWSNIMBUS:
-		return true
-	case RegionsInfoAllSpecificProviderFLY:
 		return true
 	default:
 		return false
@@ -3055,7 +3052,6 @@ const (
 	RegionsInfoRecommendationsSpecificProviderAWS       RegionsInfoRecommendationsSpecificProvider = "AWS"
 	RegionsInfoRecommendationsSpecificProviderAWSK8S    RegionsInfoRecommendationsSpecificProvider = "AWS_K8S"
 	RegionsInfoRecommendationsSpecificProviderAWSNIMBUS RegionsInfoRecommendationsSpecificProvider = "AWS_NIMBUS"
-	RegionsInfoRecommendationsSpecificProviderFLY       RegionsInfoRecommendationsSpecificProvider = "FLY"
 )
 
 // Valid indicates whether the value is a known member of the RegionsInfoRecommendationsSpecificProvider enum.
@@ -3066,8 +3062,6 @@ func (e RegionsInfoRecommendationsSpecificProvider) Valid() bool {
 	case RegionsInfoRecommendationsSpecificProviderAWSK8S:
 		return true
 	case RegionsInfoRecommendationsSpecificProviderAWSNIMBUS:
-		return true
-	case RegionsInfoRecommendationsSpecificProviderFLY:
 		return true
 	default:
 		return false

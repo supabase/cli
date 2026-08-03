@@ -763,7 +763,42 @@ describe("legacyEnsureStartVolume", () => {
     );
   });
 
-  it.live("fails on any non-zero exit, with no already-exists tolerance", () => {
+  it.live("treats podman's already-exists rejection as success", () => {
+    const mock = mockSpawner(() => ({
+      exitCode: 125,
+      stderr: "Error: volume with name supabase_db_proj already exists: volume already exists\n",
+    }));
+    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+      Effect.map(() => {
+        // Just needs to not fail — no return value to assert on.
+      }),
+    );
+  });
+
+  it.live("treats an already-exists rejection without the trailing sentinel as success", () => {
+    const mock = mockSpawner(() => ({
+      exitCode: 125,
+      stderr: "volume with name supabase_db_proj already exists\n",
+    }));
+    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+      Effect.map(() => {
+        // Just needs to not fail — no return value to assert on.
+      }),
+    );
+  });
+
+  it.live("fails with LegacyStartVolumeCreateError on any other failure", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
+    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(LegacyStartVolumeCreateError);
+        expect(error.message).toBe("failed to create volume: permission denied");
+      }),
+    );
+  });
+
+  it.live("still fails when the volume exists under a different specification", () => {
     const mock = mockSpawner(() => ({
       exitCode: 1,
       stderr:

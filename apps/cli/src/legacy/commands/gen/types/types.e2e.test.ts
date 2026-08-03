@@ -10,6 +10,12 @@ import {
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
+import {
+  RESOLVE_BUDGET_MS,
+  ensureImage,
+  resolveDeadline,
+} from "../../../../../tests/helpers/docker-image.ts";
+import { resolvePgmetaImage } from "./types.shared.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
@@ -17,6 +23,10 @@ type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 const LOCAL_POSTGRES_IMAGE = legacyGetRegistryImageUrl(dockerfileServiceImage("pg"));
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
+// Image resolution happens inside the test bodies, ahead of the startup and
+// per-language windows the test timeouts already budget — so each timeout has
+// to include its own image setup allowance on top.
+const LOCAL_IMAGE_BUDGET_MS = LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS;
 const REMOTE_E2E_FLAG = "SUPABASE_TYPEGEN_E2E_REMOTE";
 const REMOTE_PROJECT_REF_ENV = "SUPABASE_TEST_PROJECT_REF";
 const OUTPUT_TAIL_LENGTH = 4_000;
@@ -199,9 +209,26 @@ async function waitForLocalPostgres(containerName: string) {
   );
 }
 
+// `gen types` starts pg-meta itself (local AND remote non-ts languages) via a
+// single-registry rewrite with no fallback (`resolvePgmetaImage`), so pre-resolve
+// it and retag the winning candidate onto the exact reference the CLI will run.
+async function ensurePgmetaImage(deadline?: number) {
+  const expected = resolvePgmetaImage();
+  const resolved = await ensureImage(dockerfileServiceImage("pgmeta"), deadline);
+  if (resolved !== expected) {
+    await expectDockerSucceeded(["tag", resolved, expected], 30_000);
+  }
+}
+
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
   const networkName = localNetworkId(input.projectId);
+  // One shared window (already counted in the local test's timeout), with
+  // pg-meta's slice reserved up front: Postgres may spend the window only up
+  // to the point that still leaves pg-meta the default budget.
+  const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
+  const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS);
+  await ensurePgmetaImage(imageDeadline);
 
   await expectDockerSucceeded(["network", "create", networkName], 30_000);
   await expectDockerSucceeded(
@@ -219,7 +246,7 @@ async function startLocalPostgres(input: { readonly projectId: string; readonly 
       `${input.dbPort}:5432`,
       "-e",
       "POSTGRES_PASSWORD=postgres",
-      LOCAL_POSTGRES_IMAGE,
+      postgresImage,
       "postgres",
       "-D",
       "/etc/postgresql",
@@ -309,7 +336,12 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
 describe("legacy gen types e2e", () => {
   test(
     "generates all supported languages from a tokenless local stack",
-    { timeout: LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
+    {
+      timeout:
+        LOCAL_IMAGE_BUDGET_MS +
+        LOCAL_POSTGRES_TIMEOUT_MS +
+        TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length,
+    },
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-typegen-local-e2e-");
@@ -357,7 +389,7 @@ describe("legacy gen types e2e", () => {
 
   remoteTest(
     "generates all supported languages from a remote project",
-    { timeout: TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
+    { timeout: RESOLVE_BUDGET_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-typegen-remote-e2e-");
@@ -371,6 +403,8 @@ describe("legacy gen types e2e", () => {
           `Set ${REMOTE_E2E_FLAG}=1, ${REMOTE_PROJECT_REF_ENV}, and SUPABASE_ACCESS_TOKEN to run remote typegen e2e.`,
         );
       }
+
+      await ensurePgmetaImage();
 
       for (const lang of TYPEGEN_LANGS) {
         const result = await runSupabase(

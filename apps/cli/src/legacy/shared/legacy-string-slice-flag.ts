@@ -272,7 +272,7 @@ export function legacyParseStringSliceFlag(
 }
 
 /**
- * Builds a legacy flag that ports a shorthand-less pflag `StringSliceVar`:
+ * Builds a legacy flag that ports a pflag `StringSliceVar`/`StringSliceVarP`:
  * repeatable, CSV-split per occurrence, accumulated across repeats.
  *
  * On malformed CSV it fails at parse time — matching Go, where pflag's
@@ -286,16 +286,28 @@ export function legacyParseStringSliceFlag(
  * Go's `%q` for the ASCII/printable-Unicode values these flags carry —
  * including `\n`/`\r` escapes in multiline values (same precedent as
  * `sso.format.ts`).
+ *
+ * `options.alias` ports the `StringSliceVarP` shorthand (e.g. `start`'s
+ * `-x`). pflag then frames the diagnostic with BOTH spellings — `invalid
+ * argument %q for "-x, --exclude" flag: ...` (`errors.go:108-117` branches on
+ * `flag.Shorthand`) — regardless of which one the user typed, so the alias
+ * must be registered here (not piped on afterwards) for the framing to
+ * stay byte-identical to Go.
  */
-export function legacyStringSliceFlag(name: string, description: string) {
-  return Flag.string(name).pipe(
-    Flag.withDescription(description),
-    Flag.atLeast(0),
+export function legacyStringSliceFlag(
+  name: string,
+  description: string,
+  options?: { readonly alias?: string },
+) {
+  const alias = options?.alias;
+  const pflagName = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
+  const base = Flag.string(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
+  return (alias === undefined ? base : base.pipe(Flag.withAlias(alias))).pipe(
     Flag.mapTryCatch(
       (rawValues) => legacyParseStringSliceFlag(rawValues),
       (err) =>
         err instanceof LegacyStringSliceFlagParseError
-          ? `invalid argument ${JSON.stringify(err.value)} for "--${name}" flag: ${err.message}`
+          ? `invalid argument ${JSON.stringify(err.value)} for "${pflagName}" flag: ${err.message}`
           : err instanceof Error
             ? err.message
             : String(err),

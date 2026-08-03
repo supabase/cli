@@ -12,16 +12,46 @@ import {
   LegacyBackupListNetworkError,
   LegacyBackupListUnexpectedStatusError,
 } from "../backups.errors.ts";
+import { encodeEnv, encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoBool,
+  legacyGoInt,
+  legacyGoPtr,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { formatLegacyTimestamp } from "../../../shared/legacy-timestamp.format.ts";
 import { formatRegion } from "../backups.format.ts";
 import type { LegacyBackupsListFlags } from "./list.command.ts";
+
+/** Mirror of Go's `api.V1BackupsResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
+const LEGACY_GO_BACKUPS_RESPONSE = legacyGoStruct([
+  [
+    "backups",
+    legacyGoSlice(
+      legacyGoStruct([
+        ["id", legacyGoInt],
+        ["inserted_at", legacyGoString],
+        ["is_physical_backup", legacyGoBool],
+        ["status", legacyGoString],
+      ]),
+    ),
+  ],
+  [
+    "physical_backup_data",
+    legacyGoStruct([
+      ["earliest_physical_backup_date_unix", legacyGoPtr(legacyGoInt)],
+      ["latest_physical_backup_date_unix", legacyGoPtr(legacyGoInt)],
+    ]),
+  ],
+  ["pitr_enabled", legacyGoBool],
+  ["region", legacyGoString],
+  ["walg_enabled", legacyGoBool],
+]);
 
 type BackupsResponse = typeof V1ListAllBackupsOutput.Type;
 
@@ -95,11 +125,22 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(response));
+      yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_BACKUPS_RESPONSE));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml(response) + "\n");
+      // The schema decodes Go's PITR-only `"backups": null` to `[]` (see the
+      // `nullForEmptyArrays` JSON hint above); mirror that by treating an
+      // empty list as Go's nil slice, which BurntSushi omits entirely.
+      yield* output.raw(
+        encodeLegacyGoToml(
+          {
+            ...response,
+            backups: response.backups.length > 0 ? response.backups : undefined,
+          },
+          LEGACY_GO_BACKUPS_RESPONSE,
+        ),
+      );
       return;
     }
     if (goFmt === "env") {

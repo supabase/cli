@@ -198,6 +198,32 @@ describe("legacy sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("Go --output=toml fails like Go's EncodeOutput on an unencodable payload", () => {
+    // BurntSushi rejects a nil array element; Go surfaces it as an ordinary
+    // `failed to output toml: …` command error, not a crash (review
+    // r3684270640 — the same wrapping list/show gained in the prior round).
+    const body = {
+      ...PROVIDER,
+      saml: {
+        ...PROVIDER.saml,
+        attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
+      },
+    };
+    const { layer, out } = setup({ goOutput: "toml", body });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoTomlEncodeError");
+        expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
+      }
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {

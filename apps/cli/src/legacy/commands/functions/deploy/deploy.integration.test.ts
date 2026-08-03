@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
@@ -15,7 +15,13 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
-import { ConflictingFunctionDeployFlagsError } from "../../../../shared/functions/deploy.errors.ts";
+import { deployFunctions } from "../../../../shared/functions/deploy.ts";
+import {
+  ConflictingFunctionDeployFlagsError,
+  NoFunctionsToDeployError,
+} from "../../../../shared/functions/deploy.errors.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { legacyFunctionsDeploy } from "./deploy.handler.ts";
 import type { LegacyFunctionsDeployFlags } from "./deploy.command.ts";
 
@@ -113,11 +119,79 @@ describe("legacy functions deploy", () => {
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/deploy",
       );
       expect(deployRequest?.urlParams).toContain("slug=hello-world");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
+  it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
+    // Go: `strings.Join(slugs, ", ")` (`internal/functions/deploy/deploy.go:70`)
+    // joins the raw CLI-arg slugs, not a deduped set, so a repeated slug prints
+    // twice even though only one deploy request is made for it.
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        if (request.url.endsWith("/functions/deploy")) {
+          return Effect.succeed(
+            legacyJsonResponse(request, 201, {
+              id: "function-id",
+              slug: "hello-world",
+              name: "hello-world",
+              status: "ACTIVE",
+              version: 2,
+              created_at: 1_687_423_025_152,
+              updated_at: 1_687_423_025_152,
+              verify_jwt: true,
+              import_map: true,
+              entrypoint_path: "functions/hello-world/index.ts",
+              import_map_path: "functions/hello-world/deno.json",
+            }),
+          );
+        }
+        return Effect.succeed(legacyJsonResponse(request, 404, { error: "not found" }));
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+      yield* legacyFunctionsDeploy({
+        ...baseFlags,
+        functionNames: ["hello-world", "hello-world"],
+      });
+
+      expect(
+        api.requests.filter(
+          (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+        ),
+      ).toHaveLength(1);
+      expect(stripSgr(out.stdoutText)).toContain(
+        "Deployed Functions on project abcdefghijklmnopqrst: hello-world, hello-world\n",
+      );
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(
@@ -253,7 +327,7 @@ describe("legacy functions deploy", () => {
       });
 
       expect(api.requests).toHaveLength(2);
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
     }).pipe(
@@ -317,6 +391,111 @@ describe("legacy functions deploy", () => {
 
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.urlParams).toContain("slug=configured");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
+  it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
+    // Go parity (CLI-1985): Go's `toRelPath` (`pkg/function/deploy.go:94-103`)
+    // anchors uploaded file names and the server-recorded `entrypoint_path` /
+    // `import_map_path` at `os.Getwd()` — the workdir — never at the git root.
+    // A monorepo import outside the workdir but inside the git root (allowed
+    // by the source-root containment check since #5755) would otherwise
+    // upload with a Go-style `../`-relative name. Go's `writeForm`/`addFile`
+    // (`pkg/function/deploy.go:251-284`) opens every uploaded path through an
+    // `fs.FS`, which rejects any path containing a `..` element (`fs.ValidPath`)
+    // before the read — and thus the upload — happens. This asserts the CLI
+    // hard-fails the same way instead of letting the `..`-relative name reach
+    // the server.
+    const repoRoot = tempRoot.current;
+    const workdir = join(repoRoot, "app");
+    const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) => {
+        if (request.body._tag === "FormData") {
+          const metadata = request.body.formData.get("metadata");
+          multiparts.push({
+            metadata: typeof metadata === "string" ? metadata : undefined,
+            fileNames: request.body.formData
+              .getAll("file")
+              .flatMap((part) => (part instanceof File ? [part.name] : [])),
+          });
+        }
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
+          legacyJsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "supabase/functions/hello-world/index.ts",
+            import_map_path: "supabase/functions/hello-world/deno.json",
+          }),
+        );
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir }),
+        runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => writeProjectConfig(workdir));
+      yield* Effect.tryPromise(() =>
+        writeLocalFunction(
+          workdir,
+          "hello-world",
+          'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        mkdir(join(repoRoot, "packages", "shared", "src"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(repoRoot, "packages", "shared", "src", "index.ts"),
+          'export const shared = "ok"\n',
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(workdir, "supabase", "functions", "hello-world", "deno.json"),
+          JSON.stringify({
+            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+          }),
+        ),
+      );
+
+      const exit = yield* Effect.exit(legacyFunctionsDeploy(baseFlags));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+        );
+      }
+      expect(multiparts).toHaveLength(0);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(
@@ -402,7 +581,7 @@ describe("legacy functions deploy", () => {
         (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
       );
       expect(deployRequest?.urlParams).toContain("slug=custom-entry");
-      expect(out.stdoutText).toContain(
+      expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: custom-entry\n",
       );
     }).pipe(
@@ -805,7 +984,7 @@ describe("legacy functions deploy", () => {
           jobs: Option.some(2),
         });
 
-        expect(out.stdoutText).toContain(
+        expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(
@@ -863,7 +1042,7 @@ describe("legacy functions deploy", () => {
           jobs: Option.some(0),
         });
 
-        expect(out.stdoutText).toContain(
+        expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(
@@ -934,8 +1113,91 @@ describe("legacy functions deploy", () => {
         // it wasn't running, so the command fell back to the API and still succeeded.
         expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
         expect(out.stderrText).toContain("WARNING: Docker is not running\n");
-        expect(out.stdoutText).toContain(
+        expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
+        );
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+  });
+
+  describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {
+    // Calls the shared `deployFunctions` with a marker `styleEmphasis` instead of
+    // going through `legacyFunctionsDeploy`: the real hook (`legacyBold`) is
+    // TTY-gated and therefore inert under vitest, so only an injected marker can
+    // deterministically observe which output formats apply the styling.
+    function setupNoFunctionsTest(format: "text" | "json") {
+      const out = mockOutput({ format });
+      const api = mockLegacyPlatformApi();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        Stdio.layerTest({ args: Effect.succeed(["functions", "deploy"]) }),
+      );
+      const deployNoFunctions = Effect.gen(function* () {
+        const platformApi = yield* LegacyPlatformApi;
+        return yield* deployFunctions(
+          { ...baseFlags, functionNames: [] },
+          {
+            api: platformApi,
+            cwd: tempRoot.current,
+            flagCwd: tempRoot.current,
+            projectRoot: tempRoot.current,
+            supabaseDir: join(tempRoot.current, "supabase"),
+            dashboardUrl: "https://supabase.com/dashboard",
+            goViperCompat: true,
+            yes: false,
+            rawArgs: ["functions", "deploy"],
+            edgeRuntimeVersion: "1.69.12",
+            resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+            styleEmphasis: (text) => `<sgr>${text}</sgr>`,
+          },
+        );
+      });
+      return { out, layer, deployNoFunctions };
+    }
+
+    it.live("keeps the injected styling out of the json error payload", () => {
+      const { out, layer, deployNoFunctions } = setupNoFunctionsTest("json");
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+
+        yield* deployNoFunctions.pipe(withJsonErrorHandling);
+
+        expect(out.messages).toContainEqual({
+          type: "fail",
+          message: "No Functions specified or found in supabase/functions",
+        });
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+
+    it.live("still emphasizes the functions dir in the text-mode error", () => {
+      const { layer, deployNoFunctions } = setupNoFunctionsTest("text");
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+
+        const error = yield* deployNoFunctions.pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(NoFunctionsToDeployError);
+        if (!(error instanceof NoFunctionsToDeployError)) {
+          throw new Error(`unexpected error: ${String(error)}`);
+        }
+        expect(error.message).toBe(
+          "No Functions specified or found in <sgr>supabase/functions</sgr>",
         );
       }).pipe(
         Effect.provide(layer),
