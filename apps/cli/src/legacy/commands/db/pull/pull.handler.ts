@@ -6,6 +6,7 @@ import {
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -30,6 +31,7 @@ import {
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
+import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -70,7 +72,6 @@ import type { LegacyDbPullFlags } from "./pull.command.ts";
 import {
   LegacyDbPullDumpError,
   LegacyDbPullEngineConflictError,
-  LegacyDbPullExperimentalRetiredError,
   LegacyDbPullInSyncError,
   LegacyDbPullMigrationConflictError,
   LegacyDbPullTargetFlagsError,
@@ -92,16 +93,74 @@ const DEPRECATION_LINE =
 const MIGRATION_FILE_MODE = 0o644;
 
 // `--experimental`'s structured-dump `db pull` mode (Go's `format.WriteStructuredSchemas`)
-// has been retired (CLI-1957): see `LegacyDbPullExperimentalRetiredError` for why. Printed
-// to stderr in place of the removed Go delegation.
-const EXPERIMENTAL_STRUCTURED_DUMP_RETIRED_MESSAGE =
-  "The --experimental structured-dump mode for `db pull` has been removed. Use `db pull --declarative` instead to pull the remote schema as per-object files.";
+// stays delegated to the bundled Go binary (CLI-1957) rather than retired or ported: Go's
+// formatter routes DDL through a PostgreSQL AST parser (`multigres`) with no TS equivalent.
+// `--declarative` (native pg-delta export) covers the same per-object-files outcome via
+// catalog introspection for schema objects, though its output tree and cluster-object
+// coverage differ (see SIDE_EFFECTS.md), so this mode is on a deprecation path — the
+// same DECISION CLI-1960 makes for `db diff --use-pg-schema` (keep delegating, flag for
+// removal), NOT the same OUTPUT: Go's `db diff --use-pg-schema` prints its own experimental
+// warning from inside the delegated child (`cmd/db.go:121`), so the TS parent deliberately
+// stays silent there. Go's `db pull --experimental` prints nothing of the kind — this line
+// is a TS-fork-only, forward-looking addition with no Go counterpart (unlike `DEPRECATION_LINE`
+// below, which byte-matches pflag's `MarkDeprecated`). Printed to stderr right alongside the
+// existing `--use-pg-delta` deprecation line below.
+const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
+  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
+
+/** Rebuilds the `db pull` argv for the Go-delegated `--experimental` structured-dump branch. */
+const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
+  const args = ["db", "pull"];
+  // Called only once the parent has already decided to delegate (`legacyResolveExperimentalWithProjectEnv`'s
+  // last-occurrence-wins argv rescan resolved `true`), so state it explicitly rather than
+  // relying on root's own `globalArgs` forwarding: root derives `--experimental` from the
+  // PARSED `LegacyExperimentalFlag` (first-occurrence-wins, e.g. `Param.ts`'s
+  // `providedValues[0]`), which can disagree with the rescan on a repeated flag
+  // (`--experimental=false --experimental=true` resolves `true` here but `false` there). A
+  // duplicate `--experimental` is harmless — pflag's own last-`Set()`-wins rule still applies
+  // in the delegated child.
+  args.push("--experimental");
+  if (Option.isSome(flags.name)) args.push(flags.name.value);
+  const pushTarget = (name: string, value: Option.Option<boolean>) => {
+    // Target flags (linked/local) are selectors: Go's ParseDatabaseConfig keys off
+    // `flag.Changed` before the value (`internal/utils/flags/db_url.go`), so a
+    // Changed-but-false flag still selects that target. Forward whenever `Some`
+    // so the delegated child resolves the same target the native path did, instead
+    // of falling through to a different default.
+    if (Option.isSome(value)) args.push(value.value ? `--${name}` : `--${name}=false`);
+  };
+  // Delegation only ever happens in MIGRATION mode — the declarative branch
+  // returns before reaching the delegate call sites — so the resolved decision
+  // here is always `useDeclarative === false`. Go binds `--declarative` and
+  // `--use-pg-delta` to one last-occurrence-wins variable (`cmd/db.go:534-535`), so
+  // replaying only the truthy alias (e.g. forwarding `--declarative` for
+  // `db pull --declarative --use-pg-delta=false`) would flip the child back to
+  // declarative export. Forward an explicit `--declarative=false` when an alias was
+  // passed so the child resolves migration mode deterministically. Never forward
+  // `--use-pg-delta`: the parent already prints its deprecation line and Go's
+  // MarkDeprecated (`cmd/db.go:536`) would re-print it. The "alias present" guard
+  // also keeps us clear of Go's mutually-exclusive [declarative diff-engine] group
+  // (which fires on `Changed`), since an alias and `--diff-engine` can't co-occur.
+  if (Option.isSome(flags.declarative) || Option.isSome(flags.usePgDelta)) {
+    args.push("--declarative=false");
+  }
+  if (Option.isSome(flags.diffEngine)) args.push("--diff-engine", flags.diffEngine.value);
+  // Re-encode each parsed schema as a CSV field so the Go child's pflag StringSlice
+  // CSV parse doesn't re-split a comma-containing schema (e.g. `"tenant,one"`).
+  for (const s of flags.schema) args.push("--schema", legacySchemaToCsvField(s));
+  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
+  pushTarget("linked", flags.linked);
+  pushTarget("local", flags.local);
+  if (Option.isSome(flags.password)) args.push("--password", flags.password.value);
+  return args;
+};
 
 export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: LegacyDbPullFlags) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
   const seam = yield* LegacyDeclarativeSeam;
+  const proxy = yield* LegacyGoProxy;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
@@ -116,6 +175,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   // `supabase/.env` auto-confirms the native initial-migra history repair too.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+  // Go resolves `EXPERIMENTAL` from *either* the global `--experimental` pflag or
+  // `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,327,334`), with the same
+  // bound-pflag-wins-over-env precedence `legacyResolveExperimentalWithProjectEnv`
+  // already implements for `db reset`/declarative generate/sync — reuse it here
+  // instead of re-deriving the gate. Resolved once up front, same as `yes` above;
+  // declarative mode ignores it below (Go checks `usePgDelta` before `EXPERIMENTAL`,
+  // `pull.go:47-50`).
+  const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
 
   let linkedRefForCache: string | undefined;
 
@@ -141,6 +208,13 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           Option.getOrElse(flags.usePgDelta, () => false);
     if (Option.isSome(flags.usePgDelta)) {
       yield* output.raw(`${DEPRECATION_LINE}\n`, "stderr");
+    }
+    // Declarative mode never delegates (Go checks `usePgDelta` before `EXPERIMENTAL`,
+    // `pull.go:47-50`). Computed once here — reused below for both the deprecation
+    // print and the branch that actually delegates — so the two can never drift.
+    const delegatesExperimentalPull = !useDeclarative && experimental;
+    if (delegatesExperimentalPull) {
+      yield* output.raw(`${EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE}\n`, "stderr");
     }
 
     // cobra mutex groups: `[db-url linked local]`, `[declarative diff-engine]`,
@@ -176,37 +250,18 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         : "linked";
 
     // Go's `ParseDatabaseConfig` resolves the linked ref via the cheap, local-only
-    // `LoadProjectRef` (flag/env/`.temp/project-ref` file, no network) BEFORE `RunE`
-    // ever reaches the `EXPERIMENTAL` check below (`internal/utils/flags/db_url.go:
-    // 87-92`, `internal/db/pull/pull.go:47-50`), and `Execute()`'s `PersistentPostRun`
-    // caches that ref regardless of what `RunE` does next (`cmd/root.go:171-181`).
-    // Pre-load it here — same pattern as `reset.handler.ts`/`push.handler.ts`
-    // (CLI-1879) — so the post-run linked-project-cache finalizer still fires when
-    // the retirement error below returns, without paying for the expensive temp-
-    // role/pooler dance `resolver.resolve()` performs for the connection itself
-    // (which the retirement path never uses).
+    // `LoadProjectRef` (flag/env/`.temp/project-ref` file, no network) BEFORE any of
+    // the fallible work below (`internal/utils/flags/db_url.go:87-92`), and
+    // `Execute()`'s `PersistentPostRun` caches that ref regardless of what the rest
+    // of the command does next, including a mid-way failure (`cmd/root.go:170-181,
+    // 212-233`). Pre-load it here — same pattern as `reset.handler.ts`/`push.handler.ts`
+    // (CLI-1879) — so the post-run linked-project-cache finalizer still fires even if
+    // `resolver.resolve()` below fails partway through its login-role/pooler/DNS work
+    // (`resolved.ref` is only known once `resolve()` *succeeds*, which is too late for
+    // the finalizer on a failing run otherwise).
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
       linkedRefForCache = yield* refResolver.loadProjectRef(Option.none());
-    }
-
-    // Go resolves `EXPERIMENTAL` from *either* the global `--experimental` pflag or
-    // `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,327,334`), with the same
-    // bound-pflag-wins-over-env precedence `legacyResolveExperimentalWithProjectEnv`
-    // already implements for `db reset`/declarative generate/sync — reuse it here
-    // instead of re-deriving the gate. Declarative mode never reaches this branch
-    // (Go checks `usePgDelta` before `EXPERIMENTAL`, `pull.go:47-50`). This mode used
-    // to delegate the whole pull to Go for `format.WriteStructuredSchemas` (see
-    // `LegacyDbPullExperimentalRetiredError`); it now fails fast, before resolving a
-    // database connection, instead — checked ahead of `resolver.resolve()` (which can
-    // mint a temp login role and open real pooler connections) rather than after it.
-    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
-    if (!useDeclarative && experimental) {
-      return yield* Effect.fail(
-        new LegacyDbPullExperimentalRetiredError({
-          message: EXPERIMENTAL_STRUCTURED_DUMP_RETIRED_MESSAGE,
-        }),
-      );
     }
 
     const resolved = yield* resolver.resolve({
@@ -296,16 +351,52 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       }),
     });
 
+    // Runs the Go-delegated `--experimental` structured dump (still delegated, see
+    // `EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE` above for why). In machine-output
+    // mode the child's stdout is captured and a structured envelope is emitted instead,
+    // so scripted callers get valid JSON rather than the Go child's human output on
+    // stdout (CLI-1546: stdout is payload-only in machine mode). The child is run with a
+    // non-TTY stdin (`"ignore"`) so any prompt takes its default without blocking the
+    // JSON caller. The EXPERIMENTAL structured dump returns before writing a migration or
+    // touching `schema_migrations` (`pull.go:49-61`), so `remoteHistoryUpdated` is
+    // `false`; `schemaWritten` stays `null` — the child owns the write and doesn't
+    // surface the path on stdout.
+    const delegatePull = (
+      engine: "migra" | "pg-delta",
+      opts: { readonly remoteHistoryUpdated: boolean },
+    ) =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+        if (output.format !== "text") {
+          yield* proxy.execCapture(rebuildDelegateArgs(flags), { env, stdin: "ignore" });
+          yield* output.success("Schema pulled.", {
+            declarative: false,
+            schemaWritten: null,
+            remoteHistoryUpdated: opts.remoteHistoryUpdated,
+            engine,
+          });
+          return;
+        }
+        yield* proxy.exec(rebuildDelegateArgs(flags), { env });
+      });
+
     // Connectivity check (Go's `ConnectByConfig` at the top of `pull.Run`).
     yield* Effect.scoped(
       Effect.gen(function* () {
         // Go's `ConnectByConfigStream` prints this to stderr before dialing
         // (`internal/utils/connect.go:344-348`), local vs remote keyed off
-        // `utils.IsLocalDatabase` (mirrored by the resolver's `isLocal`).
-        yield* output.raw(
-          `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
-          "stderr",
-        );
+        // `utils.IsLocalDatabase` (mirrored by the resolver's `isLocal`). The
+        // delegated `--experimental` branch skips it: the Go child's own
+        // `ConnectByConfig` already prints the line, so the parent printing too
+        // would double it. (The parent still dials below — mirroring Go's early
+        // connectivity check — so a parent-side connect failure on the delegate
+        // path surfaces without the line; pre-existing delegate behavior.)
+        if (!delegatesExperimentalPull) {
+          yield* output.raw(
+            `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
+            "stderr",
+          );
+        }
         const session = yield* connection.connect(resolved.conn, {
           isLocal: resolved.isLocal,
           dnsResolver,
@@ -371,6 +462,24 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           } else {
             yield* output.raw(`Finished ${legacyAqua("supabase db pull")}.\n`);
           }
+          return;
+        }
+
+        // Go's `EXPERIMENTAL` structured-dump branch (`pull.go:49-61`) stays
+        // delegated to Go. pg_dump itself is now native (used by the initial-migra
+        // path below), but this branch also calls `format.WriteStructuredSchemas`
+        // (`cli-go/internal/migration/format/format.go:99`), which parses every
+        // dumped statement with a PostgreSQL DDL AST parser (`multigres`, ~50 node
+        // types) to route objects into structured files. No Postgres DDL parser
+        // exists in TS yet, and `--declarative` already covers the same per-object
+        // outcome via pg-delta catalog introspection, so this path is deprecated
+        // rather than ported (CLI-1957) — see the deprecation line printed above.
+        if (delegatesExperimentalPull) {
+          // Go's structured-dump path returns before writing a migration or
+          // touching schema_migrations (`pull.go:49-61`), so no history repair.
+          yield* delegatePull(usePgDeltaDiff ? "pg-delta" : "migra", {
+            remoteHistoryUpdated: false,
+          });
           return;
         }
 

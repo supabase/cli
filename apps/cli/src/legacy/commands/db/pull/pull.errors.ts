@@ -61,18 +61,3 @@ export class LegacyDbPullDumpError extends Data.TaggedError("LegacyDbPullDumpErr
   readonly message: string;
   readonly suggestion?: string;
 }> {}
-
-/**
- * `--experimental` (or `SUPABASE_EXPERIMENTAL`) `db pull`'s structured-dump mode
- * has been retired (CLI-1957): it required Go's `format.WriteStructuredSchemas`
- * (`apps/cli-go/internal/migration/format/format.go`), which parses pg_dump's
- * DDL output through a PostgreSQL AST parser (`multigres`) with no TS port.
- * `--declarative` (native pg-delta export) already delivers the same
- * per-object schema layout via catalog introspection instead of DDL parsing,
- * so it replaces this mode going forward.
- */
-export class LegacyDbPullExperimentalRetiredError extends Data.TaggedError(
-  "LegacyDbPullExperimentalRetiredError",
-)<{
-  readonly message: string;
-}> {}
