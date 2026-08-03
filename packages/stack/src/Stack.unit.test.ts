@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { createHmac } from "node:crypto";
-import { Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -43,6 +43,7 @@ const defaultConfig: ResolvedStackConfig = {
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
   mode: "native",
+  startupMode: "eager",
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
   apiPort: 54321,
@@ -99,23 +100,23 @@ const edgeRuntimeConfig: ResolvedStackConfig = {
   },
 };
 
-function setupLayer(config: ResolvedStackConfig = defaultConfig) {
+function setupLayer(
+  config: ResolvedStackConfig = defaultConfig,
+  spawner = mockChildProcessSpawner(),
+) {
   const resolver = mockBinaryResolver();
-  const spawner = mockChildProcessSpawner();
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
   const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
-  );
-
-  const layer = Stack.layer(config).pipe(
-    Layer.provide(coordinatorLayer),
     Layer.provide(spawner.layer),
     Layer.provide(BunServices.layer),
   );
 
-  return { layer, resolver, spawner };
+  const layer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
+
+  return { coordinatorLayer, layer, resolver, spawner };
 }
 
 describe("Stack", () => {
@@ -128,6 +129,8 @@ describe("Stack", () => {
 
       expect(info.url).toBe("http://127.0.0.1:54321");
       expect(info.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
+      expect(info.serviceEndpoints.auth).toBe("http://127.0.0.1:54321/auth/v1");
+      expect(info.serviceEndpoints.postgrest).toBe("http://127.0.0.1:54321/rest/v1");
     }).pipe(Effect.provide(layer));
   });
 
@@ -139,7 +142,7 @@ describe("Stack", () => {
       const info = yield* stack.getInfo();
 
       expect(info.serviceEndpoints.functions).toBe("http://127.0.0.1:54321/functions/v1");
-      expect(info.serviceEndpoints.edge_runtime).toBe("http://127.0.0.1:54325");
+      expect(info.serviceEndpoints.edge_runtime).toBe("http://127.0.0.1:54321/functions/v1");
     }).pipe(Effect.provide(layer));
   });
 
@@ -397,4 +400,94 @@ describe("Stack", () => {
       expect(startedContainers).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live("lazy startup starts direct services without starting HTTP backends", () => {
+    const { layer, spawner } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+      yield* stack.waitAllReady();
+
+      expect(
+        spawner.spawned.some((record) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"bash"'),
+          ),
+        ),
+      ).toBe(true);
+      expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
+      expect(spawner.spawned.some((record) => record.command.endsWith("/postgrest"))).toBe(false);
+
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("lazy activation honors explicitly stopped transitive dependencies", () => {
+    const config: ResolvedStackConfig = {
+      ...defaultConfig,
+      mode: "auto",
+      startupMode: "lazy",
+      storage: {
+        port: defaultPorts.storagePort,
+        dataDir: "/tmp/supabase/storage",
+        fileSizeLimit: "50MiB",
+        s3ProtocolEnabled: true,
+        version: DEFAULT_VERSIONS.storage,
+      },
+      imgproxy: {
+        port: defaultPorts.imgproxyPort,
+        version: DEFAULT_VERSIONS.imgproxy,
+      },
+    };
+    const { coordinatorLayer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      yield* coordinator.stopService("imgproxy");
+
+      const error = yield* coordinator.activateService("storage").pipe(Effect.flip);
+
+      expect(error._tag).toBe("StackBuildError");
+      if (error._tag === "StackBuildError") {
+        expect(error.detail).toContain("imgproxy was explicitly stopped");
+      }
+      yield* coordinator.stop();
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("lazy readiness includes an activation that is still starting", () =>
+    Effect.gen(function* () {
+      const spawnStarted = yield* Deferred.make<void>();
+      const spawner = mockChildProcessSpawner({
+        beforeSpawn: (record) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+          )
+            ? Deferred.succeed(spawnStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
+      const { coordinatorLayer } = setupLayer({ ...defaultConfig, startupMode: "lazy" }, spawner);
+
+      yield* Effect.gen(function* () {
+        const coordinator = yield* StackLifecycleCoordinator;
+        yield* coordinator.start();
+        const activationFiber = yield* coordinator
+          .activateService("auth")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(spawnStarted);
+
+        const readyFiber = yield* coordinator
+          .waitAllReady()
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(readyFiber.pollUnsafe()).toBeUndefined();
+
+        yield* coordinator.stop().pipe(Effect.timeout("1 second"));
+        yield* Fiber.interrupt(readyFiber);
+        yield* Fiber.interrupt(activationFiber);
+      }).pipe(Effect.provide(coordinatorLayer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
 });

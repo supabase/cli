@@ -148,6 +148,8 @@ export interface StackConfig {
   readonly runtimeRoot?: string;
   readonly projectDir?: string;
   readonly mode?: "native" | "auto" | "docker";
+  /** Start all services immediately, or defer proxied services until first use. */
+  readonly startupMode?: "eager" | "lazy";
   readonly jwtSecret?: string;
   readonly port?: number;
   readonly publishableKey?: string;
@@ -272,6 +274,7 @@ export interface ResolvedStackConfig {
   readonly runtimeRoot: string;
   readonly projectDir: string;
   readonly mode: "native" | "auto" | "docker";
+  readonly startupMode: "eager" | "lazy";
   readonly jwtSecret: string;
   readonly ports: AllocatedPorts;
   readonly apiPort: number;

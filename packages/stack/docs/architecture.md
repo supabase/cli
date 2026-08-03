@@ -707,6 +707,7 @@ public service projection metadata, and exact cleanup targets.
 
 ```ts
 interface ResolvedStackConfig {
+  readonly startupMode: "eager" | "lazy";
   readonly jwtSecret: string;
   readonly apiPort: number;
   readonly dbPort: number;
@@ -804,6 +805,12 @@ reached through the HTTP or WebSocket proxy from direct listeners and internal c
 coordinator also expands public activation into required companion targets: Storage activates
 imgproxy, and Analytics activates Vector, when those services are enabled. Process dependencies
 remain the responsibility of the process graph.
+
+The package defaults to `startupMode: "eager"`. In `"lazy"` mode, `start()` starts and waits only
+for services with direct endpoints. Each HTTP proxy route activates its target service before it
+forwards the request, and concurrent activation remains single-flight in the orchestrator. Proxy
+requests made before startup or after shutdown receive `503 Service Unavailable`. `waitAllReady()`
+waits for the set of services activated so far instead of blocking on intentionally dormant ones.
 
 #### StackInfo
 

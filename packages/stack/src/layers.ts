@@ -7,6 +7,7 @@ import { BinaryResolver } from "./BinaryResolver.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
 import { RemoteStack } from "./RemoteStack.ts";
+import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
@@ -45,7 +46,13 @@ export const foregroundLayer = (
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
   );
-  const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
+  const stackLayer = Stack.layer(config);
+  const serviceActivatorLayer = Layer.effect(
+    StackServiceActivator,
+    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
+      activate: coordinator.activateService,
+    })),
+  );
 
   const proxyConfig: ProxyConfig = {
     listenPort: config.apiPort,
@@ -64,9 +71,16 @@ export const foregroundLayer = (
     anonJwt: config.anonJwt,
     serviceRoleJwt: config.serviceRoleJwt,
   };
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(serviceActivatorLayer),
+  );
 
-  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(Layer.provide(platform), Layer.orDie);
+  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(
+    Layer.provide(coordinatorLayer),
+    Layer.provide(platform),
+    Layer.orDie,
+  );
 };
 
 // ---------------------------------------------------------------------------
@@ -112,7 +126,16 @@ export const foregroundDaemonLayer = (
     anonJwt: config.anonJwt,
     serviceRoleJwt: config.serviceRoleJwt,
   };
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
+  const serviceActivatorLayer = Layer.effect(
+    StackServiceActivator,
+    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
+      activate: coordinator.activateService,
+    })),
+  );
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(serviceActivatorLayer),
+  );
   const stateManagerLayer = StateManager.make(
     singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
   );
@@ -125,9 +148,10 @@ export const foregroundDaemonLayer = (
     Layer.provide(stackPreparationLayer),
     Layer.provide(metadataPersistenceLayer),
   );
-  const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
+  const stackLayer = Stack.layer(config);
 
   return Layer.mergeAll(stackLayer, apiProxyLayer, stateManagerLayer).pipe(
+    Layer.provide(coordinatorLayer),
     Layer.provide(platform),
     Layer.orDie,
   );

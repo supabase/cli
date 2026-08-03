@@ -545,6 +545,7 @@ export async function resolveConfig(
     runtimeRoot: roots.runtimeRoot,
     projectDir,
     mode: resolvedMode,
+    startupMode: config.startupMode ?? "eager",
     jwtSecret,
     ports,
     apiPort: ports.apiPort,

@@ -1,3 +1,7 @@
+import { ServiceNotFoundError } from "@supabase/process-compose";
+import type { ServiceReadyError } from "@supabase/process-compose";
+import { Context, Effect, Layer } from "effect";
+import { StackBuildError, StackNotRunningError } from "./errors.ts";
 import type { ServiceName } from "./versions.ts";
 
 type ServiceAccess = "proxy-http" | "proxy-websocket" | "direct" | "companion";
@@ -36,8 +40,48 @@ export const activationTargetsForService = (
   service: ServiceName,
 ): ReadonlyArray<ServiceName> => {
   const enabled = new Set(enabledServices);
-  const companions: ReadonlyArray<ServiceName> =
-    service === "storage" ? ["imgproxy"] : service === "analytics" ? ["vector"] : [];
+  const targets = new Set<ServiceName>();
+  const addWithCompanions = (target: ServiceName): void => {
+    if (!enabled.has(target) || targets.has(target)) return;
+    targets.add(target);
+    if (target === "storage") addWithCompanions("imgproxy");
+    if (target === "analytics") addWithCompanions("vector");
+    if (target === "studio") addWithCompanions("analytics");
+  };
+  addWithCompanions(service);
 
-  return [service, ...companions].filter((target) => enabled.has(target));
+  return [...targets];
 };
+
+/** Services exclusively owned by a public service for stop/restart operations. */
+export const lifecycleTargetsForService = (
+  enabledServices: ReadonlyArray<ServiceName>,
+  service: ServiceName,
+): ReadonlyArray<ServiceName> => {
+  const enabled = new Set(enabledServices);
+  const targets: ServiceName[] = [];
+  const add = (target: ServiceName): void => {
+    if (enabled.has(target)) targets.push(target);
+  };
+
+  add(service);
+  if (service === "storage") add("imgproxy");
+  if (service === "analytics") add("vector");
+  return targets;
+};
+
+export class StackServiceActivator extends Context.Service<
+  StackServiceActivator,
+  {
+    readonly activate: (
+      service: ServiceName,
+    ) => Effect.Effect<
+      void,
+      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackNotRunningError
+    >;
+  }
+>()("stack/StackServiceActivator") {
+  static noop = Layer.succeed(this, {
+    activate: () => Effect.void,
+  });
+}

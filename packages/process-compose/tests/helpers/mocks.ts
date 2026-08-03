@@ -13,6 +13,7 @@ export function mockChildProcessSpawner(
     exitCode?: number;
     stdout?: string[];
     stderr?: string[];
+    beforeSpawn?: (record: SpawnRecord) => Effect.Effect<void>;
     onSpawn?: (record: SpawnRecord) => void;
   } = {},
 ) {
@@ -27,6 +28,7 @@ export function mockChildProcessSpawner(
           const cmd = command._tag === "StandardCommand" ? command.command : "";
           const args = command._tag === "StandardCommand" ? command.args : [];
           const record: SpawnRecord = { command: cmd, args };
+          yield* opts.beforeSpawn?.(record) ?? Effect.void;
           spawned.push(record);
           opts.onSpawn?.(record);
 
