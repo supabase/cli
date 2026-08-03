@@ -19,11 +19,13 @@ import { cleanupLocalStackResources } from "./cleanup.ts";
 import { StackBuildError, StackNotRunningError } from "./errors.ts";
 import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import type { PortLease } from "./PortAllocator.ts";
 import {
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
 } from "./ServiceActivation.ts";
+import { portFieldsForService } from "./ServicePorts.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
@@ -187,6 +189,7 @@ export class StackLifecycleCoordinator extends Context.Service<
 >()("stack/StackLifecycleCoordinator") {
   static layer = (
     config: ResolvedStackConfig,
+    portLease: PortLease,
   ): Layer.Layer<
     StackLifecycleCoordinator,
     StackBuildError,
@@ -555,6 +558,9 @@ export class StackLifecycleCoordinator extends Context.Service<
             effect,
           );
         const withLifecycleLock = lifecycleLock.withPermit;
+        const serviceStartOptions = {
+          beforeSpawn: (name: string) => portLease.release(portFieldsForService(name)),
+        };
         const startServices = <E, R>(
           services: ReadonlyArray<ServiceName>,
           beforeStart: Effect.Effect<void, E, R>,
@@ -594,7 +600,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                 yield* Effect.forEach(
                   inactiveServices,
                   (service) =>
-                    runtime.orchestrator.startService(service).pipe(
+                    runtime.orchestrator.startService(service, serviceStartOptions).pipe(
                       Effect.mapError(
                         (cause) =>
                           new StackBuildError({
@@ -664,7 +670,10 @@ export class StackLifecycleCoordinator extends Context.Service<
                 runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
               cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
               config,
-            }).pipe(Effect.ensuring(Ref.set(phaseRef, "stopped")));
+            }).pipe(
+              Effect.ensuring(portLease.releaseAll),
+              Effect.ensuring(Ref.set(phaseRef, "stopped")),
+            );
           }).pipe(withLifecycleLock);
 
         yield* Effect.addFinalizer(disposeOnce);
@@ -715,15 +724,17 @@ export class StackLifecycleCoordinator extends Context.Service<
                   runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
                 ) {
                   if (!postgresInitStartedByEagerService) {
-                    yield* runtime.orchestrator.startService("postgres-init").pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new StackBuildError({
-                            detail: "Prepared graph does not contain postgres-init",
-                            cause,
-                          }),
-                      ),
-                    );
+                    yield* runtime.orchestrator
+                      .startService("postgres-init", serviceStartOptions)
+                      .pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new StackBuildError({
+                              detail: "Prepared graph does not contain postgres-init",
+                              cause,
+                            }),
+                        ),
+                      );
                   }
                   yield* runtime.orchestrator.waitReady("postgres-init").pipe(
                     Effect.catchTag("ServiceNotFoundError", (cause) =>
@@ -740,7 +751,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                 for (const service of enabledServices) {
                   activatedServices.add(service);
                 }
-                yield* runtime.orchestrator.start();
+                yield* runtime.orchestrator.start(serviceStartOptions);
                 yield* runtime.orchestrator.waitAllReady();
               }
               yield* Ref.set(phaseRef, "running");
@@ -866,7 +877,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                     restartIntents.delete(target);
                   }
                   for (const root of restartRoots) {
-                    yield* runtime.orchestrator.restartService(root);
+                    yield* runtime.orchestrator.restartService(root, serviceStartOptions);
                   }
                   yield* Effect.forEach(
                     restoreTargets,
@@ -895,7 +906,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* withActivationLocks(
                 ["edge-runtime"],
                 runtime.orchestrator
-                  .restartService("edge-runtime")
+                  .restartService("edge-runtime", serviceStartOptions)
                   .pipe(Effect.andThen(runtime.orchestrator.waitReady("edge-runtime"))),
               );
             }).pipe(withLifecycleLock),
@@ -938,7 +949,9 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* withActivationLocks(
                 ["edge-runtime"],
                 updateDefinition.pipe(
-                  Effect.andThen(runtime.orchestrator.restartService("edge-runtime")),
+                  Effect.andThen(
+                    runtime.orchestrator.restartService("edge-runtime", serviceStartOptions),
+                  ),
                   Effect.andThen(runtime.orchestrator.waitReady("edge-runtime")),
                 ),
               );

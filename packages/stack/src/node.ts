@@ -119,10 +119,14 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
 // ---------------------------------------------------------------------------
 
 /** Node platform factory for use with foregroundLayer / daemonLayer. */
-export const platformFactory: PlatformFactory = (apiPort) =>
+export const platformFactory: PlatformFactory = ({ apiPort, releaseApiPort }) =>
   Layer.mergeAll(
     NodeServices.layer,
-    NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie),
+    Layer.unwrap(
+      releaseApiPort.pipe(
+        Effect.as(NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie)),
+      ),
+    ),
     proxyWebSocketConnectorLayer,
   );
 

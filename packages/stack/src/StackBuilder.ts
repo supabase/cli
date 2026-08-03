@@ -895,7 +895,13 @@ export class StackBuilder extends Context.Service<
                 config.analytics !== false ? `http://${serviceHost}:${config.analytics.port}` : "",
               analyticsApiKey: config.analytics !== false ? config.analytics.apiKey : "api-key",
               networkArgs: dockerNetworkArgs(platform.os, [config.studio.port]),
-              dependencies: [{ service: "pgmeta", condition: "healthy" }],
+              dependencies:
+                config.analytics === false
+                  ? [{ service: "pgmeta", condition: "healthy" }]
+                  : [
+                      { service: "pgmeta", condition: "healthy" },
+                      { service: "analytics", condition: "healthy" },
+                    ],
             }),
             enabled: true,
           });

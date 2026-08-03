@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 const supervisorRuntimePath = fileURLToPath(new URL("./supervisor-runtime.ts", import.meta.url));
 
@@ -39,6 +39,35 @@ const isPidAlive = (pid: number): boolean => {
 };
 
 describe("supervisor-runtime", () => {
+  test("waits for the spawn gate before starting the supervised child", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "process-compose-supervisor-gate-"));
+    const requestPath = path.join(tempDir, "request");
+    const releasePath = path.join(tempDir, "release");
+    const readyFile = path.join(tempDir, "ready");
+    const encodedConfig = Buffer.from(
+      JSON.stringify({
+        command: process.execPath,
+        args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(readyFile)}, "ready")`],
+        spawnGate: { requestPath, releasePath },
+      }),
+    ).toString("base64url");
+    const supervisor = spawn(process.execPath, [supervisorRuntimePath, encodedConfig], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+
+    try {
+      await waitFor(() => existsSync(requestPath));
+      expect(existsSync(readyFile)).toBe(false);
+      writeFileSync(releasePath, "release", { flag: "wx" });
+      await waitFor(() => existsSync(readyFile));
+      supervisor.stdin.end();
+      await waitFor(() => supervisor.exitCode != null);
+    } finally {
+      supervisor.kill("SIGKILL");
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test(
     "kills the child tree and runs orphan cleanup when parent stdin closes",
     { timeout: 15_000 },

@@ -2,6 +2,8 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
+import { reserveAllocatedPorts, type PortLease } from "./PortAllocator.ts";
+import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { runningServiceVersionsForConfig } from "./StackMetadata.ts";
 import { foregroundDaemonLayer } from "./layers.ts";
 import { Stack } from "./Stack.ts";
@@ -50,10 +52,19 @@ export async function runDaemon(
   let daemonRuntime: ManagedRuntime.ManagedRuntime<DaemonServer, never> | undefined;
   let stateManager: StateManagerService | undefined;
   let daemonState: StackState | undefined;
+  let portLease: PortLease | undefined;
 
   try {
+    portLease = await Effect.runPromise(
+      reserveAllocatedPorts(config.ports, allocatedPortFieldsForConfig(config)),
+    );
+
     // Build the app layer (Stack + ApiProxy)
-    const appLayer = foregroundDaemonLayer({ ...config, name, projectDir }, platformFactory);
+    const appLayer = foregroundDaemonLayer(
+      { ...config, name, projectDir },
+      platformFactory,
+      portLease,
+    );
 
     appRuntime = ManagedRuntime.make(appLayer);
 
@@ -109,6 +120,9 @@ export async function runDaemon(
     };
     process.send?.(errorMsg);
     await shutdownDaemon({ appRuntime, daemonRuntime, stateManager, daemonState });
+    if (portLease !== undefined) {
+      await Effect.runPromise(portLease.releaseAll);
+    }
     process.exit(1);
   }
 }

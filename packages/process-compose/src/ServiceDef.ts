@@ -89,6 +89,11 @@ export interface OrchestratorConfig {
   readonly shutdownTimeoutSeconds?: number;
 }
 
+export interface ServiceStartOptions {
+  /** Runs after dependencies are satisfied and immediately before each spawn. */
+  readonly beforeSpawn?: (name: string) => Effect.Effect<void>;
+}
+
 export const defaults = {
   healthCheck: {
     initialDelaySeconds: 0,

@@ -11,6 +11,7 @@ export type {
   HookLog,
   LifecycleHook,
   OrchestratorConfig,
+  ServiceStartOptions,
   ServiceDef,
 } from "./ServiceDef.ts";
 export { defaults } from "./ServiceDef.ts";

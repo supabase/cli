@@ -5,7 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
@@ -100,13 +100,20 @@ const edgeRuntimeConfig: ResolvedStackConfig = {
   },
 };
 
+const noopPortLease = (ports: AllocatedPorts): PortLease => ({
+  ports,
+  release: () => Effect.void,
+  releaseAll: Effect.void,
+});
+
 function setupLayer(
   config: ResolvedStackConfig = defaultConfig,
+  portLease: PortLease = noopPortLease(config.ports),
   spawner = mockChildProcessSpawner(),
 ) {
   const resolver = mockBinaryResolver();
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
@@ -297,7 +304,10 @@ describe("Stack", () => {
     });
     const spawner = mockChildProcessSpawner();
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-    const coordinatorLayer = StackLifecycleCoordinator.layer(defaultConfig).pipe(
+    const coordinatorLayer = StackLifecycleCoordinator.layer(
+      defaultConfig,
+      noopPortLease(defaultConfig.ports),
+    ).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(StackMetadataPersistence.noop),
@@ -379,7 +389,10 @@ describe("Stack", () => {
     const resolver = mockBinaryResolver({ failServices: ["postgres", "postgrest", "auth"] });
     const spawner = mockChildProcessSpawner({ exitCode: 1 });
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-    const coordinatorLayer = StackLifecycleCoordinator.layer(defaultConfig).pipe(
+    const coordinatorLayer = StackLifecycleCoordinator.layer(
+      defaultConfig,
+      noopPortLease(defaultConfig.ports),
+    ).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(StackMetadataPersistence.noop),
@@ -468,7 +481,8 @@ describe("Stack", () => {
             ? Deferred.succeed(spawnStarted, undefined).pipe(Effect.andThen(Effect.never))
             : Effect.void,
       });
-      const { coordinatorLayer } = setupLayer({ ...defaultConfig, startupMode: "lazy" }, spawner);
+      const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+      const { coordinatorLayer } = setupLayer(config, noopPortLease(config.ports), spawner);
 
       yield* Effect.gen(function* () {
         const coordinator = yield* StackLifecycleCoordinator;
@@ -578,7 +592,8 @@ describe("Stack", () => {
   });
 
   it.live("rejects a cached activation after the stack has stopped", () => {
-    const { coordinatorLayer } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const { coordinatorLayer } = setupLayer(config);
 
     return Effect.gen(function* () {
       const coordinator = yield* StackLifecycleCoordinator;
@@ -607,5 +622,37 @@ describe("Stack", () => {
       expect((yield* coordinator.getState("auth")).status).toBe("Pending");
       yield* coordinator.stop();
     }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("releases only the ports in a lazy service dependency closure", () => {
+    const released = new Set<PortField>();
+    const lease: PortLease = {
+      ports: defaultPorts,
+      release: (fields) =>
+        Effect.sync(() => {
+          for (const field of fields) released.add(field);
+        }),
+      releaseAll: Effect.void,
+    };
+    const { layer } = setupLayer({ ...defaultConfig, startupMode: "lazy" }, lease);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+
+      expect(released.has("dbPort")).toBe(true);
+      expect(released.has("authPort")).toBe(false);
+      expect(released.has("postgrestPort")).toBe(false);
+
+      const startFiber = yield* stack
+        .startService("auth")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.sleep("50 millis");
+      expect(released.has("authPort")).toBe(true);
+      expect(released.has("postgrestPort")).toBe(false);
+
+      yield* Fiber.interrupt(startFiber);
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 });

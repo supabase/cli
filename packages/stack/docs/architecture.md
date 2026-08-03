@@ -433,7 +433,7 @@ class JwtGenerator extends ServiceMap.Service<
 
 **File:** `src/PortAllocator.ts`
 
-`PortAllocator` resolves all port numbers before the stack starts. It supports two strategies: an explicit port requested by the caller, or a randomly assigned port from the OS.
+`PortAllocator` resolves all port numbers before the stack starts. It supports explicit caller ports and random OS-assigned ports. `createStack()` uses leased allocation: each selected port remains bound until the API proxy or corresponding service dependency closure is ready to bind it.
 
 #### Interface
 
@@ -460,16 +460,20 @@ export interface AllocatedPorts {
 export const allocatePorts = (
   input: PortInput,
 ): Effect.Effect<AllocatedPorts, PortAllocationError>;
+
+export const reservePorts = (
+  input: PortInput,
+): Effect.Effect<PortLease, PortAllocationError>;
 ```
 
 #### Two strategies
 
-- **Explicit port** (`input.apiPort !== undefined`) → `probeExactPort(port)`: binds the specific port on `127.0.0.1` to confirm it is available. Fails with `PortAllocationError` if the port is already in use.
-- **Omitted** → `probeRandomPort(exclude)`: binds port `0` on `127.0.0.1` so the OS assigns a free port, then closes the server immediately and returns the assigned port number.
+- **Explicit port** (`input.apiPort !== undefined`) binds the specific port on `127.0.0.1` and fails with `PortAllocationError` if it is already in use.
+- **Omitted** binds port `0` on `127.0.0.1`, allowing the OS to assign a free port.
 
 #### Collision avoidance
 
-Allocated ports are tracked in a `Set<number>`. When `probeRandomPort` returns a port already in the set (rare but possible under concurrent allocation), it retries automatically. This prevents two services from racing to the same port.
+Allocated ports are tracked in a `Set<number>` and OS listeners prevent concurrent stacks from receiving the same assignment. The API lease is released immediately before the central proxy binds. Backend leases remain active in lazy mode and are released only for the graph dependency closure being started. Any remaining listeners are closed during stack disposal. `allocatePorts()` remains available as a probe-only low-level API; stack construction uses `reservePorts()`.
 
 ---
 
@@ -885,7 +889,7 @@ metadata persisted separately for crash recovery.
 
 **File:** `src/createStack.ts`
 
-`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function `(apiPort: number) => PlatformLayer` — so the platform-specific HTTP server (Bun or Node.js) can be bound to the already-resolved port. The platform layer also supplies the proxy's `ProxyWebSocketConnector`; custom factories can import that service contract from `@supabase/stack/effect`. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`, and their WebSocket connectors) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
+`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function receiving `{ apiPort, releaseApiPort }` — so the platform-specific HTTP server (Bun or Node.js) can release the reserved API port immediately before binding it. The platform layer also supplies the proxy's `ProxyWebSocketConnector`; custom factories can import that service contract from `@supabase/stack/effect`. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`, and their WebSocket connectors) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
 
 `createStack` also owns `resolveConfig()`, the internal async function that turns a raw
 `StackConfig` into a `ResolvedStackConfig`: it allocates ports via `PortAllocator`, generates JWTs
@@ -1204,12 +1208,17 @@ spawner; the key idea is that tests compose `Stack.layer(config)` on top of a re
 function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   const resolver = mockBinaryResolver();
   const spawner = mockChildProcessSpawner(); // from @supabase/process-compose mocks
+  const portLease: PortLease = {
+    ports: config.ports,
+    release: () => Effect.void,
+    releaseAll: Effect.void,
+  };
 
   const preparationLayer = StackPreparation.layer.pipe(
     Layer.provide(resolver.layer),
     Layer.provide(spawner.layer),
   );
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(preparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
@@ -1219,6 +1228,9 @@ function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   return { layer, resolver, spawner };
 }
 ```
+
+Production setup passes the real reserved `PortLease`; tests use the no-op lease above because
+their mocked processes do not bind the configured ports.
 
 The `mockChildProcessSpawner` is reused from `@supabase/process-compose`'s test helpers — it
 stubs process spawning without forking real OS processes, making `Stack` / coordinator tests fast

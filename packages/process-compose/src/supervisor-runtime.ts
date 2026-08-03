@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { realpathSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ChildProcess } from "effect/unstable/process";
 import type { ExternalCleanupAction } from "./ServiceDef.ts";
@@ -17,6 +17,10 @@ interface SupervisorRuntimeConfig {
   readonly shutdownSignal?: ChildProcess.Signal;
   readonly shutdownTimeoutMs?: number;
   readonly cleanup?: ReadonlyArray<ExternalCleanupAction>;
+  readonly spawnGate?: {
+    readonly requestPath: string;
+    readonly releasePath: string;
+  };
 }
 
 interface ChildExit {
@@ -135,6 +139,15 @@ const cleanupActionsFrom = (value: unknown): ReadonlyArray<ExternalCleanupAction
   return actions.every((action) => action != null) ? actions : undefined;
 };
 
+const spawnGateFrom = (value: unknown): SupervisorRuntimeConfig["spawnGate"] => {
+  if (!isObject(value)) return undefined;
+  const requestPath = getField(value, "requestPath");
+  const releasePath = getField(value, "releasePath");
+  return typeof requestPath === "string" && typeof releasePath === "string"
+    ? { requestPath, releasePath }
+    : undefined;
+};
+
 const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeConfig => {
   const value: unknown = JSON.parse(Buffer.from(encodedConfig, "base64url").toString("utf8"));
   if (!isObject(value)) {
@@ -156,6 +169,7 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
     shutdownSignal: signalFrom(getField(value, "shutdownSignal")),
     shutdownTimeoutMs: typeof shutdownTimeoutMs === "number" ? shutdownTimeoutMs : undefined,
     cleanup: cleanupActionsFrom(getField(value, "cleanup")),
+    spawnGate: spawnGateFrom(getField(value, "spawnGate")),
   };
 };
 
@@ -166,6 +180,18 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
 
   const config = parseSupervisorRuntimeConfig(encodedConfig);
   const childEnv = withoutSupervisorRuntimeEnv();
+
+  if (config.spawnGate !== undefined) {
+    writeFileSync(config.spawnGate.requestPath, "ready", { flag: "wx" });
+    const deadline = Date.now() + 60_000;
+    const waitArray = new Int32Array(new SharedArrayBuffer(4));
+    while (!existsSync(config.spawnGate.releasePath)) {
+      if (Date.now() >= deadline) throw new Error("Timed out waiting for supervised spawn release");
+      Atomics.wait(waitArray, 0, 0, 25);
+    }
+    unlinkSync(config.spawnGate.requestPath);
+    unlinkSync(config.spawnGate.releasePath);
+  }
 
   const isWindows = process.platform === "win32";
   const child = spawn(config.command, config.args ?? [], {

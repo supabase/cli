@@ -14,6 +14,12 @@ interface SupervisorRuntimeConfig {
   readonly shutdownSignal: ChildProcess.Signal;
   readonly shutdownTimeoutMs: number;
   readonly cleanup: ReadonlyArray<ExternalCleanupAction>;
+  readonly spawnGate?: SupervisorSpawnGate;
+}
+
+export interface SupervisorSpawnGate {
+  readonly requestPath: string;
+  readonly releasePath: string;
 }
 
 export const supervisorRuntimePath = fileURLToPath(
@@ -22,7 +28,7 @@ export const supervisorRuntimePath = fileURLToPath(
 
 export const usesSupervisor = (def: ServiceDef): boolean => def.supervision != null;
 
-export const makeSupervisedCommand = (def: ServiceDef) => {
+export const makeSupervisedCommand = (def: ServiceDef, spawnGate?: SupervisorSpawnGate) => {
   const runtimeConfig: SupervisorRuntimeConfig = {
     command: def.command,
     args: def.args ?? [],
@@ -30,6 +36,7 @@ export const makeSupervisedCommand = (def: ServiceDef) => {
     shutdownSignal: def.shutdown?.signal ?? defaults.shutdown.signal,
     shutdownTimeoutMs: (def.shutdown?.timeoutSeconds ?? defaults.shutdown.timeoutSeconds) * 1000,
     cleanup: def.supervision?.orphanCleanup ?? [],
+    spawnGate,
   };
   const encoded = Buffer.from(JSON.stringify(runtimeConfig)).toString("base64url");
   const selfDispatch = isSupervisorSelfDispatchEnabled(import.meta.url);

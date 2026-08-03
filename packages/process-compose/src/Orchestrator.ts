@@ -1,3 +1,6 @@
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   Cause,
   Deferred,
@@ -6,6 +9,7 @@ import {
   Exit,
   FiberMap,
   Layer,
+  Schedule,
   Context,
   Semaphore,
   Stream,
@@ -15,7 +19,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { buildGraph, type ResolvedGraph } from "./DependencyGraph.ts";
 import { type HealthProbeCallbacks, runHealthProbe } from "./HealthProbe.ts";
 import { LogBuffer } from "./LogBuffer.ts";
-import type { HookTrigger, OrchestratorConfig, RestartPolicy, ServiceDef } from "./ServiceDef.ts";
+import type {
+  HookTrigger,
+  OrchestratorConfig,
+  RestartPolicy,
+  ServiceDef,
+  ServiceStartOptions,
+} from "./ServiceDef.ts";
 import { defaults } from "./ServiceDef.ts";
 import { initial } from "./ServiceState.ts";
 import { makeSupervisedCommand, usesSupervisor } from "./Supervisor.ts";
@@ -43,11 +53,17 @@ const waitForProcessToStop = (handle: {
 export class Orchestrator extends Context.Service<
   Orchestrator,
   {
-    readonly start: () => Effect.Effect<void>;
-    readonly startService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
+    readonly start: (options?: ServiceStartOptions) => Effect.Effect<void>;
+    readonly startService: (
+      name: string,
+      options?: ServiceStartOptions,
+    ) => Effect.Effect<void, ServiceNotFoundError>;
     readonly stop: () => Effect.Effect<void>;
     readonly stopService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
-    readonly restartService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
+    readonly restartService: (
+      name: string,
+      options?: ServiceStartOptions,
+    ) => Effect.Effect<void, ServiceNotFoundError>;
     readonly updateServiceDefinition: (
       name: string,
       def: ServiceDef,
@@ -180,7 +196,10 @@ export class Orchestrator extends Context.Service<
         const shouldRestartOnUnhealthy = (policy: RestartPolicy): boolean => policy !== "no";
 
         // The full lifecycle loop for a single service
-        const runService = (def: ServiceDef): Effect.Effect<void, SpawnError> =>
+        const runService = (
+          def: ServiceDef,
+          options?: ServiceStartOptions,
+        ): Effect.Effect<void, SpawnError> =>
           Effect.gen(function* () {
             let restartCount = 0;
             const maxRestarts = def.maxRestarts ?? defaults.maxRestarts;
@@ -241,16 +260,45 @@ export class Orchestrator extends Context.Service<
                 Effect.gen(function* () {
                   const unhealthyRestart = Deferred.makeUnsafe<void>();
                   const supervised = usesSupervisor(def);
+                  const spawnGate =
+                    supervised && options?.beforeSpawn !== undefined
+                      ? yield* Effect.tryPromise({
+                          try: async () => {
+                            const directory = await mkdtemp(
+                              join(tmpdir(), "process-compose-spawn-gate-"),
+                            );
+                            return {
+                              directory,
+                              requestPath: join(directory, "request"),
+                              releasePath: join(directory, "release"),
+                            };
+                          },
+                          catch: (cause) => new SpawnError({ service: def.command, cause }),
+                        })
+                      : undefined;
+                  if (spawnGate !== undefined) {
+                    yield* Effect.addFinalizer(() =>
+                      Effect.promise(() =>
+                        rm(spawnGate.directory, { recursive: true, force: true }),
+                      ),
+                    );
+                  }
 
                   // Build command
                   const cmd = supervised
-                    ? makeSupervisedCommand(def)
+                    ? makeSupervisedCommand(def, spawnGate)
                     : ChildProcess.make(def.command, def.args ?? [], {
                         cwd: def.cwd,
                         env: def.env,
                         extendEnv: true,
                         stdin: "ignore",
                       });
+
+                  // Release external resources such as port reservations only
+                  // once dependencies are satisfied and spawning is imminent.
+                  if (!supervised) {
+                    yield* options?.beforeSpawn?.(def.name) ?? Effect.void;
+                  }
 
                   // Spawn the process
                   const handle = yield* spawner
@@ -306,6 +354,22 @@ export class Orchestrator extends Context.Service<
                       Effect.andThen(runCleanup()),
                     ),
                   );
+
+                  if (spawnGate !== undefined) {
+                    yield* Effect.tryPromise({
+                      try: () => access(spawnGate.requestPath),
+                      catch: (cause) => cause,
+                    }).pipe(
+                      Effect.retry(Schedule.spaced("10 millis")),
+                      Effect.timeout("10 seconds"),
+                      Effect.mapError((cause) => new SpawnError({ service: def.command, cause })),
+                    );
+                    yield* options?.beforeSpawn?.(def.name) ?? Effect.void;
+                    yield* Effect.tryPromise({
+                      try: () => writeFile(spawnGate.releasePath, "release", { flag: "wx" }),
+                      catch: (cause) => new SpawnError({ service: def.command, cause }),
+                    });
+                  }
 
                   // Transition to Running
                   yield* sendEvent(def.name, {
@@ -516,8 +580,8 @@ export class Orchestrator extends Context.Service<
             }
           });
 
-        const runServiceSafe = (def: ServiceDef) =>
-          runService(def).pipe(
+        const runServiceSafe = (def: ServiceDef, options?: ServiceStartOptions) =>
+          runService(def, options).pipe(
             Effect.catch((error) =>
               sendEvent(def.name, {
                 _tag: "DependencyFailed",
@@ -551,23 +615,26 @@ export class Orchestrator extends Context.Service<
 
         const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
           const names = new Set<string>([name]);
-          const collectDependents = (current: string): void => {
+          const visited = new Set<string>();
+          const collectDependents = (current: string): boolean => {
+            if (visited.has(current)) return names.has(current);
+            visited.add(current);
+            let hasActiveDependent = false;
             for (const dependent of graph.dependentsOf(current)) {
-              if (names.has(dependent.name)) continue;
-              names.add(dependent.name);
-              collectDependents(dependent.name);
+              const dependentService = services.get(dependent.name);
+              const dependentIsActive =
+                FiberMap.hasUnsafe(fibers, dependent.name) ||
+                (dependentService?.requested === true && dependentService.stoppedByUser !== true);
+              const descendantIsActive = collectDependents(dependent.name);
+              if (dependentIsActive || descendantIsActive) {
+                names.add(dependent.name);
+                hasActiveDependent = true;
+              }
             }
+            return hasActiveDependent;
           };
           collectDependents(name);
-          return graph.startOrder.filter((def) => {
-            const service = services.get(def.name);
-            return (
-              names.has(def.name) &&
-              (def.name === name ||
-                FiberMap.hasUnsafe(fibers, def.name) ||
-                (service?.requested === true && service.stoppedByUser !== true))
-            );
-          });
+          return graph.startOrder.filter((def) => names.has(def.name));
         };
 
         const waitReadySingle = (def: ServiceDef): Effect.Effect<void, ServiceReadyError> =>
@@ -665,16 +732,16 @@ export class Orchestrator extends Context.Service<
           });
 
         return {
-          start: () =>
+          start: (options) =>
             Effect.gen(function* () {
               for (const def of graph.startOrder) {
                 const service = services.get(def.name);
                 if (service !== undefined) service.requested = true;
-                yield* FiberMap.run(fibers, def.name, runServiceSafe(def));
+                yield* FiberMap.run(fibers, def.name, runServiceSafe(def, options));
               }
             }),
 
-          startService: (name: string) =>
+          startService: (name: string, options) =>
             Effect.gen(function* () {
               const def = lookupDef(name);
               if (def === undefined) {
@@ -723,7 +790,9 @@ export class Orchestrator extends Context.Service<
                   resetNames.add(d.name);
                 }
                 if (service !== undefined) service.requested = true;
-                yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
+                yield* FiberMap.run(fibers, d.name, runServiceSafe(d, options), {
+                  onlyIfMissing: true,
+                });
               }
 
               // A caller may retry a dependency directly while dependents started by an
@@ -743,7 +812,7 @@ export class Orchestrator extends Context.Service<
                   yield* FiberMap.remove(fibers, d.name);
                   yield* resetService(d.name);
                   service.requested = true;
-                  yield* FiberMap.run(fibers, d.name, runServiceSafe(d), {
+                  yield* FiberMap.run(fibers, d.name, runServiceSafe(d, options), {
                     onlyIfMissing: true,
                   });
                 }
@@ -816,7 +885,7 @@ export class Orchestrator extends Context.Service<
               yield* sendEvent(name, { _tag: "ProcessExited", exitCode: 143 });
             }),
 
-          restartService: (name: string) =>
+          restartService: (name: string, options) =>
             Effect.gen(function* () {
               const def = lookupDef(name);
               if (def === undefined) {
@@ -833,7 +902,7 @@ export class Orchestrator extends Context.Service<
               for (const affectedDef of affected) {
                 const service = services.get(affectedDef.name);
                 if (service !== undefined) service.requested = true;
-                yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef));
+                yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef, options));
               }
             }),
 

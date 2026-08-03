@@ -7,7 +7,7 @@ Programmatic local Supabase stack for TypeScript. Create a local Supabase runtim
 - **Single entry point** -- `createStack()` resolves config and returns a handle; `start()` prepares assets, starts services, and waits for readiness
 - **Preparation-aware startup** -- cold-cache startup can surface `Downloading` before normal runtime states like `Starting`, `Initializing`, and `Healthy`
 - **Native binaries with Docker fallback** -- uses native services when available and falls back to Docker images automatically
-- **Automatic port allocation** -- all ports are optional and auto-assigned to avoid conflicts
+- **Leased port allocation** -- optional ports are auto-assigned and held until their service starts
 - **API proxy with opaque keys** -- SDKs use `publishableKey`/`secretKey` (like production), translated to JWTs internally
 - **Lazy proxied services** -- opt into `startupMode: "lazy"` to start HTTP and Realtime WebSocket services on first use while keeping direct listeners reachable
 - **`AsyncDisposable` support** -- use `await using` for automatic cleanup

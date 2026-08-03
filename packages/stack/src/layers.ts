@@ -6,6 +6,7 @@ import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
+import type { PortLease } from "./PortAllocator.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
@@ -34,14 +35,18 @@ import { terminateChildProcess } from "./terminateChild.ts";
 export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
+  portLease: PortLease,
 ): Layer.Layer<Stack> => {
-  const platform = platformFactory(config.apiPort);
+  const platform = platformFactory({
+    apiPort: config.apiPort,
+    releaseApiPort: portLease.release(["apiPort"]),
+  });
 
   const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(binaryResolverLayer));
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
@@ -104,8 +109,12 @@ export interface DaemonConfig extends ResolvedStackConfig {
 export const foregroundDaemonLayer = (
   config: DaemonConfig,
   platformFactory: PlatformFactory,
+  portLease: PortLease,
 ): Layer.Layer<Stack | StateManager> => {
-  const platform = platformFactory(config.apiPort);
+  const platform = platformFactory({
+    apiPort: config.apiPort,
+    releaseApiPort: portLease.release(["apiPort"]),
+  });
 
   const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
@@ -145,7 +154,7 @@ export const foregroundDaemonLayer = (
   const metadataPersistenceLayer = StackMetadataPersistence.fromStateManager(config.name).pipe(
     Layer.provide(stateManagerLayer),
   );
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(metadataPersistenceLayer),

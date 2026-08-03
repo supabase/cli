@@ -43,10 +43,10 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
 // ---------------------------------------------------------------------------
 
 /** Bun platform factory for use with foregroundLayer / daemonLayer. */
-export const platformFactory: PlatformFactory = (apiPort) =>
+export const platformFactory: PlatformFactory = ({ apiPort, releaseApiPort }) =>
   Layer.mergeAll(
     BunServices.layer,
-    BunHttpServer.layer({ port: apiPort }),
+    Layer.unwrap(releaseApiPort.pipe(Effect.as(BunHttpServer.layer({ port: apiPort })))),
     proxyWebSocketConnectorLayer,
   );
 

@@ -16,6 +16,7 @@ import {
   defaultSecretKey,
   generateJwt,
 } from "./JwtGenerator.ts";
+import { acquireManagedPortLock } from "./ManagedPortLock.ts";
 import {
   daemonLayer,
   foregroundLayer,
@@ -30,7 +31,18 @@ import {
   defaultManagedStackRoot,
   shortTempPrefixRoot,
 } from "./paths.ts";
-import { allocatePorts, DEFAULT_PORTS, PORT_FIELDS, type AllocatedPorts } from "./PortAllocator.ts";
+import {
+  allocatePorts,
+  DEFAULT_PORTS,
+  PORT_FIELDS,
+  reservePorts,
+  type AllocatedPorts,
+  type PortInput,
+  type PortAllocationError,
+  type PortLease,
+  type PortSelectionOptions,
+} from "./PortAllocator.ts";
+import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { StackMetadataSchema } from "./StackMetadata.ts";
 import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
 import { Stack } from "./Stack.ts";
@@ -84,7 +96,12 @@ export type PlatformLayer = Layer.Layer<PlatformServices>;
  * Custom factories can implement the connector via the exported
  * `ProxyWebSocketConnector` service from `@supabase/stack/effect`.
  */
-export type PlatformFactory = (apiPort: number) => PlatformLayer;
+export interface PlatformFactoryOptions {
+  readonly apiPort: number;
+  readonly releaseApiPort: Effect.Effect<void>;
+}
+
+export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
 
 export interface ReadyOptions {
   readonly timeout?: number;
@@ -122,6 +139,10 @@ interface ResolveConfigOptions {
   readonly runtimeRoot?: string;
   readonly preferredPorts?: Partial<AllocatedPorts>;
   readonly reservedPorts?: ReadonlySet<number>;
+  readonly portAllocator?: (
+    input: PortInput,
+    options: PortSelectionOptions,
+  ) => Effect.Effect<AllocatedPorts, PortAllocationError>;
 }
 
 interface ResolvedRoots {
@@ -512,7 +533,7 @@ export async function resolveConfig(
   const postgresDataDir = resolveDataDir(postgresInput.dataDir, roots.stackRoot, "postgres");
 
   const ports = await Effect.runPromise(
-    allocatePorts(
+    (opts.portAllocator ?? allocatePorts)(
       {
         apiPort: config.port,
         dbPort: postgresInput.port,
@@ -667,19 +688,24 @@ export const projectDaemonLayer = (opts: {
   DaemonStartError | InvalidStackStateError | StackAlreadyRunningError,
   FileSystem.FileSystem | Path.Path | UnixHttpClient
 > =>
-  Effect.gen(function* () {
-    const config = yield* Effect.promise(() =>
-      resolveDaemonConfig({
-        cacheRoot: opts.cacheRoot,
-        cwd: opts.cwd,
-        projectDir: opts.projectDir,
-        projectStateRoot: opts.projectStateRoot,
-        name: opts.name,
-        ...opts.stackConfig,
+  Effect.acquireUseRelease(
+    Effect.promise(() => acquireManagedPortLock()),
+    () =>
+      Effect.gen(function* () {
+        const config = yield* Effect.promise(() =>
+          resolveDaemonConfig({
+            cacheRoot: opts.cacheRoot,
+            cwd: opts.cwd,
+            projectDir: opts.projectDir,
+            projectStateRoot: opts.projectStateRoot,
+            name: opts.name,
+            ...opts.stackConfig,
+          }),
+        );
+        return yield* daemonLayer(config, opts.daemonEntryPoint);
       }),
-    );
-    return yield* daemonLayer(config, opts.daemonEntryPoint);
-  });
+    (release) => Effect.promise(release),
+  );
 
 function possibleCleanupTargetsForConfig(config: ResolvedStackConfig): CleanupTargets {
   const dockerContainerNames = [`supabase-postgres-${config.apiPort}`];
@@ -703,67 +729,103 @@ export async function createStack(
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
 ): Promise<StackHandle> {
-  const resolved = await resolveConfig(config);
-  const fullLayer = foregroundLayer(resolved, platformFactory);
-  const runtime = ManagedRuntime.make(fullLayer);
+  let portLease: PortLease | undefined;
+  let resolved: ResolvedStackConfig;
+  const releasePortLock = await acquireManagedPortLock();
+  try {
+    resolved = await resolveConfig(config, {
+      portAllocator: (input, options) =>
+        reservePorts(input, options).pipe(
+          Effect.tap((lease) =>
+            Effect.sync(() => {
+              portLease = lease;
+            }),
+          ),
+          Effect.map((lease) => lease.ports),
+        ),
+    });
+  } catch (error: unknown) {
+    if (portLease !== undefined) {
+      await Effect.runPromise(portLease.releaseAll);
+    }
+    throw error;
+  } finally {
+    await releasePortLock();
+  }
+
+  if (portLease === undefined) {
+    throw new Error("Stack port allocation completed without a port lease");
+  }
+
+  const activeFields = new Set(allocatedPortFieldsForConfig(resolved));
+  const unusedFields = PORT_FIELDS.filter((field) => !activeFields.has(field));
+  await Effect.runPromise(portLease.release(unusedFields));
 
   try {
-    const services = await runtime.context();
-    const localStack = await runtime.runPromise(
-      Effect.gen(function* () {
-        return yield* Stack;
-      }),
-    );
-    const info = await runtime.runPromise(localStack.getInfo());
+    const fullLayer = foregroundLayer(resolved, platformFactory, portLease);
+    const runtime = ManagedRuntime.make(fullLayer);
 
-    const run = <A>(effect: Effect.Effect<A, unknown>) =>
-      runtime.runPromise(effect).catch((error: unknown) => {
-        throw toStackError(error);
-      });
+    try {
+      const services = await runtime.context();
+      const localStack = await runtime.runPromise(
+        Effect.gen(function* () {
+          return yield* Stack;
+        }),
+      );
+      const info = await runtime.runPromise(localStack.getInfo());
 
-    const gracefulDispose = async () => {
+      const run = <A>(effect: Effect.Effect<A, unknown>) =>
+        runtime.runPromise(effect).catch((error: unknown) => {
+          throw toStackError(error);
+        });
+
+      const gracefulDispose = async () => {
+        await runtime.dispose().catch(() => {});
+      };
+
+      const stack: StackHandle = {
+        url: info.url,
+        dbUrl: info.dbUrl,
+        publishableKey: info.publishableKey,
+        secretKey: info.secretKey,
+        start: () => run(localStack.start()),
+        stop: () => run(localStack.stop()),
+        dispose: gracefulDispose,
+        startService: (name) => run(localStack.startService(name)),
+        stopService: (name) => run(localStack.stopService(name)),
+        restartService: (name) => run(localStack.restartService(name)),
+        reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
+        reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
+        ready: (opts) => {
+          const effect =
+            opts?.timeout != null
+              ? localStack.waitAllReady().pipe(Effect.timeout(Duration.millis(opts.timeout)))
+              : localStack.waitAllReady();
+          return run(effect);
+        },
+        serviceReady: (name, opts) => {
+          const effect =
+            opts?.timeout != null
+              ? localStack.waitReady(name).pipe(Effect.timeout(Duration.millis(opts.timeout)))
+              : localStack.waitReady(name);
+          return run(effect);
+        },
+        getStatus: () => run(localStack.getAllStates()),
+        getServiceStatus: (name) => run(localStack.getState(name)),
+        statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),
+        logs: () => Stream.toAsyncIterableWith(localStack.subscribeAllLogs(), services),
+        serviceLogs: (name) => Stream.toAsyncIterableWith(localStack.subscribeLogs(name), services),
+        logHistory: (name, limit) => run(localStack.logHistory(name, limit)),
+        [Symbol.asyncDispose]: gracefulDispose,
+      };
+
+      return stack;
+    } catch (error: unknown) {
       await runtime.dispose().catch(() => {});
-    };
-
-    const stack: StackHandle = {
-      url: info.url,
-      dbUrl: info.dbUrl,
-      publishableKey: info.publishableKey,
-      secretKey: info.secretKey,
-      start: () => run(localStack.start()),
-      stop: () => run(localStack.stop()),
-      dispose: gracefulDispose,
-      startService: (name) => run(localStack.startService(name)),
-      stopService: (name) => run(localStack.stopService(name)),
-      restartService: (name) => run(localStack.restartService(name)),
-      reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
-      reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
-      ready: (opts) => {
-        const effect =
-          opts?.timeout != null
-            ? localStack.waitAllReady().pipe(Effect.timeout(Duration.millis(opts.timeout)))
-            : localStack.waitAllReady();
-        return run(effect);
-      },
-      serviceReady: (name, opts) => {
-        const effect =
-          opts?.timeout != null
-            ? localStack.waitReady(name).pipe(Effect.timeout(Duration.millis(opts.timeout)))
-            : localStack.waitReady(name);
-        return run(effect);
-      },
-      getStatus: () => run(localStack.getAllStates()),
-      getServiceStatus: (name) => run(localStack.getState(name)),
-      statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),
-      logs: () => Stream.toAsyncIterableWith(localStack.subscribeAllLogs(), services),
-      serviceLogs: (name) => Stream.toAsyncIterableWith(localStack.subscribeLogs(name), services),
-      logHistory: (name, limit) => run(localStack.logHistory(name, limit)),
-      [Symbol.asyncDispose]: gracefulDispose,
-    };
-
-    return stack;
+      throw error;
+    }
   } catch (error: unknown) {
-    await runtime.dispose().catch(() => {});
+    await Effect.runPromise(portLease.releaseAll);
     dockerForceRemove(possibleCleanupTargetsForConfig(resolved).dockerContainerNames);
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);
