@@ -8,13 +8,6 @@ import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-comm
 import { LEGACY_SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { legacySsoAdd } from "./add.handler.ts";
 
-const NAME_ID_FORMATS = [
-  "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-  "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-  "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
-  "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-] as const;
-
 // Go declares `--domains` with pflag's `StringSliceVar` (`cmd/sso.go:158`);
 // malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
 // see `legacyStringSliceFlag`).
