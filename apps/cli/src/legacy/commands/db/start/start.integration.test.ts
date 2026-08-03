@@ -1285,6 +1285,48 @@ describe("legacy db start", () => {
   );
 
   it.live(
+    "fails with a typed config error when [experimental.webhooks] is present without enabled = true, even when Postgres is already running",
+    () => {
+      // Go's `Experimental.validate()` (`pkg/config/config.go:1846-1848`) rejects ANY present
+      // `[experimental.webhooks]` section whose `enabled` isn't explicitly `true` — this runs
+      // unconditionally inside `Config.Load`, before `AssertSupabaseDbIsRunning`. `db start`'s own
+      // `legacyCheckDbToml` call (D's shared db/migration config pipeline,
+      // `legacy-db-config.toml-read.ts`) previously never populated
+      // `LegacyExperimentalInput.webhooksPresent`/`webhooksEnabled` at all, so
+      // `legacyValidateResolvedConfig`'s existing webhooks check never ran for `db start` (or any
+      // other D caller) — silently accepted regardless of whether Postgres was already running
+      // (review: PRRT_kwDOErm0O86WE42i).
+      const { layer, child } = setup({
+        configContents: 'project_id = "test"\n[experimental.webhooks]\nenabled = false\n',
+        running: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(
+            "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
+          );
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live("starts normally when [experimental.webhooks] is absent from config.toml", () => {
+    // Matches Go, which never rejects an absent `[experimental.webhooks]` section (the bool
+    // zero-value default is fine) — the new webhooks presence check must be a no-op rather than
+    // failing on a section the config never mentions.
+    const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(createArgs(child.spawned)).not.toBeUndefined();
+    });
+  });
+
+  it.live(
     "warns when api.auto_expose_new_tables is true, matching Go's unconditional Config.Validate print",
     () => {
       // Go prints this unconditionally right after the `project_id` check, before

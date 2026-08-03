@@ -1246,6 +1246,59 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const denoVersion =
     typeof denoVersionResolved === "number" ? denoVersionResolved : DEFAULT_DENO_VERSION;
 
+  // `[experimental.webhooks]`. Go's `*webhooks` is a nil-unless-declared pointer sibling of
+  // `*PgDeltaConfig` below (`config.go:335`) — presence-gated the same way, and checked FIRST
+  // within `Experimental.validate()` (`config.go:1846-1848`, immediately before the pgdelta
+  // check right below). The section only exists to be turned ON: Go rejects ANY present
+  // `[experimental.webhooks]` whose `enabled` isn't explicitly `true`, including when the key
+  // is simply omitted (bool zero-value `false`). `webhooksPresent`/`webhooksEnabled` feed
+  // `legacyValidateResolvedConfig`'s existing `experimental.webhooks` check
+  // (`legacy-config-validate.ts:676-680`) — this D pipeline never populated that input pair,
+  // so the check never ran for any of D's ~15 db/migration-command callers (`db start`, `db
+  // reset`, `db push`, `start`, migrate-and-seed), unlike L's `legacyResolveLocalConfigValues`,
+  // which already computes the identical pair from its own decoded config + raw document
+  // (review: PRRT_kwDOErm0O86WE42i). Go's viper `AutomaticEnv` binds
+  // `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED` the same generic way as
+  // `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` below, so an env override can flip a TOML
+  // `enabled = false` to `true` (or a bogus value can abort the load) before validation runs.
+  const webhooksRaw = asRecord(experimentalRaw?.["webhooks"]);
+  const webhooksPresent = webhooksRaw !== undefined;
+  const webhooksEnabledRaw = webhooksRaw?.["enabled"];
+  const webhooksEnabledEnv = remoteOverrideKeys.has("experimental.webhooks.enabled")
+    ? undefined
+    : envOverride("SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED");
+  let webhooksEnabled: boolean;
+  if (webhooksEnabledEnv !== undefined) {
+    const expandedWebhooksEnabledEnv = legacyExpandEnv(webhooksEnabledEnv, lookup);
+    const parsed = legacyParseGoBool(expandedWebhooksEnabledEnv);
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandedWebhooksEnabledEnv}.`,
+        }),
+      );
+    }
+    webhooksEnabled = parsed;
+  } else if (typeof webhooksEnabledRaw === "boolean") {
+    webhooksEnabled = webhooksEnabledRaw;
+  } else if (typeof webhooksEnabledRaw === "number") {
+    // Go decodes the whole config under mapstructure's weak typing, so a numeric `enabled = 1`
+    // is true (`value != 0`) — same rule as `experimental.pgdelta.enabled` below.
+    webhooksEnabled = webhooksEnabledRaw !== 0;
+  } else if (typeof webhooksEnabledRaw === "string") {
+    const parsed = legacyParseGoBool(legacyExpandEnv(webhooksEnabledRaw, lookup));
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to parse config: invalid experimental.webhooks.enabled: ${legacyExpandEnv(webhooksEnabledRaw, lookup)}.`,
+        }),
+      );
+    }
+    webhooksEnabled = parsed;
+  } else {
+    webhooksEnabled = false;
+  }
+
   // `[experimental.pgdelta]`. `enabled` is a TOML bool (Go decodes weakly, so an
   // `env(VAR)`/string "true" also counts); `declarative_schema_path` is resolved
   // to a `supabase/`-prefixed path when relative (Go's `config.resolve`).
@@ -1711,6 +1764,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     gcpJwtPath,
   };
   const experimentalInput: LegacyExperimentalInput = {
+    webhooksPresent,
+    webhooksEnabled,
     pgdeltaFormatOptions: formatOptionsExpanded,
   };
   const validationInput: LegacyConfigValidationInput = {
