@@ -1012,6 +1012,38 @@ describe("legacy db start", () => {
     },
   );
 
+  it.live(
+    "fails on a malformed SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED override, matching Go's Config.Load",
+    () => {
+      // `auth.hook.<type>.*` is Viper-bound like every other nested field (`AutomaticEnv`,
+      // `pkg/config/config.go:581-586`), decoded in the same unconditional `Config.Load` pass as
+      // `auth.external` above. `legacyResolveAuthHooks` only applies the env override when the
+      // `[auth.hook.<type>]` section is present in the raw document (`@supabase/config`'s schema
+      // always decodes a `{ enabled: false }` default regardless of file presence, which would
+      // otherwise erase the presence signal `AutomaticEnv` needs) — so the section must exist in
+      // config.toml for the override below to be reached at all. `db start` never built a GoTrue
+      // container, so nothing else in this handler called `legacyResolveAuthHooks` before now
+      // (review: PRRT_kwDOErm0O86WBGSW).
+      const { layer, child } = setup({
+        configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
+      });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.hook");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
     // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before
     // `AssertSupabaseDbIsRunning` in `start.Run` (`internal/db/start/start.go:45-47`) — a

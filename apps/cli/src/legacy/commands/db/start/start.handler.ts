@@ -34,6 +34,7 @@ import {
   legacyResolveAuthEmail,
   legacyResolveAuthExternalProviders,
   legacyResolveAuthExternalUrl,
+  legacyResolveAuthHooks,
   legacyResolveAuthMfa,
   legacyResolveAuthSms,
   legacyResolveDbSettingsEnvOverrides,
@@ -363,6 +364,18 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         config.auth.external,
         projectEnvValues,
       ),
+    );
+    // Same gap for `auth.hook.<type>.{enabled,uri,secrets}` — Go's `hook.validate()`
+    // (`pkg/config/config.go:1453-1485`) reads pointer-backed `*hookConfig` fields Viper-bound
+    // like every other nested field (`AutomaticEnv`, `config.go:581-586`), decoded in the same
+    // unconditional `Config.Load` pass as `auth.external` above — `db start` never builds a
+    // GoTrue container, so nothing else in this handler calls `legacyResolveAuthHooks` (it's
+    // only otherwise reached via `legacyResolveLocalConfigValues`'s not-running-only call).
+    // `legacyEnvOverrideBool` throws internally on a malformed
+    // `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED` override, so calling it here, once, eagerly, and
+    // discarding the result closes the gap (review: PRRT_kwDOErm0O86WBGSW).
+    yield* wrapDbConfigOverride("auth.hook", () =>
+      legacyResolveAuthHooks(authDocForValidation, config.auth.hook, projectEnvValues),
     );
 
     // Same gap for `api.enabled`/`api.tls.enabled` — plain bools decoded in the same
