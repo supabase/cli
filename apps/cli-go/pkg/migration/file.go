@@ -110,6 +110,9 @@ func trimLeadingSQLComments(sql string) string {
 	}
 }
 
+// ExecBatch is also reached from the shipped supabase-go sidecar: local `db
+// start` / `db reset` delegate migration apply to the `db __db-bootstrap`
+// seam (apps/cli-go/cmd/db.go), which calls this via apply.MigrateAndSeed.
 func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 	batch := &pgconn.Batch{}
 	batchSize := 0
