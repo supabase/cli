@@ -214,6 +214,27 @@ describe("legacy sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("Go --output=toml fails like BurntSushi on a nil attribute-mapping array element", () => {
+    const item = {
+      ...PROVIDER_ITEM,
+      saml: {
+        ...PROVIDER_ITEM.saml,
+        attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
+      },
+    };
+    const { layer, out } = setup({ goOutput: "toml", body: { items: [item] } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoTomlEncodeError");
+        expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
+      }
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("Go --output=env emits a flat PROVIDERS= entry", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {

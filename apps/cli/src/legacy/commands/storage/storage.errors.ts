@@ -1,6 +1,7 @@
 import { Data } from "effect";
 
 import { legacyAqua } from "../../shared/legacy-colors.ts";
+import { legacyGoQuote } from "../../shared/legacy-go-quote.ts";
 
 /**
  * Domain errors for `supabase storage ls/cp/mv/rm`, mirroring the Go error paths
@@ -49,6 +50,27 @@ export class LegacyStorageUnsupportedOperationError extends Data.TaggedError(
       suggestion: `Run ${legacyAqua("cp -r <src> <dst>")} to copy between local directories.`,
     });
   }
+}
+
+/**
+ * `cp`'s `--jobs` is a pflag uint (`UintVarP`, `cmd/storage.go:107`): a
+ * non-uint token fails `strconv.ParseUint(s, 0, 64)` at flag-parse time.
+ * Byte-matches pflag's `invalid argument %q for %q flag: %v` template with
+ * the shorthand-prefixed flag name (`pflag/errors.go:108-116`), carrying the
+ * RAW token (so `--jobs=-01` reports `"-01"`, not a normalized `"-1"`) and
+ * strconv's cause (`invalid syntax` / `value out of range`). Both token
+ * occurrences are `%q`-quoted like Go's — pflag applies `%q` to the value
+ * and strconv's `NumError.Error()` wraps `e.Num` in `strconv.Quote`
+ * (`strconv/number.go:258-260`) — so an escapable token stays one escaped
+ * line (go1.26: `--jobs 'a"b'` → `… "a\"b" …`, not a raw quote/newline).
+ * Thrown from the flag's own `Flag.mapTryCatch` in `cp.command.ts` so the
+ * rejection happens during command parsing, like Go's —
+ * `formatInvalidValueMessage` surfaces the resulting
+ * `CliError.InvalidValue`'s message verbatim.
+ */
+export function legacyStorageInvalidJobsMessage(token: string, cause: string): string {
+  const quoted = legacyGoQuote(new TextEncoder().encode(token));
+  return `invalid argument ${quoted} for "-j, --jobs" flag: strconv.ParseUint: parsing ${quoted}: ${cause}`;
 }
 
 /** `cp`'s remote→remote branch (`internal/storage/cp/cp.go:57`). */

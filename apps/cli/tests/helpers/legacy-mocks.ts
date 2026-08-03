@@ -318,14 +318,25 @@ export function mockLegacyLinkedProjectCacheTracked(): {
   readonly layer: Layer.Layer<LegacyLinkedProjectCache>;
   readonly cached: boolean;
   readonly cachedRef: string | undefined;
+  readonly cachedApiUrl: string | undefined;
+  readonly cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
 } {
   let cached = false;
   let cachedRef: string | undefined;
+  let cachedApiUrl: string | undefined;
+  let cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
   const layer = Layer.succeed(LegacyLinkedProjectCache, {
-    cache: (ref: string) =>
+    cache: (
+      ref: string,
+      _workdir?: string,
+      apiUrl?: string,
+      accessToken?: Option.Option<Redacted.Redacted<string>>,
+    ) =>
       Effect.sync(() => {
         cached = true;
         cachedRef = ref;
+        cachedApiUrl = apiUrl;
+        cachedAccessToken = accessToken;
       }),
   });
   return {
@@ -335,6 +346,12 @@ export function mockLegacyLinkedProjectCacheTracked(): {
     },
     get cachedRef() {
       return cachedRef;
+    },
+    get cachedApiUrl() {
+      return cachedApiUrl;
+    },
+    get cachedAccessToken() {
+      return cachedAccessToken;
     },
   };
 }

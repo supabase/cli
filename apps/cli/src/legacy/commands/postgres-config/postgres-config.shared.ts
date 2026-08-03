@@ -13,6 +13,7 @@ import {
   encodeGoStructJsonBody,
   encodeYaml,
 } from "../../shared/legacy-go-output.encoders.ts";
+import { legacyGoFormatFloat } from "../../shared/legacy-go-float.ts";
 import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
 import { requestWithAuth } from "../../shared/legacy-raw-http.ts";
 import { resolveLegacyAccessToken } from "../../shared/legacy-resolve-token.ts";
@@ -30,7 +31,11 @@ function sortConfigEntries(config: LegacyPostgresConfigMap): Array<[string, unkn
 
 function formatPrettyValue(value: unknown): string {
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  // Go renders each cell with `%+v` (`get.go:32-35`) on values from
+  // `json.Unmarshal` into `map[string]any` — every JSON number is a `float64`,
+  // so e.g. `1000000` prints as `1e+06`, not `1000000`.
+  if (typeof value === "number") return legacyGoFormatFloat(value);
+  if (typeof value === "boolean") return String(value);
   if (value === null) return "<nil>";
   return JSON.stringify(value);
 }
@@ -66,11 +71,39 @@ function encodePostgresConfigToml(config: LegacyPostgresConfigMap): string {
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
+// Go's `strconv.Atoi` parses into a 64-bit int (`update.go:43`).
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+// Exactly `strconv.ParseBool`'s accepted sets. `1`/`0` are also in them, but
+// the integer branch below wins first — in Go too, where `Atoi` runs before
+// `ParseBool` (`update.go:43-48`).
+const GO_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const GO_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False"]);
+
+/**
+ * Go's coercion chain for `--config key=value` (`update.go:41-49`):
+ * `strconv.Atoi` → `strconv.ParseBool` → keep as string. `Atoi` fails with
+ * `ErrRange` on digits beyond int64, and a pure digit string is not a
+ * `ParseBool` literal (only bare `1`/`0` are, and those fit in int64), so an
+ * overflowing integer falls through to the verbatim string. `ParseBool` is
+ * case-SENSITIVE over a fixed set — `tRuE` stays a string in Go.
+ *
+ * Residual divergence: digits in `(2^53, 2^63)` fit int64, so Go sends an
+ * exact JSON integer, while JS `Number` loses precision there —
+ * `encodeGoStructJsonBody` is `JSON.stringify`, which cannot emit exact
+ * int64 tokens beyond `Number.MAX_SAFE_INTEGER`.
+ */
 export function parseConfigValue(value: string): string | number | boolean {
-  if (/^[+-]?\d+$/.test(value)) return Number.parseInt(value, 10);
-  const lower = value.toLowerCase();
-  if (["1", "t", "true"].includes(lower)) return true;
-  if (["0", "f", "false"].includes(lower)) return false;
+  if (/^[+-]?\d+$/.test(value)) {
+    const asBigInt = BigInt(value.replace(/^\+/, ""));
+    if (asBigInt >= INT64_MIN && asBigInt <= INT64_MAX) {
+      return Number.parseInt(value, 10);
+    }
+    return value;
+  }
+  if (GO_TRUE_LITERALS.has(value)) return true;
+  if (GO_FALSE_LITERALS.has(value)) return false;
   return value;
 }
 

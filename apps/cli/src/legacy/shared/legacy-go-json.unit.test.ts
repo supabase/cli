@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { encodeGoJsonIndented, escapeGoJsonString } from "./legacy-go-json.ts";
+import { encodeGoJsonCompact, encodeGoJsonIndented, escapeGoJsonString } from "./legacy-go-json.ts";
 
 describe("escapeGoJsonString", () => {
   it("escapes quotes and backslashes like Go", () => {
@@ -55,5 +55,19 @@ describe("encodeGoJsonIndented", () => {
     expect(encodeGoJsonIndented([])).toBe("[]\n");
     expect(encodeGoJsonIndented({})).toBe("{}\n");
     expect(encodeGoJsonIndented({ issues: [] })).toBe(`{\n  "issues": []\n}\n`);
+  });
+});
+
+describe("encodeGoJsonCompact", () => {
+  it("matches Go's json.Marshal compact shape with HTML escaping", () => {
+    expect(encodeGoJsonCompact({ metadata_xml: "<xml>&stuff</xml>", type: "saml" })).toBe(
+      '{"metadata_xml":"\\u003cxml\\u003e\\u0026stuff\\u003c/xml\\u003e","type":"saml"}',
+    );
+  });
+
+  it("keeps insertion order, compact separators, and no trailing newline", () => {
+    expect(encodeGoJsonCompact({ b: [1, 2], a: { c: true } })).toBe('{"b":[1,2],"a":{"c":true}}');
+    expect(encodeGoJsonCompact([])).toBe("[]");
+    expect(encodeGoJsonCompact(null)).toBe("null");
   });
 });

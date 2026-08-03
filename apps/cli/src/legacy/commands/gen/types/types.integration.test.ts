@@ -783,7 +783,7 @@ describe("legacy gen types", () => {
   });
 
   it.live("rejects combining --local and --linked", () => {
-    const { layer } = setup({ args: ["gen", "types", "--local", "--linked"] });
+    const { layer, telemetry } = setup({ args: ["gen", "types", "--local", "--linked"] });
 
     return Effect.gen(function* () {
       const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
@@ -799,29 +799,88 @@ describe("legacy gen types", () => {
           "if any flags in the group [local linked project-id db-url] are set none of the others can be; [linked local] were all set",
         );
       }
+      // The root's `PersistentPreRunE` has already installed the telemetry
+      // context by the time cobra validates flag groups (`cmd/root.go:93-163`,
+      // `command.go:1000-1010`), so a mutex rejection still flushes telemetry.
+      expect(telemetry.flushed).toBe(true);
     });
   });
 
-  it.live("rejects --swift-access-control for non-Swift generation", () => {
+  it.live("does not misdetect a mutex flag consumed as -s's value (pflag consumption)", () => {
+    // Go's `StringSliceVarP(&schema, "schema", "s", ...)` (cmd/gen.go:155) makes
+    // a bare `-s` consume the very next argv token unconditionally, even a
+    // flag-shaped one — pflag hands `-s` the (oddly named, but valid) value
+    // `"--linked"`, leaving only `--local` Changed. Simulates what the real
+    // Effect parser produces for this argv (both `local` and `linked` parse as
+    // independently true, since its tokenizer is unaware of pflag's value
+    // consumption — CLI-1982); only the pflag-faithful scan can tell them apart.
+    const { layer } = setup({ args: ["gen", "types", "-s", "--linked", "--local"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).not.toContain("if any flags in the group");
+      }
+    });
+  });
+
+  it.live("rejects --swift-access-control with --linked (cobra mutex group)", () => {
     const { layer } = setup({
-      args: ["gen", "types", "--local", "--lang", "python", "--swift-access-control", "public"],
+      args: ["gen", "types", "--linked", "--swift-access-control", "public", "--lang", "swift"],
     });
 
     return Effect.gen(function* () {
       const exit = yield* legacyGenTypes(
-        defaultFlags({ local: true, lang: "python", swiftAccessControl: "public" }),
+        defaultFlags({ linked: true, lang: "swift", swiftAccessControl: "public" }),
       ).pipe(Effect.provide(layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(String(exit.cause)).toContain(
-          "--swift-access-control can only be used with --lang swift",
+          "if any flags in the group [linked project-id swift-access-control] are set none of the others can be; [linked swift-access-control] were all set",
         );
       }
     });
   });
 
-  it.live("rejects --postgrest-v9-compat for remote TypeScript generation", () => {
+  it.live("rejects --swift-access-control with --project-id (cobra mutex group)", () => {
+    const { layer } = setup({
+      args: [
+        "gen",
+        "types",
+        "--project-id",
+        LEGACY_VALID_REF,
+        "--swift-access-control",
+        "public",
+        "--lang",
+        "swift",
+      ],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "swift",
+          swiftAccessControl: "public",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "if any flags in the group [linked project-id swift-access-control] are set none of the others can be; [project-id swift-access-control] were all set",
+        );
+      }
+    });
+  });
+
+  it.live("rejects --postgrest-v9-compat without --db-url for project-id generation", () => {
     const { layer } = setup({
       args: ["gen", "types", "--project-id", LEGACY_VALID_REF, "--postgrest-v9-compat"],
     });
@@ -833,14 +892,38 @@ describe("legacy gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
+        // Go's PreRunE guard, including its "must used" typo (cmd/gen.go:81).
         expect(String(exit.cause)).toContain(
-          "--postgrest-v9-compat can only be used with pg-meta type generation",
+          "--postgrest-v9-compat must used together with --db-url",
         );
       }
     });
   });
 
-  it.live("rejects --query-timeout for remote TypeScript generation", () => {
+  it.live("rejects --postgrest-v9-compat without --db-url for local generation", () => {
+    const { layer, telemetry } = setup({
+      args: ["gen", "types", "--local", "--postgrest-v9-compat"],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({ local: true, postgrestV9Compat: true }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "--postgrest-v9-compat must used together with --db-url",
+        );
+      }
+      // Go's PreRunE runs after the root's `PersistentPreRunE` has already
+      // installed the telemetry context (`cmd/root.go:93-163`), so this
+      // restored guard must still flush telemetry on rejection.
+      expect(telemetry.flushed).toBe(true);
+    });
+  });
+
+  it.live("rejects --query-timeout with --project-id (cobra mutex group)", () => {
     const { layer } = setup({
       args: ["gen", "types", "--project-id", LEGACY_VALID_REF, "--query-timeout", "20s"],
     });
@@ -853,13 +936,13 @@ describe("legacy gen types", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(String(exit.cause)).toContain(
-          "--query-timeout can only be used with pg-meta type generation",
+          "if any flags in the group [linked project-id query-timeout] are set none of the others can be; [project-id query-timeout] were all set",
         );
       }
     });
   });
 
-  it.live("rejects --query-timeout for explicit linked remote TypeScript generation", () => {
+  it.live("rejects --query-timeout with --linked (cobra mutex group)", () => {
     const { layer } = setup({
       args: ["gen", "types", "--linked", "--query-timeout", "20s"],
       projectId: Option.some(LEGACY_VALID_REF),
@@ -874,41 +957,213 @@ describe("legacy gen types", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(String(exit.cause)).toContain(
-          "--query-timeout can only be used with pg-meta type generation",
+          "if any flags in the group [linked project-id query-timeout] are set none of the others can be; [linked query-timeout] were all set",
         );
       }
     });
   });
 
-  it.live(
-    "warns and continues for implicit linked TypeScript generation with --query-timeout",
-    () => {
-      const { layer, out, api } = setup({
-        args: ["gen", "types", "--query-timeout", "20s"],
-        projectId: Option.some(LEGACY_VALID_REF),
-        projectTypes: "ok",
-      });
+  it.live("counts explicitly negated booleans as set for mutex groups (pflag Changed)", () => {
+    const { layer } = setup({
+      args: ["gen", "types", "--linked=false", "--project-id", LEGACY_VALID_REF],
+    });
 
-      return Effect.gen(function* () {
-        yield* legacyGenTypes(defaultFlags({ queryTimeout: "20s" })).pipe(Effect.provide(layer));
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({ linked: false, projectId: Option.some(LEGACY_VALID_REF) }),
+      ).pipe(Effect.provide(layer), Effect.exit);
 
-        expect(out.stderrText).toContain(
-          "Warning: --query-timeout is ignored for remote TypeScript type generation.",
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        // pflag's `Changed` is true once a flag is passed explicitly, even as
+        // `--linked=false`, so cobra still trips the mutex group.
+        expect(String(exit.cause)).toContain(
+          "if any flags in the group [linked project-id postgrest-v9-compat] are set none of the others can be; [linked project-id] were all set",
         );
-        expect(api.requests).toContainEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: LEGACY_VALID_REF, included_schemas: "public" },
-        });
+      }
+    });
+  });
+
+  it.live("fails on an invalid --query-timeout before any flag guard runs", () => {
+    const { layer, telemetry } = setup({
+      args: ["gen", "types", "--linked", "--query-timeout", "bogus"],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({ linked: true, queryTimeout: "bogus" }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        // Go rejects the duration at flag-parse time, before PreRunE and the
+        // mutex groups, so the parse error wins over the linked/query-timeout
+        // mutex violation.
+        expect(String(exit.cause)).toContain('invalid duration "bogus"');
+        expect(String(exit.cause)).not.toContain("if any flags in the group");
+      }
+      // pflag's `DurationVar` rejects this at flag-parse time, before the
+      // root's `PersistentPreRunE` ever installs the telemetry context
+      // (`cmd/root.go:93-163`) — unlike the guards below, this rejection must
+      // NOT flush telemetry.
+      expect(telemetry.flushed).toBe(false);
+    });
+  });
+
+  it.live("silently ignores --query-timeout for implicit linked TypeScript generation", () => {
+    const { layer, out, api } = setup({
+      args: ["gen", "types", "--query-timeout", "20s"],
+      projectId: Option.some(LEGACY_VALID_REF),
+      projectTypes: "ok",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ queryTimeout: "20s" })).pipe(Effect.provide(layer));
+
+      // Go neither errors nor warns here — only one flag of the
+      // linked/project-id/query-timeout mutex group is set, and the remote
+      // TypeScript path simply never reads the timeout.
+      expect(out.stderrText).not.toContain("--query-timeout");
+      expect(api.requests).toContainEqual({
+        method: "generateTypescriptTypes",
+        input: { ref: LEGACY_VALID_REF, included_schemas: "public" },
       });
-    },
+    });
+  });
+
+  it.live(
+    "forwards --query-timeout and --swift-access-control to pg-meta for implicit linked non-TypeScript generation",
+    () =>
+      Effect.tryPromise({
+        try: () =>
+          withSslProbeServer(async (port) => {
+            const docker = captureDockerRun();
+            const { layer, dbConfig } = setup({
+              args: [
+                "gen",
+                "types",
+                "--lang",
+                "go",
+                "--query-timeout",
+                "20s",
+                "--swift-access-control",
+                "public",
+              ],
+              projectId: Option.some(LEGACY_VALID_REF),
+              childStdout: ["type PublicMovies struct {}"],
+              dbConfigResolve: () =>
+                Effect.succeed(
+                  remoteResolvedConfig({
+                    host: "127.0.0.1",
+                    port,
+                    user: "postgres",
+                    password: "workdir-password",
+                    database: "postgres",
+                  }),
+                ),
+              onSpawn: docker.onSpawn,
+            });
+
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({ lang: "go", queryTimeout: "20s", swiftAccessControl: "public" }),
+              ).pipe(Effect.provide(layer)),
+            );
+
+            // Unlike an explicit --linked/--project-id, the implicit fallback never
+            // sets the "linked"/"project-id" mutex keys, so --query-timeout and
+            // --swift-access-control clear every guard here and reach pg-meta — the
+            // SIDE_EFFECTS.md defaults-invariant note is scoped to the explicit
+            // paths for exactly this reason.
+            expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
+            expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
+            expect(docker.env.has("PG_CONN_TIMEOUT_SECS=20")).toBe(true);
+            expect(docker.env.has("PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=public")).toBe(true);
+          }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
   );
 
-  it.live("allows --postgrest-v9-compat for local pg-meta generation", () =>
+  it.live("prefers the --postgrest-v9-compat guard over mutex group errors", () => {
+    const { layer } = setup({
+      args: ["gen", "types", "--local", "--linked", "--postgrest-v9-compat"],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({ local: true, linked: true, postgrestV9Compat: true }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        // Go runs the command's PreRunE before cobra's flag-group validation
+        // (spf13/cobra command.go:1000-1010), so the PreRunE error wins.
+        expect(String(exit.cause)).toContain(
+          "--postgrest-v9-compat must used together with --db-url",
+        );
+      }
+    });
+  });
+
+  it.live("prefers the positional language guard over mutex group errors", () => {
+    const { layer } = setup({
+      args: ["gen", "types", "go", "--local", "--linked"],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+      }
+    });
+  });
+
+  it.live("reports mutex groups in cobra's sorted group-key order", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const { layer } = setup({
+      args: [
+        "gen",
+        "types",
+        "--db-url",
+        dbUrl,
+        "--postgrest-v9-compat",
+        "--project-id",
+        LEGACY_VALID_REF,
+      ],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          dbUrl: Option.some(dbUrl),
+          projectId: Option.some(LEGACY_VALID_REF),
+          postgrestV9Compat: true,
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        // Cobra validates the groups in lexicographically sorted key order, so
+        // the linked/project-id/postgrest-v9-compat group reports before the
+        // local/linked/project-id/db-url group even though both are violated.
+        expect(String(exit.cause)).toContain(
+          "if any flags in the group [linked project-id postgrest-v9-compat] are set none of the others can be; [postgrest-v9-compat project-id] were all set",
+        );
+      }
+    });
+  });
+
+  it.live("allows --swift-access-control for local non-Swift generation", () =>
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
           const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-v9-flag-"));
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-swift-flag-"));
           writeConfig(
             workdir,
             [
@@ -924,15 +1179,58 @@ describe("legacy gen types", () => {
 
           const { layer } = setup({
             workdir,
-            args: ["gen", "types", "--local", "--postgrest-v9-compat"],
+            args: [
+              "gen",
+              "types",
+              "--local",
+              "--lang",
+              "python",
+              "--swift-access-control",
+              "public",
+            ],
+            childStdout: ["generated"],
+            onSpawn: docker.onSpawn,
+          });
+
+          // Go has no "--swift-access-control requires --lang swift" guard —
+          // the value is always forwarded to pg-meta regardless of language.
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({ local: true, lang: "python", swiftAccessControl: "public" }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(docker.env.has("PG_META_GENERATE_TYPES=python")).toBe(true);
+          expect(docker.env.has("PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=public")).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("allows --postgrest-v9-compat together with --db-url", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer } = setup({
+            args: [
+              "gen",
+              "types",
+              "--db-url",
+              `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
+              "--postgrest-v9-compat",
+            ],
             childStdout: ["generated"],
             onSpawn: docker.onSpawn,
           });
 
           await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true, postgrestV9Compat: true })).pipe(
-              Effect.provide(layer),
-            ),
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                postgrestV9Compat: true,
+              }),
+            ).pipe(Effect.provide(layer)),
           );
 
           expect(
@@ -1703,61 +2001,6 @@ describe("legacy gen types", () => {
             true,
           );
           expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(false);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("allows pg-meta flags for remote non-TypeScript project refs", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            args: [
-              "gen",
-              "types",
-              "--lang",
-              "swift",
-              "--project-id",
-              LEGACY_VALID_REF,
-              "--swift-access-control",
-              "public",
-              "--query-timeout",
-              "20s",
-              "--postgrest-v9-compat",
-            ],
-            childStdout: ["struct PublicMovies: Codable {}"],
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: "127.0.0.1",
-                  port,
-                  user: "postgres",
-                  password: "postgres",
-                  database: "postgres",
-                }),
-              ),
-            onSpawn: docker.onSpawn,
-          });
-
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "swift",
-                swiftAccessControl: "public",
-                queryTimeout: "20s",
-                postgrestV9Compat: true,
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(docker.env.has("PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=public")).toBe(true);
-          expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
-          expect(
-            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=false"),
-          ).toBe(true);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),

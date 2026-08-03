@@ -9,28 +9,25 @@ import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
-import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
+import { legacyStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { legacyStart } from "./start.handler.ts";
 
+// Go registers `--exclude`/`-x` as a pflag `StringSliceVarP` (`cmd/start.go:58`), which
+// CSV-splits each occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
+// across repeats — matching `status`'s own `--exclude`/`--override-name` handling.
+// Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005); the
+// shorthand makes pflag frame it as `"-x, --exclude"` (see `legacyStringSliceFlag`).
+export const legacyStartExcludeFlag = legacyStringSliceFlag(
+  "exclude",
+  `Names of containers to not start. [${LEGACY_START_EXCLUDABLE_KEYS.join(",")}]`,
+  { alias: "x" },
+);
+
 const config = {
-  // Go registers `--exclude`/`-x` as a pflag `StringSliceVarP` (`cmd/start.go:58`), which
-  // CSV-splits each occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
-  // across repeats — matching `status`'s own `--exclude`/`--override-name` handling.
-  exclude: Flag.string("exclude").pipe(
-    Flag.atLeast(0),
-    Flag.mapTryCatch(
-      (rawValues) => legacyParseStringSliceFlag(rawValues),
-      (err) => (err instanceof Error ? err.message : String(err)),
-    ),
-    Flag.withDescription(
-      `Names of containers to not start. [${LEGACY_START_EXCLUDABLE_KEYS.join(",")}]`,
-    ),
-    Flag.withDefault([] as ReadonlyArray<string>),
-    Flag.withAlias("x"),
-  ),
+  exclude: legacyStartExcludeFlag,
   ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
   ),

@@ -125,7 +125,7 @@ describe("legacyEnsureImagesCached", () => {
     }),
   );
 
-  // Every pull attempt fails, so this drives the real DOCKER_PULL_RETRY_DELAYS_MS
+  // Every pull attempt fails, so this drives the real LEGACY_DOCKER_PULL_RETRY_DELAYS_MS
   // backoff (4s + 8s) to exhaustion across all 3 registry candidates (~36s) —
   // needs more than Vitest's 5s default.
   it.live(
