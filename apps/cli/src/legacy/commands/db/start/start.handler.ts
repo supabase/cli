@@ -928,7 +928,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       },
     }).pipe(
       Effect.onError(() =>
-        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
       ),
     );
 
