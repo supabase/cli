@@ -25,9 +25,16 @@ import { legacyStatusCommand } from "./status.command.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-status-string-slice-int-");
 
+// `withGlobalFlags` must come AFTER `withSubcommands`: it only excludes each
+// global flag's context requirement from the R accumulated on the command
+// SO FAR, and `withSubcommands` unions in every subcommand's own requirements
+// (including `status`'s handler-chain reads of `LegacyDebugFlag`/
+// `LegacyProfileFlag`/`LegacyWorkdirFlag`). Reversing the order leaves those
+// context tags in `Command.runWith`'s Environment type even though this
+// parse-failure path never reaches the handler at runtime.
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyStatusCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {
@@ -91,19 +98,13 @@ describe("legacy status StringSlice flags (pflag CSV parity)", () => {
   for (const { name, args, message } of cases) {
     it.live(`${name} CSV fails at parse time with pflag's exact diagnostic`, () => {
       const { layer } = setup();
-      const run = Effect.gen(function* () {
+      return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(normalizeCause(exit.cause).message).toBe(message);
         }
       }).pipe(Effect.provide(layer));
-
-      // Command.runWith's Environment type retains the GlobalFlag services the
-      // status handler reads (--debug, --workdir, --profile) even though this
-      // parse-failure path never reaches the handler at runtime — same
-      // precedent as migration.integration.test.ts.
-      return run as Effect.Effect<void>;
     });
   }
 });
