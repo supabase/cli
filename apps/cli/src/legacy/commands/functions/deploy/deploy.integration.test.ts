@@ -132,6 +132,74 @@ describe("legacy functions deploy", () => {
     );
   });
 
+  it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
+    // Go: `strings.Join(slugs, ", ")` (`internal/functions/deploy/deploy.go:70`)
+    // joins the raw CLI-arg slugs, not a deduped set, so a repeated slug prints
+    // twice even though only one deploy request is made for it.
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        if (request.url.endsWith("/functions/deploy")) {
+          return Effect.succeed(
+            legacyJsonResponse(request, 201, {
+              id: "function-id",
+              slug: "hello-world",
+              name: "hello-world",
+              status: "ACTIVE",
+              version: 2,
+              created_at: 1_687_423_025_152,
+              updated_at: 1_687_423_025_152,
+              verify_jwt: true,
+              import_map: true,
+              entrypoint_path: "functions/hello-world/index.ts",
+              import_map_path: "functions/hello-world/deno.json",
+            }),
+          );
+        }
+        return Effect.succeed(legacyJsonResponse(request, 404, { error: "not found" }));
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+      yield* legacyFunctionsDeploy({
+        ...baseFlags,
+        functionNames: ["hello-world", "hello-world"],
+      });
+
+      expect(
+        api.requests.filter(
+          (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+        ),
+      ).toHaveLength(1);
+      expect(stripSgr(out.stdoutText)).toContain(
+        "Deployed Functions on project abcdefghijklmnopqrst: hello-world, hello-world\n",
+      );
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
   it.live("uses an explicit project ref when provided", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({

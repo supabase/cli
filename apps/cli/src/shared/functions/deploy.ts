@@ -2328,11 +2328,13 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
 
     if (output.format === "text") {
       // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
-      // utils.Aqua(flags.ProjectRef), …)` (`internal/functions/deploy/deploy.go:70`)
-      // — the legacy handler injects the aqua styling via `styleIdentifier`
-      // (stdout-bound, so its TTY gate must check stdout); next stays plain.
+      // utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))`
+      // (`internal/functions/deploy/deploy.go:70`) — the legacy handler injects
+      // the aqua styling via `styleIdentifier` (stdout-bound, so its TTY gate
+      // must check stdout); next stays plain. Go joins the raw `slugs` list, not
+      // the deduped set, so `functions deploy foo foo` prints "foo, foo".
       yield* output.raw(
-        `Deployed Functions on project ${styleIdentifier(projectRef)}: ${uniqueSlugs.join(", ")}\n`,
+        `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
       );
       yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
     } else {
