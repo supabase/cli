@@ -276,6 +276,8 @@ When porting a Management-API-style command, verify each item before marking the
 
 7. **PostHog telemetry payload matches Go 1:1** — see the next section.
 
+8. **Go API type regen re-syncs `*.go-payload.ts` specs** — when `apps/cli-go/pkg/api/types.gen.go` regenerates, re-audit every `*.go-payload.ts`/inline `LegacyGoType` struct spec that mirrors it (field order, JSON/Go name pairs); nothing checks this mechanically today (CLI-1975, review kanadgupta).
+
 ---
 
 ## Legacy Port: Telemetry Parity

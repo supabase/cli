@@ -1159,6 +1159,27 @@ function tomlEncode(state: TomlState, key: ReadonlyArray<string>, value: GoValue
   }
 }
 
+/**
+ * Map/struct entries in BurntSushi's write order: map entries sorted by
+ * {@link goStringCompare} (structs keep declaration order), then both
+ * partitioned into non-table ("direct") and table ("sub") groups via
+ * {@link tomlIsTable} — `eStruct`/`eMap` always write direct fields before
+ * sub-tables.
+ */
+function tomlOrderedEntries(value: Extract<GoValue, { k: "struct" | "map" }>): {
+  direct: ReadonlyArray<readonly [string, GoValue]>;
+  sub: ReadonlyArray<readonly [string, GoValue]>;
+} {
+  const entries =
+    value.k === "map"
+      ? [...value.entries].sort(([a], [b]) => goStringCompare(a, b))
+      : value.entries;
+  return {
+    direct: entries.filter(([, v]) => !tomlIsTable(v)),
+    sub: entries.filter(([, v]) => tomlIsTable(v)),
+  };
+}
+
 function tomlTable(
   state: TomlState,
   key: ReadonlyArray<string>,
@@ -1171,12 +1192,7 @@ function tomlTable(
   if (key.length > 0) {
     tomlWrite(state, `${tomlIndent(key)}[${key.map(tomlKeyName).join(".")}]\n`);
   }
-  const entries =
-    value.k === "map"
-      ? [...value.entries].sort(([a], [b]) => goStringCompare(a, b))
-      : value.entries;
-  const direct = entries.filter(([, v]) => !tomlIsTable(v));
-  const sub = entries.filter(([, v]) => tomlIsTable(v));
+  const { direct, sub } = tomlOrderedEntries(value);
   for (const [name, v] of direct) {
     if (tomlIsNil(v)) continue;
     tomlEncode(state, [...key, name], v);
@@ -1197,12 +1213,7 @@ function tomlArrayOfTables(
     tomlNewline(state);
     tomlWrite(state, `${tomlIndent(key)}[[${key.map(tomlKeyName).join(".")}]]\n`);
     if (item.k === "struct" || item.k === "map") {
-      const entries =
-        item.k === "map"
-          ? [...item.entries].sort(([a], [b]) => goStringCompare(a, b))
-          : item.entries;
-      const direct = entries.filter(([, v]) => !tomlIsTable(v));
-      const sub = entries.filter(([, v]) => tomlIsTable(v));
+      const { direct, sub } = tomlOrderedEntries(item);
       for (const [name, v] of [...direct, ...sub]) {
         if (tomlIsNil(v)) continue;
         tomlEncode(state, [...key, name], v);
