@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { unixHttpClientLayer } from "@supabase/stack";
+import { StackServiceState } from "@supabase/stack/effect";
 import { Effect, Layer } from "effect";
 import { status } from "./status.handler.ts";
 import {
@@ -159,6 +160,166 @@ describe("status handler", () => {
           }),
         );
       }),
+  );
+
+  it.live("does not report dormant lazy services as unready", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          makeRunningStackFixture({
+            states: [
+              new StackServiceState({
+                name: "auth",
+                status: "Pending",
+                pid: null,
+                exitCode: null,
+                restartCount: 0,
+                startedAt: null,
+                error: null,
+                dormant: true,
+              }),
+            ],
+          }),
+        ),
+        (resource) => Effect.promise(() => resource.dispose()),
+      );
+      const out = mockOutput();
+      const layer = Layer.mergeAll(
+        fixture.baseLayer,
+        out.layer,
+        mockProjectLinkState(),
+        mockProjectLocalServiceVersions(),
+      );
+
+      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "success", message: "Local Supabase stack is running." }),
+      );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "info", message: "auth: Pending" }),
+      );
+    }),
+  );
+
+  it.live("reports an activating pending service as unready", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          makeRunningStackFixture({
+            states: [
+              new StackServiceState({
+                name: "auth",
+                status: "Pending",
+                pid: null,
+                exitCode: null,
+                restartCount: 0,
+                startedAt: null,
+                error: null,
+              }),
+            ],
+          }),
+        ),
+        (resource) => Effect.promise(() => resource.dispose()),
+      );
+      const out = mockOutput();
+      const layer = Layer.mergeAll(
+        fixture.baseLayer,
+        out.layer,
+        mockProjectLinkState(),
+        mockProjectLocalServiceVersions(),
+      );
+
+      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: "Local Supabase stack is running, but some services are not ready.",
+        }),
+      );
+    }),
+  );
+
+  it.live("reports a stopped service as unready", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          makeRunningStackFixture({
+            states: [
+              new StackServiceState({
+                name: "auth",
+                status: "Stopped",
+                pid: null,
+                exitCode: 0,
+                restartCount: 0,
+                startedAt: null,
+                error: null,
+              }),
+            ],
+          }),
+        ),
+        (resource) => Effect.promise(() => resource.dispose()),
+      );
+      const out = mockOutput();
+      const layer = Layer.mergeAll(
+        fixture.baseLayer,
+        out.layer,
+        mockProjectLinkState(),
+        mockProjectLocalServiceVersions(),
+      );
+
+      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: "Local Supabase stack is running, but some services are not ready.",
+        }),
+      );
+    }),
+  );
+
+  it.live("reports transitional states without waiting for readiness", () =>
+    Effect.gen(function* () {
+      const starting = new StackServiceState({
+        name: "auth",
+        status: "Starting",
+        pid: 123,
+        exitCode: null,
+        restartCount: 0,
+        startedAt: Date.now(),
+        error: null,
+      });
+      const fixture = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          makeRunningStackFixture({
+            states: [starting],
+            waitAllReadyNever: true,
+          }),
+        ),
+        (resource) => Effect.promise(() => resource.dispose()),
+      );
+      const out = mockOutput();
+      const layer = Layer.mergeAll(
+        fixture.baseLayer,
+        out.layer,
+        mockProjectLinkState(),
+        mockProjectLocalServiceVersions(),
+      );
+
+      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: "Local Supabase stack is running, but some services are not ready.",
+        }),
+      );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "info", message: "auth: Starting" }),
+      );
+    }).pipe(Effect.timeout("2 seconds")),
   );
 
   it.live("emits machine-readable available updates when the pinned stack is behind", () =>

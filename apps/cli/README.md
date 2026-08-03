@@ -123,7 +123,9 @@ Important areas:
 
 The local stack commands use `@supabase/stack` for lifecycle, daemon transport, status, and logs.
 That stack layer now has an explicit preparation phase, so foreground and detached `start` flows
-can surface `Downloading` before normal runtime states.
+can surface `Downloading` before normal runtime states. CLI-managed stacks use lazy service startup:
+direct listeners start with the stack, while HTTP and Realtime services activate on first proxied
+use. The package API itself keeps eager startup as its backward-compatible default.
 
 Useful companion docs:
 
