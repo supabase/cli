@@ -1208,6 +1208,83 @@ describe("legacy db start", () => {
   );
 
   it.live(
+    "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override, matching Go's Config.Load",
+    () => {
+      // `db.ssl_enforcement` is a nil-unless-declared Go pointer (`pkg/config/db.go:95`),
+      // Viper-bound like every other nested pointer field once `[db.ssl_enforcement]` is present
+      // in config.toml — the same presence-gated shape as `storage.image_transformation` above,
+      // not the plain-bool shape of `db.network_restrictions.enabled` (never a pointer). `db
+      // start` never resolves this field elsewhere, so nothing else in this handler called the
+      // eager check before now (review: PRRT_kwDOErm0O86WE42a).
+      const { layer, child } = setup({
+        configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
+      });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("db.ssl_enforcement.enabled");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override even when Postgres is already running",
+    () => {
+      // Same gap, already-running variant: Codex's exact repro for this finding was an
+      // already-running project declaring `[db.ssl_enforcement]` — the eager check above already
+      // covers the non-running path, this proves the running short-circuit doesn't mask it either
+      // (review: PRRT_kwDOErm0O86WE42a).
+      const { layer, child } = setup({
+        configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
+        running: true,
+      });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("db.ssl_enforcement.enabled");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "ignores SUPABASE_DB_SSL_ENFORCEMENT_ENABLED when [db.ssl_enforcement] is absent from config.toml",
+    () => {
+      // Matches Go's `AutomaticEnv`, which only intercepts keys already bound from the merged
+      // config — an absent `[db.ssl_enforcement]` section never picks up an env override alone
+      // (confirmed empirically against the real Go binary for the identical
+      // `storage.image_transformation` shape above), so the eager check must gate on section
+      // presence and be a no-op rather than failing on a section the config never mentions.
+      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
+      );
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(createArgs(child.spawned)).not.toBeUndefined();
+      });
+    },
+  );
+
+  it.live(
     "warns when api.auto_expose_new_tables is true, matching Go's unconditional Config.Validate print",
     () => {
       // Go prints this unconditionally right after the `project_id` check, before

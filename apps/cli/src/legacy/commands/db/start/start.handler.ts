@@ -757,6 +757,33 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Same gap for `db.ssl_enforcement.enabled` — Go's `SslEnforcement` is a nil-unless-declared
+    // pointer (`db.go:95`), Viper-bound like every other nested pointer field ONLY once
+    // `[db.ssl_enforcement]` is present in config.toml — the same presence-gated shape as
+    // `storage.image_transformation` above, not the plain-bool shape of
+    // `db.network_restrictions.enabled` right above (which IS a non-pointer field, decoded
+    // unconditionally). `db start` never builds any container gated on this value, but a
+    // malformed override (e.g. `SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus`) must still fail
+    // before `AssertSupabaseDbIsRunning` whenever the section is declared, matching every other
+    // field in this battery — so it would otherwise be silently accepted whenever Postgres is
+    // already running, unlike Go. `@supabase/config`'s decoded `config.db.ssl_enforcement` can't
+    // be used as the presence proxy itself — it decodes to a default `{ enabled: false }`, never
+    // `undefined` (confirmed empirically, same as `storage.image_transformation`) — so presence
+    // comes from the raw document, same `asRecord(loaded?.document?.[...])` gate used above.
+    // `db start` never resolves this field elsewhere, so it's called here purely to force the
+    // eager decode-time error (review: PRRT_kwDOErm0O86WE42a).
+    const sslEnforcementSectionPresent =
+      asRecord(asRecord(loaded?.document?.["db"])?.["ssl_enforcement"]) !== undefined;
+    if (sslEnforcementSectionPresent) {
+      yield* wrapDbConfigOverride("db.ssl_enforcement.enabled", () =>
+        legacyEnvOverrideBool(
+          "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED",
+          config.db.ssl_enforcement?.enabled ?? false,
+          "db.ssl_enforcement.enabled",
+          projectEnvValues,
+        ),
+      );
+    }
     const studioEnabledForValidation = yield* wrapDbConfigOverride("studio.enabled", () =>
       legacyEnvOverrideBool(
         "SUPABASE_STUDIO_ENABLED",
