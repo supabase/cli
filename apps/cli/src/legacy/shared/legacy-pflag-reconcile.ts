@@ -9,6 +9,14 @@ import { legacyParseStringSliceFlag } from "./legacy-string-slice-flag.ts";
 import { legacyValidateWorkdirIsDirectory } from "./legacy-workdir-validation.ts";
 
 /**
+ * Hoisted here ahead of a second command family landing on purpose: a human
+ * reviewer flagged in #5974 that the pflag-vs-Effect-parser divergence this
+ * module reconciles is CLI-wide, not sso-specific, and asked for it to live
+ * in a shared layer rather than be reimplemented per command family —
+ * https://github.com/supabase/cli/pull/5974#discussion_r3685149895 (CLI-1982).
+ */
+
+/**
  * Go's `ChangeWorkDir` (`internal/utils/misc.go:238-257`), run from the root
  * `PersistentPreRunE` (`cmd/root.go:104`) — after `ParseFlags` and
  * `ValidateArgs`, before `ValidateRequiredFlags`, `ValidateFlagGroups`, and
