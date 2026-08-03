@@ -212,7 +212,7 @@ export const stopDaemon = (opts: {
     }
 
     // Clean up any state the daemon did not remove for itself.
-    yield* stateManager.remove(state.name);
+    yield* stateManager.removeOwned(state);
   });
 
 export const deleteManagedStackPersistence = (opts: {

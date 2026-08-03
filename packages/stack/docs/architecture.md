@@ -815,6 +815,15 @@ for services with direct endpoints. Each HTTP proxy route activates its target s
 forwards the request, and concurrent activation remains single-flight in the orchestrator. Proxy
 requests made before startup or after shutdown receive `503 Service Unavailable`. `waitAllReady()`
 waits for the set of services activated so far instead of blocking on intentionally dormant ones.
+Activation records the process graph's actual dependency closure, so readiness includes implicitly
+started public dependencies as well as the requested service. Readiness is only valid while the
+stack is running, and waiting for an unactivated lazy service fails immediately with a typed build
+error. Activation state is cleared across stop/start cycles.
+
+Detached mode preserves these semantics instead of reconstructing readiness from status snapshots.
+The daemon exposes `/ready` and `/services/:name/ready`, both of which delegate to the lifecycle
+coordinator. Typed error discriminants preserve service-not-found, service-readiness, and stack-build
+failures across the HTTP boundary.
 
 Realtime WebSocket upgrades use the same activation boundary. The proxy rewrites the public
 `/realtime/v1/websocket` path to Realtime's `/socket/websocket` endpoint, translates opaque API

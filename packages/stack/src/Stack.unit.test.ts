@@ -488,10 +488,12 @@ describe("Stack", () => {
       yield* Effect.gen(function* () {
         const coordinator = yield* StackLifecycleCoordinator;
         yield* coordinator.start();
+        expect((yield* coordinator.getState("auth")).dormant).toBe(true);
         const activationFiber = yield* coordinator
           .activateService("auth")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(spawnStarted);
+        expect((yield* coordinator.getState("auth")).dormant).toBeUndefined();
 
         const readyFiber = yield* coordinator
           .waitAllReady()
@@ -591,6 +593,39 @@ describe("Stack", () => {
         yield* coordinator.stop();
       }).pipe(Effect.provide(coordinatorLayer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds"));
+  });
+
+  it.live("lazy readiness fails fast before a service is activated", () => {
+    const { layer } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const beforeStart = yield* stack.waitAllReady().pipe(Effect.flip);
+      expect(beforeStart._tag).toBe("StackBuildError");
+
+      yield* stack.start();
+      const authNotActivated = yield* stack.waitReady("auth").pipe(Effect.flip);
+      expect(authNotActivated._tag).toBe("StackBuildError");
+
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("keeps unactivated services dormant after a stop and start cycle", () => {
+    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const { coordinatorLayer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      expect((yield* coordinator.getState("auth")).dormant).toBe(true);
+
+      yield* coordinator.stop();
+      yield* coordinator.start();
+
+      expect((yield* coordinator.getState("auth")).dormant).toBe(true);
+      yield* coordinator.stop();
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
   });
 
   it.live("rejects a cached activation after the stack has stopped", () => {

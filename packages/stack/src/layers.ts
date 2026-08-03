@@ -1,11 +1,12 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { Data, Effect, Layer, Option } from "effect";
+import { Data, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { FileSystem, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
+import { DaemonMessageSchema } from "./DaemonProtocol.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
@@ -239,9 +240,17 @@ export const daemonLayer = (
         projectDir: config.projectDir,
         socketPath,
       };
-      child.send(startMsg);
-
-      const response = yield* waitForDaemonResponse(child);
+      const responseFiber = yield* waitForDaemonResponse(child).pipe(
+        Effect.timeout("30 seconds"),
+        Effect.mapError((error) =>
+          error._tag === "DaemonStartError"
+            ? error
+            : new DaemonStartError({ message: "Timed out waiting for daemon startup" }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* sendDaemonStart(child, startMsg);
+      const response = yield* Fiber.join(responseFiber);
 
       if (response.type === "error") {
         return yield* new DaemonStartError({ message: response.message });
@@ -282,6 +291,35 @@ const forkDaemon = (entryPoint: string): Effect.Effect<ChildProcess, DaemonStart
       }),
   });
 
+const sendDaemonStart = (
+  child: ChildProcess,
+  message: DaemonStartMessage,
+): Effect.Effect<void, DaemonStartError> =>
+  Effect.callback<void, DaemonStartError>((resume) => {
+    try {
+      child.send(message, (error) => {
+        if (error === null) {
+          resume(Effect.void);
+          return;
+        }
+        resume(
+          Effect.fail(
+            new DaemonStartError({ message: `Failed to send daemon config: ${error.message}` }),
+          ),
+        );
+      });
+    } catch (cause) {
+      resume(
+        Effect.fail(
+          new DaemonStartError({
+            message: `Failed to send daemon config: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+        ),
+      );
+    }
+    return Effect.void;
+  });
+
 /** Wait for DaemonStartedMessage or DaemonErrorMessage from the child. */
 const waitForDaemonResponse = (
   child: ChildProcess,
@@ -289,7 +327,12 @@ const waitForDaemonResponse = (
   Effect.callback<DaemonMessage, DaemonStartError>((resume) => {
     const onMessage = (msg: unknown) => {
       cleanup();
-      resume(Effect.succeed(msg as DaemonMessage));
+      const decoded = Schema.decodeUnknownOption(DaemonMessageSchema)(msg);
+      resume(
+        Option.isSome(decoded)
+          ? Effect.succeed(decoded.value)
+          : Effect.fail(new DaemonStartError({ message: "Daemon sent an invalid IPC response" })),
+      );
     };
 
     const onError = (err: Error) => {

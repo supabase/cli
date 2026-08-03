@@ -71,13 +71,20 @@ export async function runDaemon(
     // Build the stack (services are started later via POST /start)
     const localStack = await appRuntime.runPromise(Stack);
     const info = await appRuntime.runPromise(localStack.getInfo());
-    stateManager = await appRuntime.runPromise(StateManager);
+    const localStateManager = await appRuntime.runPromise(StateManager);
+    stateManager = localStateManager;
 
     // Build daemon management server on Unix socket
-    const daemonLayer = DaemonServer.layer.pipe(
+    const daemonLayer = DaemonServer.layerWithShutdown(
+      Effect.suspend(() =>
+        daemonState === undefined
+          ? Effect.void
+          : localStateManager.removeOwned(daemonState).pipe(Effect.ignore),
+      ),
+    ).pipe(
       Layer.provide(Layer.succeed(Stack, localStack)),
       Layer.provide(daemonServerFactory(socketPath)),
-    ) as unknown as Layer.Layer<DaemonServer, never, never>;
+    );
 
     daemonRuntime = ManagedRuntime.make(daemonLayer);
     await daemonRuntime.runPromise(DaemonServer);
@@ -103,7 +110,7 @@ export async function runDaemon(
       services: runningServiceVersionsForConfig(config),
     };
     daemonState = state;
-    await Effect.runPromise(stateManager.write(state));
+    await Effect.runPromise(localStateManager.write(state));
 
     const response: DaemonStartedMessage = { type: "started", state };
     process.send!(response);
@@ -163,6 +170,6 @@ async function shutdownDaemon(opts: {
   await opts.appRuntime?.dispose().catch(() => {});
 
   if (opts.stateManager != null && opts.daemonState != null) {
-    await Effect.runPromise(opts.stateManager.remove(opts.daemonState.name)).catch(() => {});
+    await Effect.runPromise(opts.stateManager.removeOwned(opts.daemonState)).catch(() => {});
   }
 }

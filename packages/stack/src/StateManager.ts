@@ -41,7 +41,7 @@ export interface StackState {
   readonly services: PartialVersionManifest;
 }
 
-const StackStateSchema = Schema.Struct({
+export const StackStateSchema = Schema.Struct({
   pid: Schema.Number,
   name: Schema.String,
   projectDir: Schema.String,
@@ -459,6 +459,20 @@ function makeRemove(deps: StateManagerDeps) {
     }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
 }
 
+function makeRemoveOwned(read: ReturnType<typeof makeRead>, remove: ReturnType<typeof makeRemove>) {
+  return (expected: StackState): Effect.Effect<void, InvalidStackStateError> =>
+    read(expected.name).pipe(
+      Effect.flatMap((current) =>
+        current.pid === expected.pid &&
+        current.startedAt === expected.startedAt &&
+        current.socketPath === expected.socketPath
+          ? remove(expected.name)
+          : Effect.void,
+      ),
+      Effect.catchTag("StateNotFoundError", () => Effect.void),
+    );
+}
+
 function makeDeleteStack(deps: StateManagerDeps) {
   return (name: string): Effect.Effect<void> =>
     Effect.gen(function* () {
@@ -618,6 +632,7 @@ export class StateManager extends Context.Service<
       InvalidStackMetadataError | UnsupportedStackMetadataVersionError
     >;
     readonly remove: (name: string) => Effect.Effect<void>;
+    readonly removeOwned: (state: StackState) => Effect.Effect<void, InvalidStackStateError>;
     readonly deleteStack: (name: string) => Effect.Effect<void>;
     readonly resolve: (
       cwd: string,
@@ -650,6 +665,8 @@ export class StateManager extends Context.Service<
           metadataFile,
           runtimeDir,
         };
+        const read = makeRead(deps);
+        const remove = makeRemove(deps);
         const scan = makeScan(deps);
         const writeMetadata = makeWriteMetadata(deps);
         const readMetadata = makeReadMetadata(deps);
@@ -662,13 +679,14 @@ export class StateManager extends Context.Service<
           metadataFile,
           stackExists: makeStackExists(deps),
           write: makeWrite(deps),
-          read: makeRead(deps),
+          read,
           scan,
           writeMetadata,
           updateMetadata: makeUpdateMetadata(readMetadata, writeMetadata),
           readMetadata,
           scanMetadata: makeScanMetadata(deps),
-          remove: makeRemove(deps),
+          remove,
+          removeOwned: makeRemoveOwned(read, remove),
           deleteStack: makeDeleteStack(deps),
           resolve: makeResolve(path, scan),
           isAlive: makeIsAlive(),

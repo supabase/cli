@@ -292,6 +292,37 @@ describe("StateManager", () => {
         yield* mgr.remove("nonexistent");
       }).pipe(Effect.provide(layer));
     });
+
+    it.live("removes state and runtime files when the owner matches", () => {
+      const { layer, dirs } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        const state = makeState();
+        yield* mgr.write(state);
+        dirs.add(mgr.runtimeDir(state.name));
+
+        yield* mgr.removeOwned(state);
+
+        expect(Exit.isFailure(yield* mgr.read(state.name).pipe(Effect.exit))).toBe(true);
+        expect(dirs.has(mgr.runtimeDir(state.name))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("preserves state and runtime files owned by a replacement daemon", () => {
+      const { layer, dirs } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        const previous = makeState();
+        const replacement = makeState({ pid: 67890, startedAt: "2026-03-04T10:01:00Z" });
+        yield* mgr.write(replacement);
+        dirs.add(mgr.runtimeDir(replacement.name));
+
+        yield* mgr.removeOwned(previous);
+
+        expect(yield* mgr.read(replacement.name)).toEqual(replacement);
+        expect(dirs.has(mgr.runtimeDir(replacement.name))).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("deleteStack", () => {

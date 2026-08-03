@@ -201,8 +201,8 @@ wait healthy`, so detached mode exposes the same pre-runtime status behavior as 
 | `getState(name)`           | `GET /status` → `Effect` (filter by name)                      |
 | `allStateChanges()`        | `GET /status/stream` (SSE → `Stream`, including `Downloading`) |
 | `stateChanges(name)`       | `GET /status/stream` (SSE → `Stream`, filter by name)          |
-| `waitReady(name)`          | `GET /status/stream` (SSE → `Stream`, take until ready)        |
-| `waitAllReady()`           | `GET /status/stream` (SSE → `Stream`, take until all ready)    |
+| `waitReady(name)`          | `GET /services/:name/ready` → `Effect`                         |
+| `waitAllReady()`           | `GET /ready` → `Effect`                                        |
 | `subscribeAllLogs()`       | `GET /logs` (SSE → `Stream`)                                   |
 | `subscribeLogs(name)`      | `GET /logs/:name` (SSE → `Stream`)                             |
 | `logHistory(name, limit?)` | `GET /logs/:name/history?limit=N` → `Effect`                   |
@@ -250,8 +250,9 @@ runtime-dispatch rationale.
 
 Parent and child send JSON messages via `process.send()` / `process.on("message")`.
 
-This channel is only used for the initial startup handshake — once the daemon confirms
-it's ready (or reports an error), the CLI disconnects the channel. All subsequent
+This channel is only used for the initial startup handshake. The parent validates the response and
+applies a bounded startup timeout. Once the daemon confirms it's ready (or reports an error), the
+CLI disconnects the channel. All subsequent
 communication (stop, status, logs) happens over the Unix socket HTTP API instead.
 
 ```
@@ -285,12 +286,18 @@ and the CLI displays the error and exits with a non-zero code.
 | Endpoint                 | Method | Description                                                                         |
 | ------------------------ | ------ | ----------------------------------------------------------------------------------- |
 | `/health`                | GET    | Liveness check (200 OK)                                                             |
+| `/ready`                 | GET    | Wait for all activated services using foreground lifecycle semantics                |
 | `/status`                | GET    | All service states + connection info (JSON)                                         |
 | `/status/stream`         | GET    | SSE stream of all service state changes, including `Downloading` during preparation |
 | `/stop`                  | POST   | Graceful shutdown → dispose + exit                                                  |
+| `/services/:name/ready`  | GET    | Wait for one activated service                                                      |
 | `/logs`                  | GET    | SSE stream of all logs                                                              |
 | `/logs/:service`         | GET    | SSE stream for one service                                                          |
 | `/logs/:service/history` | GET    | Recent log entries for one service (JSON, `?limit=N`)                               |
+
+Management errors include a stable discriminator. `RemoteStack` maps service-not-found,
+service-readiness, and stack-build responses back to the same typed failures exposed by a
+foreground stack.
 
 ### `supabase` — New/modified commands
 

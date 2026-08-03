@@ -533,6 +533,18 @@ export class StackLifecycleCoordinator extends Context.Service<
               (previous, current) => [current, changedStatesBetween(previous, current)],
             ),
           );
+        const annotateDormancy = (state: StackServiceState): StackServiceState => {
+          const service = SERVICE_NAMES.find((candidate) => candidate === state.name);
+          const dormant =
+            config.startupMode === "lazy" &&
+            Ref.getUnsafe(phaseRef) === "running" &&
+            (state.status === "Pending" || state.status === "Stopped") &&
+            service !== undefined &&
+            !activatedServices.has(service) &&
+            !manuallyStoppedServices.has(service);
+          return dormant ? new StackServiceState({ ...state, dormant: true }) : state;
+        };
+        const publicAllStateChanges = () => allStateChanges().pipe(Stream.map(annotateDormancy));
         const publicServiceClosure = (
           runtime: RuntimeState,
           services: ReadonlyArray<ServiceName>,
@@ -964,23 +976,52 @@ export class StackLifecycleCoordinator extends Context.Service<
               if (match === undefined) {
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
-              return match;
+              return annotateDormancy(match);
             }),
-          getAllStates: () => Effect.sync(() => SubscriptionRef.getUnsafe(stateRef)),
+          getAllStates: () =>
+            Effect.sync(() => SubscriptionRef.getUnsafe(stateRef).map(annotateDormancy)),
           stateChanges: (name) =>
             Effect.gen(function* () {
               yield* requireKnownService(name);
-              return Stream.filter(allStateChanges(), (state) => state.name === name);
+              return Stream.filter(publicAllStateChanges(), (state) => state.name === name);
             }),
-          allStateChanges,
+          allStateChanges: publicAllStateChanges,
           waitReady: (name) =>
             Effect.gen(function* () {
-              yield* requireKnownService(name);
-              const runtime = yield* ensureRuntime;
-              yield* runtime.orchestrator.waitReady(name);
+              const service = yield* requireKnownServiceName(name);
+              yield* withActivationLocks(
+                [service],
+                Effect.gen(function* () {
+                  const phase = yield* Ref.get(phaseRef);
+                  if (phase !== "running") {
+                    return yield* Effect.fail(
+                      new StackBuildError({
+                        detail: `Cannot wait for service ${name} while the stack is ${phase}`,
+                      }),
+                    );
+                  }
+                  if (config.startupMode === "lazy" && !activatedServices.has(service)) {
+                    return yield* Effect.fail(
+                      new StackBuildError({
+                        detail: `Service ${name} has not been activated in lazy startup mode`,
+                      }),
+                    );
+                  }
+                  const runtime = yield* ensureRuntime;
+                  yield* runtime.orchestrator.waitReady(name);
+                }),
+              );
             }),
           waitAllReady: () =>
             Effect.gen(function* () {
+              const phase = yield* Ref.get(phaseRef);
+              if (phase !== "running") {
+                return yield* Effect.fail(
+                  new StackBuildError({
+                    detail: `Cannot wait for stack readiness while the stack is ${phase}`,
+                  }),
+                );
+              }
               const runtime = yield* ensureRuntime;
               if (config.startupMode === "eager") {
                 yield* runtime.orchestrator.waitAllReady();

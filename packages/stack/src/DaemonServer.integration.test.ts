@@ -131,8 +131,9 @@ function mockStack() {
 
 function buildDaemonLayer(
   mock: ReturnType<typeof mockStack>,
+  beforeShutdown: Effect.Effect<void> = Effect.void,
 ): Layer.Layer<DaemonServer, never, never> {
-  return DaemonServer.layer.pipe(
+  return DaemonServer.layerWithShutdown(beforeShutdown).pipe(
     Layer.provide(mock.layer),
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
   ) as Layer.Layer<DaemonServer, never, never>;
@@ -351,6 +352,28 @@ describe("DaemonServer", () => {
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(mock.stopped).toBe(true);
+  });
+
+  test("POST /stop unregisters the daemon before responding", async () => {
+    const freshMock = mockStack();
+    let registered = true;
+    const freshRuntime = ManagedRuntime.make(
+      buildDaemonLayer(
+        freshMock,
+        Effect.sync(() => {
+          registered = false;
+        }),
+      ),
+    );
+    try {
+      const daemon = await freshRuntime.runPromise(DaemonServer);
+      const res = await fetch(`${getUrl(daemon.address)}/stop`, { method: "POST" });
+
+      expect(res.status).toBe(200);
+      expect(registered).toBe(false);
+    } finally {
+      await freshRuntime.dispose();
+    }
   });
 
   test("POST /stop resolves awaitShutdown", async () => {

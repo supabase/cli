@@ -25,6 +25,8 @@ export class StackServiceState extends Data.Class<{
   readonly restartCount: number;
   readonly startedAt: number | null;
   readonly error: string | null;
+  /** True when a lazy service is intentionally idle and will activate on demand. */
+  readonly dormant?: boolean;
 }> {}
 
 export function fromRawServiceState(raw: RawServiceState): StackServiceState {

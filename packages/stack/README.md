@@ -203,7 +203,10 @@ await stack.serviceReady("postgres"); // Wait for one service
 await stack.serviceReady("auth", { timeout: 10_000 });
 ```
 
-Note: `start()` already blocks until all services are ready. Use `ready()` and `serviceReady()` after manually starting individual services.
+In eager mode, `start()` blocks until every enabled service is ready. In lazy mode it waits only
+for direct listeners and services activated so far. Calling `serviceReady()` for a dormant lazy
+service fails immediately; activate it through the proxy or call `startService()` first. Foreground
+and detached stacks use the same readiness rules.
 
 ### Status
 
