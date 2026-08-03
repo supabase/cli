@@ -6,12 +6,12 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeEnv, encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
+import { LEGACY_GO_SSL_ENFORCEMENT_RESPONSE } from "../ssl-enforcement.go-payload.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacySslEnforcementGetNetworkError,
@@ -62,11 +62,11 @@ export const legacySslEnforcementGet = Effect.fn("legacy.ssl-enforcement.get")(f
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(response));
+        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_SSL_ENFORCEMENT_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeToml(response) + "\n");
+        yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_SSL_ENFORCEMENT_RESPONSE));
         return;
       }
       if (goFmt === "env") {

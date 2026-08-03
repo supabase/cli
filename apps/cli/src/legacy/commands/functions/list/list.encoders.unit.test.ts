@@ -135,18 +135,25 @@ describe("list encoders", () => {
   importmappath: null`);
   });
 
-  it("keeps Go TOML keys in struct order", () => {
-    expect(encodeFunctionsGoToml([SAMPLE_FUNCTION])).toContain(`[[functions]]
-CreatedAt = 1687423025152
-EntrypointPath = "functions/hello-world/index.ts"
-Id = "11111111-2222-3333-4444-555555555555"
-ImportMap = false
-Name = "Hello World"
-Slug = "hello-world"
-Status = "ACTIVE"
-UpdatedAt = 1687423025152
-VerifyJwt = true
-Version = 2
-`);
+  it("keeps Go TOML keys in struct order with BurntSushi's 2-space indentation", () => {
+    expect(encodeFunctionsGoToml({ functions: [SAMPLE_FUNCTION], isNil: false })).toBe(
+      `[[functions]]
+  CreatedAt = 1687423025152
+  EntrypointPath = "functions/hello-world/index.ts"
+  Id = "11111111-2222-3333-4444-555555555555"
+  ImportMap = false
+  Name = "Hello World"
+  Slug = "hello-world"
+  Status = "ACTIVE"
+  UpdatedAt = 1687423025152
+  VerifyJwt = true
+  Version = 2
+`,
+    );
+  });
+
+  it("emits nothing for a nil TOML list and `functions = []` for a decoded empty list", () => {
+    expect(encodeFunctionsGoToml({ functions: [], isNil: true })).toBe("");
+    expect(encodeFunctionsGoToml({ functions: [], isNil: false })).toBe("functions = []\n");
   });
 });

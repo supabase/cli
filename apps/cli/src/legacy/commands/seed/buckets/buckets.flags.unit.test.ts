@@ -58,7 +58,7 @@ describe("legacyAssertSeedTargetsExclusive", () => {
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(JSON.stringify(exit)).toContain(
-      "if any flags in the group [linked local] are set none of the others can be; [linked local] were all set",
+      "if any flags in the group [local linked] are set none of the others can be; [linked local] were all set",
     );
   });
 

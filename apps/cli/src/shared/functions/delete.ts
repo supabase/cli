@@ -20,6 +20,13 @@ export interface DeleteFunctionDependencies<ResolveError, ResolveRequirements> {
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  /**
+   * Optional shell-specific styling for the slug/ref in the success line.
+   * Defaults to identity (plain text). The legacy shell injects Go's aqua
+   * here; keeping the hook injected preserves next-shell isolation from
+   * `legacy/`-specific rendering.
+   */
+  readonly styleIdentifier?: (text: string) => string;
 }
 
 function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugError> {
@@ -86,6 +93,10 @@ export function deleteFunction<ResolveError, ResolveRequirements>(
       return;
     }
 
-    yield* output.raw(`Deleted Function ${flags.slug} from project ${projectRef}.\n`);
+    // Go: `fmt.Printf("Deleted Function %s from project %s.\n", utils.Aqua(slug),
+    // utils.Aqua(projectRef))` (`internal/functions/delete/delete.go:20`) — the
+    // legacy handler injects the aqua styling via `styleIdentifier`; next stays plain.
+    const style = dependencies.styleIdentifier ?? ((text: string) => text);
+    yield* output.raw(`Deleted Function ${style(flags.slug)} from project ${style(projectRef)}.\n`);
   }).pipe(Effect.withSpan("functions.delete"));
 }

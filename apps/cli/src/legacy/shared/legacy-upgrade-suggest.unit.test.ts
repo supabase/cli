@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Option, Redacted } from "effect";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -285,6 +285,44 @@ describe("legacySuggestUpgrade", () => {
           properties: { feature_key: "custom_domain", org_slug: "env-org" },
         },
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a caller-provided reconciled token authenticates the fallback GETs", () => {
+    // Go resolves credentials for the process-wide reconciled CurrentProfile
+    // (`access_token.go:43`) — a reconciled caller passes its token with the
+    // URL so the stale profile's bearer token never follows the reconciled
+    // host (review r3684524241).
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        featureKey: "branching_limit",
+        statusCode: 402,
+        accessToken: Option.some(Redacted.make("sbp_reconciled_token")),
+      });
+      expect(api.requests).toHaveLength(2);
+      for (const req of api.requests) {
+        expect(req.headers["authorization"]).toBe("Bearer sbp_reconciled_token");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a reconciled profile with no token sends the fallback GETs unauthenticated", () => {
+    // `None` means the reconciled profile's own lookup found nothing — Go
+    // never falls back to the stale profile's token in that case.
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        featureKey: "branching_limit",
+        statusCode: 402,
+        accessToken: Option.none(),
+      });
+      expect(api.requests).toHaveLength(2);
+      for (const req of api.requests) {
+        expect(req.headers["authorization"]).toBeUndefined();
+      }
     }).pipe(Effect.provide(layer));
   });
 

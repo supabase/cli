@@ -2,13 +2,74 @@ import { Effect, Option } from "effect";
 
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { encodeEnv, encodeGoJson } from "../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoAny,
+  legacyGoBool,
+  legacyGoPtr,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+} from "../../shared/legacy-go-struct-output.encoders.ts";
 import { formatHostnameStatus, type LegacyHostnameResponse } from "./domains.format.ts";
+
+/**
+ * Mirror of Go's `api.UpdateCustomHostnameResponse`
+ * (`apps/cli-go/pkg/api/types.gen.go`) — every hostname subcommand encodes
+ * this struct for `-o yaml` / `-o toml`, so keys derive from the Go field
+ * names and non-pointer fields are zero-filled (CLI-1975).
+ */
+const LEGACY_GO_HOSTNAME_RESPONSE = legacyGoStruct([
+  ["custom_hostname", legacyGoString],
+  [
+    "data",
+    legacyGoStruct([
+      ["errors", legacyGoSlice(legacyGoAny)],
+      ["messages", legacyGoSlice(legacyGoAny)],
+      [
+        "result",
+        legacyGoStruct([
+          ["custom_origin_server", legacyGoString],
+          ["hostname", legacyGoString],
+          ["id", legacyGoString],
+          [
+            "ownership_verification",
+            legacyGoStruct([
+              ["name", legacyGoString],
+              ["type", legacyGoString],
+              ["value", legacyGoString],
+            ]),
+          ],
+          [
+            "ssl",
+            legacyGoStruct([
+              ["status", legacyGoString],
+              [
+                "validation_errors",
+                legacyGoPtr(legacyGoSlice(legacyGoStruct([["message", legacyGoString]]))),
+              ],
+              [
+                "validation_records",
+                legacyGoSlice(
+                  legacyGoStruct([
+                    ["txt_name", legacyGoString],
+                    ["txt_value", legacyGoString],
+                  ]),
+                ),
+              ],
+            ]),
+          ],
+          ["status", legacyGoString],
+          ["verification_errors", legacyGoPtr(legacyGoSlice(legacyGoString))],
+        ]),
+      ],
+      ["success", legacyGoBool],
+    ]),
+  ],
+  ["status", legacyGoString],
+]);
 
 function normalizeLegacyHostnameResponse(
   response: LegacyHostnameResponse,
@@ -77,11 +138,11 @@ export const emitLegacyHostnameResult = Effect.fnUntraced(function* (
     return;
   }
   if (effectiveGoFmt === "yaml") {
-    yield* output.raw(encodeYaml(normalizeLegacyHostnameResponse(response)));
+    yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_HOSTNAME_RESPONSE));
     return;
   }
   if (effectiveGoFmt === "toml") {
-    yield* output.raw(encodeToml(normalizeLegacyHostnameResponse(response)) + "\n");
+    yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_HOSTNAME_RESPONSE));
     return;
   }
   if (effectiveGoFmt === "env") {

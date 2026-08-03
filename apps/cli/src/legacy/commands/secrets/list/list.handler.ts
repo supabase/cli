@@ -7,7 +7,16 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoPtr,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+  legacyGoTomlListWrapper,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacySecretsEnvNotSupportedError,
@@ -29,6 +38,20 @@ const mapListError = mapLegacyHttpError({
 function sortSecrets(secrets: Secrets): Secrets {
   return [...secrets].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
+
+/** Mirror of Go's `api.SecretResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
+const LEGACY_GO_SECRET_RESPONSE = legacyGoStruct([
+  ["name", legacyGoString],
+  ["updated_at", legacyGoPtr(legacyGoString)],
+  ["value", legacyGoString],
+]);
+
+const LEGACY_GO_SECRETS_LIST = legacyGoSlice(LEGACY_GO_SECRET_RESPONSE);
+
+const LEGACY_GO_SECRETS_TOML_WRAPPER = legacyGoTomlListWrapper(
+  "secrets",
+  LEGACY_GO_SECRET_RESPONSE,
+);
 
 export const legacySecretsList = Effect.fn("legacy.secrets.list")(function* (
   flags: LegacySecretsListFlags,
@@ -66,11 +89,11 @@ export const legacySecretsList = Effect.fn("legacy.secrets.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(sorted));
+      yield* output.raw(encodeLegacyGoYaml(sorted, LEGACY_GO_SECRETS_LIST));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml({ secrets: sorted }) + "\n");
+      yield* output.raw(encodeLegacyGoToml({ secrets: sorted }, LEGACY_GO_SECRETS_TOML_WRAPPER));
       return;
     }
 

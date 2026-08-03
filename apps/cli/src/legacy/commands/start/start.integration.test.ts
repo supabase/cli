@@ -1348,6 +1348,26 @@ describe("legacy start integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.live("brings the stack up when podman rejects re-creating preserved volumes (#6020)", () => {
+      const route = defaultRoute();
+      const { layer, analytics } = setup({
+        route: (args) => {
+          if (args[0] === "volume" && args[1] === "create") {
+            const name = args[args.length - 1] ?? "";
+            return {
+              exitCode: 125,
+              stderr: [`Error: volume with name ${name} already exists: volume already exists`],
+            };
+          }
+          return route(args);
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.live(
       "reuses the bring-up-resolved local config values for the final status print instead of re-deriving them",
       () => {
@@ -2775,6 +2795,58 @@ content_path = "./templates/custom_notice.html"
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
           }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+      45_000,
+    );
+
+    it.live(
+      "still fails when the daemon dies mid-pre-pull under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
+      () => {
+        // Go's `IsUnhealthyError` (`internal/db/start/start.go:227-231`) matches any
+        // `errors.Join`-shaped error, which accidentally includes `ensureImagesCached`'s
+        // joined pull errors — so Go with `--ignore-health-check` swallows a total pre-pull
+        // failure, prints "Started supabase local development setup." + the status table,
+        // and exits 0 with no container running. Ruled an unintended quirk (CLI-1987):
+        // this port keeps the failure fatal regardless of the flag — no success banner,
+        // no status table on stdout, and no rollback (nothing was created yet). This
+        // scenario models the daemon-becoming-unreachable trigger: `hasLocalImage`
+        // (`legacy-docker-image-resolve.ts`) fails IMMEDIATELY on a daemon-unreachable
+        // `image inspect` stderr — no registry-candidate retries, no real 4s/8s backoff
+        // sleeps (review r3689619133) — while the flagless test above already pins the
+        // other trigger, pull-retry exhaustion. Both funnel into the same joined
+        // `LegacyImagePrepullError` (`lib/image-prepull.ts`). See
+        // `legacyIsUnhealthyStartError`'s doc comment (`start.rollback.ts`) and
+        // `SIDE_EFFECTS.md`'s "Notes" before "fixing" this toward Go.
+        const base = defaultRoute();
+        const route = (args: ReadonlyArray<string>): RouteResult => {
+          if (args[0] === "image" && args[1] === "inspect") {
+            const image = args[2] ?? "";
+            if (image.includes("kong")) {
+              return {
+                exitCode: 1,
+                stderr: [
+                  "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+                ],
+              };
+            }
+            return { exitCode: 1 };
+          }
+          if (args[0] === "pull") return { exitCode: 0 };
+          return base(args);
+        };
+        const { layer, out, child } = setup({ route });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ ignoreHealthCheck: true })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
+          }
+          expect(out.stderrText).not.toContain("Started");
+          expect(out.stderrText).not.toContain("Local dev security notice");
+          expect(out.stdoutText).toBe("");
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
         }).pipe(Effect.provide(layer));

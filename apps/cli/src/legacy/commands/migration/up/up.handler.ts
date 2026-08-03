@@ -18,6 +18,7 @@ import {
   legacyFindPendingMigrations,
   legacyListLocalMigrationPaths,
   legacyListRemoteMigrations,
+  legacySortMigrationPathsByVersion,
   legacySuggestRevertHistory,
 } from "../../../shared/legacy-migration-history.ts";
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
@@ -106,8 +107,14 @@ const runUp = Effect.fnUntraced(function* (
             );
           }
           // Go's `--include-all`: the out-of-order set + everything after the
-          // applied prefix (`up.go:47`).
-          pending = [...result.paths, ...local.slice(remote.length + result.paths.length)];
+          // applied prefix (`up.go:47`). Slices the same version-ordered list
+          // `result.paths` was taken from — indexing a name-ordered list with a
+          // version-ordered offset would skip a pending migration and re-apply
+          // an already-applied one.
+          pending = [
+            ...result.paths,
+            ...legacySortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),
+          ];
         } else {
           pending = result.paths;
         }

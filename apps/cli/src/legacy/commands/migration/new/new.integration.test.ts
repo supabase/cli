@@ -158,6 +158,9 @@ describe("legacy migration new", () => {
     () => {
       // Go's io.Copy returns "failed to copy from stdin" and exits non-zero on a stdin read
       // error (new.go:42); the streaming copy must surface that, not leave a truncated file.
+      // Go's deferred `fmt.Println("Created new migration at …")` (new.go:24-27) is already
+      // registered by the time the copy fails, so the Created line still prints to stdout
+      // BEFORE the copy error propagates to stderr / exit 1 — assert BOTH here.
       const failingStdin = Layer.succeed(Stdin, {
         isTTY: false,
         readPipedBytes: Effect.succeed(Option.none()),
@@ -187,6 +190,10 @@ describe("legacy migration new", () => {
             }
           }
         }
+        const file = onlyMigration(tmp.current);
+        expect(stripAnsi(out.stdoutText)).toBe(
+          `Created new migration at supabase/migrations/${file}\n`,
+        );
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     },

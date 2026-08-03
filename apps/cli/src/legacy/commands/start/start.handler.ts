@@ -416,6 +416,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
+  // Threaded into every `legacyDockerRemoveAll` teardown below — Go's
+  // `--debug` gates that function's `Pruned …:` stderr reports
+  // (`docker.go:123-143`, `viper.GetBool("DEBUG")`).
+  const debug = yield* LegacyDebugFlag;
 
   yield* Effect.gen(function* () {
     // 0. Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) —
@@ -1714,7 +1718,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // real relative position (between ImgProxy and pg-meta).
         if (entry.service === "edgeRuntime") {
           if (!gates.edgeRuntime || edgeRuntimeDefaultImage === undefined) continue;
-          const debug = yield* LegacyDebugFlag;
           // `config.edge_runtime.secrets` is still schema-decoded plain
           // strings here — `toPlainEdgeRuntimeConfig` only emits entries
           // whose values are `Redacted` (`shared/functions/serve.ts`), and a
@@ -1872,7 +1875,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // `onError` fires on any failure outcome (including interruption) and its
       // cleanup effect runs uninterruptibly, matching Go's unconditional check.
       Effect.onError(() =>
-        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
       ),
     );
 
@@ -1891,12 +1894,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         );
       }
       let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-      yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
-        // Recovery only trusts its own workdir; empty labels use the existing fallback.
-        removedContainers = containers.filter(
-          (container) => container.workdir.length === 0 || container.workdir === cliConfig.workdir,
-        );
-      }).pipe(
+      yield* legacyDockerRemoveAll(
+        spawner,
+        filterValue,
+        false,
+        (containers) => {
+          // Recovery only trusts its own workdir; empty labels use the existing fallback.
+          removedContainers = containers.filter(
+            (container) =>
+              container.workdir.length === 0 || container.workdir === cliConfig.workdir,
+          );
+        },
+        debug,
+      ).pipe(
         Effect.ensuring(
           Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
         ),
@@ -2121,7 +2131,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
       }).pipe(
         Effect.onError(() =>
-          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
         ),
       );
     }
