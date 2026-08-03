@@ -783,7 +783,7 @@ describe("legacy gen types", () => {
   });
 
   it.live("rejects combining --local and --linked", () => {
-    const { layer } = setup({ args: ["gen", "types", "--local", "--linked"] });
+    const { layer, telemetry } = setup({ args: ["gen", "types", "--local", "--linked"] });
 
     return Effect.gen(function* () {
       const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
@@ -798,6 +798,33 @@ describe("legacy gen types", () => {
         expect(String(exit.cause)).toContain(
           "if any flags in the group [local linked project-id db-url] are set none of the others can be; [linked local] were all set",
         );
+      }
+      // The root's `PersistentPreRunE` has already installed the telemetry
+      // context by the time cobra validates flag groups (`cmd/root.go:93-163`,
+      // `command.go:1000-1010`), so a mutex rejection still flushes telemetry.
+      expect(telemetry.flushed).toBe(true);
+    });
+  });
+
+  it.live("does not misdetect a mutex flag consumed as -s's value (pflag consumption)", () => {
+    // Go's `StringSliceVarP(&schema, "schema", "s", ...)` (cmd/gen.go:155) makes
+    // a bare `-s` consume the very next argv token unconditionally, even a
+    // flag-shaped one — pflag hands `-s` the (oddly named, but valid) value
+    // `"--linked"`, leaving only `--local` Changed. Simulates what the real
+    // Effect parser produces for this argv (both `local` and `linked` parse as
+    // independently true, since its tokenizer is unaware of pflag's value
+    // consumption — CLI-1982); only the pflag-faithful scan can tell them apart.
+    const { layer } = setup({ args: ["gen", "types", "-s", "--linked", "--local"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).not.toContain("if any flags in the group");
       }
     });
   });
@@ -874,7 +901,7 @@ describe("legacy gen types", () => {
   });
 
   it.live("rejects --postgrest-v9-compat without --db-url for local generation", () => {
-    const { layer } = setup({
+    const { layer, telemetry } = setup({
       args: ["gen", "types", "--local", "--postgrest-v9-compat"],
     });
 
@@ -889,6 +916,10 @@ describe("legacy gen types", () => {
           "--postgrest-v9-compat must used together with --db-url",
         );
       }
+      // Go's PreRunE runs after the root's `PersistentPreRunE` has already
+      // installed the telemetry context (`cmd/root.go:93-163`), so this
+      // restored guard must still flush telemetry on rejection.
+      expect(telemetry.flushed).toBe(true);
     });
   });
 
@@ -954,7 +985,7 @@ describe("legacy gen types", () => {
   });
 
   it.live("fails on an invalid --query-timeout before any flag guard runs", () => {
-    const { layer } = setup({
+    const { layer, telemetry } = setup({
       args: ["gen", "types", "--linked", "--query-timeout", "bogus"],
     });
 
@@ -971,6 +1002,11 @@ describe("legacy gen types", () => {
         expect(String(exit.cause)).toContain('invalid duration "bogus"');
         expect(String(exit.cause)).not.toContain("if any flags in the group");
       }
+      // pflag's `DurationVar` rejects this at flag-parse time, before the
+      // root's `PersistentPreRunE` ever installs the telemetry context
+      // (`cmd/root.go:93-163`) — unlike the guards below, this rejection must
+      // NOT flush telemetry.
+      expect(telemetry.flushed).toBe(false);
     });
   });
 

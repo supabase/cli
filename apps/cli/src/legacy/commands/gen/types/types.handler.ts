@@ -8,7 +8,9 @@ import {
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  hasExplicitValueFlag,
+  PERSISTENT_VALUE_FLAG_NAMES,
+  PERSISTENT_VALUE_FLAG_SHORTHANDS,
+  pflagArgvScan,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
@@ -109,6 +111,30 @@ const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<LegacyGenTypesMutexFla
   ["linked", "project-id", "swift-access-control"],
   ["local", "linked", "project-id", "db-url"],
 ];
+
+/**
+ * Every value-taking (non-boolean) flag reachable when `gen types` parses:
+ * the command's own (`types.command.ts`) plus the root's persistent value
+ * flags — these tell `pflagArgvScan` which bare tokens consume the next argv
+ * token as their value. `--local`, `--linked`, and `--postgrest-v9-compat`
+ * are this command's only boolean flags and are deliberately excluded;
+ * booleans never consume a following token. `--schema`'s `-s` shorthand
+ * (Go `cmd/gen.go:155` `StringSliceVarP`) is covered via the shorthand map
+ * so a genuine `-s public` invocation — and a bare `-s` consuming the next
+ * flag-shaped token as pflag does — is seen exactly as pflag sees it.
+ */
+const GEN_TYPES_SCAN_SPEC = {
+  valueFlagNames: new Set([
+    "db-url",
+    "project-id",
+    "lang",
+    "schema",
+    "swift-access-control",
+    "query-timeout",
+    ...PERSISTENT_VALUE_FLAG_NAMES,
+  ]),
+  valueFlagShorthands: new Map([["s", "schema"], ...PERSISTENT_VALUE_FLAG_SHORTHANDS]),
+} as const;
 
 function forwardByteStream(
   stream: Stream.Stream<Uint8Array, unknown>,
@@ -211,49 +237,23 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const dbConfig = yield* LegacyDbConfigResolver;
   const sslProbe = yield* LegacyPgDeltaSslProbe;
 
-  const flagChanged = (flagName: string) =>
-    hasExplicitValueFlag(rawArgs, GEN_TYPES_COMMAND_PATH, LONG_FLAGS_WITH_VALUES, flagName);
+  // "Set" follows cobra's `pflag.Changed` semantics — whether the flag was
+  // passed at all — not the resulting value: `--linked=false` still counts
+  // as set. Scanning raw argv keeps detection aligned with pflag's semantics
+  // rather than with whatever the TS parser produced — e.g. a bare
+  // `-s --linked --local` is pflag's `-s` consuming `--linked` as its
+  // (oddly named, but valid) schema value, leaving only `--local` changed,
+  // while the Effect parser reads `--linked` as its own boolean flag
+  // (CLI-1982).
+  const scan = pflagArgvScan(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);
+  const occurrences = scan.occurrences;
 
-  // Go parses `--query-timeout` at flag-parse time, before any PreRunE or
-  // flag-group validation, so an invalid duration wins over the guards below.
+  // Go parses `--query-timeout` at flag-parse time (pflag's `DurationVar`),
+  // before the root's `PersistentPreRunE` installs the telemetry context
+  // (apps/cli-go/cmd/root.go:93-163) — so an invalid duration wins over every
+  // guard below, and unlike them, its rejection is never followed by a
+  // telemetry flush.
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
-
-  // Guard order matches Go exactly: the command's PreRunE runs first
-  // (apps/cli-go/cmd/gen.go:79-88), then cobra validates the mutually-exclusive
-  // flag groups (spf13/cobra command.go:1000-1010) — so a PreRunE error wins
-  // when both apply (e.g. `--local --linked --postgrest-v9-compat`).
-  if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
-    // Byte-match of Go's error, including the "must used" typo (cmd/gen.go:81).
-    return yield* Effect.fail(new Error("--postgrest-v9-compat must used together with --db-url"));
-  }
-  const legacyLang = findLegacyPositionalLanguage(rawArgs);
-  if (Option.isSome(legacyLang) && legacyLang.value !== "typescript" && !flagChanged("lang")) {
-    return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
-  }
-
-  // Cobra's mutual exclusion keys off pflag `Changed` — a flag counts as set
-  // once passed explicitly, regardless of value, so `--linked=false` still
-  // trips its groups. The raw-argv scan mirrors that for the booleans and for
-  // the defaulted value flags (`--swift-access-control`, `--query-timeout`,
-  // whose parsed value cannot distinguish an explicit default from an unset
-  // flag). A true boolean or Some optional also implies the flag was passed,
-  // which keeps the check working when the handler is driven directly in
-  // tests without matching raw argv.
-  const changedMutexFlags: Record<LegacyGenTypesMutexFlag, boolean> = {
-    local: flags.local || flagChanged("local"),
-    linked: flags.linked || flagChanged("linked"),
-    "project-id": Option.isSome(flags.projectId),
-    "db-url": Option.isSome(flags.dbUrl),
-    "postgrest-v9-compat": flags.postgrestV9Compat || flagChanged("postgrest-v9-compat"),
-    "swift-access-control": flagChanged("swift-access-control"),
-    "query-timeout": flagChanged("query-timeout"),
-  };
-  for (const group of GEN_TYPES_MUTEX_GROUPS) {
-    const set = group.filter((flagName) => changedMutexFlags[flagName]);
-    if (set.length > 1) {
-      return yield* Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, set)));
-    }
-  }
 
   // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(legacyParseSchemaFlags)`
   // in types.command.ts — use it directly.
@@ -539,6 +539,52 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     );
 
   yield* Effect.gen(function* () {
+    // Guard order matches Go exactly: the command's PreRunE runs first
+    // (apps/cli-go/cmd/gen.go:79-88), then cobra validates the
+    // mutually-exclusive flag groups (spf13/cobra command.go:1000-1010) — so
+    // a PreRunE error wins when both apply (e.g. `--local --linked
+    // --postgrest-v9-compat`). Both run AFTER the root's `PersistentPreRunE`
+    // has already installed the telemetry context (`cmd/root.go:93-163`),
+    // unlike the query-timeout parse failure above, so every return in this
+    // block must stay inside the `Effect.ensuring(telemetryState.flush)`
+    // below.
+    if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
+      // Byte-match of Go's error, including the "must used" typo (cmd/gen.go:81).
+      return yield* Effect.fail(
+        new Error("--postgrest-v9-compat must used together with --db-url"),
+      );
+    }
+    const legacyLang = findLegacyPositionalLanguage(rawArgs);
+    if (
+      Option.isSome(legacyLang) &&
+      legacyLang.value !== "typescript" &&
+      !occurrences.has("lang")
+    ) {
+      return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
+    }
+
+    // Cobra's mutual exclusion keys off pflag `Changed` — a flag counts as
+    // set once passed explicitly, regardless of value, so `--linked=false`
+    // still trips its groups. `project-id` and `db-url` are read straight off
+    // the parsed flags: neither has a boolean-vs-default ambiguity, and
+    // reconciling them against the scan is unnecessary here — every guard
+    // test drives the handler with argv that matches its flags.
+    const changedMutexFlags: Record<LegacyGenTypesMutexFlag, boolean> = {
+      local: occurrences.has("local"),
+      linked: occurrences.has("linked"),
+      "project-id": Option.isSome(flags.projectId),
+      "db-url": Option.isSome(flags.dbUrl),
+      "postgrest-v9-compat": occurrences.has("postgrest-v9-compat"),
+      "swift-access-control": occurrences.has("swift-access-control"),
+      "query-timeout": occurrences.has("query-timeout"),
+    };
+    for (const group of GEN_TYPES_MUTEX_GROUPS) {
+      const set = group.filter((flagName) => changedMutexFlags[flagName]);
+      if (set.length > 1) {
+        return yield* Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, set)));
+      }
+    }
+
     if (flags.local) {
       const config = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
       yield* legacyApplyProjectEnv(
