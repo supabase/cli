@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
@@ -391,6 +391,111 @@ describe("legacy functions deploy", () => {
 
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.urlParams).toContain("slug=configured");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
+  it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
+    // Go parity (CLI-1985): Go's `toRelPath` (`pkg/function/deploy.go:94-103`)
+    // anchors uploaded file names and the server-recorded `entrypoint_path` /
+    // `import_map_path` at `os.Getwd()` — the workdir — never at the git root.
+    // A monorepo import outside the workdir but inside the git root (allowed
+    // by the source-root containment check since #5755) would otherwise
+    // upload with a Go-style `../`-relative name. Go's `writeForm`/`addFile`
+    // (`pkg/function/deploy.go:251-284`) opens every uploaded path through an
+    // `fs.FS`, which rejects any path containing a `..` element (`fs.ValidPath`)
+    // before the read — and thus the upload — happens. This asserts the CLI
+    // hard-fails the same way instead of letting the `..`-relative name reach
+    // the server.
+    const repoRoot = tempRoot.current;
+    const workdir = join(repoRoot, "app");
+    const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) => {
+        if (request.body._tag === "FormData") {
+          const metadata = request.body.formData.get("metadata");
+          multiparts.push({
+            metadata: typeof metadata === "string" ? metadata : undefined,
+            fileNames: request.body.formData
+              .getAll("file")
+              .flatMap((part) => (part instanceof File ? [part.name] : [])),
+          });
+        }
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
+          legacyJsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "supabase/functions/hello-world/index.ts",
+            import_map_path: "supabase/functions/hello-world/deno.json",
+          }),
+        );
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir }),
+        runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => writeProjectConfig(workdir));
+      yield* Effect.tryPromise(() =>
+        writeLocalFunction(
+          workdir,
+          "hello-world",
+          'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        mkdir(join(repoRoot, "packages", "shared", "src"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(repoRoot, "packages", "shared", "src", "index.ts"),
+          'export const shared = "ok"\n',
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(workdir, "supabase", "functions", "hello-world", "deno.json"),
+          JSON.stringify({
+            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+          }),
+        ),
+      );
+
+      const exit = yield* Effect.exit(legacyFunctionsDeploy(baseFlags));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+        );
+      }
+      expect(multiparts).toHaveLength(0);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(
