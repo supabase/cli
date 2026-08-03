@@ -697,6 +697,16 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
 
         // Bounded attempts surface the real error instead of hanging.
         expect(error).toBeInstanceOf(DownloadError);
+
+        // The `cleanupTmpDir` finalizer must still remove the staging
+        // directory even though the rename it was guarding rethrew — a
+        // regression here (e.g. scoping cleanup to an `onError` around
+        // `stage` instead of `Effect.ensuring`) would leak the fully
+        // populated `.tmp-`/`_download` tree.
+        const staleTmpPaths = [...fakeFs.dirs, ...fakeFs.files.keys()].filter(
+          (candidatePath) => candidatePath.includes(".tmp-") || candidatePath.includes("_download"),
+        );
+        expect(staleTmpPaths).toEqual([]);
       }).pipe(Effect.provide(layer));
     },
   );
