@@ -755,7 +755,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain("LegacyPflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir --metadata-file: no such file or directory",
           );
@@ -794,7 +794,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain("LegacyPflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir /nonexistent-sso-update-workdir: no such file or directory",
           );
@@ -816,7 +816,7 @@ describe("legacy sso update integration", () => {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("LegacySsoUpdateArityError");
         expect(dump).toContain("accepts 1 arg(s), received 2");
-        expect(dump).not.toContain("LegacySsoWorkdirError");
+        expect(dump).not.toContain("LegacyPflagWorkdirError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -1792,7 +1792,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoProfileError");
+          expect(dump).toContain("LegacyProfileLoadError");
           expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
         }
         expect(api.requests.length).toBe(0);
@@ -1899,7 +1899,7 @@ describe("legacy sso update integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("LegacySsoUpdateArityError");
-        expect(dump).not.toContain("LegacySsoProfileError");
+        expect(dump).not.toContain("LegacyProfileLoadError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));

@@ -478,7 +478,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain("LegacyPflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir --metadata-file: no such file or directory",
           );
@@ -519,7 +519,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoWorkdirError");
+          expect(dump).toContain("LegacyPflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir /nonexistent-sso-add-workdir: no such file or directory",
           );
@@ -1228,7 +1228,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoProfileError");
+          expect(dump).toContain("LegacyProfileLoadError");
           expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
         }
         expect(api.requests.length).toBe(0);
@@ -1288,8 +1288,8 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoProfileError");
-          expect(dump).not.toContain("LegacySsoWorkdirError");
+          expect(dump).toContain("LegacyProfileLoadError");
+          expect(dump).not.toContain("LegacyPflagWorkdirError");
           expect(dump).not.toContain("LegacySsoAddRequiredFlagError");
           expect(dump).not.toContain("LegacySsoMutexFlagError");
         }
