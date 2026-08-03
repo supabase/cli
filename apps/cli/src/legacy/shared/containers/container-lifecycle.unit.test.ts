@@ -772,7 +772,7 @@ describe("legacyEnsureVolume", () => {
       exitCode: 125,
       stderr: "Error: volume with name supabase_db_proj already exists: volume already exists\n",
     }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
       Effect.map(() => {
         // Just needs to not fail — no return value to assert on.
       }),
@@ -784,19 +784,19 @@ describe("legacyEnsureVolume", () => {
       exitCode: 125,
       stderr: "volume with name supabase_db_proj already exists\n",
     }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
       Effect.map(() => {
         // Just needs to not fail — no return value to assert on.
       }),
     );
   });
 
-  it.live("fails with LegacyStartVolumeCreateError on any other failure", () => {
+  it.live("fails with LegacyVolumeCreateError on any other failure", () => {
     const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartVolumeCreateError);
+        expect(error).toBeInstanceOf(LegacyVolumeCreateError);
         expect(error.message).toBe("failed to create volume: permission denied");
       }),
     );
