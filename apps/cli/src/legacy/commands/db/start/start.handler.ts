@@ -526,6 +526,35 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Same gap for `storage.image_transformation.enabled` — Go's `Storage.ImageTransformation` is
+    // a nil-unless-declared pointer (`pkg/config/storage.go:16`), Viper-bound like every other
+    // nested pointer field ONLY once `[storage.image_transformation]` is present in config.toml —
+    // the same shape as `auth.hook`/`auth.email.smtp` above, not the plain-bool shape of
+    // `storage.vector.enabled`/`storage.s3_protocol.enabled` above (confirmed empirically against
+    // the real Go binary: `SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus` fails
+    // `config.Load` when the section is present, even though `db start` never builds ImgProxy or
+    // the Storage container; the identical override is silently ignored when the section is
+    // absent, so this check must gate on presence — not decode unconditionally like the plain
+    // booleans above — or a section-less project would eagerly fail on a bogus env var Go itself
+    // ignores). `@supabase/config`'s decoded `config.storage.image_transformation` can't be used
+    // as the presence proxy itself — it decodes to a default, never `undefined` — so presence
+    // comes from the raw document, same `asRecord(loaded?.document?.[...])` gate
+    // `legacyResolveAuthEmailSmtp`/`legacyResolveGotruePasskeyWebauthn` above already use for the
+    // identical Go-pointer-section shape (also `start.gates.ts`'s own identical gate for `supabase
+    // start`'s ImgProxy boolean). `db start` never resolves this field elsewhere, so it's called
+    // here purely to force the eager decode-time error (review: PRRT_kwDOErm0O86WDkO9).
+    const imageTransformationSectionPresent =
+      asRecord(asRecord(loaded?.document?.["storage"])?.["image_transformation"]) !== undefined;
+    if (imageTransformationSectionPresent) {
+      yield* wrapDbConfigOverride("storage.image_transformation.enabled", () =>
+        legacyEnvOverrideBool(
+          "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
+          config.storage.image_transformation?.enabled ?? false,
+          "storage.image_transformation.enabled",
+          projectEnvValues,
+        ),
+      );
+    }
 
     // Same gap for Mailpit's three ports and Logflare's two — Go's `Config.Load` applies
     // `SUPABASE_LOCAL_SMTP_{PORT,SMTP_PORT,POP3_PORT}`/`SUPABASE_ANALYTICS_{PORT,VECTOR_PORT}`
