@@ -284,10 +284,25 @@ export function legacyEnsureStartNetwork(
 }
 
 /**
+ * Whether `volume create`'s stderr reports the volume already existing —
+ * podman's "volume with name <name> already exists: volume already exists",
+ * either half. A "...but was not created for the current specification"
+ * conflict deliberately does not match, so a real spec conflict still fails.
+ */
+function legacyIsVolumeAlreadyExistsError(stderr: string): boolean {
+  return /volume (?:with name \S+ )?already exists/iu.test(stderr);
+}
+
+/**
  * Go's per-source-name `Docker.VolumeCreate` call (`docker.go:407-415`) via
- * `docker volume create --label ...`. Unlike network creation, Go applies no
- * "already exists" tolerance here — `VolumeCreate` is already idempotent for a
- * repeated name with matching options, so any non-zero exit is a real failure.
+ * `docker volume create --label ...`, treating "already exists" as success the
+ * same way {@link legacyEnsureStartNetwork} does; any other non-zero exit is a
+ * real failure.
+ *
+ * Go's Engine API is idempotent for a repeated name, including against Podman's
+ * Docker-compat endpoint; `podman volume create` goes through libpod instead
+ * and rejects it, so every `stop`/`start` cycle aborted the bring-up on the
+ * volumes `stop` preserves (supabase/cli#6020).
  */
 export function legacyEnsureStartVolume(
   spawner: Spawner,
@@ -322,7 +337,7 @@ export function legacyEnsureStartVolume(
           () => new LegacyStartVolumeCreateError({ message: "failed to create volume" }),
         ),
       );
-      if (exitCode !== 0) {
+      if (exitCode !== 0 && !legacyIsVolumeAlreadyExistsError(stderr)) {
         const message = stderr.trim();
         return yield* Effect.fail(
           new LegacyStartVolumeCreateError({
@@ -546,8 +561,9 @@ function legacyDockerStartContainer(
  * an arbitrary host-invoking uid at `0600` would get `EACCES` there — Go's
  * own equivalent (heredoc'd directly into the container by a root-authored
  * entrypoint script) already lands at world-readable `0644`, matching this
- * exactly — then returns the `<hostPath>:<containerPath>:ro`
- * bind for each. Mirrors this same session's `-e KEY`-only env fix
+ * exactly — then returns the `<hostPath>:<containerPath>:ro,Z` bind for each
+ * (`Z`: private SELinux relabel — see the inline comment at the bind).
+ * Mirrors this same session's `-e KEY`-only env fix
  * (`legacyDockerCreateContainer`'s doc comment) for entrypoint/`Cmd`-bound
  * secret content instead of env values: the file's HOST path is the only
  * thing that ever reaches `docker create`'s argv, never the secret `content`
@@ -603,7 +619,12 @@ function legacyStageStartSecretFiles(
             // `077`/`027`) can't silently narrow this to `0600` and break the non-root
             // in-container reader (see this function's doc comment).
             await chmod(hostPath, 0o644);
-            return `${hostPath}:${secretFile.containerPath}:ro`;
+            // `Z`: SELinux-enforcing hosts (e.g. Fedora + rootless Podman) relabel this
+            // CLI-generated file so the confined container can read it (supabase/cli#5989).
+            // Private label, not shared `z` — each staged dir is 1:1 with one container,
+            // and no sibling container has any business reading these secrets. No-op
+            // elsewhere; Docker/Podman ignore ENOTSUP from non-labelable filesystems.
+            return `${hostPath}:${secretFile.containerPath}:ro,Z`;
           }),
         );
         return { binds, cleanup: () => rm(dir, { recursive: true, force: true }) };

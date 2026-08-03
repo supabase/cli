@@ -376,9 +376,9 @@ describe("legacyStartContainer secretFiles", () => {
       let dirModeAtCreateTime: number | undefined;
       const mock = mockSpawner((args) => {
         if (args[0] === "create") {
-          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
+          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
           if (bind !== undefined) {
-            hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
+            hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
             modeAtCreateTime = statSync(hostPath).mode & 0o777;
             dirModeAtCreateTime = statSync(dirname(hostPath)).mode & 0o777;
           }
@@ -407,7 +407,7 @@ describe("legacyStartContainer secretFiles", () => {
           expect(hostPath).toBeDefined();
           expect(modeAtCreateTime).toBe(0o644);
           expect(dirModeAtCreateTime).toBe(0o700);
-          expect(create).toContain(`${hostPath}:/etc/kong/kong.yml:ro`);
+          expect(create).toContain(`${hostPath}:/etc/kong/kong.yml:ro,Z`);
 
           // Deterministic — rooted in the project's own workdir, not an OS temp dir, and
           // scoped by container name so sibling services never collide.
@@ -432,9 +432,9 @@ describe("legacyStartContainer secretFiles", () => {
       let modeAtCreateTime: number | undefined;
       const mock = mockSpawner((args) => {
         if (args[0] === "create") {
-          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
+          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
           if (bind !== undefined) {
-            hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
+            hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
             modeAtCreateTime = statSync(hostPath).mode & 0o777;
           }
           return { exitCode: 0, stdout: "container-id-umask\n" };
@@ -502,8 +502,8 @@ describe("legacyStartContainer secretFiles", () => {
     let hostPath: string | undefined;
     const mock = mockSpawner((args) => {
       if (args[0] === "create") {
-        const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
-        hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
+        const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
+        hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
         return { exitCode: 1, stderr: "no such image\n" };
       }
       return { exitCode: 0 };
@@ -536,8 +536,8 @@ describe("legacyStartContainer secretFiles", () => {
       let hostPath: string | undefined;
       const mock = mockSpawner((args) => {
         if (args[0] === "create") {
-          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
-          hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
+          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
+          hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
           return { exitCode: 0, stdout: "container-id-abc\n" };
         }
         if (args[0] === "start") {
@@ -587,8 +587,8 @@ describe("legacyStartContainer secretFiles", () => {
         Effect.gen(function* () {
           const args = command._tag === "StandardCommand" ? command.args : [];
           if (args[0] === "create") {
-            const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
-            hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
+            const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
+            hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
             yield* Deferred.succeed(createStarted, undefined);
             // Never resolves on its own — only interruption ends this "process".
             return ChildProcessSpawner.makeHandle({
@@ -763,7 +763,42 @@ describe("legacyEnsureStartVolume", () => {
     );
   });
 
-  it.live("fails on any non-zero exit, with no already-exists tolerance", () => {
+  it.live("treats podman's already-exists rejection as success", () => {
+    const mock = mockSpawner(() => ({
+      exitCode: 125,
+      stderr: "Error: volume with name supabase_db_proj already exists: volume already exists\n",
+    }));
+    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+      Effect.map(() => {
+        // Just needs to not fail — no return value to assert on.
+      }),
+    );
+  });
+
+  it.live("treats an already-exists rejection without the trailing sentinel as success", () => {
+    const mock = mockSpawner(() => ({
+      exitCode: 125,
+      stderr: "volume with name supabase_db_proj already exists\n",
+    }));
+    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+      Effect.map(() => {
+        // Just needs to not fail — no return value to assert on.
+      }),
+    );
+  });
+
+  it.live("fails with LegacyStartVolumeCreateError on any other failure", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
+    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(LegacyStartVolumeCreateError);
+        expect(error.message).toBe("failed to create volume: permission denied");
+      }),
+    );
+  });
+
+  it.live("still fails when the volume exists under a different specification", () => {
     const mock = mockSpawner(() => ({
       exitCode: 1,
       stderr:

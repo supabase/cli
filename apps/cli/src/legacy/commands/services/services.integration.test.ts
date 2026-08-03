@@ -558,6 +558,21 @@ major_version = 15
     });
   });
 
+  it.live("warns to stderr when the project-ref file exists but cannot be read", () => {
+    // A directory at the ref path makes `exists()` true but `readFileString()` fail
+    // (EISDIR), exercising the READ-error branch distinct from "file absent".
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
+    mkdirSync(join(workdir, "supabase", ".temp", "project-ref"), { recursive: true });
+    const { layer, out } = setup({ workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).toContain("failed to load project ref: ");
+      expect(out.stdoutText).toContain("supabase/postgres");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
   it.live("flushes telemetry state after the command finishes", () => {
     const { layer, telemetry } = setup();
 
