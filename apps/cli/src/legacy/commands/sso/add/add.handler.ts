@@ -170,7 +170,8 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // — before every validation, hook, and `RunE`, so no POST is ever made.
     // The Effect parser accepts that argv (the flag parses as unset), hence
     // the emulation. Binary-verified against `apps/cli-go` (PR #5974 review
-    // round 3). Keep this the very first check.
+    // round 3). Keep this ahead of the profile/workdir/required-flag/mutex
+    // checks.
     if (scan.missingValueError !== undefined) {
       return yield* Effect.fail(
         new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
