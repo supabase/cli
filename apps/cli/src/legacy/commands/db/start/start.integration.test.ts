@@ -1044,6 +1044,106 @@ describe("legacy db start", () => {
     },
   );
 
+  it.live(
+    "fails on a malformed SUPABASE_AUTH_EMAIL_SMTP_PORT override even when auth is disabled, matching Go's Config.Load",
+    () => {
+      // `auth.email.smtp.*` is Viper-bound like every other nested field once
+      // `[auth.email.smtp]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
+      // `pkg/config/config.go:581-586`), decoded in the same unconditional `Config.Load` pass as
+      // `auth.hook` above — confirmed empirically against the real Go binary that this decode
+      // failure fires even with `auth.enabled = false`, well before `Config.Validate`'s
+      // `Auth.Enabled`-gated `Email.validate()` and before `AssertSupabaseDbIsRunning`. `db start`
+      // never built a GoTrue container, so nothing else in this handler called
+      // `legacyResolveAuthEmailSmtp` before now (review: PRRT_kwDOErm0O86WC8J3).
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "test"\n[auth]\nenabled = false\n[auth.email.smtp]\nhost = "smtp.example.com"\n',
+      });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.email.smtp");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "ignores SUPABASE_AUTH_EMAIL_SMTP_PORT when [auth.email.smtp] is absent from config.toml",
+    () => {
+      // Matches Go's `AutomaticEnv`, which only intercepts keys already bound from the merged
+      // config — an absent `[auth.email.smtp]` section never picks up an env override alone
+      // (confirmed empirically against the real Go binary), so `legacyResolveAuthEmailSmtp`'s own
+      // presence gate must return `undefined` and the eager check below must be a no-op rather
+      // than failing on a section the config never mentions.
+      const { layer, child } = setup({
+        configContents: 'project_id = "test"\n[auth]\nenabled = false\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
+      );
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(createArgs(child.spawned)).not.toBeUndefined();
+      });
+    },
+  );
+
+  it.live(
+    "warns when api.auto_expose_new_tables is true, matching Go's unconditional Config.Validate print",
+    () => {
+      // Go prints this unconditionally right after the `project_id` check, before
+      // `if c.Api.Enabled`/`if c.Auth.Enabled`/anything else in `Validate`
+      // (`pkg/config/config.go:1002-1005`) — so it must fire on a fresh start regardless of
+      // `api.enabled`/`auth.enabled`. The removed hidden Go bootstrap child used to print this
+      // itself; the native path has no equivalent call without this fix (review:
+      // PRRT_kwDOErm0O86WC8J7).
+      const { layer, out } = setup({
+        configContents: 'project_id = "test"\n[api]\nauto_expose_new_tables = true\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30.",
+        );
+      });
+    },
+  );
+
+  it.live("does not warn about api.auto_expose_new_tables when it is unset", () => {
+    const { layer, out } = setup({ route: freshVolumeRoute(defaultRoute()) });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("auto_expose_new_tables");
+    });
+  });
+
+  it.live("warns about api.auto_expose_new_tables even when the db is already running", () => {
+    // Go's `flags.LoadConfig` (Load + Validate, including this print) runs before
+    // `AssertSupabaseDbIsRunning` in `start.Run` (`internal/db/start/start.go:45-47`) — the
+    // warning must fire even on the already-running short-circuit, not be masked by it.
+    const { layer, out } = setup({
+      configContents: 'project_id = "test"\n[api]\nauto_expose_new_tables = true\n',
+      running: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("WARN: api.auto_expose_new_tables is deprecated");
+      expect(out.stderrText).toContain("Postgres database is already running.");
+    });
+  });
+
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
     // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before
     // `AssertSupabaseDbIsRunning` in `start.Run` (`internal/db/start/start.go:45-47`) — a

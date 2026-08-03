@@ -32,6 +32,7 @@ import {
   legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyEnvOverrideUint,
   legacyResolveAuthEmail,
+  legacyResolveAuthEmailSmtp,
   legacyResolveAuthExternalProviders,
   legacyResolveAuthExternalUrl,
   legacyResolveAuthHooks,
@@ -131,7 +132,26 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // is that exact load+validate — call it here (not via `legacyIsLocalDbRunning`'s
     // best-effort read, which swallows config errors) so `db start` fails fast on a
     // broken config.
-    yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+    const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+
+    // Go's `Config.Validate` prints this unconditionally, right after the `project_id` check and
+    // BEFORE `if c.Api.Enabled`/`if c.Auth.Enabled`/anything else in `Validate`
+    // (`pkg/config/config.go:1002-1005`) — so it fires regardless of `api.enabled`/`auth.enabled`,
+    // and regardless of whether Postgres is already running, matching `flags.LoadConfig` running
+    // before `AssertSupabaseDbIsRunning` (`internal/db/start/start.go:45-47`). The removed hidden
+    // Go bootstrap child used to print this itself (it ran the real `Config.Validate`); the native
+    // path has no equivalent call, so this handler must reproduce the print directly — neither
+    // `legacyCheckDbToml` nor `legacyLoadLocalProjectContext` emits it (review:
+    // PRRT_kwDOErm0O86WC8J7). Reuses `legacyCheckDbToml`'s own tri-state resolution
+    // (`dbTomlValues.baseline.apiAutoExposeNewTables`), which already replicates Go's
+    // `SUPABASE_API_AUTO_EXPOSE_NEW_TABLES` override + malformed-value abort, instead of
+    // re-deriving the value a second time.
+    if (Option.getOrElse(dbTomlValues.baseline.apiAutoExposeNewTables, () => false)) {
+      yield* output.raw(
+        "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.\n",
+        "stderr",
+      );
+    }
 
     // The rest of Go's `flags.LoadConfig` — full config decode/resolution
     // (`legacyLoadLocalProjectContext`) plus the eager `time.Duration` field validation right
@@ -164,6 +184,27 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     );
     yield* wrapDbConfigOverride("auth.email.max_frequency", () =>
       legacyParseGoDuration(resolvedEmailForValidation.max_frequency),
+    );
+    // Same gap for `auth.email.smtp.*` — Viper-bound like every other nested field once
+    // `[auth.email.smtp]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
+    // `config.go:581-586`), decoded in the SAME unconditional `Config.Load` pass as
+    // `auth.email`/`auth.email.max_frequency` above — confirmed empirically against the real Go
+    // binary: `SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus` with `[auth.email.smtp]` present fails
+    // `config.Load` (`'auth.email.smtp.port' cannot parse value as 'uint16'`) even when `auth.
+    // enabled = false`, since this decode runs before `Config.Validate`'s `if c.Auth.Enabled` gate,
+    // let alone `AssertSupabaseDbIsRunning`. `legacyResolveAuthEmail` does NOT cover this — its own
+    // doc comment explicitly defers the smtp presence gap elsewhere in this file. `db start` never
+    // builds a GoTrue container, so nothing else in this handler calls `legacyResolveAuthEmailSmtp`;
+    // it's only otherwise reached via `legacyResolveLocalConfigValues`'s OWN `authEnabled`-gated
+    // call, in the not-running branch only — so a disabled-auth project would never reach it at all
+    // (review: PRRT_kwDOErm0O86WC8J3). `legacyResolveAuthEmailSmtp` already gates on
+    // `[auth.email.smtp]` presence internally (returns `undefined` when absent, matching Go's
+    // `AutomaticEnv` only intercepting already-bound keys — confirmed empirically too: the same
+    // override is silently ignored when the TOML has no `[auth.email.smtp]` table at all), so
+    // calling it here, once, eagerly, and discarding the result closes the gap without over-firing
+    // on an SMTP-less config.
+    yield* wrapDbConfigOverride("auth.email.smtp", () =>
+      legacyResolveAuthEmailSmtp(authDocForValidation, projectEnvValues),
     );
     const smsForValidation = yield* wrapDbConfigOverride("auth.sms", () =>
       legacyResolveAuthSms(authDocForValidation, config.auth.sms, projectEnvValues),

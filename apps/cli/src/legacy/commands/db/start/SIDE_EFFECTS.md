@@ -158,6 +158,11 @@ surfaced on failure.
 - Starting → `Starting database...` / `Starting database from backup...`, then (fresh
   volume, no `--from-backup`) `Initialising schema...` and `Seeding globals from
 roles.sql...`, all on **stderr**. No stdout output, no `Finished` line.
+- `api.auto_expose_new_tables = true` (or `SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=true`) → `WARN:
+  api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or
+  set it to false to adopt the new default of revoking Data API privileges on new entities in the
+  public schema.` on **stderr**, printed unconditionally during config load — even when Postgres
+  is already running.
 - `backup volume already exists` → the message on **stderr**, followed by the
   `supabase stop --no-backup` suggestion (aqua-colored).
 
