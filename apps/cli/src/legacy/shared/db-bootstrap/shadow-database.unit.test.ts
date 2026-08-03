@@ -62,7 +62,12 @@ function mockDockerRun() {
       runs.push(runOpts);
       return Effect.succeed({ exitCode: 0, stdout: new Uint8Array(), stderr: "" });
     },
-    runStream: () => Effect.die("runStream unused"),
+    // The shadow's own PG15+ one-shot platform-baseline jobs (`legacyRunStartMigrateJob`)
+    // go through `runStream`, not `runCapture` — see `db-setup.ts`'s own doc comment.
+    runStream: (runOpts) => {
+      runs.push(runOpts);
+      return Effect.succeed({ exitCode: 0, stderr: "" });
+    },
   });
 }
 
@@ -234,6 +239,7 @@ function baseSetupDatabaseInput(
     config: defaultConfig,
     majorVersion: 17,
     dbHost: "abcdef012345",
+    projectId: "proj",
     networkId: "supabase_network_proj",
     dbUrl: "postgresql://postgres:postgrespassword@127.0.0.1:54322/postgres",
     jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
@@ -248,6 +254,8 @@ function baseSetupDatabaseInput(
       storage: "public.ecr.aws/supabase/storage-api:v1.0.0",
       auth: "public.ecr.aws/supabase/gotrue:v2.170.0",
     },
+    projectEnvValues: undefined,
+    debug: false,
     apiAutoExposeNewTables: Option.some(true),
     vault: [],
   };
@@ -257,10 +265,15 @@ describe("legacySetupShadowConn", () => {
   it.effect("runs SetupDatabase, then execs CREATE_TEMPLATE when withTemplate is true", () => {
     const { session, calls } = fakeSession();
     const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+    const mock = mockSpawner();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* legacySetupShadowConn(baseSetupDatabaseInput(session, fs, path, workdir), true);
+      yield* legacySetupShadowConn(
+        mock.spawner,
+        baseSetupDatabaseInput(session, fs, path, workdir),
+        true,
+      );
       expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
       rmSync(workdir, { recursive: true, force: true });
     }).pipe(
@@ -273,10 +286,15 @@ describe("legacySetupShadowConn", () => {
   it.effect("skips CREATE_TEMPLATE when withTemplate is false", () => {
     const { session, calls } = fakeSession();
     const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+    const mock = mockSpawner();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* legacySetupShadowConn(baseSetupDatabaseInput(session, fs, path, workdir), false);
+      yield* legacySetupShadowConn(
+        mock.spawner,
+        baseSetupDatabaseInput(session, fs, path, workdir),
+        false,
+      );
       expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(false);
       rmSync(workdir, { recursive: true, force: true });
     }).pipe(
@@ -307,6 +325,7 @@ function baseShadowSetup<E = never>(
     authEnabledForSetup: false,
     serviceVersionOverrides: {},
     projectEnvValues: undefined,
+    debug: false,
     apiAutoExposeNewTables: Option.some(true),
     vault: [],
     ...overrides,
@@ -326,6 +345,7 @@ describe("legacyBuildShadowSetupDatabaseInput", () => {
             fs,
             path,
             workdir: "/proj",
+            projectId: "proj",
             container: "shadow-container-id-0123456789abcdef",
             networkId: "supabase_network_proj",
             connConfig: {
@@ -377,6 +397,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           fs,
           path,
           workdir,
+          projectId: "proj",
           container: "shadow-container-id-0123456789abcdef",
           networkId: "supabase_network_proj",
           connConfig: {
@@ -422,6 +443,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           fs,
           path,
           workdir,
+          projectId: "proj",
           container: "shadow-container-id-0123456789abcdef",
           networkId: "supabase_network_proj",
           connConfig: {
@@ -464,6 +486,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           fs,
           path,
           workdir,
+          projectId: "proj",
           container: "shadow-container-id-0123456789abcdef",
           networkId: "supabase_network_proj",
           connConfig: {
@@ -510,6 +533,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
         fs,
         path,
         workdir,
+        projectId: "proj",
         container: "shadow-container-id-0123456789abcdef",
         networkId: "supabase_network_proj",
         connConfig: {
@@ -577,6 +601,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           fs,
           path,
           workdir,
+          projectId: "proj",
           container: "shadow-container-id-0123456789abcdef",
           networkId: "supabase_network_proj",
           connConfig: {

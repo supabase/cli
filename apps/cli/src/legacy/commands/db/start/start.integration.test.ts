@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -263,6 +263,8 @@ interface SetupOpts {
   readonly networkId?: string;
   /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
   readonly experimental?: boolean;
+  /** `--debug`. Defaults to `false`. */
+  readonly debug?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -303,7 +305,7 @@ function setup(opts: SetupOpts = {}) {
     ),
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
-    Layer.succeed(LegacyDebugFlag, false),
+    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
   );
   return { layer, out, telemetry, child, dbSession };
 }
@@ -312,6 +314,10 @@ const currentBranchPath = (workdir: string) =>
   join(workdir, "supabase", ".branches", "_current_branch");
 
 describe("legacy db start", () => {
+  afterEach(() => {
+    delete process.env["SUPABASE_NETWORK_ID"];
+  });
+
   it.live("reports an already-running database without starting a container", () => {
     const { layer, out, telemetry, child } = setup({ running: true });
     return Effect.gen(function* () {
@@ -626,6 +632,25 @@ describe("legacy db start", () => {
     },
   );
 
+  it.live("falls back to SUPABASE_NETWORK_ID when --network-id is omitted", () => {
+    // Go's `network-id` is a persistent flag bound to viper under `SetEnvPrefix("SUPABASE")` +
+    // `AutomaticEnv()` (`apps/cli-go/cmd/root.go:318-334`), and `DockerStart` reads
+    // `viper.GetString("network-id")` fresh at its own call site — well after `Config.Load`'s
+    // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is effective when the flag
+    // itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
+    process.env["SUPABASE_NETWORK_ID"] = "env-network";
+    const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(
+        child.spawned.some((s) => s.args[0] === "network" && s.args.at(-1) === "env-network"),
+      ).toBe(true);
+      const args = createArgs(child.spawned);
+      const networkIndex = args?.indexOf("--network") ?? -1;
+      expect(args?.[networkIndex + 1]).toBe("env-network");
+    });
+  });
+
   it.live(
     "an explicitly empty --network-id falls back to the generated network name, not a literal empty override",
     () => {
@@ -664,6 +689,404 @@ describe("legacy db start", () => {
           expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Go's `Config.Load` (`flags.LoadConfig`) decodes every `time.Duration` field unconditionally,
+  // for every command including `db start` — even though `db start` never starts GoTrue itself.
+  // Mirrors `commands/start/start.handler.ts`'s own identical eager-validation tests.
+  it.live.each([
+    ["auth.email.max_frequency", '[auth.email]\nmax_frequency = "not-a-duration"\n'],
+    ["auth.sms.max_frequency", '[auth.sms]\nmax_frequency = "not-a-duration"\n'],
+    ["auth.sessions.timebox", '[auth.sessions]\ntimebox = "not-a-duration"\n'],
+    [
+      "auth.sessions.inactivity_timeout",
+      '[auth.sessions]\ninactivity_timeout = "not-a-duration"\n',
+    ],
+    ["auth.mfa.phone.max_frequency", '[auth.mfa.phone]\nmax_frequency = "not-a-duration"\n'],
+  ] as const)(
+    "fails with a typed config error on a malformed %s, before any container is created",
+    ([dottedFieldPath, tomlFragment]) => {
+      const { layer, child } = setup({
+        configContents: `project_id = "test"\n${tomlFragment}`,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "fails with a typed config error on a malformed SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT override, before any container is created",
+    () => {
+      // Go's `Auth.RateLimit` (plain `uint`s, `pkg/config/auth.go:200-208`) has no `Enabled`-gated
+      // `validate()` method — its only Go-side check is the unconditional `uint` type-decode inside
+      // `Config.Load`'s single pass, which fails a non-numeric override regardless of `auth.enabled`
+      // or whether `db start` itself ever reads the field (review: PRRT_kwDOErm0O86Vk-e0).
+      const { layer, child } = setup({});
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.rate_limit");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Closes the review-thread gap: Go's `Config.Load` decodes the ENTIRE config struct
+  // unconditionally in a single `v.UnmarshalExact` pass, including every field below, regardless
+  // of whether `db start` itself ever reads it — mirrors `commands/start/start.handler.ts`'s own
+  // identical eager-validation tests for these same fields (review: PRRT_kwDOErm0O86VlOHQ).
+  it.live.each([
+    ["edge_runtime.inspector_port", "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT", "not-a-port"],
+    ["edge_runtime.policy", "SUPABASE_EDGE_RUNTIME_POLICY", "not-a-policy"],
+    ["api.max_rows", "SUPABASE_API_MAX_ROWS", "not-a-uint"],
+    ["storage.analytics.max_namespaces", "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES", "not-a-uint"],
+    ["local_smtp.port", "SUPABASE_LOCAL_SMTP_PORT", "not-a-port"],
+    ["analytics.port", "SUPABASE_ANALYTICS_PORT", "not-a-port"],
+    ["db.pooler.pool_mode", "SUPABASE_DB_POOLER_POOL_MODE", "not-a-mode"],
+    ["db.pooler.enabled", "SUPABASE_DB_POOLER_ENABLED", "not-a-bool"],
+    ["auth.web3", "SUPABASE_AUTH_WEB3_SOLANA_ENABLED", "not-a-bool"],
+    ["auth.oauth_server", "SUPABASE_AUTH_OAUTH_SERVER_ENABLED", "not-a-bool"],
+    ["api.enabled", "SUPABASE_API_ENABLED", "not-a-bool"],
+    ["storage.vector.enabled", "SUPABASE_STORAGE_VECTOR_ENABLED", "not-a-bool"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override, before any container is created",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({});
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Regression test for the exact gap the review thread found: `legacyEnvOverrideRealtimeIpVersion`/
+  // `legacyEnvOverrideRealtimeMaxHeaderLength` used to be invoked ONLY inside
+  // `legacyResolveDbBootstrapConfig`, which never runs once `legacyIsLocalDbRunning` short-circuits
+  // — so a malformed override was silently ignored whenever Postgres was already running, unlike
+  // Go's `flags.LoadConfig`, which decodes both fields unconditionally before
+  // `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86VmHkl).
+  it.live.each([
+    ["realtime.ip_version", "SUPABASE_REALTIME_IP_VERSION", "IPv5"],
+    ["realtime.max_header_length", "SUPABASE_REALTIME_MAX_HEADER_LENGTH", "not-a-uint"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override even when Postgres is already running",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Same gap, same shape, whole `db.settings.*` group: `legacyResolveDbSettingsEnvOverrides` was
+  // only ever invoked building `legacyStartDatabase`'s `postgresSpec.db.settings`, which never
+  // runs once `legacyIsLocalDbRunning` short-circuits — so a malformed override was silently
+  // ignored whenever Postgres was already running, unlike Go's `flags.LoadConfig`, which decodes
+  // the entire `db.settings` struct unconditionally before `AssertSupabaseDbIsRunning` (review:
+  // PRRT_kwDOErm0O86Vn3Hw).
+  it.live.each([
+    ["db.settings.max_connections", "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS", "bogus"],
+    ["db.settings.track_commit_timestamp", "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP", "bogus"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override even when Postgres is already running",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Same gap, same shape, different field: `storage.enabled` (a plain `bool`,
+  // `pkg/config/storage.go:11`) was only ever resolved inside
+  // `legacyResolveDbBootstrapConfig` (gating the fresh-volume storage migrate job), which never
+  // runs once `legacyIsLocalDbRunning` short-circuits — so a malformed override was silently
+  // ignored whenever Postgres was already running, unlike Go's `flags.LoadConfig`, which decodes
+  // it unconditionally before `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86VooCL).
+  it.live(
+    "fails with a typed config error on a malformed SUPABASE_STORAGE_ENABLED override even when Postgres is already running",
+    () => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_STORAGE_ENABLED=not-a-bool\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("storage.enabled");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Same gap, same shape, different fields: `edge_runtime.enabled`, `db.network_restrictions.
+  // enabled`, `studio.enabled`, and `local_smtp.enabled` were only ever resolved inside
+  // `legacyResolveLocalConfigValues` (the not-running branch's own config-values resolver, called
+  // below), which never runs once `legacyIsLocalDbRunning` short-circuits — so a malformed
+  // override was silently ignored whenever Postgres was already running, unlike Go's
+  // `flags.LoadConfig`, which decodes all four unconditionally before
+  // `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86Vo7zx).
+  it.live.each([
+    ["edge_runtime.enabled", "SUPABASE_EDGE_RUNTIME_ENABLED", "not-a-bool"],
+    ["db.network_restrictions.enabled", "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED", "not-a-bool"],
+    ["studio.enabled", "SUPABASE_STUDIO_ENABLED", "not-a-bool"],
+    ["local_smtp.enabled", "SUPABASE_LOCAL_SMTP_ENABLED", "not-a-bool"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override even when Postgres is already running",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Same gap, same shape, different field: `auth.jwt_expiry` (a plain `uint`,
+  // `pkg/config/auth.go:155`) was only ever resolved as part of `values.authJwtExpiry`
+  // (`legacyResolveLocalConfigValues`), which this handler calls ONLY in the not-running branch —
+  // so a malformed override was silently ignored whenever Postgres was already running, unlike
+  // Go's `flags.LoadConfig`, which decodes it unconditionally before `AssertSupabaseDbIsRunning`
+  // (review: PRRT_kwDOErm0O86VmpeG).
+  it.live(
+    "fails with a typed config error on a malformed SUPABASE_AUTH_JWT_EXPIRY override even when Postgres is already running",
+    () => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".env"),
+        "SUPABASE_AUTH_JWT_EXPIRY=not-a-uint\n",
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.jwt_expiry");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Same gap, same shape, different field: `api.port` (a plain `uint16`, `pkg/config/api.go:29`)
+  // was only ever resolved as part of `values.apiPort` (`legacyResolveLocalConfigValues`), which
+  // this handler calls ONLY in the not-running branch — so a malformed override was silently
+  // ignored whenever Postgres was already running, unlike Go's `flags.LoadConfig`, which decodes
+  // it unconditionally before `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86Vnmss).
+  it.live(
+    "fails with a typed config error on a malformed SUPABASE_API_PORT override even when Postgres is already running",
+    () => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_API_PORT=not-a-port\n");
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("api.port");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // Same gap, same shape, remaining root-level `auth.*` scalars: none of these is referenced
+  // anywhere in `Config.Validate`'s `if c.Auth.Enabled` block (`pkg/config/config.go:1086-1153`),
+  // so — like `auth.jwt_expiry` above — each was only ever resolved as part of
+  // `legacyResolveLocalConfigValues`, which this handler calls ONLY in the not-running branch, and
+  // a malformed override was silently ignored whenever Postgres was already running, unlike Go's
+  // `flags.LoadConfig`, which decodes all of them unconditionally before
+  // `AssertSupabaseDbIsRunning` (review: PRRT_kwDOErm0O86VnEV6).
+  it.live.each([
+    ["auth.enable_signup", "SUPABASE_AUTH_ENABLE_SIGNUP", "not-a-bool"],
+    ["auth.enable_anonymous_sign_ins", "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS", "not-a-bool"],
+    [
+      "auth.enable_refresh_token_rotation",
+      "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
+      "not-a-bool",
+    ],
+    [
+      "auth.refresh_token_reuse_interval",
+      "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
+      "not-a-uint",
+    ],
+    ["auth.enable_manual_linking", "SUPABASE_AUTH_ENABLE_MANUAL_LINKING", "not-a-bool"],
+    ["auth.minimum_password_length", "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH", "not-a-uint"],
+    ["auth.password_requirements", "SUPABASE_AUTH_PASSWORD_REQUIREMENTS", "not-a-requirement"],
+  ] as const)(
+    "fails with a typed config error on a malformed %s override even when Postgres is already running",
+    ([dottedFieldPath, envVar, envValue]) => {
+      const { layer, child } = setup({ running: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain(dottedFieldPath);
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
+    () => {
+      // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
+      // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
+      // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, so the malformed value must live
+      // directly in config.toml here since `@supabase/config` never sees (or rejects) this
+      // unmodeled field — there's no schema-level bool coercion to catch it first
+      // (review: PRRT_kwDOErm0O86VlOHQ).
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.passkey");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
+    () => {
+      // `auth.external` is a genuine Go `map[string]provider` (auth.go:190) — an unmodeled/
+      // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
+      // schema silently drops at decode time, so `legacyResolveAuthExternalProviders`'s
+      // raw-document read is the only place this malformed value is ever seen — same
+      // override-only-throw reasoning as the passkey test above (review: PRRT_kwDOErm0O86VlOHQ).
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = JSON.stringify(exit.cause);
+          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("auth.external");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live("fails on a malformed auth duration field even when the db is already running", () => {
+    // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before
+    // `AssertSupabaseDbIsRunning` in `start.Run` (`internal/db/start/start.go:45-47`) — a
+    // malformed `auth.*` duration field must fail the command even when Postgres is already
+    // up, not be masked by the already-running short-circuit. Mirrors the sibling
+    // "undecryptable secret" already-running test above.
+    const { layer, out } = setup({
+      configContents: 'project_id = "test"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = JSON.stringify(exit.cause);
+        expect(message).toContain("LegacyDbConfigLoadError");
+        expect(message).toContain("auth.email.max_frequency");
+      }
+      expect(out.stderrText).not.toContain("already running");
+    });
+  });
+
+  it.live(
+    "warns when auth.sms.enable_signup is true but no SMS provider is enabled, matching Go's (s *sms) validate()",
+    () => {
+      const { layer, out } = setup({
+        configContents: 'project_id = "test"\n[auth.sms]\nenable_signup = true\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
+      });
+    },
+  );
+
+  it.live(
+    "does not warn about SMS when auth is disabled, matching Go's Enabled-gated (s *sms) validate()",
+    () => {
+      // Go only calls `Sms.validate()` — the source of this warning — `if c.Auth.Enabled`
+      // (`config.go:1087,1145`). A disabled-auth project with `enable_signup = true` and no
+      // provider configured must NOT print the warning (review: PRRT_kwDOErm0O86Vk-e2).
+      const { layer, out } = setup({
+        configContents:
+          'project_id = "test"\n[auth]\nenabled = false\n[auth.sms]\nenable_signup = true\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("no SMS provider is enabled");
       });
     },
   );
@@ -727,6 +1150,11 @@ describe("legacy db start", () => {
       expect(createArgs(child.spawned)).not.toBeUndefined();
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["status"]).toBe("started");
+      // Go's `StartDatabase` (`start.go:168-175`) writes "Starting database..." (or "...from
+      // backup..." on a pre-existing volume, as here — see `defaultRoute`) to stderr
+      // unconditionally — no output-format concept gates it in Go, so the `--output-format json`
+      // run must still see it on stderr (review: PRRT_kwDOErm0O86VmHkn).
+      expect(out.stderrText).toContain("Starting database from backup...\n");
     });
   });
 });

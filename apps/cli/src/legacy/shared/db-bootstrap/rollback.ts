@@ -13,7 +13,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * start.go:227-231`): Go tests whether the failure unwraps as a joined
  * multi-error (`Unwrap() []error`) — the shape `WaitForHealthyService`
  * produces on timeout. This port's equivalent health-check-timeout failure is
- * {@link LegacyHealthCheckTimeoutError} (`./health-check.ts`), so the
+ * {@link LegacyHealthCheckTimeoutError} (`../containers/health-check.ts`), so the
  * classification collapses to an `instanceof` check against that one class —
  * the caller (`start.handler.ts`) uses this to decide whether
  * `--ignore-health-check` should downgrade a failure to a warning instead of
@@ -35,7 +35,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * matcher: the port has no outer classifier check. `start.handler.ts`
  * consults this function only inside its two health-wait failure branches,
  * and the pre-pull (`legacyEnsureImagesCached`) runs before bring-up, so a
- * `LegacyImagePrepullError` (`lib/image-prepull.ts`) propagates straight out
+ * `LegacyImagePrepullError` (`../containers/image-prepull.ts`) propagates straight out
  * and always fails the command with exit 1, with or without the flag.
  * Widening this match to accept `LegacyImagePrepullError` would be a dead
  * no-op — no pre-pull failure ever reaches a call site. The observable delta

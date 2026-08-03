@@ -4,6 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import {
+  LegacyDebugFlag,
   LegacyNetworkIdFlag,
   LegacyDnsResolverFlag,
 } from "../../../../shared/legacy/global-flags.ts";
@@ -129,6 +130,12 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
+  // Threaded into `legacyBuildLocalDbContainerInputs`'s own `setup.debug`, so a failed
+  // fresh-volume Realtime/Storage/Auth migrate job on the PG15 recreate path tees its own
+  // stderr, matching Go's `initSchema15` passing `utils.GetDebugLogger()` as that job's
+  // stderr writer (`start.go:349-353`) — reached by BOTH real Go callers of
+  // `SetupLocalDatabase` (`db start` and `db reset`'s PG15 recreate).
+  const debug = yield* LegacyDebugFlag;
 
   const workdir = cliConfig.workdir;
   const migrationsDir = path.join(workdir, "supabase", "migrations");
@@ -352,6 +359,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         workdir,
         networkIdFlag,
         runtimeInfo.platform,
+        debug,
       );
       const {
         context: { projectId, hostname },

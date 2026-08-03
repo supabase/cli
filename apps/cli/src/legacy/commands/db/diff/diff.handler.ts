@@ -2,6 +2,7 @@ import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
@@ -103,6 +104,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const debug = yield* LegacyDebugFlag;
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}) — Go's `ensureProjectGroupsCached` (cmd/root.go:214).
@@ -397,6 +399,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       cliConfig.workdir,
       networkIdFlag,
       runtimeInfo.platform,
+      debug,
       // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
       // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
       // as `cfg` above (`legacyReadDbToml(..., linkedRef)`) — Go remote-merges the WHOLE

@@ -412,6 +412,14 @@ const DOCKER_CLIENT_ENV_KEYS: ReadonlySet<string> = new Set([
   "DOCKER_CERT_PATH",
   "DOCKER_CONTEXT",
   "DOCKER_API_VERSION",
+  // `docker/cli`'s own `EnvOverrideConfigDir` (`cli/config/config.go:25`) — the same env var
+  // `legacyGetHostname`'s `dockerConfigDir()` reads to locate `config.json`/the context store.
+  // Without this, a project dotenv that sets ONLY `DOCKER_CONFIG` (no `DOCKER_HOST`/
+  // `DOCKER_CONTEXT`) would never reach `process.env` via `legacy-local-project-context.ts`'s
+  // Docker-client-env loop, so both hostname resolution and every `docker`/`podman` subprocess
+  // this process spawns would silently fall back to the ambient `~/.docker` config instead of the
+  // project-selected one — the same class of bug already fixed for `DOCKER_HOST`/`DOCKER_CONTEXT`.
+  "DOCKER_CONFIG",
 ]);
 
 /** Whether `key` configures the Docker/Podman CLI client itself — see {@link DOCKER_CLIENT_ENV_KEYS}. */

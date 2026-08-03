@@ -150,34 +150,32 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
-  // `dockerCalls` tracks only the migra OOM bash fallback's own `runCapture` — the
+  // `dockerCalls` tracks the migra OOM bash fallback's own `runCapture` calls — the
   // native shadow's PG15+ one-shot setup jobs (`legacyRunStartMigrateJob`) go through
-  // the SAME `LegacyDockerRun` service but always set `skipImageResolve: true`, so
-  // they're excluded here to keep this array's pre-existing "just the fallback" meaning.
-  // `shadowSetupJobCalls` tracks those excluded calls separately (their `env`, notably
-  // `DB_HOST`, is the one shadow-specific parameterization CLI-1956 exists to get right).
+  // `runStream` instead (constant-memory stdout discard, matching Go's `io.Discard`
+  // writer for these jobs), so they're tracked separately in `shadowSetupJobCalls`
+  // (their `env`, notably `DB_HOST`, is the one shadow-specific parameterization
+  // CLI-1956 exists to get right).
   const dockerCalls: unknown[] = [];
   const shadowSetupJobCalls: Array<{ readonly env: Readonly<Record<string, string>> }> = [];
   const docker = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.die("run unused"),
     runCapture: (dockerOpts) => {
-      if (dockerOpts.skipImageResolve !== true) {
-        dockerCalls.push(dockerOpts);
-        return Effect.succeed({
-          exitCode: 0,
-          stdout: new TextEncoder().encode(opts.diffSql ?? ""),
-          stderr: "",
-        });
-      }
-      // The shadow's own PG15+ one-shot platform-baseline job(s).
-      shadowSetupJobCalls.push(dockerOpts);
+      dockerCalls.push(dockerOpts);
       return Effect.succeed({
-        exitCode: opts.failShadowSetupJob === true ? 1 : 0,
-        stdout: new Uint8Array(),
+        exitCode: 0,
+        stdout: new TextEncoder().encode(opts.diffSql ?? ""),
         stderr: "",
       });
     },
-    runStream: () => Effect.die("runStream unused"),
+    // The shadow's own PG15+ one-shot platform-baseline job(s).
+    runStream: (dockerOpts) => {
+      shadowSetupJobCalls.push(dockerOpts);
+      return Effect.succeed({
+        exitCode: opts.failShadowSetupJob === true ? 1 : 0,
+        stderr: "",
+      });
+    },
   });
 
   const resolverCalls: unknown[] = [];

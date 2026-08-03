@@ -1,16 +1,22 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { LegacyMigrationApplyError } from "./legacy-migration-apply.ts";
 import {
   legacyMigrateAndSeed,
   type LegacyMigrateAndSeedConfig,
 } from "./legacy-migrate-and-seed.ts";
+
+// Root bypasses POSIX permission bits, so chmod 000 wouldn't block readdir() there.
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 function fakeSession() {
   const execs: Array<string> = [];
@@ -19,6 +25,25 @@ function fakeSession() {
       Effect.sync(() => {
         execs.push(sql);
       }),
+    query: () => Effect.succeed([]),
+    extensionExists: () => Effect.succeed(false),
+    copyToCsv: () => Effect.succeed(new Uint8Array()),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+  };
+  return { session, execs };
+}
+
+/** Every statement fails except the `BEGIN`/`COMMIT`/`ROLLBACK` transaction control Go wraps it in. */
+function failingExecSession(): { session: LegacyDbSession; execs: Array<string> } {
+  const execs: Array<string> = [];
+  const TRANSACTION_CONTROL = new Set(["BEGIN", "COMMIT", "ROLLBACK"]);
+  const session: LegacyDbSession = {
+    exec: (sql) => {
+      execs.push(sql);
+      return TRANSACTION_CONTROL.has(sql)
+        ? Effect.sync(() => {})
+        : Effect.fail(new LegacyDbExecError({ message: "syntax error" }));
+    },
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
@@ -78,7 +103,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
           ...baseConfig,
           experimental: true,
           pgDeltaEnabled: false,
-          schemaPaths: ["schemas/a.sql"],
+          schemaPaths: ["supabase/schemas/a.sql"],
         },
         session,
         out,
@@ -116,7 +141,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
           ...baseConfig,
           experimental: true,
           pgDeltaEnabled: true,
-          schemaPaths: ["schemas/a.sql"],
+          schemaPaths: ["supabase/schemas/a.sql"],
         },
         session,
         out,
@@ -149,7 +174,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
         ...baseConfig,
         experimental: false,
         pgDeltaEnabled: false,
-        schemaPaths: ["schemas/a.sql"],
+        schemaPaths: ["supabase/schemas/a.sql"],
       },
       session,
       out,
@@ -183,7 +208,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
           ...baseConfig,
           experimental: true,
           pgDeltaEnabled: false,
-          schemaPaths: ["schemas/a.sql"],
+          schemaPaths: ["supabase/schemas/a.sql"],
         },
         session,
         out,
@@ -212,10 +237,10 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
         ...baseConfig,
         experimental: true,
         pgDeltaEnabled: false,
-        schemaPaths: ["schemas/a.sql"],
-        // Unlike `schemaPaths` (resolved against `supabase/` inside `legacyMigrateAndSeed`
-        // itself), `LegacySeedConfig.sqlPaths` is already `supabase/`-prefixed by its real
-        // caller (`legacy-db-config.toml-read.ts`) — see its own doc comment.
+        schemaPaths: ["supabase/schemas/a.sql"],
+        // Both `schemaPaths` and `LegacySeedConfig.sqlPaths` arrive already
+        // `supabase/`-prefixed by their real caller (`legacy-db-config.toml-read.ts`) — see
+        // its own doc comment. Neither field does its own path-shape work anymore.
         seed: { enabled: true, sqlPaths: ["supabase/seed.sql"] },
       },
       session,
@@ -248,7 +273,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
         {
           ...baseConfig,
           experimental: true,
-          schemaPaths: ["schemas/z_function.sql", "schemas/tables"],
+          schemaPaths: ["supabase/schemas/z_function.sql", "supabase/schemas/tables"],
         },
         session,
         out,
@@ -276,7 +301,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
       {
         ...baseConfig,
         experimental: true,
-        schemaPaths: ["database/a.sql", "database", "database/*.sql"],
+        schemaPaths: ["supabase/database/a.sql", "supabase/database", "supabase/database/*.sql"],
       },
       session,
       out,
@@ -291,4 +316,119 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
       ),
     );
   });
+
+  it.effect.skipIf(isRoot)(
+    "fails a matched schema_paths directory that cannot be traversed, instead of treating it as empty",
+    () => {
+      // Go's `walkMatchedDir` returns `failed to walk matched directory: %w` on a read
+      // error; `applySchemaFiles` propagates it when nothing else matched either. Mode
+      // 000 makes `stat` (parent-directory lookup) succeed but `readdir` fail with EACCES.
+      const workdir = makeWorkdir();
+      const lockedDir = join(workdir, "supabase", "schemas", "locked");
+      mkdirSync(lockedDir, { recursive: true });
+      writeFileSync(join(lockedDir, "b.sql"), "select 1;");
+      chmodSync(lockedDir, 0o000);
+      const { session } = fakeSession();
+      const out = mockOutput();
+      return run(
+        workdir,
+        "",
+        {
+          ...baseConfig,
+          experimental: true,
+          schemaPaths: ["supabase/schemas/locked"],
+        },
+        session,
+        out,
+      ).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("failed to walk matched directory");
+            }
+            chmodSync(lockedDir, 0o755);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "skips a symlinked .sql file and an entire symlinked subdirectory inside a matched schema_paths directory",
+    () => {
+      // Go's `walkMatchedDir` (`fs.WalkDir` + `entry.Type().IsRegular()`) never follows a
+      // symlinked `DirEntry` — a symlinked `.sql` file is excluded regardless of target, and a
+      // symlinked subdirectory is never even descended into. Both live OUTSIDE the matched
+      // directory here, so applying either would mean executing SQL Go would never touch.
+      const workdir = makeWorkdir();
+      const outsideDir = mkdtempSync(join(tmpdir(), "legacy-migrate-and-seed-outside-"));
+      writeFileSync(join(outsideDir, "escaped.sql"), "select 999;");
+      writeFileSync(join(outsideDir, "linked-target.sql"), "select 888;");
+      writeFile(workdir, "supabase/schemas/real.sql", "select 1;");
+      symlinkSync(
+        join(outsideDir, "linked-target.sql"),
+        join(workdir, "supabase", "schemas", "link-to-file.sql"),
+      );
+      symlinkSync(outsideDir, join(workdir, "supabase", "schemas", "link-to-dir"));
+      const { session, execs } = fakeSession();
+      const out = mockOutput();
+      return run(
+        workdir,
+        "",
+        {
+          ...baseConfig,
+          experimental: true,
+          schemaPaths: ["supabase/schemas"],
+        },
+        session,
+        out,
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(execs).toContain("select 1");
+            expect(execs).not.toContain("select 888");
+            expect(execs).not.toContain("select 999");
+            rmSync(workdir, { recursive: true, force: true });
+            rmSync(outsideDir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "attaches the failing schema file as Go's CmdSuggestion (See schema file: <fp>)",
+    () => {
+      const workdir = makeWorkdir();
+      const schemaPath = "supabase/schemas/broken.sql";
+      writeFile(workdir, schemaPath, "totally not valid sql;");
+      const { session } = failingExecSession();
+      const out = mockOutput();
+      return run(
+        workdir,
+        "",
+        {
+          ...baseConfig,
+          experimental: true,
+          schemaPaths: [schemaPath],
+        },
+        session,
+        out,
+      ).pipe(
+        Effect.flip,
+        Effect.tap((error) =>
+          Effect.sync(() => {
+            expect(error).toBeInstanceOf(LegacyMigrationApplyError);
+            const suggestion = (error as LegacyMigrationApplyError).suggestion;
+            expect(suggestion).toBeDefined();
+            expect(stripAnsi(suggestion ?? "")).toBe(`See schema file: ${schemaPath}`);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

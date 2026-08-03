@@ -138,6 +138,68 @@ export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
 }
 
 /**
+ * Docker's/Podman's "container doesn't exist" stderr shapes — "No such container"/
+ * "No such object" (Docker, either casing depending on daemon version/CLI path) or
+ * "no container with name or ID" (Podman's own wording) — Go's `errdefs.IsNotFound(err)`
+ * equivalent for a CLI-shelled-out (rather than Engine-API) caller. Case-insensitive
+ * and covers all three shapes, matching the pre-existing Podman-aware parser in
+ * `commands/start/start.handler.ts`'s own `isContainerNotFoundMessage` — a lowercase
+ * Podman message must be tolerated exactly like an uppercase Docker one, or a reset
+ * excluding a satellite service (storage/auth/realtime/pooler) or Kong would report a
+ * hard restart/reload failure instead of tolerating the absent container. Hoisted here
+ * so callers across the container-lifecycle/restart/health-check domain
+ * (`legacyIsLocalDbRunning`, `legacyRestartSatelliteService`, `legacyReloadKong`) share
+ * one predicate instead of re-deriving the same match.
+ */
+export function legacyIsContainerNotFoundMessage(message: string): boolean {
+  return (
+    /no such container/iu.test(message) ||
+    /no such object/iu.test(message) ||
+    /no container with name or id/iu.test(message)
+  );
+}
+
+/**
+ * Runs a container-CLI command that must succeed outright — no tolerance for any
+ * failure mode (spawn failure, non-zero exit) — the shared shape behind every
+ * "docker verb target" primitive that fails hard on any problem
+ * (`legacyRemoveContainer`/`legacyRemoveVolume`/`legacyRestartContainer`; see
+ * `containers/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
+ * `verb` is the human-readable action embedded in the error message (e.g.
+ * `"remove container"` → `"failed to remove container: <cause>"`).
+ */
+export function runContainerCliExpectSuccess<E>(
+  spawner: Spawner,
+  args: ReadonlyArray<string>,
+  verb: string,
+  makeError: (message: string) => E,
+): Effect.Effect<void, E> {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnContainerCli(spawner, args, {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      }).pipe(
+        Effect.mapError((cause) =>
+          makeError(`failed to ${verb}: ${legacyDescribeContainerCliFailure(cause)}`),
+        ),
+      );
+      const [exitCode, stderr] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(() => makeError(`failed to ${verb}`)));
+      if (exitCode !== 0) {
+        const message = stderr.trim();
+        return yield* Effect.fail(
+          makeError(message.length > 0 ? `failed to ${verb}: ${message}` : `failed to ${verb}`),
+        );
+      }
+    }),
+  );
+}
+
+/**
  * Like {@link containerCliExitCode}, but also collecting the child's stdout —
  * for callers that need the CLI's own report of what it did (e.g. the `docker
  * … prune` deleted-ID lists backing Go's `--debug` "Pruned …" reports in
@@ -182,59 +244,6 @@ export const legacyContainerCliExitCodeAndStdout = (
       return { exitCode, stdout };
     }),
   );
-
-/**
- * Docker's/Podman's "container doesn't exist" stderr shapes — "No such container"
- * or "No such object" depending on daemon version/CLI path — Go's
- * `errdefs.IsNotFound(err)` equivalent for a CLI-shelled-out (rather than
- * Engine-API) caller. Hoisted here so callers across the container-lifecycle/
- * restart/health-check domain (`legacyIsLocalDbRunning`,
- * `legacyRestartSatelliteService`, `legacyReloadKong`) share one predicate
- * instead of re-deriving the same substring match.
- */
-export function legacyIsContainerNotFoundMessage(message: string): boolean {
-  return message.includes("No such container") || message.includes("No such object");
-}
-
-/**
- * Runs a container-CLI command that must succeed outright — no tolerance for any
- * failure mode (spawn failure, non-zero exit) — the shared shape behind every
- * "docker verb target" primitive that fails hard on any problem
- * (`legacyRemoveContainer`/`legacyRemoveVolume`/`legacyRestartContainer`; see
- * `containers/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
- * `verb` is the human-readable action embedded in the error message (e.g.
- * `"remove container"` → `"failed to remove container: <cause>"`).
- */
-export function runContainerCliExpectSuccess<E>(
-  spawner: Spawner,
-  args: ReadonlyArray<string>,
-  verb: string,
-  makeError: (message: string) => E,
-): Effect.Effect<void, E> {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const child = yield* spawnContainerCli(spawner, args, {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "pipe",
-      }).pipe(
-        Effect.mapError((cause) =>
-          makeError(`failed to ${verb}: ${legacyDescribeContainerCliFailure(cause)}`),
-        ),
-      );
-      const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.mapError(() => makeError(`failed to ${verb}`)));
-      if (exitCode !== 0) {
-        const message = stderr.trim();
-        return yield* Effect.fail(
-          makeError(message.length > 0 ? `failed to ${verb}: ${message}` : `failed to ${verb}`),
-        );
-      }
-    }),
-  );
-}
 
 /**
  * Mirrors Go's `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`,

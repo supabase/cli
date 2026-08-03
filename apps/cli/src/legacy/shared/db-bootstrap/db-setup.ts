@@ -103,7 +103,7 @@ import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connectio
 import type { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
 import { legacyCheckDbToml, legacyResolveSeedSqlPath } from "../legacy-db-config.toml-read.ts";
-import { localDbContainerId } from "../legacy-docker-ids.ts";
+import { LEGACY_CLI_PROJECT_LABEL, localDbContainerId } from "../legacy-docker-ids.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
 import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migration-apply.ts";
@@ -119,6 +119,7 @@ import {
   type LegacyImagePrepullError,
 } from "../containers/image-prepull.ts";
 import { legacyResolvePinnedImage } from "../containers/pinned-image.ts";
+import { LEGACY_COMPOSE_PROJECT_LABEL } from "../containers/container-lifecycle.ts";
 import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "./realtime-env.ts";
 import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
 import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
@@ -127,6 +128,8 @@ import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
 } from "./internal-db-connection.ts";
+
+type Spawner = ChildProcessSpawner["Service"];
 
 /**
  * Go's inline `RevokeDefaultDataApiPrivilegesSql` constant (`start.go:405-412`) —
@@ -160,7 +163,8 @@ export type LegacyStartSetupLocalDatabaseError =
   | LegacyDbSetupError
   | LegacyMigrationVaultError
   | LegacyMigrationApplyError
-  | LegacyMigrationSeedError;
+  | LegacyMigrationSeedError
+  | LegacyImagePrepullError;
 
 /** Already-resolved Docker images for the three PG15+ one-shot migrate jobs (`initSchema15`'s `initJobs`). */
 export interface LegacyStartDbSetupImages {
@@ -172,68 +176,48 @@ export interface LegacyStartDbSetupImages {
   readonly auth: string;
 }
 
-type Spawner = ChildProcessSpawner["Service"];
-
 /**
- * Resolves the three PG15+ one-shot setup jobs' images (`initSchema15`'s
+ * Computes the three PG15+ one-shot setup jobs' PINNED image names (`initSchema15`'s
  * `initRealtimeJob`/`initStorageJob`/`initAuthJob`) for {@link legacyResolveDbSetupPrelude},
- * the ONE place every real Go caller (`db start`'s fresh-volume branch, `db reset`'s PG15
+ * the ONE place every real caller (`db start`'s fresh-volume branch, `db reset`'s PG15
  * recreate, and the shadow-database variant's `legacySetupShadowDatabase`/
  * `legacyMigrateShadowDatabase`) reaches this resolution from — see that function's own doc
  * comment. Mirrors Go's `initSchema15`, which uses the SAME already-pin-rewritten
  * `utils.Config.{Realtime,Storage,Auth}.Image` fields the long-running containers would use,
  * regardless of `--exclude` — resolved via `legacyResolvePinnedImage`, not the raw Dockerfile
- * default, so a linked project's version pins apply here too. Resolved lazily (only the images
- * whose service is BOTH `majorVersion >= 15` AND enabled-for-setup), matching Go's own
- * `ensureImagesCached` (`start.go:237-262`), which never pre-pulls these for any caller.
+ * default, so a linked project's version pins apply here too. Deliberately does NOT resolve
+ * these against the registry (`legacyEnsureImagesCached`) as a batch: Go resolves (and pulls)
+ * each one-shot job's own image individually, sequentially, right before THAT job runs
+ * (`DockerRunJob` -> `DockerStart` -> `DockerResolveImageIfNotCached`, `start.go:334-355`,
+ * `docker.go:363-365`) — {@link legacyRunStartMigrateJob} does that lazily itself, right
+ * before running each job (see its own doc comment): a batch resolve here would let one
+ * unreachable image fail the WHOLE setup before an earlier job Go would already have run
+ * to completion ever gets to run.
  */
-const legacyResolveDbSetupImages = Effect.fnUntraced(function* (
-  spawner: Spawner,
-  input: {
-    readonly majorVersion: number;
-    readonly realtimeEnabledForSetup: boolean;
-    readonly storageEnabledForSetup: boolean;
-    readonly authEnabledForSetup: boolean;
-    readonly serviceVersionOverrides: LocalServiceVersionOverrides;
-    readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
-  },
-) {
-  const rawSetupJobImages = {
-    realtime: legacyResolvePinnedImage("realtime", "realtime", input.serviceVersionOverrides),
-    storage: legacyResolvePinnedImage("storage", "storage", input.serviceVersionOverrides),
-    auth: legacyResolvePinnedImage("gotrue", "auth", input.serviceVersionOverrides),
-  };
-  const setupJobImagesToResolve =
-    input.majorVersion >= 15
-      ? [
-          ...(input.realtimeEnabledForSetup ? [rawSetupJobImages.realtime] : []),
-          ...(input.storageEnabledForSetup ? [rawSetupJobImages.storage] : []),
-          ...(input.authEnabledForSetup ? [rawSetupJobImages.auth] : []),
-        ]
-      : [];
-  const resolvedSetupJobImages =
-    setupJobImagesToResolve.length > 0
-      ? yield* legacyEnsureImagesCached(spawner, setupJobImagesToResolve, input.projectEnvValues)
-      : new Map<string, string>();
-  const resolveSetupJobImage = (image: string) => resolvedSetupJobImages.get(image) ?? image;
+function legacyResolveDbSetupImages(
+  serviceVersionOverrides: LocalServiceVersionOverrides,
+): LegacyStartDbSetupImages {
   return {
-    realtime: resolveSetupJobImage(rawSetupJobImages.realtime),
-    storage: resolveSetupJobImage(rawSetupJobImages.storage),
-    auth: resolveSetupJobImage(rawSetupJobImages.auth),
+    realtime: legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
+    storage: legacyResolvePinnedImage("storage", "storage", serviceVersionOverrides),
+    auth: legacyResolvePinnedImage("gotrue", "auth", serviceVersionOverrides),
   };
-});
+}
 
 /**
  * Resolves JWKS (lazily, only when `majorVersion >= 15` AND `realtimeEnabledForSetup`) + the
- * PG15+ one-shot job images (via {@link legacyResolveDbSetupImages}) — the exact prelude BOTH
- * {@link legacyRunFreshDbSetup} (the real local `db` container) and `shadow-database.ts`'s
- * `legacySetupShadowDatabase`/`legacyMigrateShadowDatabase` need before calling {@link
- * legacySetupDatabase}. Hoisted here (CLI-1956 review follow-up) so the shadow path shares
- * this exact resolution instead of keeping its own copy, which had silently drifted (a dead,
- * never-forwarded `jwtExpiry` field on the shadow's own setup-input shape). Structurally typed
- * against just the fields this needs (not the full {@link LegacyFreshDbSetupInput}) so both
- * that type and `shadow-database.ts`'s `LegacyShadowDbSetupInput` — which is itself derived
- * from it — satisfy this signature without an explicit cast.
+ * PG15+ one-shot job images' PINNED names (via {@link legacyResolveDbSetupImages}) — the
+ * exact prelude BOTH {@link legacyRunFreshDbSetup} (the real local `db` container) and
+ * `shadow-database.ts`'s `legacySetupShadowDatabase`/`legacyMigrateShadowDatabase` need
+ * before calling {@link legacySetupDatabase}. Hoisted here (CLI-1956 review follow-up) so
+ * the shadow path shares this exact resolution instead of keeping its own copy, which had
+ * silently drifted (a dead, never-forwarded `jwtExpiry` field on the shadow's own setup-input
+ * shape). Structurally typed against just the fields this needs (not the full {@link
+ * LegacyFreshDbSetupInput}) so both that type and `shadow-database.ts`'s
+ * `LegacyShadowDbSetupInput` — which is itself derived from it — satisfy this signature
+ * without an explicit cast. Synchronous other than the caller-supplied `jwks` effect: neither
+ * step here talks to Docker at all (see {@link legacyResolveDbSetupImages}'s own doc comment
+ * for why the images are only PINNED, not registry-resolved, at this stage).
  *
  * The `majorVersion >= 15` gate matters, not just an optimization: Go's `initSchema`
  * (`apps/cli-go/internal/db/start/start.go:243-253`) returns via `InitSchema14` for
@@ -243,31 +227,15 @@ const legacyResolveDbSetupImages = Effect.fnUntraced(function* (
  * configured `auth.third_party` providers, so resolving it unconditionally on PG14 is not
  * just wasted work: it can fail (or hang) when Go's own shadow/setup never would.
  */
-export const legacyResolveDbSetupPrelude = <E>(
-  spawner: Spawner,
-  setup: {
-    readonly majorVersion: number;
-    readonly realtimeEnabledForSetup: boolean;
-    readonly storageEnabledForSetup: boolean;
-    readonly authEnabledForSetup: boolean;
-    readonly serviceVersionOverrides: LocalServiceVersionOverrides;
-    readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
-    readonly jwks: Effect.Effect<string, E>;
-  },
-): Effect.Effect<
-  { readonly jwks: string; readonly images: LegacyStartDbSetupImages },
-  E | LegacyImagePrepullError
-> =>
+export const legacyResolveDbSetupPrelude = <E>(setup: {
+  readonly majorVersion: number;
+  readonly realtimeEnabledForSetup: boolean;
+  readonly serviceVersionOverrides: LocalServiceVersionOverrides;
+  readonly jwks: Effect.Effect<string, E>;
+}): Effect.Effect<{ readonly jwks: string; readonly images: LegacyStartDbSetupImages }, E> =>
   Effect.gen(function* () {
     const jwks = setup.majorVersion >= 15 && setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
-    const images: LegacyStartDbSetupImages = yield* legacyResolveDbSetupImages(spawner, {
-      majorVersion: setup.majorVersion,
-      realtimeEnabledForSetup: setup.realtimeEnabledForSetup,
-      storageEnabledForSetup: setup.storageEnabledForSetup,
-      authEnabledForSetup: setup.authEnabledForSetup,
-      serviceVersionOverrides: setup.serviceVersionOverrides,
-      projectEnvValues: setup.projectEnvValues,
-    });
+    const images = legacyResolveDbSetupImages(setup.serviceVersionOverrides);
     return { jwks, images };
   });
 
@@ -320,6 +288,15 @@ export interface LegacySetupDatabaseInput {
    * provisioning to reuse `SetupDatabase` at all.
    */
   readonly dbHost: string;
+  /**
+   * Go's `Config.ProjectId` — labels the PG15+ one-shot job containers
+   * (`com.supabase.cli.project`/`com.docker.compose.project`, see {@link
+   * legacyRunStartMigrateJob}), matching Go's `DockerStart`, which sets both
+   * unconditionally for every container it starts (`docker.go:371-376`). Independent of
+   * {@link dbHost}: this labels the one-shot job containers THEMSELVES, not the (possibly
+   * different) container `dbHost` addresses.
+   */
+  readonly projectId: string;
   /** The `start` run's Docker network id (Go's `utils.NetId` or the `--network-id` override) — every PG15+ one-shot job joins it, matching `DockerStart`'s own default (`docker.go:379-383`). */
   readonly networkId: string;
   /** `LegacyLocalConfigValues.dbUrl` — reused (not recomputed) to derive the internal DB password via `legacyStartInternalDbPassword`, matching every other `start/services/*.service.ts` builder. */
@@ -358,6 +335,23 @@ export interface LegacySetupDatabaseInput {
   /** Go's `utils.Config.Storage.TargetMigration` (`toml:"-"`, resolved from a version-pin file) — the caller passes `""` when absent, matching Go's zero-value default. */
   readonly storageTargetMigration: string;
   readonly images: LegacyStartDbSetupImages;
+  /**
+   * Project-`.env`-scoped `SUPABASE_INTERNAL_IMAGE_REGISTRY`/mirror overrides — threaded
+   * through to each one-shot migrate job's OWN per-image `legacyEnsureImagesCached` resolve
+   * (see {@link legacyRunStartMigrateJob}), matching Go's real process-env registry override,
+   * which applies uniformly to every `DockerResolveImageIfNotCached` call regardless of which
+   * code path triggers it. `LegacyDockerRun.runCapture`'s own ambient-only ChildProcessSpawner-
+   * scoped ancestor resolver (used for the long-running containers) does NOT see this — it only
+   * reads bare `process.env`.
+   */
+  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /**
+   * `--debug` — threaded to each PG15+ one-shot migrate job (see
+   * {@link legacyRunStartMigrateJob}'s own doc comment) so a failed Realtime/Storage/Auth
+   * migration job's own stderr is visible, matching Go's `initSchema15` passing
+   * `utils.GetDebugLogger()` as the job's stderr writer (`start.go:349-353`).
+   */
+  readonly debug: boolean;
   /** `toml.baseline.apiAutoExposeNewTables` — Go's `api.auto_expose_new_tables` tri-state, threaded straight into {@link legacyApplyApiPrivileges}. */
   readonly apiAutoExposeNewTables: Option.Option<boolean>;
   /** `toml.vault` — Go's `utils.Config.Db.Vault`, threaded straight into {@link legacyUpsertVaultSecrets}. */
@@ -512,24 +506,59 @@ const legacyStartInitSchemaPre15 = Effect.fnUntraced(function* (
  * Runs one PG15+ one-shot service-migration job to completion (Go's
  * `utils.DockerRunJob` = `DockerRunOnceWithStream`, `docker.go:457-459,469-487`):
  * foreground, same Docker network as `db`, no entrypoint override (Go's plain
- * `Cmd` field), stdout discarded and stderr not teed (Go discards both outside
- * `--debug` — `utils.GetDebugLogger()`, `logger.go:10-15`). A non-zero exit fails
- * with the same shape as Go's `error running container: <cause>`.
+ * `Cmd` field), stdout always discarded (Go's own `stdout` writer here is always
+ * `io.Discard`, `start.go:352`) and stderr teed to the parent process's own stderr ONLY
+ * under `--debug` — Go passes `logger := utils.GetDebugLogger()` as the job's stderr
+ * writer (`os.Stderr` under `--debug`, else `io.Discard`, `logger.go:10-15`) — so a
+ * fresh-volume Realtime/Storage/Auth migration job's own diagnostics are visible when
+ * `db start --debug`/`supabase start --debug` is used, not just its exit code. A
+ * non-zero exit fails with the same shape as Go's `error running container: <cause>`.
+ *
+ * Resolves `opts.image` itself, individually, right here — via `legacyEnsureImagesCached`
+ * (NOT `LegacyDockerRun.runStream`'s own ambient-only resolver, which never sees
+ * `opts.projectEnvValues`) — immediately before running THIS job, matching Go's
+ * `DockerRunJob` -> `DockerStart` -> `DockerResolveImageIfNotCached` (`docker.go:363-365`)
+ * resolving each one-shot job's own image individually, sequentially, exactly where it's
+ * used: neither caller pre-pulls these three images as a batch ahead of time (see
+ * `start-database.ts`'s own doc comment for why), and Go's registry-override env var applies
+ * uniformly to every `DockerResolveImageIfNotCached` call, including project-`.env`-scoped
+ * values — this call must see the same override the long-running containers' own resolve does.
+ *
+ * Labels the container with `com.supabase.cli.project`/`com.docker.compose.project`
+ * (`opts.projectId`), matching Go's `DockerStart`, which sets both unconditionally for
+ * every container it starts, one-shot jobs included (`docker.go:371-376`) — so if the
+ * client is interrupted or the daemon disconnects while this job is still running, the
+ * orphaned container is still discoverable (and removable) by `supabase stop`/rollback's
+ * project-label filter (`legacy-docker-remove-all.ts`), not left invisible to both
+ * (review: Codex, PR #6022).
  */
-const legacyRunStartMigrateJob = Effect.fnUntraced(function* (opts: {
-  readonly image: string;
-  readonly env: Readonly<Record<string, string>>;
-  readonly cmd: ReadonlyArray<string>;
-  readonly networkId: string;
-}) {
+const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
+  spawner: Spawner,
+  opts: {
+    readonly image: string;
+    readonly env: Readonly<Record<string, string>>;
+    readonly cmd: ReadonlyArray<string>;
+    readonly networkId: string;
+    readonly projectId: string;
+    readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+    /** `--debug` — Go's `utils.GetDebugLogger()`, see this function's own doc comment. */
+    readonly debug: boolean;
+  },
+) {
   const docker = yield* LegacyDockerRun;
   const runtimeInfo = yield* RuntimeInfo;
+  const resolvedImages = yield* legacyEnsureImagesCached(
+    spawner,
+    [opts.image],
+    opts.projectEnvValues,
+  );
+  const resolvedImage = resolvedImages.get(opts.image) ?? opts.image;
   // Go's `DockerStart` unconditionally appends the Linux-only `host.docker.internal:
   // host-gateway` extra host for every container it starts (`docker_linux.go`),
   // including one-shot jobs routed through the same `DockerStart` path.
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
   const runOpts: LegacyDockerRunOpts = {
-    image: opts.image,
+    image: resolvedImage,
     cmd: opts.cmd,
     env: opts.env,
     binds: [],
@@ -537,14 +566,22 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (opts: {
     securityOpt: [],
     extraHosts,
     network: { _tag: "named", name: opts.networkId },
-    // `opts.image` is already fully resolved (`start.handler.ts`'s `resolveImage`, which
-    // threads `projectEnvValues` through `legacyEnsureImagesCached`) — this layer's own
-    // ambient-only resolver must not re-resolve it. See `LegacyDockerRunOpts.
-    // skipImageResolve`'s doc comment.
+    labels: {
+      [LEGACY_CLI_PROJECT_LABEL]: opts.projectId,
+      [LEGACY_COMPOSE_PROJECT_LABEL]: opts.projectId,
+    },
+    // Already resolved, immediately above — `LegacyDockerRun.runCapture`'s own ambient-only
+    // resolver must not re-resolve it (it doesn't see `opts.projectEnvValues` at all).
     skipImageResolve: true,
   };
+  // `runStream` (not `runCapture`) so stdout is actually discarded chunk-by-chunk as it
+  // arrives, matching Go's `io.Discard` writer for this job (`start.go:352`, and this
+  // function's own doc comment above) at constant memory — `runCapture` would instead
+  // buffer the ENTIRE stdout stream into `stdoutChunks` even though nothing here ever
+  // reads it, which a large/verbose migration job's output could grow without bound
+  // (review: Codex, PR #6022).
   const result = yield* docker
-    .runCapture(runOpts)
+    .runStream(runOpts, { onStdout: () => Effect.void, teeStderr: opts.debug })
     .pipe(Effect.mapError((cause) => new LegacyDbSetupError({ message: cause.message })));
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
@@ -620,14 +657,20 @@ function legacyStartAuthMigrateEnv(input: {
  * migrate jobs, each gated on its own service's `enabled` flag, run in Go's
  * fixed order (realtime, storage, auth).
  */
-const legacyStartInitSchema15 = Effect.fnUntraced(function* (input: LegacySetupDatabaseInput) {
+const legacyStartInitSchema15 = Effect.fnUntraced(function* (
+  spawner: Spawner,
+  input: LegacySetupDatabaseInput,
+) {
   const dbHost = input.dbHost;
   const dbPassword = legacyStartInternalDbPassword(input.dbUrl);
 
   if (input.config.realtime.enabled) {
-    yield* legacyRunStartMigrateJob({
+    yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.realtime,
       networkId: input.networkId,
+      projectId: input.projectId,
+      projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: legacyBuildRealtimeEnv({
         ipVersion: input.config.realtime.ip_version,
         maxHeaderLength: input.config.realtime.max_header_length,
@@ -673,17 +716,23 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (input: LegacySetupD
           message: `invalid config for storage: ${errMessage(cause)}`,
         }),
     });
-    yield* legacyRunStartMigrateJob({
+    yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.storage,
       networkId: input.networkId,
+      projectId: input.projectId,
+      projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: storageEnv,
       cmd: ["node", "dist/scripts/migrate-call.js"],
     });
   }
   if (input.config.auth.enabled) {
-    yield* legacyRunStartMigrateJob({
+    yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.auth,
       networkId: input.networkId,
+      projectId: input.projectId,
+      projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: legacyStartAuthMigrateEnv({
         apiUrl: input.apiUrl,
         authExternalUrl: input.authExternalUrl,
@@ -704,6 +753,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (input: LegacySetupD
  * `if utils.Config.Db.MajorVersion <= 14` check.
  */
 const legacyStartInitSchema = Effect.fnUntraced(function* (
+  spawner: Spawner,
   input: LegacySetupDatabaseInput,
   tmpDir: string,
 ) {
@@ -719,7 +769,7 @@ const legacyStartInitSchema = Effect.fnUntraced(function* (
     );
     return;
   }
-  yield* legacyStartInitSchema15(input);
+  yield* legacyStartInitSchema15(spawner, input);
 });
 
 /**
@@ -787,7 +837,13 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
         }),
     ),
   );
-  yield* fs.writeFileString(currentBranchPath, "main").pipe(
+  // Go's `utils.WriteFile` writes through `afero.WriteFile(fsys, path, contents, 0644)`
+  // (`internal/utils/misc.go:280-286`) — an explicit mode, not the platform default. Effect's
+  // `writeFileString` falls back to Node's default file mode (`0666` before the umask) when no
+  // `mode` is given, so under a permissive/group-writable umask (`000`/`002`) this file could be
+  // created `0666`/`0664` instead of Go's `0644`, making project branch metadata writable by
+  // additional local users.
+  yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 }).pipe(
     Effect.mapError(
       (error) =>
         new LegacyDbSetupError({
@@ -804,10 +860,11 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
  * provisioning can reuse this exact sequence without also reaching `apply.MigrateAndSeed`.
  */
 export const legacySetupDatabase = (
+  spawner: Spawner,
   input: LegacySetupDatabaseInput,
 ): Effect.Effect<
   void,
-  LegacyDbSetupError | LegacyMigrationVaultError,
+  LegacyDbSetupError | LegacyMigrationVaultError | LegacyImagePrepullError,
   Output | LegacyDockerRun | RuntimeInfo
 > =>
   Effect.gen(function* () {
@@ -826,7 +883,7 @@ export const legacySetupDatabase = (
                 }),
             ),
           );
-        yield* legacyStartInitSchema(input, tmpDir);
+        yield* legacyStartInitSchema(spawner, input, tmpDir);
         yield* legacyApplyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),
     );
@@ -875,6 +932,7 @@ export const legacySetupDatabase = (
  * no health/readiness checks of its own.
  */
 export const legacyStartSetupLocalDatabase = (
+  spawner: Spawner,
   input: LegacyStartSetupLocalDatabaseInput,
 ): Effect.Effect<
   void,
@@ -884,9 +942,20 @@ export const legacyStartSetupLocalDatabase = (
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    const toml = yield* legacyCheckDbToml(fs, path, workdir);
+    // `warnOnUnresolvedEnv: false` — both `start.handler.ts` and `db/start/
+    // start.handler.ts` already ran an earlier, same-invocation `legacyCheckDbToml`
+    // purely for its Go-parity validation side effect (their own callers discard the
+    // result) before ever reaching this fresh-volume setup, so that earlier call
+    // already printed Go's single `assertEnvLoaded` OrioleDB S3 WARN, if any. Without
+    // this, this module's own accepted duplicate config-load pass (see this module's
+    // header) would print the SAME warning a second time — a real, observable stderr
+    // divergence from Go's exactly-once `flags.LoadConfig`, unlike the harmless
+    // resolved-value duplication the header describes.
+    const toml = yield* legacyCheckDbToml(fs, path, workdir, undefined, {
+      warnOnUnresolvedEnv: false,
+    });
 
-    yield* legacySetupDatabase({
+    yield* legacySetupDatabase(spawner, {
       ...input,
       apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
       vault: toml.vault,
@@ -898,16 +967,19 @@ export const legacyStartSetupLocalDatabase = (
     // passes its own resolved reset version instead (`resetDatabase15`, `reset.go:169`)
     // — see `input.version`'s own doc comment. `experimental`/`pgDeltaEnabled`/
     // `schemaPaths` gate `legacyMigrateAndSeed`'s own declarative-schema-files branch
-    // (apply.go:19) — see its doc comment; `toml.pgDelta.enabled` is this module's own
-    // already-loaded config, not re-read from the caller. `input.seedFlags` applies
-    // `db reset`'s own `--no-seed`/`--sql-paths` overrides on top of the loaded
-    // `[db.seed]` config — a no-op for `db start`, which has neither flag.
+    // (apply.go:19) — see its doc comment; `toml.pgDelta.enabled` and `toml.schemaPaths`
+    // are this module's own already-loaded config (the latter already resolved +
+    // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env-overridden by `legacyCheckDbToml`,
+    // `legacy-db-config.toml-read.ts`), not re-read from the caller's raw, unresolved
+    // `ProjectConfig`. `input.seedFlags` applies `db reset`'s own `--no-seed`/
+    // `--sql-paths` overrides on top of the loaded `[db.seed]` config — a no-op for
+    // `db start`, which has neither flag.
     yield* legacyMigrateAndSeed(session, fs, path, workdir, input.version, {
       migrationsEnabled: toml.migrationsEnabled,
       seed: legacyResolveResetSeedConfig(toml.seed, input.seedFlags, path),
       experimental: input.experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
-      schemaPaths: input.config.db.migrations.schema_paths,
+      schemaPaths: toml.schemaPaths,
     });
 
     // Go's best-effort pgcache catalog warning (`pgcache.TryCacheMigrationsCatalog`,
@@ -954,6 +1026,11 @@ export interface LegacyFreshDbSetupInput<E> {
   readonly authEnabledForSetup: boolean;
   readonly serviceVersionOverrides: LocalServiceVersionOverrides;
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /**
+   * `--debug` — threaded straight through to {@link
+   * LegacyStartSetupLocalDatabaseInput.debug}; see its own doc comment.
+   */
+  readonly debug: boolean;
 }
 
 /**
@@ -962,8 +1039,9 @@ export interface LegacyFreshDbSetupInput<E> {
  * healthcheck passes on a fresh database (`db start`'s fresh-volume branch and
  * `db reset`'s PG15 recreate, see {@link LegacyFreshDbSetupInput}'s own doc
  * comment): dial the host-facing session (Go's `ConnectLocalPostgres`), resolve
- * JWKS + the three PG15+ one-shot job images via {@link legacyResolveDbSetupPrelude},
- * then run {@link legacyStartSetupLocalDatabase}
+ * JWKS + the three PG15+ one-shot job images' PINNED names via {@link
+ * legacyResolveDbSetupPrelude} (the same hoisted prelude the shadow-database variant
+ * uses), then run {@link legacyStartSetupLocalDatabase}
  * itself. `version`/`seedFlags` are the one genuine difference between the two
  * callers (`db start` always passes `""`/`{noSeed:false, sqlPaths:[]}`; `db
  * reset` passes its own resolved reset version/flags) — threaded straight
@@ -1005,9 +1083,9 @@ export const legacyRunFreshDbSetup = <E>(
         { isLocal: true, dnsResolver: "native" },
       );
 
-      const { jwks, images: dbSetupImages } = yield* legacyResolveDbSetupPrelude(spawner, setup);
+      const { jwks, images: dbSetupImages } = yield* legacyResolveDbSetupPrelude(setup);
 
-      yield* legacyStartSetupLocalDatabase({
+      yield* legacyStartSetupLocalDatabase(spawner, {
         session,
         fs: input.fs,
         path: input.path,
@@ -1019,6 +1097,7 @@ export const legacyRunFreshDbSetup = <E>(
         // jobs connect through. Unchanged from before CLI-1956, just now an explicit
         // parameter on `LegacySetupDatabaseInput` instead of computed inside it.
         dbHost: localDbContainerId(input.projectId),
+        projectId: input.projectId,
         networkId: input.networkId,
         dbUrl: setup.dbUrl,
         jwtSecret: setup.jwtSecret,
@@ -1030,6 +1109,8 @@ export const legacyRunFreshDbSetup = <E>(
         serviceRoleKey: setup.serviceRoleKey,
         storageTargetMigration: setup.storageTargetMigration,
         images: dbSetupImages,
+        projectEnvValues: setup.projectEnvValues,
+        debug: setup.debug,
         version: input.version,
         seedFlags: input.seedFlags,
       });

@@ -299,7 +299,7 @@ function legacyIsVolumeAlreadyExistsError(stderr: string): boolean {
 /**
  * Go's per-source-name `Docker.VolumeCreate` call (`docker.go:407-415`) via
  * `docker volume create --label ...`, treating "already exists" as success the
- * same way {@link legacyEnsureStartNetwork} does; any other non-zero exit is a
+ * same way {@link legacyEnsureNetwork} does; any other non-zero exit is a
  * real failure.
  *
  * Go's Engine API is idempotent for a repeated name, including against Podman's

@@ -28,6 +28,7 @@ import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-fact
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
+  LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
@@ -425,6 +426,8 @@ function setup(
     isLocal?: boolean;
     ref?: string;
     experimental?: boolean;
+    /** `--debug`. Defaults to `false`. */
+    debug?: boolean;
     remoteSeeds?: Readonly<Record<string, string>>;
     yes?: boolean;
     omitRef?: boolean;
@@ -503,6 +506,7 @@ function setup(
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
     telemetry.layer,
     linkedCache.layer,
   );

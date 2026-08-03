@@ -2,6 +2,7 @@ import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
@@ -152,6 +153,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const debug = yield* LegacyDebugFlag;
   const cliArgs = yield* CliArgs;
 
   // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320). Go
@@ -379,6 +381,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             cliConfig.workdir,
             declNetworkIdFlag,
             declRuntimeInfo.platform,
+            debug,
             // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
             // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
             connType === "linked" ? linkedRef : undefined,
@@ -614,6 +617,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           cliConfig.workdir,
           pullNetworkIdFlag,
           pullRuntimeInfo.platform,
+          debug,
           // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
           // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
           connType === "linked" ? linkedRef : undefined,

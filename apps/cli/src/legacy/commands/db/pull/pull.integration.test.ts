@@ -152,14 +152,18 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   let dumpRunCount = 0;
   const docker = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.die("run unused"),
-    // The native shadow's PG15+ one-shot platform-baseline jobs
-    // (`legacyRunStartMigrateJob`) go through this same `runCapture`, always
-    // `skipImageResolve: true` (unlike the real "runCapture unused" callers, if any
-    // are ever added to this suite) — succeed unconditionally so shadow setup itself
-    // never fails; this suite has no assertions over the one-shot jobs' own output.
-    runCapture: () => Effect.succeed({ exitCode: 0, stdout: new Uint8Array(), stderr: "" }),
+    runCapture: () => Effect.die("runCapture unused"),
     runStream: (runOpts, streamOpts) =>
       Effect.gen(function* () {
+        // The native shadow's PG15+ one-shot platform-baseline jobs
+        // (`legacyRunStartMigrateJob`) go through this same `runStream`, always
+        // `skipImageResolve: true` (the real `pg_dump` `runStream` call never sets
+        // it) — succeed unconditionally so shadow setup itself never fails; this
+        // suite has no assertions over the one-shot jobs' own output, and they must
+        // not be counted alongside the real `dumpCalls` this suite DOES assert on.
+        if (runOpts.skipImageResolve === true) {
+          return { exitCode: 0, stderr: "" };
+        }
         dumpRunCount += 1;
         dumpCalls.push({ env: runOpts.env, image: runOpts.image });
         if (opts.dumpFailFirstWith !== undefined && dumpRunCount === 1) {

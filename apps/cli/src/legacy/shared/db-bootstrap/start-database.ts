@@ -7,12 +7,14 @@
  * shape available in a codebase whose whole contract is byte-level Go parity. A future change to
  * Go's `StartDatabase` now only has one TS home to update.
  *
- * Exact Go call order: network ensure -> pre-create volume-existence probe (+ the
- * `fromBackup`-on-an-existing-volume guard) -> Postgres container create+start -> health wait
- * (swallowed ONLY when `fromBackup` is set — "restoring a large backup may take longer than 2
- * minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent pipeline (skipped IN FULL when
- * `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the LAST line of `StartDatabase`,
- * reached on every path that doesn't already return/fail above).
+ * Exact Go call order: pre-create volume-existence probe (+ the `fromBackup`-on-an-existing-volume
+ * guard) -> image resolve + network ensure (Go's `DockerStart` resolves the image, THEN creates
+ * the network, both strictly ahead of container create — `docker.go:363-386` — so NEITHER one
+ * ever runs on a request the volume guard above already rejected) -> Postgres container
+ * create+start -> health wait (swallowed ONLY when `fromBackup` is set — "restoring a large
+ * backup may take longer than 2 minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent
+ * pipeline (skipped IN FULL when `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the
+ * LAST line of `StartDatabase`, reached on every path that doesn't already return/fail above).
  *
  * Deliberately has ZERO knowledge of `--ignore-health-check` — matching Go exactly: that flag is
  * `internal/start/start.go`'s `Run()`'s own concern, entirely OUTSIDE `StartDatabase` (Go's
@@ -34,8 +36,10 @@
  *    `ensureImagesCached` pre-pull, before bring-up even starts, and just threads that value
  *    through.
  *  - `setup.jwks` — `db start` has no earlier use for JWKS at all, so it resolves it lazily,
- *    conditionally (only when reached AND `realtime.enabled`), matching Go's own `initSchema15`-
- *    local `ResolveJWKS` call (`internal/db/start/start.go:337-341`) exactly; `supabase start`
+ *    conditionally (only when reached AND `majorVersion >= 15` AND `realtime.enabled` — Go's
+ *    `initSchema`, `start.go:243-254`, only ever reaches `initSchema15`'s `ResolveJWKS` call on
+ *    PG15+; the PG13/14 branch, `InitSchema14`, never touches JWKS at all), matching Go's own
+ *    `initSchema15`-local `ResolveJWKS` call (`internal/db/start/start.go:337-341`) exactly; `supabase start`
  *    resolves JWKS once, unconditionally, near the top of its OWN prelude (feeding its
  *    long-running Realtime/GoTrue/PostgREST containers too — `internal/start/start.go:274-277`)
  *    and reuses that SAME already-resolved value here rather than re-resolving (a second resolve
@@ -166,21 +170,21 @@ export const legacyStartDatabase = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
 
-    yield* legacyEnsureNetwork(spawner, input.networkId, {
-      [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
-      [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
-    });
-
     // Go's pre-create volume-existence check (`internal/db/start/start.go:165-167`) — MUST run
-    // before Postgres's own volume gets created below: `docker volume create` is idempotent, so
-    // creating first would make "did this volume already exist" unobservable.
+    // before Postgres's own volume gets created below, AND before the network is created too:
+    // `docker volume create`/`docker network create` are both idempotent, so creating either
+    // first would make "did this volume already exist" unobservable, and would leave a Docker
+    // network behind even for a request the guard below is about to reject outright — Go's own
+    // `VolumeInspect` and the guard both run strictly BEFORE `DockerStart`, which is the ONLY
+    // place Go ever creates the network (`docker.go:363-386`).
     const isFreshVolume = !(yield* legacyVolumeExists(spawner, input.dbContainerId));
     input.onFreshVolumeResolved(isFreshVolume);
 
     const fromBackup = input.postgresSpec.fromBackup;
     if (!isFreshVolume && fromBackup !== undefined) {
       // Go's `StartDatabase` (`start.go:170-172`): a `--from-backup` restore into an
-      // already-provisioned volume is refused outright, BEFORE any container is created.
+      // already-provisioned volume is refused outright, BEFORE any container or network is
+      // created.
       return yield* Effect.fail(
         new LegacyStartBackupVolumeExistsError({
           message: "backup volume already exists",
@@ -189,16 +193,30 @@ export const legacyStartDatabase = <E>(
       );
     }
 
-    if (output.format === "text") {
-      yield* output.raw(
-        isFreshVolume
-          ? LEGACY_START_STARTING_DATABASE_MESSAGE
-          : LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
-        "stderr",
-      );
-    }
+    // Go's `StartDatabase` (`start.go:168-175`) prints this unconditionally to stderr — Go has
+    // no output-format concept for this seam at all. Matches every other progress line in this
+    // same pipeline (`db-setup.ts`'s "Initialising schema..."/"Seeding globals...",
+    // `legacy-migrate-and-seed.ts`'s "Applying migration ..."), which are also unguarded
+    // (review: PRRT_kwDOErm0O86VmHkn).
+    yield* output.raw(
+      isFreshVolume
+        ? LEGACY_START_STARTING_DATABASE_MESSAGE
+        : LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
+      "stderr",
+    );
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
+
+    // Go's `DockerStart` (`docker.go:363-386`): image resolve, THEN network create, both
+    // strictly ahead of container create — hoisted here to run ONCE per `start` run instead of
+    // once per container (Go's own repeated per-container call is a no-op after the first, see
+    // `legacyEnsureNetwork`'s own doc comment), but kept in Go's own relative position:
+    // after the volume probe/guard above, never before it.
+    yield* legacyEnsureNetwork(spawner, input.networkId, {
+      [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
+      [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
+    });
+
     const postgresSpec = legacyBuildPostgresStartContainerSpec({
       ...input.postgresSpec,
       image: resolvedPostgresImage,

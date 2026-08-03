@@ -394,6 +394,7 @@ export const legacyPrepareRawShadow = (
  * on its own instead, while this function stays the exact `setupShadowConn` shape.
  */
 export const legacySetupShadowConn = (
+  spawner: Spawner,
   input: LegacySetupDatabaseInput,
   withTemplate: boolean,
 ): Effect.Effect<
@@ -402,7 +403,7 @@ export const legacySetupShadowConn = (
   Output | LegacyDockerRun | RuntimeInfo
 > =>
   Effect.gen(function* () {
-    yield* legacySetupDatabase(input);
+    yield* legacySetupDatabase(spawner, input);
     if (!withTemplate) return;
     yield* input.session.exec(LEGACY_SHADOW_CREATE_TEMPLATE_SQL).pipe(
       Effect.mapError(
@@ -435,6 +436,8 @@ interface LegacyShadowSetupRunInput<E> {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly workdir: string;
+  /** Go's `Config.ProjectId` — labels the shadow's own PG15+ one-shot migrate job containers, same as the real local `db` container's — see {@link LegacySetupDatabaseInput.projectId}'s own doc comment. */
+  readonly projectId: string;
   readonly container: string;
   readonly networkId: string;
   /** The shadow's own connect target — host/port/user/password/database (`postgres`/`postgres`). */
@@ -464,6 +467,7 @@ export const legacyBuildShadowSetupDatabaseInput = <E>(
   // Go's `container[:12]` — see this module's own header for why this resolves as a
   // hostname at all despite the shadow container having no name/alias.
   dbHost: input.container.slice(0, 12),
+  projectId: input.projectId,
   networkId: input.networkId,
   dbUrl: input.setup.dbUrl,
   jwtSecret: input.setup.jwtSecret,
@@ -475,6 +479,8 @@ export const legacyBuildShadowSetupDatabaseInput = <E>(
   serviceRoleKey: input.setup.serviceRoleKey,
   storageTargetMigration: input.setup.storageTargetMigration,
   images: resolved.images,
+  projectEnvValues: input.setup.projectEnvValues,
+  debug: input.setup.debug,
   apiAutoExposeNewTables: input.setup.apiAutoExposeNewTables,
   vault: input.setup.vault,
 });
@@ -482,15 +488,15 @@ export const legacyBuildShadowSetupDatabaseInput = <E>(
 /**
  * Port of Go's `SetupShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:181-193`):
  * connects to the shadow (Go's `ConnectShadowDatabase`, {@link legacyConnectShadowDatabase})
- * FIRST, THEN resolves the setup prelude (JWKS/image pulls, {@link legacyResolveDbSetupPrelude})
- * and runs {@link legacySetupShadowConn} WITH the template database — the platform baseline
- * only, no user migrations. Connect-then-setup, matching Go's own `SetupShadowDatabase` (which
- * dials `ConnectShadowDatabase` before ever calling `start.SetupDatabase`, `diff.go:186-192`)
- * and this same module's `legacyRunFreshDbSetup` (`db-setup.ts`) for the real local `db`
- * container: an unconnectable shadow must surface a connect error immediately, not pay for
- * image-pull/JWKS work first. The connection is closed once this resolves (Go's `defer
- * conn.Close(...)`), matching `Effect.scoped`'s finalizer running at the end of this function
- * rather than leaking a `Scope.Scope` requirement to the caller.
+ * FIRST, THEN resolves the setup prelude (JWKS/pinned image names, {@link
+ * legacyResolveDbSetupPrelude}) and runs {@link legacySetupShadowConn} WITH the template
+ * database — the platform baseline only, no user migrations. Connect-then-setup, matching Go's
+ * own `SetupShadowDatabase` (which dials `ConnectShadowDatabase` before ever calling
+ * `start.SetupDatabase`, `diff.go:186-192`) and this same module's `legacyRunFreshDbSetup`
+ * (`db-setup.ts`) for the real local `db` container: an unconnectable shadow must surface a
+ * connect error immediately, not pay for JWKS work first. The connection is closed once this
+ * resolves (Go's `defer conn.Close(...)`), matching `Effect.scoped`'s finalizer running at the
+ * end of this function rather than leaking a `Scope.Scope` requirement to the caller.
  */
 export const legacySetupShadowDatabase = <E>(
   spawner: Spawner,
@@ -503,8 +509,9 @@ export const legacySetupShadowDatabase = <E>(
   Effect.scoped(
     Effect.gen(function* () {
       const session = yield* legacyConnectShadowDatabase(input.connConfig);
-      const resolved = yield* legacyResolveDbSetupPrelude(spawner, input.setup);
+      const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
       yield* legacySetupShadowConn(
+        spawner,
         legacyBuildShadowSetupDatabaseInput(input, session, resolved),
         true,
       );
@@ -515,7 +522,7 @@ export const legacySetupShadowDatabase = <E>(
  * Port of Go's `MigrateShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:195-209`):
  * lists local migrations FIRST (Go's `migration.ListLocalMigrations`, fails fast on a bad
  * migrations directory before any DB connection is even attempted), THEN connects (Go's
- * `ConnectShadowDatabase`), THEN resolves the setup prelude (JWKS/image pulls, {@link
+ * `ConnectShadowDatabase`), THEN resolves the setup prelude (JWKS/pinned image names, {@link
  * legacyResolveDbSetupPrelude}) and sets up the platform baseline + template database ({@link
  * legacySetupShadowConn}, `withTemplate: true`), then applies every listed migration (Go's
  * `migration.ApplyMigrations`). Connect-then-setup (not the reverse) matches Go's own
@@ -542,8 +549,9 @@ export const legacyMigrateShadowDatabase = <E>(
       ).pipe(Effect.mapError((cause) => new LegacyShadowDbError({ message: cause.message })));
 
       const session = yield* legacyConnectShadowDatabase(input.connConfig);
-      const resolved = yield* legacyResolveDbSetupPrelude(spawner, input.setup);
+      const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
       yield* legacySetupShadowConn(
+        spawner,
         legacyBuildShadowSetupDatabaseInput(input, session, resolved),
         true,
       );
