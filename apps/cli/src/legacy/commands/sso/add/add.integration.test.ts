@@ -23,11 +23,10 @@ import { legacySsoAdd } from "./add.handler.ts";
 const RESPONSE_PROVIDER = {
   id: "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8",
   saml: {
-    id: "saml-1",
     entity_id: "https://example.com",
     attribute_mapping: { keys: { a: { name: "xyz", default: 3 } } },
   },
-  domains: [{ id: "d1", domain: "example.com" }],
+  domains: [{ domain: "example.com" }],
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-add-int-");
