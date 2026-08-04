@@ -518,17 +518,21 @@ describe("legacy functions serve integration", () => {
           },
         });
 
-        // Bare `kong reload`, matching Go's `restartEdgeRuntime`
-        // (`internal/functions/serve/serve.go:129`) — the `--nginx-conf`
-        // template argument belongs to `start`'s Kong bring-up, not reload.
+        // The reload must carry bring-up's `--nginx-conf`; a bare `kong reload`
+        // re-renders nginx.conf from Kong's default template and drops the
+        // `email_templates` server GoTrue fetches (issue #6059).
         expect(deployMockState.runCalls).toContainEqual({
           command: "docker",
-          args: ["exec", "supabase_kong_test-project", "kong", "reload"],
+          args: [
+            "exec",
+            "supabase_kong_test-project",
+            "kong",
+            "reload",
+            "--nginx-conf",
+            "/home/kong/custom_nginx.template",
+          ],
           options: { stdout: "ignore", stderr: "pipe" },
         });
-        expect(deployMockState.runCalls.some((call) => call.args.includes("--nginx-conf"))).toBe(
-          false,
-        );
 
         expect(childSpawner.spawned).toEqual([
           {
