@@ -322,7 +322,7 @@ describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {
     writeFileSync(join(tempDir, "catalog-local-declarative-other-50.json"), "{}");
     return withServices((fs, path) =>
       Effect.gen(function* () {
-        const latest = yield* legacyResolveDeclarativeCatalogPath(fs, path, tempDir, "local", "h");
+        const latest = yield* legacyResolveDeclarativeCatalogPath(fs, path, tempDir, "h", "local");
         expect(Option.getOrNull(latest)?.endsWith("catalog-local-declarative-h-300.json")).toBe(
           true,
         );

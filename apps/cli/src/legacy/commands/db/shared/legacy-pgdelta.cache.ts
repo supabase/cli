@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Clock, Effect, type FileSystem, Option, type Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
+import type { LegacyBaselineTomlConfig } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
 import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "./legacy-pgdelta.ts";
@@ -13,6 +14,14 @@ import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
  * `internal/db/pgcache/cache.go`). Byte-stable parity matters: caches under
  * `supabase/.temp/pgdelta/` are shared with the Go binary, so a drifting key
  * would silently miss (re-provision) or over-hit (reuse a stale snapshot).
+ *
+ * Beyond the pure key/path builders, this file also owns the migrations-catalog
+ * RESOLUTION path for both `db diff --from/--to migrations` and `db schema
+ * declarative sync` ({@link legacyResolveMigrationsCatalogRef},
+ * {@link legacyGetMigrationsCatalogRef}) — including shadow-database provisioning/
+ * removal via `LegacyDeclarativeSeam` (Docker orchestration, unchanged from the Go
+ * seam) and the "Creating shadow database..." stderr side effect the latter prints
+ * on a cache miss. It is not a pure module.
  */
 
 const CATALOG_PREFIX_PATTERN = /[^a-zA-Z0-9._-]+/g;
@@ -119,13 +128,7 @@ export const legacyResolveSetupInputs = Effect.fnUntraced(function* (
   workdir: string,
   majorVersion: number,
   orioledbVersion: string | undefined,
-  baseline: {
-    readonly authEnabled: boolean;
-    readonly storageEnabled: boolean;
-    readonly realtimeEnabled: boolean;
-    readonly apiAutoExposeNewTables: Option.Option<boolean>;
-    readonly vaultNames: ReadonlyArray<string>;
-  },
+  baseline: LegacyBaselineTomlConfig,
 ) {
   const image = yield* legacyResolveDbImage(fs, path, workdir, majorVersion, orioledbVersion);
   const rolesPath = path.join(workdir, "supabase", "roles.sql");
@@ -338,19 +341,21 @@ const listJsonEntries = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, 
 });
 
 /**
- * Resolves the newest cached declarative catalog for `(prefix, hash)`. Mirrors
- * Go's `resolveDeclarativeCatalogPath` (`declarative.go:578`): of all
- * `catalog-<prefix>-declarative-<hash>-<ts>.json`, returns the highest `ts`.
+ * Shared "highest suffixed timestamp wins" scan behind both
+ * {@link legacyResolveDeclarativeCatalogPath} and {@link legacyResolveMigrationCatalogPath}:
+ * of every `<familyPrefix><ts>.json` entry in `tempDir`, returns the path with the
+ * highest `ts`. Mirrors both Go's `resolveDeclarativeCatalogPath`
+ * (`declarative.go:578`) and `pgcache.ResolveMigrationCatalogPath`
+ * (`internal/db/pgcache/cache.go:112-149`), which share this exact scan over their
+ * own filename family — only the family prefix differs between callers.
  */
-export const legacyResolveDeclarativeCatalogPath = Effect.fnUntraced(function* (
+const resolveLatestByFamily = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   tempDir: string,
-  prefix: string,
-  hash: string,
+  familyPrefix: string,
 ) {
   const entries = yield* listJsonEntries(fs, tempDir);
-  const familyPrefix = `catalog-${legacySanitizedCatalogPrefix(prefix)}-declarative-${hash}-`;
   let latestPath = Option.none<string>();
   let latest = -1;
   for (const name of entries) {
@@ -362,6 +367,26 @@ export const legacyResolveDeclarativeCatalogPath = Effect.fnUntraced(function* (
     }
   }
   return latestPath;
+});
+
+/**
+ * Resolves the newest cached declarative catalog for `(hash, prefix)`. Mirrors
+ * Go's `resolveDeclarativeCatalogPath` (`declarative.go:578`): of all
+ * `catalog-<prefix>-declarative-<hash>-<ts>.json`, returns the highest `ts`.
+ */
+export const legacyResolveDeclarativeCatalogPath = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tempDir: string,
+  hash: string,
+  prefix: string,
+) {
+  return yield* resolveLatestByFamily(
+    fs,
+    path,
+    tempDir,
+    `catalog-${legacySanitizedCatalogPrefix(prefix)}-declarative-${hash}-`,
+  );
 });
 
 const cleanupOldCatalogsByFamily = Effect.fnUntraced(function* (
@@ -446,19 +471,12 @@ export const legacyResolveMigrationCatalogPath = Effect.fnUntraced(function* (
   hash: string,
   prefix: string,
 ) {
-  const entries = yield* listJsonEntries(fs, tempDir);
-  const familyPrefix = `catalog-${legacySanitizedCatalogPrefix(prefix)}-migrations-${hash}-`;
-  let latestPath = Option.none<string>();
-  let latest = -1;
-  for (const name of entries) {
-    if (!name.startsWith(familyPrefix) || !name.endsWith(".json")) continue;
-    const stamp = Number(name.slice(familyPrefix.length, -".json".length));
-    if (Number.isInteger(stamp) && stamp > latest) {
-      latest = stamp;
-      latestPath = Option.some(path.join(tempDir, name));
-    }
-  }
-  return latestPath;
+  return yield* resolveLatestByFamily(
+    fs,
+    path,
+    tempDir,
+    `catalog-${legacySanitizedCatalogPrefix(prefix)}-migrations-${hash}-`,
+  );
 });
 
 /**
@@ -531,6 +549,56 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
 });
 
 /**
+ * Shared shadow-provision → pg-delta export → persist → cleanup mechanics behind
+ * both {@link legacyResolveMigrationsCatalogRef} and {@link legacyGetMigrationsCatalogRef}
+ * on a cache miss: provisions the shadow via the EXISTING
+ * `LegacyDeclarativeSeam.provisionShadow` (Go's `db __shadow --mode diff`, unchanged
+ * / out of scope for CLI-1959 — `CreateShadowDatabase` + `MigrateShadowDatabase` are
+ * the exact same Go primitives both callers' Go counterparts call directly,
+ * `internal/db/diff/shadow.go:37-53` with `targetLocal=false` skipping its only
+ * extra branch), exports its catalog via the already-native
+ * {@link legacyExportCatalogPgDelta} (the same edge-runtime script Go's own
+ * `ExportCatalogPgDelta` runs), hands the snapshot to `persist` to decide where it
+ * lands on disk, then ALWAYS removes the shadow container (`Effect.ensuring`,
+ * success or failure) before returning. The persisted path is made relative to
+ * `ctx.cwd` before returning: every caller feeds this ref into pg-delta's
+ * edge-runtime scripts as SOURCE/TARGET, which prefix a bare (non-postgres://) ref
+ * with `/workspace/` — matching the container bind `${ctx.cwd}:/workspace`
+ * (`legacyPgDeltaContainerRef`, `legacy-pgdelta.ts:100-103`). Go's equivalent
+ * (`pgcache.WriteMigrationCatalogSnapshot`) is only ever built from `utils.TempDir`,
+ * a workdir-RELATIVE constant (Go chdirs into the workdir first), so the ref it
+ * returns is relative too; return the same shape here rather than the absolute host
+ * path `persist` builds internally. The two public functions differ only in their
+ * cache-decision and `persist`'s cache-write logic, not in this mechanics.
+ */
+const exportViaShadowCatalog = <E, R>(
+  path: Path.Path,
+  ctx: LegacyPgDeltaContext,
+  provisionParams: { readonly projectRef?: string },
+  persist: (snapshot: string) => Effect.Effect<string, E, R>,
+) =>
+  Effect.gen(function* () {
+    const seam = yield* LegacyDeclarativeSeam;
+    const shadow = yield* seam.provisionShadow({
+      mode: "diff",
+      targetLocal: false,
+      usePgDelta: false,
+      schema: [],
+      ...(provisionParams.projectRef !== undefined
+        ? { projectRef: provisionParams.projectRef }
+        : {}),
+    });
+    const written = yield* Effect.gen(function* () {
+      const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
+        targetRef: shadow.sourceUrl,
+        role: "postgres",
+      });
+      return yield* persist(snapshot);
+    }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+    return path.relative(ctx.cwd, written);
+  });
+
+/**
  * Resolves the pg-delta migrations-catalog ref for `db diff`'s explicit
  * `--from migrations` / `--to migrations` target — the native replacement for
  * the hidden Go seam `db schema declarative __catalog --mode migrations` this
@@ -545,15 +613,9 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
  * and prints no "Creating shadow database..." line (Go calls the shadow
  * primitives directly, without `DiffDatabase`'s own progress line).
  *
- * On a cache miss, provisions the shadow via the EXISTING
- * `LegacyDeclarativeSeam.provisionShadow` (Go's `db __shadow --mode diff`,
- * unchanged / out of scope for CLI-1959 — see `legacy-pgdelta.seam.layer.ts`):
- * `CreateShadowDatabase` + `MigrateShadowDatabase` are the exact same Go
- * primitives `resolveMigrationsCatalogRef` calls directly
- * (`internal/db/diff/shadow.go:37-53` with `targetLocal=false` skips its only
- * extra branch). The catalog itself is exported via the already-native
- * {@link legacyExportCatalogPgDelta} (the same edge-runtime script Go's own
- * `ExportCatalogPgDelta` runs) and cached with
+ * On a cache miss, the shadow-provision/export/persist/cleanup mechanics are
+ * shared with {@link legacyGetMigrationsCatalogRef} via {@link exportViaShadowCatalog}
+ * — see its doc comment. The catalog is cached with
  * {@link legacyWriteMigrationCatalogSnapshot}.
  */
 export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
@@ -568,38 +630,20 @@ export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
   const cached = yield* legacyResolveMigrationCatalogPath(fs, path, tempDir, hash, "local");
   if (Option.isSome(cached)) return path.relative(ctx.cwd, cached.value);
 
-  const seam = yield* LegacyDeclarativeSeam;
-  const shadow = yield* seam.provisionShadow({
-    mode: "diff",
-    targetLocal: false,
-    usePgDelta: false,
-    schema: [],
-    ...(params.projectRef !== undefined ? { projectRef: params.projectRef } : {}),
-  });
-  const written = yield* Effect.gen(function* () {
-    const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
-      targetRef: shadow.sourceUrl,
-      role: "postgres",
-    });
-    const timestamp = yield* Clock.currentTimeMillis;
-    return yield* legacyWriteMigrationCatalogSnapshot(
-      fs,
-      path,
-      tempDir,
-      "local",
-      hash,
-      snapshot,
-      timestamp,
-    );
-  }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
-  // Every caller feeds this ref into pg-delta's edge-runtime scripts as SOURCE/
-  // TARGET, which prefix a bare (non-postgres://) ref with `/workspace/` —
-  // matching the container bind `${ctx.cwd}:/workspace` (`legacyPgDeltaContainerRef`,
-  // `legacy-pgdelta.ts:100-103`). Go's equivalent (`pgcache.WriteMigrationCatalogSnapshot`)
-  // is only ever built from `utils.TempDir`, a workdir-RELATIVE constant (Go chdirs
-  // into the workdir first), so the ref it returns is relative too; return the same
-  // shape here rather than the absolute host path the write helpers use internally.
-  return path.relative(ctx.cwd, written);
+  return yield* exportViaShadowCatalog(path, ctx, params, (snapshot) =>
+    Effect.gen(function* () {
+      const timestamp = yield* Clock.currentTimeMillis;
+      return yield* legacyWriteMigrationCatalogSnapshot(
+        fs,
+        path,
+        tempDir,
+        "local",
+        hash,
+        snapshot,
+        timestamp,
+      );
+    }),
+  );
 });
 
 /** `catalog-nocache-migrations.json` — Go's `noCacheMigrationsCatalogPath` (`declarative.go:51`). */
@@ -619,12 +663,9 @@ const NO_CACHE_MIGRATIONS_CATALOG_NAME = "catalog-nocache-migrations.json";
  * "Creating shadow database..." to stderr on a cache miss
  * (`declarative.go:490`, reached only when `createShadow` actually runs).
  *
- * Shadow provisioning reuses the EXISTING `LegacyDeclarativeSeam.provisionShadow`
- * (Go's `db __shadow --mode diff`, unchanged / out of scope for CLI-1959) exactly
- * as {@link legacyResolveMigrationsCatalogRef} does — `MigrateShadowDatabase` is
- * the same Go primitive both `getMigrationsCatalogRef` and `PrepareShadowSource`
- * call. The catalog itself is exported via the already-native
- * {@link legacyExportCatalogPgDelta}.
+ * On a cache miss, the shadow-provision/export/persist/cleanup mechanics are
+ * shared with {@link legacyResolveMigrationsCatalogRef} via
+ * {@link exportViaShadowCatalog} — see its doc comment.
  */
 export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -661,42 +702,29 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
   }
 
   yield* output.raw("Creating shadow database...\n", "stderr");
-  const seam = yield* LegacyDeclarativeSeam;
-  const shadow = yield* seam.provisionShadow({
-    mode: "diff",
-    targetLocal: false,
-    usePgDelta: false,
-    schema: [],
-    ...(params.projectRef !== undefined ? { projectRef: params.projectRef } : {}),
-  });
-  const written = yield* Effect.gen(function* () {
-    const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
-      targetRef: shadow.sourceUrl,
-      role: "postgres",
-    });
-    if (params.noCache) {
-      yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(Effect.ignore);
-      const noCachePath = path.join(tempDir, NO_CACHE_MIGRATIONS_CATALOG_NAME);
-      yield* fs.writeFileString(noCachePath, snapshot);
-      return noCachePath;
-    }
-    if (zeroMigrations) {
-      yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(Effect.ignore);
-      yield* fs.writeFileString(baselinePath, snapshot);
-      return baselinePath;
-    }
-    const timestamp = yield* Clock.currentTimeMillis;
-    return yield* legacyWriteMigrationCatalogSnapshot(
-      fs,
-      path,
-      tempDir,
-      "local",
-      hash,
-      snapshot,
-      timestamp,
-    );
-  }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
-  // See `legacyResolveMigrationsCatalogRef`'s matching comment: every caller feeds
-  // this ref into pg-delta's edge-runtime scripts, which expect it workdir-relative.
-  return path.relative(ctx.cwd, written);
+  return yield* exportViaShadowCatalog(path, ctx, params, (snapshot) =>
+    Effect.gen(function* () {
+      if (params.noCache) {
+        yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(Effect.ignore);
+        const noCachePath = path.join(tempDir, NO_CACHE_MIGRATIONS_CATALOG_NAME);
+        yield* fs.writeFileString(noCachePath, snapshot);
+        return noCachePath;
+      }
+      if (zeroMigrations) {
+        yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(Effect.ignore);
+        yield* fs.writeFileString(baselinePath, snapshot);
+        return baselinePath;
+      }
+      const timestamp = yield* Clock.currentTimeMillis;
+      return yield* legacyWriteMigrationCatalogSnapshot(
+        fs,
+        path,
+        tempDir,
+        "local",
+        hash,
+        snapshot,
+        timestamp,
+      );
+    }),
+  );
 });

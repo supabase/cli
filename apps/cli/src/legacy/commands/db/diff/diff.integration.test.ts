@@ -664,6 +664,13 @@ describe("legacy db diff", () => {
       expect(s.provisionCalls).toEqual([
         { mode: "diff", targetLocal: false, usePgDelta: false, projectRef: undefined },
       ]);
+      // `resolveMigrationsCatalogRef` (Go's `explicit.go:88-126`) calls the shadow
+      // primitives directly, without `DiffDatabase`'s own progress line — unlike
+      // `db schema declarative sync`'s `getMigrationsCatalogRef`, which DOES print
+      // it (`legacy-pgdelta.cache.ts`'s `legacyGetMigrationsCatalogRef`). This
+      // stderr asymmetry is the parity fix CLI-1959 makes; pin it here even though
+      // a shadow was actually provisioned on this cache miss.
+      expect(s.out.stderrText).not.toContain("Creating shadow database...");
     }).pipe(Effect.provide(s.layer));
   });
 

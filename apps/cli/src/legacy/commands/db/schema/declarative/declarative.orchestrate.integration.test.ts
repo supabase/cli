@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { mockOutput } from "../../../../../../tests/helpers/mocks.ts";
 import {
@@ -14,6 +14,10 @@ import { LegacyPgDeltaSslProbe } from "../../../../shared/legacy-pgdelta-ssl-pro
 import {
   legacyBaselineCatalogFileName,
   legacyBaselineCatalogKey,
+  legacyHashMigrations,
+  legacyMigrationCatalogFileName,
+  legacyMigrationsCatalogCacheKey,
+  legacySetupInputsToken,
   type LegacySetupInputs,
 } from "../../shared/legacy-pgdelta.cache.ts";
 import {
@@ -201,6 +205,144 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
+        Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, out.layer, BunServices.layer)),
+      );
+    },
+  );
+
+  it.effect(
+    "with local migrations present and cache enabled, provisions a shadow and caches the resulting catalog",
+    () => {
+      // The dominant real-world code path (a project WITH local migrations, cache
+      // enabled) — `legacyGetMigrationsCatalogRef`'s cache-miss/non-zero-migrations
+      // branch (declarative.go:393-430) — was previously never exercised by any
+      // test; every other test here uses a fresh temp dir with zero migrations.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+      const declDir = join(dir, "supabase", "database");
+      mkdirSync(declDir, { recursive: true });
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20240101000000_init.sql"), "create table a();\n");
+      const seam = mockSeam({
+        declarative: "supabase/.temp/pgdelta/decl.json",
+        baseline: "supabase/.temp/pgdelta/base.json",
+      });
+      const edge = mockEdge("ALTER TABLE x ADD COLUMN y int;\n");
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const migrationsHash = yield* legacyHashMigrations(fs, path, dir, migrationsDir);
+        const key = legacyMigrationsCatalogCacheKey(
+          legacySetupInputsToken(setupInputs),
+          migrationsHash,
+        );
+        const result = yield* legacyDiffDeclarativeToMigrations(ctx(dir, declDir), setupInputs);
+        expect(result.sourceRef).toMatch(
+          new RegExp(
+            `^supabase[/\\\\]\\.temp[/\\\\]pgdelta[/\\\\]catalog-local-migrations-${key}-\\d+\\.json$`,
+          ),
+        );
+        expect(readFileSync(join(dir, result.sourceRef), "utf8")).toBe('{"schemas":[]}');
+        expect(out.stderrText).toContain("Creating shadow database...\n");
+        expect(seam.provisionCalls).toEqual([
+          { mode: "diff", targetLocal: false, usePgDelta: false, projectRef: undefined },
+        ]);
+        expect(seam.removedContainers).toEqual(["shadow-1"]);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, out.layer, BunServices.layer)),
+      );
+    },
+  );
+
+  it.effect(
+    "reuses an already-cached migrations catalog for local migrations without provisioning a new shadow",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+      const declDir = join(dir, "supabase", "database");
+      mkdirSync(declDir, { recursive: true });
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20240101000000_init.sql"), "create table a();\n");
+      const tempDir = join(dir, "supabase", ".temp", "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      const seam = mockSeam({
+        declarative: "supabase/.temp/pgdelta/decl.json",
+        baseline: "supabase/.temp/pgdelta/base.json",
+      });
+      const edge = mockEdge("ALTER TABLE x;\n");
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const migrationsHash = yield* legacyHashMigrations(fs, path, dir, migrationsDir);
+        const key = legacyMigrationsCatalogCacheKey(
+          legacySetupInputsToken(setupInputs),
+          migrationsHash,
+        );
+        const cachedPath = join(
+          tempDir,
+          legacyMigrationCatalogFileName("local", key, 1_700_000_000_000),
+        );
+        writeFileSync(cachedPath, '{"cached":true}');
+        const result = yield* legacyDiffDeclarativeToMigrations(ctx(dir, declDir), setupInputs);
+        expect(result.sourceRef).toBe(path.relative(dir, cachedPath));
+        expect(readFileSync(cachedPath, "utf8")).toBe('{"cached":true}');
+        expect(seam.provisionCalls).toEqual([]);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, out.layer, BunServices.layer)),
+      );
+    },
+  );
+
+  it.effect(
+    "--no-cache ignores an already-cached migrations catalog, provisions a fresh shadow, and writes catalog-nocache-migrations.json",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+      const declDir = join(dir, "supabase", "database");
+      mkdirSync(declDir, { recursive: true });
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20240101000000_init.sql"), "create table a();\n");
+      const tempDir = join(dir, "supabase", ".temp", "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      const seam = mockSeam({
+        declarative: "supabase/.temp/pgdelta/decl.json",
+        baseline: "supabase/.temp/pgdelta/base.json",
+      });
+      const edge = mockEdge("ALTER TABLE x;\n");
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Pre-warm the cache entry that a cache-enabled run would hit, proving
+        // --no-cache really skips the lookup rather than merely never having
+        // written that entry.
+        const migrationsHash = yield* legacyHashMigrations(fs, path, dir, migrationsDir);
+        const key = legacyMigrationsCatalogCacheKey(
+          legacySetupInputsToken(setupInputs),
+          migrationsHash,
+        );
+        const cachedPath = join(
+          tempDir,
+          legacyMigrationCatalogFileName("local", key, 1_700_000_000_000),
+        );
+        writeFileSync(cachedPath, '{"cached":true}');
+        const result = yield* legacyDiffDeclarativeToMigrations(
+          { ...ctx(dir, declDir), noCache: true },
+          setupInputs,
+        );
+        expect(result.sourceRef).toBe(
+          join("supabase", ".temp", "pgdelta", "catalog-nocache-migrations.json"),
+        );
+        expect(readFileSync(join(dir, result.sourceRef), "utf8")).toBe('{"schemas":[]}');
+        expect(seam.provisionCalls).toEqual([
+          { mode: "diff", targetLocal: false, usePgDelta: false, projectRef: undefined },
+        ]);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
         Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, out.layer, BunServices.layer)),
       );
     },
