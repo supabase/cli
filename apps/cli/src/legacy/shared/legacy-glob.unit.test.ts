@@ -1,8 +1,8 @@
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
-import { legacyGlobPattern, legacyResolveUnderWorkdir } from "./legacy-glob.ts";
+import { legacyGlobPattern, legacyResolveUnderWorkdir, legacyWalkSqlFiles } from "./legacy-glob.ts";
 
 /**
  * A `FileSystem.FileSystem` that answers `readDirectory` from a fixed map (keyed by the exact
@@ -88,6 +88,114 @@ describe("legacyGlobPattern", () => {
       }).pipe(Effect.provide(Layer.mergeAll(layer, BunPath.layerWin32)));
     },
   );
+});
+
+function fakeFileInfo(type: FileSystem.File.Type): FileSystem.File.Info {
+  return {
+    type,
+    mtime: Option.none(),
+    atime: Option.none(),
+    birthtime: Option.none(),
+    dev: 0,
+    ino: Option.none(),
+    mode: 0,
+    nlink: Option.none(),
+    uid: Option.none(),
+    gid: Option.none(),
+    rdev: Option.none(),
+    size: 0n as FileSystem.Size,
+    blksize: Option.none(),
+    blocks: Option.none(),
+  };
+}
+
+const notASymlink = (path: string) =>
+  PlatformError.systemError({
+    _tag: "NotFound",
+    module: "FileSystem",
+    method: "readLink",
+    description: `not a symlink: ${path}`,
+    pathOrDescriptor: path,
+  });
+
+const statFailure = (path: string) =>
+  PlatformError.systemError({
+    _tag: "PermissionDenied",
+    module: "FileSystem",
+    method: "stat",
+    description: `EACCES: permission denied, stat '${path}'`,
+    pathOrDescriptor: path,
+  });
+
+/**
+ * A `FileSystem.FileSystem` entirely backed by fixed maps: `readDirectory` answers from
+ * `entries`, `readLink` always fails (every entry looks like "not a symlink" to
+ * `legacyWalkSqlFiles`'s probe), and `stat` answers from `statTypes` — except for
+ * `statFailsFor`, which fails, simulating a permission/I/O error reading an entry
+ * `readDirectory` just listed (distinct from a benign not-a-symlink `readLink` failure). Every
+ * other method is `legacyWalkSqlFiles`-unreachable noise, so it's left as `FileSystem.makeNoop`'s
+ * default `NotFound` failure.
+ */
+function fakeWalkFs(
+  entries: Record<string, ReadonlyArray<string>>,
+  statTypes: Record<string, FileSystem.File.Type>,
+  statFailsFor?: string,
+) {
+  return Layer.succeed(
+    FileSystem.FileSystem,
+    FileSystem.makeNoop({
+      readDirectory: (dir) => Effect.succeed([...(entries[dir] ?? [])]),
+      readLink: (path) => Effect.fail(notASymlink(path)),
+      stat: (path) =>
+        path === statFailsFor
+          ? Effect.fail(statFailure(path))
+          : Effect.succeed(fakeFileInfo(statTypes[path] ?? "File")),
+    }),
+  );
+}
+
+describe("legacyWalkSqlFiles", () => {
+  it.effect("propagates a stat failure instead of silently treating the entry as absent", () => {
+    // Go's `fs.WalkDir` (`walkMatchedDir`, `pkg/config/config.go:194-207`) propagates a
+    // per-entry stat/lstat error from its walk callback, aborting `Glob.SQLFiles` entirely —
+    // a directory `readDirectory` can list but `stat` then fails to read (permission denied,
+    // removed mid-walk, I/O error) must fail the whole walk, not silently resolve to "no file
+    // here" (review: PRRT_kwDOErm0O86WXFqr).
+    const layer = fakeWalkFs({ "/schemas": ["broken.sql"] }, {}, "/schemas/broken.sql");
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const exit = yield* Effect.exit(legacyWalkSqlFiles(fs, "/schemas", ""));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("still lists regular .sql files when every stat succeeds", () => {
+    const layer = fakeWalkFs(
+      { "/schemas": ["a.sql", "b.txt"] },
+      { "/schemas/a.sql": "File", "/schemas/b.txt": "File" },
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const files = yield* legacyWalkSqlFiles(fs, "/schemas", "");
+      expect([...files]).toEqual(["a.sql"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("recurses into subdirectories and sorts is left to the caller", () => {
+    const layer = fakeWalkFs(
+      { "/schemas": ["nested", "top.sql"], "/schemas/nested": ["inner.sql"] },
+      {
+        "/schemas/nested": "Directory",
+        "/schemas/top.sql": "File",
+        "/schemas/nested/inner.sql": "File",
+      },
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const files = yield* legacyWalkSqlFiles(fs, "/schemas", "");
+      expect([...files].sort()).toEqual(["nested/inner.sql", "top.sql"]);
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("legacyResolveUnderWorkdir", () => {
