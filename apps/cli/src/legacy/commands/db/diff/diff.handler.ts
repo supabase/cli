@@ -46,12 +46,13 @@ Run ${legacyAqua("supabase db reset")} to verify that the new migration does not
 
 // TS-only deprecation notice (CLI-1960): `--use-pg-schema` wraps the in-process
 // Go library `stripe/pg-schema-diff` (`apps/cli-go/internal/db/diff/pgschema.go`),
-// which has no TS/container equivalent, so it stays the sole remaining Go
-// delegation after the M9 milestone's cleanup — but the flag itself is now
-// deprecated in favor of the pg-delta engine. This is additive to (and prints
-// before) Go's own "experimental" warning (`cmd/db.go:121`), which the delegated
-// child still prints unchanged.
-const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} --use-pg-schema is deprecated and will be removed in a future release. Use --use-pg-delta (or the default migra engine) instead.`;
+// which has no TS/container equivalent — a keep-in-Go exception, not a pending
+// port (see SIDE_EFFECTS.md). The flag itself is now deprecated in favor of the
+// pg-delta engine. This is additive to (and prints before) Go's own
+// "experimental" warning (`cmd/db.go:121`), which the delegated child still
+// prints unchanged. No removal timeline is promised: actual removal is out of
+// scope for CLI-1960.
+const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
 
 /**
  * Rebuilds the `db diff` argv for the pgAdmin / pg-schema delegate path. Flags

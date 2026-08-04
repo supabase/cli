@@ -22,14 +22,14 @@ const config = {
     Flag.optional,
   ),
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
-    // CLI-1960: deprecated in favor of --use-pg-delta (or the default migra
-    // engine); kept as the sole remaining Go delegation (in-process
-    // stripe/pg-schema-diff library, no TS/container equivalent). The flag
-    // itself is not marked deprecated in Go (no `MarkDeprecated` upstream), so
-    // this description-only notice is TS-only — see diff.handler.ts's runtime
-    // warning for the enforced half of the deprecation.
+    // CLI-1960: deprecated in favor of the pg-delta engine (or the default
+    // migra engine); a keep-in-Go exception (in-process stripe/pg-schema-diff
+    // library, no TS/container equivalent — see SIDE_EFFECTS.md), not a pending
+    // port. The flag itself is not marked deprecated in Go (no `MarkDeprecated`
+    // upstream), so this description-only notice is TS-only — see
+    // diff.handler.ts's runtime warning for the enforced half of the deprecation.
     Flag.withDescription(
-      "Use pg-schema-diff to generate schema diff. Deprecated: use --use-pg-delta (or the default migra engine) instead.",
+      "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
     ),
     Flag.optional,
   ),

@@ -422,9 +422,9 @@ describe("legacy db diff", () => {
         // pg-delta / the default migra engine, additive to (not a replacement for)
         // the delegated Go child's own "experimental" warning (`cmd/db.go:121`,
         // unchanged, printed by the real Go binary rather than this mocked proxy).
-        expect(stderr(s.out)).toContain(
-          "--use-pg-schema is deprecated and will be removed in a future release. Use --use-pg-delta (or the default migra engine) instead.",
-        );
+        // Assert on a stable substring so future wording tweaks don't require
+        // touching every test site.
+        expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
         // The TS wrapper must not print a second copy of Go's own warning.
         expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
         // Delegation to Go is unchanged besides the new warning.
@@ -437,7 +437,7 @@ describe("legacy db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags());
-      expect(stderr(s.out)).not.toContain("--use-pg-schema is deprecated");
+      expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -447,7 +447,7 @@ describe("legacy db diff", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
-        expect(stderr(s.out)).not.toContain("--use-pg-schema is deprecated");
+        expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -484,9 +484,7 @@ describe("legacy db diff", () => {
       // CLI-1960: the deprecation notice is a diagnostic, so it must still reach
       // stderr in machine output mode (CLI-1546) rather than being dropped or
       // leaking into the stdout payload.
-      expect(stderr(s.out)).toContain(
-        "--use-pg-schema is deprecated and will be removed in a future release. Use --use-pg-delta (or the default migra engine) instead.",
-      );
+      expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
     }).pipe(Effect.provide(s.layer));
   });
 
