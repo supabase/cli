@@ -368,25 +368,28 @@ describe("ApiProxy", () => {
     }
   });
 
-  test("rejects non-upgrade Realtime requests without activating the service", async () => {
-    const activated: ServiceName[] = [];
-    const activatorLayer = Layer.succeed(StackServiceActivator, {
-      activate: (service) =>
-        Effect.sync(() => {
-          activated.push(service);
-        }),
-    });
-    const proxy = await startProxy(configForPort(echoServer.port), activatorLayer);
+  test.each(["GET", "POST"])(
+    "rejects non-upgrade %s Realtime requests without activating the service",
+    async (method) => {
+      const activated: ServiceName[] = [];
+      const activatorLayer = Layer.succeed(StackServiceActivator, {
+        activate: (service) =>
+          Effect.sync(() => {
+            activated.push(service);
+          }),
+      });
+      const proxy = await startProxy(configForPort(echoServer.port), activatorLayer);
 
-    try {
-      const response = await fetch(`${proxy.url}/realtime/v1/websocket`);
+      try {
+        const response = await fetch(`${proxy.url}/realtime/v1/websocket`, { method });
 
-      expect(response.status).toBe(426);
-      expect(activated).toEqual([]);
-    } finally {
-      await proxy.dispose();
-    }
-  });
+        expect(response.status).toBe(426);
+        expect(activated).toEqual([]);
+      } finally {
+        await proxy.dispose();
+      }
+    },
+  );
 
   test("preserves the selected WebSocket protocol", async () => {
     const backend = await startWebSocketEchoBackend();

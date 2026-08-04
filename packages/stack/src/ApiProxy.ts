@@ -436,7 +436,7 @@ export class ApiProxy extends Context.Service<
         const routes = [
           HttpRouter.route("*", "/health", HttpServerResponse.text("OK", { status: 200 })),
           HttpRouter.route(
-            "GET",
+            "*",
             "/realtime/v1/websocket",
             makeRealtimeWebSocketHandler(config, activator, webSocketConnector),
           ),
