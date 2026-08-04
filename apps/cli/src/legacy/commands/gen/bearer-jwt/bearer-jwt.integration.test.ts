@@ -1,0 +1,752 @@
+import { generateKeyPairSync } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Exit, Layer, Option } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
+import { importJWK, jwtVerify } from "jose";
+
+import {
+  mockAnalytics,
+  mockOutput,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+} from "../../../../../tests/helpers/mocks.ts";
+import {
+  buildLegacyTestRuntime,
+  mockLegacyCliConfig,
+  mockLegacyPlatformApi,
+  mockLegacyTelemetryStateTracked,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { LEGACY_GLOBAL_FLAGS } from "../../../../shared/legacy/global-flags.ts";
+import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { processControlLayer } from "../../../../shared/runtime/process-control.layer.ts";
+import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { legacyGenCommand } from "../gen.command.ts";
+import type { LegacyGenBearerJwtFlags } from "./bearer-jwt.command.ts";
+import { legacyGenBearerJwt } from "./bearer-jwt.handler.ts";
+
+const tempRoot = useLegacyTempWorkdir("supabase-gen-bearer-jwt-int-");
+
+const LEGACY_DEFAULT_SIGNING_KEY_PUBLIC = {
+  kty: "EC",
+  crv: "P-256",
+  x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+  y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+};
+
+function generateEcJwk(kid: string) {
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = privateKey.export({ format: "jwk" }) as Record<string, unknown>;
+  return { ...jwk, kty: "EC", alg: "ES256", kid };
+}
+
+function generateRsaJwk(kid: string) {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = privateKey.export({ format: "jwk" }) as Record<string, unknown>;
+  return { ...jwk, kty: "RSA", alg: "RS256", kid };
+}
+
+function publicJwkOf(jwk: Record<string, unknown>): Record<string, unknown> {
+  const { d: _d, p: _p, q: _q, dp: _dp, dq: _dq, qi: _qi, ...publicJwk } = jwk;
+  return publicJwk;
+}
+
+interface SetupOptions {
+  readonly stdinIsTty?: boolean;
+  readonly pipedAnswer?: string;
+  readonly promptSelectResponses?: ReadonlyArray<string>;
+  readonly trackTelemetry?: boolean;
+}
+
+function setup(options: SetupOptions = {}) {
+  const out = mockOutput({
+    format: "text",
+    interactive: options.stdinIsTty ?? false,
+    promptSelectResponses: options.promptSelectResponses,
+  });
+  const api = mockLegacyPlatformApi();
+  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current, projectId: Option.none() });
+  const tty = mockTty({
+    stdinIsTty: options.stdinIsTty ?? false,
+    stdoutIsTty: options.stdinIsTty ?? false,
+  });
+  const telemetry = options.trackTelemetry ? mockLegacyTelemetryStateTracked() : undefined;
+  const layer = Layer.mergeAll(
+    buildLegacyTestRuntime({ out, api, cliConfig, tty, telemetry: telemetry?.layer }),
+    Layer.succeed(CliArgs, { args: [] }),
+    mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),
+    Layer.succeed(LegacyDebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
+  );
+  return { layer, out, telemetry };
+}
+
+async function writeConfig(contents: string) {
+  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
+  await writeFile(join(tempRoot.current, "supabase", "config.toml"), contents);
+}
+
+async function writeSigningKeys(contents: string) {
+  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
+  await writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), contents);
+}
+
+const baseFlags: LegacyGenBearerJwtFlags = {
+  role: "anon",
+  sub: Option.none(),
+  exp: Option.none(),
+  validFor: 1800,
+  payload: "{}",
+};
+
+function decodeSegment(segment: string): unknown {
+  return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
+}
+
+function tokenFrom(out: { stdoutText: string }): string {
+  return out.stdoutText.trimEnd();
+}
+
+const legacyTestRoot = Command.make("supabase").pipe(
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([legacyGenCommand]),
+);
+
+describe("legacy gen bearer-jwt integration", () => {
+  it.live("mints a token with the built-in default ES256 key when no config exists", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt(baseFlags);
+
+      // Go: `fmt.Fprintln(w, token)` — the token, then exactly one trailing newline,
+      // nothing else on stdout.
+      expect(out.stdoutText.endsWith("\n")).toBe(true);
+      expect(out.stdoutText.indexOf("\n")).toBe(out.stdoutText.length - 1);
+
+      const token = tokenFrom(out);
+      const [header, payload] = token.split(".");
+      expect(decodeSegment(header ?? "")).toEqual({
+        alg: "ES256",
+        kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+        typ: "JWT",
+      });
+      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      expect(claims["role"]).toBe("anon");
+      expect(typeof claims["exp"]).toBe("number");
+      expect(typeof claims["iat"]).toBe("number");
+      expect((claims["exp"] as number) - (claims["iat"] as number)).toBe(1800);
+
+      const publicKey = yield* Effect.promise(() =>
+        importJWK(LEGACY_DEFAULT_SIGNING_KEY_PUBLIC, "ES256"),
+      );
+      const verified = yield* Effect.promise(() => jwtVerify(token, publicKey));
+      expect(verified.payload).toMatchObject({ role: "anon" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "mints a token with the default key when config.toml exists but signing_keys_path is not set",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeConfig("[auth]\nenabled = true\n"));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("sets is_anonymous when role is authenticated and --sub is not given", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt({ ...baseFlags, role: "authenticated" });
+      const [, payload] = tokenFrom(out).split(".");
+      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      expect(claims["is_anonymous"]).toBe(true);
+      expect("sub" in claims).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not set is_anonymous when role is authenticated and --sub is given", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt({
+        ...baseFlags,
+        role: "authenticated",
+        sub: Option.some("user-1"),
+      });
+      const [, payload] = tokenFrom(out).split(".");
+      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      expect(claims["is_anonymous"]).toBeUndefined();
+      expect(claims["sub"]).toBe("user-1");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("computes exp from an explicit --exp, with iat = exp - validFor", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt({ ...baseFlags, exp: Option.some(2_000_000_000) });
+      const [, payload] = tokenFrom(out).split(".");
+      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      expect(claims["exp"]).toBe(2_000_000_000);
+      expect(claims["iat"]).toBe(2_000_000_000 - 1800);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("merges --payload on top of the computed claims", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt({
+        ...baseFlags,
+        role: "postgres",
+        payload: '{"role":"override","sb-role":"mgmt-api"}',
+      });
+      const [, payload] = tokenFrom(out).split(".");
+      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      expect(claims["role"]).toBe("override");
+      expect(claims["sb-role"]).toBe("mgmt-api");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "fails with Go's exact wrapping for a malformed --payload, before any signing-key prompt",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt({ ...baseFlags, payload: "not json" }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtPayloadError");
+          expect(json).toContain("failed to parse payload:");
+        }
+        // No signing-key prompt should have been reached — the payload merge runs first.
+        expect(out.stderrText).toBe("");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("Branch A: accepts a pasted RS256 JWK from stdin", () => {
+    const jwk = generateRsaJwk("rsa-kid");
+    const { layer, out } = setup({ pipedAnswer: JSON.stringify(jwk) });
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt(baseFlags);
+      const token = tokenFrom(out);
+      const [header] = token.split(".");
+      expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+
+      const publicKey = yield* Effect.promise(() => importJWK(publicJwkOf(jwk), "RS256"));
+      const verified = yield* Effect.promise(() => jwtVerify(token, publicKey));
+      expect(verified.payload).toMatchObject({ role: "anon" });
+      expect(out.stderrText).toContain(
+        "Enter your signing key in JWK format (or leave blank to use local default): ",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Branch A: on a real TTY, still prompts via stdin but does not echo the answer", () => {
+    // Go's Branch A ALWAYS uses plain `PromptText` regardless of TTY-ness — only
+    // Branches B/C (a configured `signing_keys_path`) fork on interactivity. On a
+    // real TTY the terminal's own line-editing already echoes what was typed, so
+    // `legacyConsolePromptText` must not double-echo it itself.
+    const jwk = generateEcJwk("ec-kid");
+    const { layer, out } = setup({ stdinIsTty: true, pipedAnswer: JSON.stringify(jwk) });
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt(baseFlags);
+      const token = tokenFrom(out);
+      const [header] = token.split(".");
+      expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+      expect(out.stderrText).toBe(
+        "Enter your signing key in JWK format (or leave blank to use local default): ",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Branch A: rejects malformed JSON pasted at the stdin JWK prompt", () => {
+    const { layer } = setup({ pipedAnswer: "not-json-at-all" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyGenBearerJwtKeyParseError");
+        expect(json).toContain("failed to parse JWK:");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Branch A: rejects a JSON array pasted at the stdin JWK prompt", () => {
+    const { layer } = setup({ pipedAnswer: "[1,2,3]" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyGenBearerJwtKeyParseError");
+        expect(json).toContain("cannot unmarshal array into Go value of type config.JWK");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Branch A: rejects a scalar number pasted at the stdin JWK prompt", () => {
+    const { layer } = setup({ pipedAnswer: "123" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "cannot unmarshal number into Go value of type config.JWK",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Branch A: rejects a scalar string pasted at the stdin JWK prompt", () => {
+    const { layer } = setup({ pipedAnswer: '"a string"' });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "cannot unmarshal string into Go value of type config.JWK",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Branch A: rejects a scalar boolean pasted at the stdin JWK prompt", () => {
+    const { layer } = setup({ pipedAnswer: "true" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "cannot unmarshal bool into Go value of type config.JWK",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "Branch A: a literal 'null' pasted at the stdin JWK prompt falls back to the default key",
+    () => {
+      const { layer, out } = setup({ pipedAnswer: "null" });
+      return Effect.gen(function* () {
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: mints a token from the configured signing_keys_path's only key on a blank kid answer",
+    () => {
+      const jwk = generateEcJwk("ec-kid");
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+        expect(out.stderrText).toContain(
+          "Enter the kid of your signing key (or leave blank to use the first one): ",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: fails with Go's exact wrapped message for an unsupported key type (bearerjwt_test.go parity)",
+    () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([{ kty: "oct" }])));
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtSignError");
+          expect(json).toContain("failed to convert JWK to private key: unsupported key type: oct");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("Branch B: fails with an empty key type when the stored key omits kty entirely", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([{ alg: "ES256" }])));
+
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "failed to convert JWK to private key: unsupported key type: ",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "Branch B: selects a key by exact kid match among several (bearerjwt_test.go parity)",
+    () => {
+      const ecJwk = generateEcJwk("ec-kid");
+      const rsaJwk = generateRsaJwk("rsa-kid");
+      const { layer, out } = setup({ pipedAnswer: "rsa-kid" });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([ecJwk, rsaJwk])));
+
+        yield* legacyGenBearerJwt({ ...baseFlags, role: "postgres" });
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: an unmatched kid, with a blank fallback available, still errors (bearerjwt_test.go parity)",
+    () => {
+      const { layer } = setup({ pipedAnswer: "test-key" });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys("[]"));
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtKeyNotFoundError");
+          expect(json).toContain("signing key not found: test-key");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: an exact kid match on a key with an empty kid wins ahead of the blank-input fallback-to-first",
+    () => {
+      const namedKey = generateEcJwk("named-kid");
+      const { kid: _kid, ...unnamedKey } = generateEcJwk("unused");
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        // `namedKey` is listed FIRST, but has a non-empty kid; `unnamedKey` (no kid
+        // field at all -> "") is listed SECOND. A blank answer must still resolve to
+        // `unnamedKey` via the exact-match loop, not to `namedKey` via "return first".
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([namedKey, unnamedKey])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", typ: "JWT" });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch C: TTY picks a key via the interactive selector and echoes Selected key ID",
+    () => {
+      const ecJwk = generateEcJwk("ec-kid");
+      const rsaJwk = generateRsaJwk("rsa-kid");
+      const { layer, out } = setup({ stdinIsTty: true, promptSelectResponses: ["1"] });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([ecJwk, rsaJwk])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({ type: "info", message: "Selected key ID: rsa-kid" }),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch C: TTY renders an empty label/kid/hint for a stored key missing kid and alg",
+    () => {
+      const { kid: _kid, alg: _alg, ...bareKey } = generateEcJwk("unused");
+      const { layer, out } = setup({ stdinIsTty: true, promptSelectResponses: ["0"] });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([bareKey])));
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        // No `alg` at all fails downstream in the shared signer ("unsupported
+        // algorithm: "), but the picker itself must still render before that.
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(out.promptSelectCalls[0]?.options[0]?.label).toBe("");
+        expect(out.promptSelectCalls[0]?.options[0]?.hint).toBe(" ()");
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({ type: "info", message: "Selected key ID: " }),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch C: TTY renders the key's use/ext/key_ops fields when a stored key carries them",
+    () => {
+      const jwk = {
+        ...generateEcJwk("full-kid"),
+        use: "sig",
+        ext: true,
+        key_ops: ["sign", "verify"],
+      };
+      const { layer, out } = setup({ stdinIsTty: true, promptSelectResponses: ["0"] });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        expect(out.promptSelectCalls[0]?.options[0]?.hint).toBe("ES256 (sign,verify)");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "auth.enabled = false with signing_keys_path configured still uses the built-in default key (Go quirk)",
+    () => {
+      const otherJwk = generateEcJwk("configured-kid");
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([otherJwk])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        // The default key's kid, NOT the file's key — the file is never read when
+        // auth.enabled is false (verified against the real binary, CLI-1961).
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "auth.enabled = false with signing_keys_path configured: a real kid from the file is reported not found",
+    () => {
+      const otherJwk = generateEcJwk("configured-kid");
+      const { layer } = setup({ pipedAnswer: "configured-kid" });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([otherJwk])));
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("signing key not found: configured-kid");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("fails when signing_keys_path is configured but the file is missing", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyGenBearerJwtReadError");
+        expect(json).toContain("failed to read signing keys");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when the configured signing keys file is not valid JSON at all", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() => writeSigningKeys("not valid json {"));
+
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyGenBearerJwtDecodeError");
+        expect(json).toContain("failed to decode signing keys:");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when the configured signing keys file is not a JSON array at all", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() => writeSigningKeys("{}"));
+
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyGenBearerJwtDecodeError");
+        expect(json).toContain("expected a JSON array");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when the configured signing keys file is a JSON array of non-objects", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() => writeSigningKeys("[1, 2]"));
+
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyGenBearerJwtDecodeError");
+        expect(json).toContain("expected a JSON array of objects");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails with a config parse error when config.toml is malformed", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeConfig("not valid toml ]["));
+
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyGenBearerJwtConfigParseError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("flushes telemetry state after a successful run", () => {
+    const { layer, telemetry } = setup({ trackTelemetry: true });
+    return Effect.gen(function* () {
+      yield* legacyGenBearerJwt(baseFlags);
+      expect(telemetry?.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("flushes telemetry state even when the signing-key resolution fails", () => {
+    const { layer, telemetry } = setup({ trackTelemetry: true });
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      // No signing_keys.json written -> LegacyGenBearerJwtReadError.
+      yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(telemetry?.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("runs through the command wiring without missing runtime services", () => {
+    const out = mockOutput({ format: "text", interactive: false });
+    const analytics = mockAnalytics();
+    const layer = Layer.mergeAll(
+      BunServices.layer,
+      processControlLayer,
+      CliOutput.layer(textCliOutputFormatter()),
+      out.layer,
+      analytics.layer,
+      mockRuntimeInfo({ cwd: tempRoot.current, homeDir: tempRoot.current }),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      Layer.succeed(CliArgs, { args: [] }),
+      mockStdin(false),
+      Layer.succeed(
+        TelemetryRuntime,
+        TelemetryRuntime.of({
+          configDir: join(tempRoot.current, ".supabase"),
+          tracesDir: join(tempRoot.current, ".supabase", "traces"),
+          consent: "granted",
+          showDebug: false,
+          deviceId: "test-device-id",
+          sessionId: "test-session-id",
+          identity: makeTelemetryIdentity(undefined),
+          isFirstRun: false,
+          isTty: false,
+          isCi: false,
+          os: "linux",
+          arch: "x64",
+          cliVersion: "0.1.0",
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+        "gen",
+        "bearer-jwt",
+        "--role",
+        "service_role",
+        "--workdir",
+        tempRoot.current,
+      ]);
+
+      const token = tokenFrom(out);
+      const [, payload] = token.split(".");
+      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      expect(claims["role"]).toBe("service_role");
+    }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+  });
+});

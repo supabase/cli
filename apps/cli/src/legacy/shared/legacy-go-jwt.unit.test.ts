@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   legacyGenerateAsymmetricGoJwt,
   legacyGenerateGoJwt,
+  legacySignJwtWithJwk,
   type LegacyJwk,
 } from "./legacy-go-jwt.ts";
 
@@ -153,20 +154,43 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
     );
   });
 
+  // Go has NO explicit kty<->alg cross-check (verified against the real binary,
+  // CLI-1961): `jwkToPrivateKey` only validates kty/curve, and the algorithm
+  // switch only validates `jwk.Algorithm` — a mismatched pair reaches
+  // `token.SignedString(privateKey)` and fails INSIDE golang-jwt's own signing
+  // method with "key is of invalid type: ...", wrapped as "failed to sign
+  // JWT: %w" (`apikeys.go:113`). These two tests previously asserted an
+  // "unsupported key type" message that Go never actually produces for this
+  // input — corrected here.
   it("rejects an EC key forged with alg: RS256 instead of signing garbage", () => {
     const jwk = { ...generateEcJwk(), alg: "RS256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported key type: EC");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to sign JWT: key is of invalid type: RSA sign expects *rsa.PrivateKey",
+    );
   });
 
   it("rejects an RSA key forged with alg: ES256 instead of signing garbage", () => {
     const jwk = { ...generateRsaJwk(), alg: "ES256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported key type: RSA");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to sign JWT: key is of invalid type: ECDSA sign expects *ecdsa.PrivateKey",
+    );
   });
 
-  it("rejects an ES256 EC key whose curve is not P-256", () => {
+  it("rejects an ES256 EC key whose curve is not P-256, wrapped like Go's GenerateAsymmetricJWT", () => {
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-384" });
     const jwk = { ...privateKey.export({ format: "jwk" }), kty: "EC", alg: "ES256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported curve: P-384");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to convert JWK to private key: unsupported curve: P-384",
+    );
+  });
+
+  it("rejects a JWK with no kty at all, wrapped like Go's GenerateAsymmetricJWT", () => {
+    // `bearerjwt_test.go`'s "throws error on unsupported kty" fixture uses exactly
+    // this shape (`{"kty": "oct"}`, no `alg`) — kty is checked before alg regardless.
+    const jwk = { kty: "oct" } as LegacyJwk;
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to convert JWK to private key: unsupported key type: oct",
+    );
   });
 
   it("rejects an ES256 EC key with no curve at all", () => {
@@ -175,5 +199,22 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
     expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutCurve, "anon")).toThrow(
       "unsupported curve: ",
     );
+  });
+});
+
+describe("legacySignJwtWithJwk", () => {
+  it("signs the caller's exact pre-encoded payload string verbatim (no re-serialization)", async () => {
+    const jwk = generateEcJwk("ec-kid");
+    // Deliberately NOT alphabetically sorted and containing characters Go's
+    // `encoding/json` would HTML-escape (`&`) — this function must sign exactly
+    // the bytes it's given, leaving ordering/escaping decisions to the caller.
+    const payloadJson = '{"role":"postgres","sb-role":"mgmt-api & co"}';
+    const token = legacySignJwtWithJwk(jwk, payloadJson);
+    const [, payload] = token.split(".");
+    expect(decodeSegment(payload ?? "")).toBe(payloadJson);
+
+    const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
+    const { payload: verified } = await jwtVerify(token, publicKey);
+    expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
   });
 });
