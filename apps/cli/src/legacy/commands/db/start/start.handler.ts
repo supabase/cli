@@ -881,6 +881,51 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       );
     }
 
+    // Closes an entire recurring class of gaps in the battery above, rather than adding another
+    // one-off field check: `legacyResolveLocalConfigValues` (below) is the SAME resolver this
+    // handler already calls, unconditionally, to build `values` for the not-running branch — it
+    // was simply called too LATE, after the already-running shortcut, so every Go `Config.Load`/
+    // `Validate` step it performs internally (not just the ones this battery separately
+    // hand-duplicates above) was skipped whenever Postgres was already up. Moving the SAME call
+    // here — before the shortcut, matching every other check in this battery — closes 6 review
+    // findings at once, because they're all steps this one resolver already performs internally:
+    // `auth.captcha` decode (`legacyResolveAuthCaptcha`, review: PRRT_kwDOErm0O86WYMj_),
+    // `auth.jwt_secret` length validation (`resolveJwtSecret`/`generateAPIKeys`, review:
+    // PRRT_kwDOErm0O86WYMkJ), `auth.signing_keys_path` file read
+    // (`legacyResolveConfiguredSigningKeys`, review: PRRT_kwDOErm0O86WYMkM), `api.tls` cert/key
+    // path validation + file reads (`readApiTlsFiles`, review: PRRT_kwDOErm0O86WYMkP),
+    // `auth.external.*` required-field validation (`validateAuthExternalProviders`, review:
+    // PRRT_kwDOErm0O86WYMkT), and `auth.email`/notification template content reads
+    // (`readAuthEmailTemplateContent`, review: PRRT_kwDOErm0O86WYMkW) — all genuinely unconditional
+    // in Go's `Config.Load`/`Validate`, all before `AssertSupabaseDbIsRunning`
+    // (`internal/db/start/start.go:45-47`), same as everything else in this battery. This
+    // deliberately does NOT replace the individual checks above for fields this resolver does
+    // NOT cover (anything only `db start`'s own fresh-volume setup jobs read: `edge_runtime.*`,
+    // `realtime.*`, `storage.{vector,s3_protocol,analytics,image_transformation}`, `db.pooler.*`,
+    // `db.ssl_enforcement.enabled`, `db.health_timeout`, `storage.{enabled,file_size_limit}`,
+    // Mailpit/Logflare's non-primary ports) — `status`/`stop` never read those either, so
+    // `legacyResolveLocalConfigValues` never decodes them, and they still need their own eager
+    // check the same way they always have. It's harmless (not incorrect) that this also
+    // re-validates a handful of fields the battery above already covers one-by-one (e.g.
+    // `studio.port`/`local_smtp.port`, `api.tls.enabled`) — same "resolve once, still call again
+    // to force the decode" precedent `db.settings`/`realtime.*` already use elsewhere in this
+    // battery — removing those now-redundant individual checks is a separate cleanup, not required
+    // to close the gaps above.
+    const values = yield* Effect.try({
+      try: () =>
+        legacyResolveLocalConfigValues(
+          config,
+          hostname,
+          cliConfig.workdir,
+          projectEnvValues,
+          loaded?.document,
+        ),
+      catch: (cause) =>
+        new LegacyDbConfigLoadError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
     // stderr and return nil (exit 0). Already native — see this module's header. Runs AFTER
     // the config load/validation above, matching Go's `start.Run` (`flags.LoadConfig` before
@@ -927,21 +972,9 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // aware, like `db reset`'s identical gate) so it can be threaded straight through.
     const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
 
-    const values = yield* Effect.try({
-      try: () =>
-        legacyResolveLocalConfigValues(
-          config,
-          hostname,
-          cliConfig.workdir,
-          projectEnvValues,
-          loaded?.document,
-        ),
-      catch: (cause) =>
-        new LegacyDbConfigLoadError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-
+    // `values` was already resolved above, before the already-running shortcut (see that call's
+    // own doc comment) — reused here rather than calling `legacyResolveLocalConfigValues` a
+    // second time.
     const bootstrapConfig = yield* legacyResolveDbBootstrapConfig(
       fs,
       path,
