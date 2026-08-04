@@ -7,15 +7,22 @@ import { dirname, join } from "node:path";
 
 const LOCK_STALE_AFTER_MS = 5_000;
 const LOCK_RETRY_AFTER_MS = 25;
+const CURRENT_UID = process.getuid?.();
 const SHARED_LOCK_ROOT = join(
   process.platform === "win32" ? tmpdir() : "/tmp",
   "supabase-stack-managed-port-locks",
 );
+const PRIVATE_LOCK_ROOT = join(
+  tmpdir(),
+  process.platform === "win32"
+    ? "supabase-stack-state-locks"
+    : `supabase-stack-state-locks-${CURRENT_UID ?? "user"}`,
+);
 const DEFAULT_LOCK_PATH = join(SHARED_LOCK_ROOT, "allocation.lock");
 
-/** Build a stable, host-wide lock path without exposing caller-controlled path segments. */
-export const managedLockPath = (scope: string): string =>
-  join(SHARED_LOCK_ROOT, `${createHash("sha256").update(scope).digest("hex")}.lock`);
+/** Build a stable per-user lock path without exposing caller-controlled path segments. */
+export const privateManagedLockPath = (scope: string): string =>
+  join(PRIVATE_LOCK_ROOT, `${createHash("sha256").update(scope).digest("hex")}.lock`);
 
 interface LockOwner {
   readonly pid: number;
@@ -255,6 +262,27 @@ const prepareSharedLockRoot = async (signal?: AbortSignal): Promise<void> => {
   throw new Error(`Shared managed-port lock directory is not writable: ${SHARED_LOCK_ROOT}`);
 };
 
+const preparePrivateLockRoot = async (): Promise<void> => {
+  await mkdir(PRIVATE_LOCK_ROOT, { recursive: true, mode: 0o700 });
+  if (process.platform === "win32") return;
+
+  const handle = await open(
+    PRIVATE_LOCK_ROOT,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  try {
+    const info = await handle.stat();
+    if (!info.isDirectory() || CURRENT_UID === undefined || info.uid !== CURRENT_UID) {
+      throw new Error(
+        `Private stack lock root is not owned by the current user: ${PRIVATE_LOCK_ROOT}`,
+      );
+    }
+    await handle.chmod(0o700);
+  } finally {
+    await handle.close();
+  }
+};
+
 export type ReleaseManagedPortLock = () => Promise<void>;
 
 /** Serialize port selection and lease handoff across foreground and detached stacks. */
@@ -262,8 +290,13 @@ export async function acquireManagedPortLock(
   lockPath = DEFAULT_LOCK_PATH,
   signal?: AbortSignal,
 ): Promise<ReleaseManagedPortLock> {
-  if (dirname(lockPath) === SHARED_LOCK_ROOT) {
+  const lockRoot = dirname(lockPath);
+  const isSharedLock = lockRoot === SHARED_LOCK_ROOT;
+  const isPrivateLock = lockRoot === PRIVATE_LOCK_ROOT;
+  if (isSharedLock) {
     await prepareSharedLockRoot(signal);
+  } else if (isPrivateLock) {
+    await preparePrivateLockRoot();
   }
   for (;;) {
     signal?.throwIfAborted();
@@ -278,12 +311,13 @@ export async function acquireManagedPortLock(
     let installed = false;
 
     try {
-      await mkdir(candidatePath, { mode: 0o777 });
+      await mkdir(candidatePath, { mode: isPrivateLock ? 0o700 : 0o777 });
       try {
         if (process.platform !== "win32") {
-          // The shared generation must remain removable by a different user.
+          // Shared generations must remain removable by a different user, while
+          // state generations are private to the user who owns their state files.
           // mkdir applies the process umask, so make the effective mode explicit.
-          await chmod(candidatePath, 0o777);
+          await chmod(candidatePath, isPrivateLock ? 0o700 : 0o777);
         }
         const ownerHandle = await open(
           join(candidatePath, "owner"),

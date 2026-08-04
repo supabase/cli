@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir, uptime } from "node:os";
-import { join } from "node:path";
-import { acquireManagedPortLock } from "./ManagedPortLock.ts";
+import { dirname, join } from "node:path";
+import { acquireManagedPortLock, privateManagedLockPath } from "./ManagedPortLock.ts";
 
 describe("ManagedPortLock", () => {
   it("serializes independent port allocators", async () => {
@@ -62,6 +62,19 @@ describe("ManagedPortLock", () => {
       await release();
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps state lock generations private to the current user", async () => {
+    const lockPath = privateManagedLockPath(`test:${process.pid}:${Date.now()}`);
+    const release = await acquireManagedPortLock(lockPath);
+    try {
+      if (process.platform !== "win32") {
+        expect((await stat(dirname(lockPath))).mode & 0o777).toBe(0o700);
+        expect((await stat(lockPath)).mode & 0o777).toBe(0o700);
+      }
+    } finally {
+      await release();
     }
   });
 

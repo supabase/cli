@@ -3,7 +3,7 @@ import { FileSystem, Path } from "effect";
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
-import { acquireManagedPortLock, managedLockPath } from "./ManagedPortLock.ts";
+import { acquireManagedPortLock, privateManagedLockPath } from "./ManagedPortLock.ts";
 import {
   PartialVersionManifestSchema,
   STACK_METADATA_SCHEMA_VERSION,
@@ -450,7 +450,7 @@ function withStateLock<A, E, R>(
   name: string,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> {
-  const lockPath = managedLockPath(`stack-state:${deps.stackDir(name)}`);
+  const lockPath = privateManagedLockPath(`stack-state:${deps.stackDir(name)}`);
   return Effect.acquireUseRelease(
     Effect.promise((signal) => acquireManagedPortLock(lockPath, signal)),
     () => effect,
