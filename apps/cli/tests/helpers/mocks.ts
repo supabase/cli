@@ -697,20 +697,24 @@ export function mockStack(
           }),
         ),
       getAllStates: () => {
-        const serviceNames = opts.stateChanges
-          ? [...new Set(opts.stateChanges.map((s) => s.name))]
-          : ["postgres"];
+        const latestStates = new Map(
+          (stateHistory.length > 0
+            ? stateHistory
+            : [{ name: "postgres", status: "Pending" as const }]
+          ).map((state) => [state.name, state] as const),
+        );
         return Effect.succeed(
-          serviceNames.map(
-            (name) =>
+          [...latestStates.values()].map(
+            (state) =>
               new StackServiceState({
-                name,
-                status: "Pending",
+                name: state.name,
+                status: state.status,
                 pid: null,
                 exitCode: null,
                 restartCount: 0,
                 startedAt: null,
                 error: null,
+                ...(state.dormant === undefined ? {} : { dormant: state.dormant }),
               }),
           ),
         );

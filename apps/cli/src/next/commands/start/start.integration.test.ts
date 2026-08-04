@@ -271,17 +271,14 @@ describe("start", () => {
 
       stack.emitStateChange({ name: "postgres", status: "Healthy" });
       stack.emitStateChange({ name: "studio", status: "Pending", dormant: true });
-      yield* waitFor(
-        () =>
-          out.progressEvents
-            .filter((event) => event.type === "advance")
-            .reduce((sum, event) => sum + (event.step ?? 0), 0) === 2,
-        "startup progress did not complete",
-      );
-
       stack.resolveStart();
       yield* Fiber.join(fiber);
 
+      expect(
+        out.progressEvents
+          .filter((event) => event.type === "advance")
+          .reduce((sum, event) => sum + (event.step ?? 0), 0),
+      ).toBe(2);
       expect(out.progressEvents).toContainEqual({
         type: "advance",
         step: 1,

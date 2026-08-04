@@ -20,7 +20,7 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
     yield* prog.advance(completedNames.size, "Already ready");
   }
 
-  const fiber = yield* Stream.runForEach(stack.allStateChanges(), (state) =>
+  const updateProgress = (state: (typeof initialStates)[number]) =>
     Effect.sync(() => {
       const previousState = statesByName.get(state.name);
       statesByName.set(state.name, state);
@@ -55,13 +55,18 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
           { discard: true },
         ),
       ),
-    ),
-  ).pipe(
+    );
+
+  const fiber = yield* Stream.runForEach(stack.allStateChanges(), updateProgress).pipe(
     Effect.catch(() => Effect.void),
     Effect.forkChild({ startImmediately: true }),
   );
 
-  yield* stack.start().pipe(Effect.ensuring(Fiber.interrupt(fiber)));
+  yield* Effect.gen(function* () {
+    yield* stack.start();
+    const finalStates = yield* stack.getAllStates();
+    yield* Effect.forEach(finalStates, updateProgress, { discard: true });
+  }).pipe(Effect.ensuring(Fiber.interrupt(fiber)));
   yield* prog.stop("All services started");
 });
 
