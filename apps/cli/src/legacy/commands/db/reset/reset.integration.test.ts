@@ -967,6 +967,56 @@ describe("legacy db reset", () => {
   );
 
   it.live(
+    "applies schema files across multiple schema_paths patterns in declaration order, sorted within each pattern",
+    () => {
+      // Go sorts matches WITHIN each pattern (`sort.Strings`, `config.go:155`) but
+      // preserves DECLARATION order ACROSS patterns (no global re-sort) — `zz/*.sql`'s
+      // files must all run before `aa/*.sql`'s, even though "aa" sorts before "zz".
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n',
+        files: {
+          "supabase/zz/b.sql": "create table zz_b ();",
+          "supabase/zz/a.sql": "create table zz_a ();",
+          "supabase/aa/b.sql": "create table aa_b ();",
+          "supabase/aa/a.sql": "create table aa_a ();",
+        },
+        experimental: true,
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        const order = conn.execs
+          .map((s) => /create table (\w+) \(\)/.exec(s)?.[1])
+          .filter((name): name is string => name !== undefined);
+        expect(order).toEqual(["zz_a", "zz_b", "aa_a", "aa_b"]);
+      });
+    },
+  );
+
+  it.live(
+    "expands a schema_paths directory entry to its nested .sql files on an experimental remote reset",
+    () => {
+      // `[db.migrations].schema_paths` resolves through Go's `Glob.SQLFiles` (not
+      // `Glob.Files`), which expands a directory match to its regular `.sql` files,
+      // recursively — unlike a plain glob pattern.
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n',
+        files: {
+          "supabase/some-dir/01_top.sql": "create table dir_top ();",
+          "supabase/some-dir/nested/02_nested.sql": "create table dir_nested ();",
+        },
+        experimental: true,
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((s) => s.includes("create table dir_top"))).toBe(true);
+        expect(conn.execs.some((s) => s.includes("create table dir_nested"))).toBe(true);
+      });
+    },
+  );
+
+  it.live(
     "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
     () => {
       // Go's `schema_paths` default is `[]` (`pkg/config/templates/config.toml:64`).

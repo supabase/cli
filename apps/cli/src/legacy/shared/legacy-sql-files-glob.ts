@@ -4,7 +4,18 @@ import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "./legacy-path-match
 
 const META_CHARS = /[*?[\\]/u;
 
-const toSlash = (p: string): string => p.replaceAll("\\", "/");
+// Go's `config.hasGlobMeta` (`apps/cli-go/pkg/config/config.go:211-213`) — a DIFFERENT,
+// narrower set than `META_CHARS` above (which mirrors `io/fs.hasMeta`'s `path.Match`
+// escape handling and includes `\`). Only used to gate `WithSkipEmptyGlobs()` below.
+const GLOB_META_CHARS = /[*?[]/u;
+
+// Go's `filepath.ToSlash` replaces `os.PathSeparator` with `/` — a no-op on the
+// non-Windows platforms this shell mostly runs on, since their separator already IS
+// `/`. Gating on `win32` (rather than converting unconditionally) matters: on
+// non-Windows a `\` in a pattern is never a path separator, only a `path.Match`
+// escape (`foo\.sql`, `seed\*.sql`), and unconditionally slashing it would corrupt
+// that escape — see `legacyPathMatch`'s escape handling below.
+const toSlash = (p: string): string => (process.platform === "win32" ? p.replaceAll("\\", "/") : p);
 
 /** Splits a forward-slashed path into its directory prefix and final element. */
 const splitPath = (p: string): { readonly dir: string; readonly file: string } => {
@@ -101,11 +112,41 @@ interface LegacySqlFilesGlobResult {
 }
 
 /**
+ * Mirrors Go's `GlobOption`s (`apps/cli-go/pkg/config/config.go:100-117`). Neither
+ * caller in this shared module needs them today (`legacyApplySchemaFiles`'s
+ * `[db.migrations].schema_paths`, and the two `[db.seed].sql_paths` callers —
+ * `legacyGetPendingSeeds` and `legacy-seed.ts`'s `resolveSeedFiles` — all pass none,
+ * matching Go's own zero-option call sites, `pkg/migration/seed.go:35` and
+ * `internal/migration/apply/apply.go:52`). Added for `db diff`'s declarative path,
+ * which calls `Glob.files` `WithSkipEmptyGlobs()` + `WithErrorOnAllSkippedGlobs()`.
+ */
+export interface LegacySqlFilesGlobOptions {
+  /**
+   * Go's `WithSkipEmptyGlobs()`: a pattern that contains a glob metacharacter
+   * (`config.hasGlobMeta` — `*`, `?`, `[`; NOT `\`, unlike `META_CHARS` above) and
+   * matches nothing is silently skipped — no "no files matched pattern" warning —
+   * unless `errorOnAllSkipped` retroactively un-skips it (below). A LITERAL pattern
+   * (no glob metacharacter) that doesn't exist always warns, regardless of this flag.
+   */
+  readonly skipEmptyGlobs?: boolean;
+  /**
+   * Go's `WithErrorOnAllSkippedGlobs()`: only meaningful together with
+   * `skipEmptyGlobs`. If the overall result ends up empty AND at least one pattern
+   * was silently skipped, every skipped pattern's silence is retroactively turned
+   * back into a "no files matched pattern" warning — so a `skipEmptyGlobs` caller
+   * can still detect the "nothing matched anything" case.
+   */
+  readonly errorOnAllSkipped?: boolean;
+}
+
+/**
  * Resolves SQL-file glob patterns to existing files, porting Go's `config.Glob.SQLFiles`
- * over `fs.Glob` (`apps/cli-go/pkg/config/config.go:123-211`). Shared by `[db.seed].sql_paths`
- * (via `legacyGlobSeedFiles`, `legacy-seed-ops.ts`) and `[db.migrations].schema_paths` (via
- * `legacyApplySchemaFiles`, `legacy-migration-apply.ts`) — both Go fields resolve through the
- * exact same `Glob` type and `SQLFiles` method, so the traversal logic lives here once.
+ * over `fs.Glob` (`apps/cli-go/pkg/config/config.go:123-211`). Shared by
+ * `[db.seed].sql_paths` (via `legacyGetPendingSeeds`, `legacy-seed-ops.ts`, and
+ * `legacy-seed.ts`'s `resolveSeedFiles`) and `[db.migrations].schema_paths` (via
+ * `legacyApplySchemaFiles`, `legacy-migration-apply.ts`) — all three Go call sites
+ * resolve through the exact same `Glob` type and `SQLFiles` method, so the traversal
+ * logic lives here once.
  *
  * Each pattern is matched independently: matches are sorted per-pattern (Go's
  * `sort.Strings`, `config.go:155`), but the overall result preserves cross-pattern
@@ -126,10 +167,14 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
   path: Path.Path,
   patterns: ReadonlyArray<string>,
   workdir: string,
+  options?: LegacySqlFilesGlobOptions,
 ) {
+  const skipEmptyGlobs = options?.skipEmptyGlobs ?? false;
+  const errorOnAllSkipped = options?.errorOnAllSkipped ?? false;
   const seen = new Set<string>();
   const files: Array<string> = [];
   const warnings: Array<string> = [];
+  const skipped: Array<string> = [];
 
   for (const rawPattern of patterns) {
     const pattern = toSlash(rawPattern);
@@ -142,7 +187,11 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
     }
     const matches = yield* globOne(fs, path, workdir, pattern);
     if (matches.length === 0) {
-      warnings.push(`no files matched pattern: ${pattern}`);
+      if (skipEmptyGlobs && GLOB_META_CHARS.test(pattern)) {
+        skipped.push(pattern);
+      } else {
+        warnings.push(`no files matched pattern: ${pattern}`);
+      }
       continue;
     }
     for (const match of [...matches].sort()) {
@@ -166,6 +215,14 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
         seen.add(fp);
         files.push(fp);
       }
+    }
+  }
+
+  // Go: `if opts.errorOnAllSkipped && len(result) == 0 && len(skipped) > 0` — only
+  // escalate silently-skipped patterns back into warnings when NOTHING matched at all.
+  if (errorOnAllSkipped && files.length === 0 && skipped.length > 0) {
+    for (const pattern of skipped) {
+      warnings.push(`no files matched pattern: ${pattern}`);
     }
   }
 

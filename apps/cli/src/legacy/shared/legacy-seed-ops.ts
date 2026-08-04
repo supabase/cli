@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Effect, type FileSystem, Option, type Path } from "effect";
+import { Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
@@ -26,39 +26,6 @@ export interface LegacySeedFile {
   readonly dirty: boolean;
 }
 
-/** Result of resolving `[db.seed].sql_paths` against the workspace. */
-interface LegacyGlobResult {
-  /** Workdir-relative, forward-slashed matches, deduplicated in pattern order. */
-  readonly files: ReadonlyArray<string>;
-  /** Per-pattern warnings (`no files matched pattern: …`), joined by Go's `errors.Join`. */
-  readonly warning: Option.Option<string>;
-}
-
-/**
- * Resolves seed glob patterns to existing files, porting Go's `config.Glob.Files`
- * over `fs.Glob` (`pkg/config/config.go:102-124`) via the shared {@link legacySqlFilesGlob}
- * traversal (also used by `[db.migrations].schema_paths`, `legacy-migration-apply.ts`).
- * Each pattern is first joined under the `supabase/` directory (Go resolves `sql_paths`
- * at config load, `config.go:884`) — that resolution happens once, upstream, via
- * `legacyResolveSeedSqlPath`; this function globs the already-resolved patterns
- * verbatim. Per-pattern warnings (`no files matched pattern: …` / malformed glob) are
- * joined with Go's `errors.Join` newline semantics and surfaced unconditionally — the
- * seed path always warns, unlike the schema-files apply path (see
- * `legacyApplySchemaFiles`), which only surfaces a warning when it is the ONLY outcome.
- */
-const legacyGlobSeedFiles = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  patterns: ReadonlyArray<string>,
-  workdir: string,
-) {
-  const { files, warnings } = yield* legacySqlFilesGlob(fs, path, patterns, workdir);
-  return {
-    files,
-    warning: warnings.length > 0 ? Option.some(warnings.join("\n")) : Option.none(),
-  } satisfies LegacyGlobResult;
-});
-
 /** `SELECT path, hash FROM supabase_migrations.seed_files`, `42P01` → empty map. */
 const readRemoteSeeds = (session: LegacyDbSession) =>
   session.query(SELECT_SEED_TABLE).pipe(
@@ -80,10 +47,16 @@ const isUndefinedTable = (error: LegacyDbExecError): boolean =>
 
 /**
  * Resolves the pending seed files for `db push --include-seed`. Mirrors Go's
- * `GetPendingSeeds` (`pkg/migration/seed.go:34-63`): glob the configured paths
- * (warn, don't fail, on empty patterns), read the remote `seed_files` hashes,
- * and emit each local file that is new (`dirty=false`) or hash-changed
- * (`dirty=true`); files whose hash already matches are skipped.
+ * `GetPendingSeeds` (`pkg/migration/seed.go:34-63`): glob the configured paths via
+ * the shared {@link legacySqlFilesGlob} traversal (also used by `[db.migrations].
+ * schema_paths`, `legacy-migration-apply.ts`, and by `legacy-seed.ts`'s own
+ * `resolveSeedFiles` for the `migration down`/`start` seed step), warn — don't fail —
+ * on empty patterns, read the remote `seed_files` hashes, and emit each local file
+ * that is new (`dirty=false`) or hash-changed (`dirty=true`); files whose hash
+ * already matches are skipped. Per-pattern warnings are joined with Go's `errors.Join`
+ * newline semantics and surfaced unconditionally (`seed.go:36-38`) — unlike the
+ * schema-files apply path (see `legacyApplySchemaFiles`), which only surfaces a
+ * warning when it is the ONLY outcome.
  */
 export const legacyGetPendingSeeds = Effect.fnUntraced(function* (
   session: LegacyDbSession,
@@ -93,9 +66,9 @@ export const legacyGetPendingSeeds = Effect.fnUntraced(function* (
   workdir: string,
 ) {
   const output = yield* Output;
-  const { files, warning } = yield* legacyGlobSeedFiles(fs, path, patterns, workdir);
-  if (Option.isSome(warning)) {
-    yield* output.raw(`WARN: ${warning.value}\n`, "stderr");
+  const { files, warnings } = yield* legacySqlFilesGlob(fs, path, patterns, workdir);
+  if (warnings.length > 0) {
+    yield* output.raw(`WARN: ${warnings.join("\n")}\n`, "stderr");
   }
   const pending: Array<LegacySeedFile> = [];
   if (files.length === 0) return pending;

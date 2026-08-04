@@ -15,10 +15,16 @@ export interface LegacyMigrateAndSeedConfig {
 /**
  * Reapplies local migrations up to `version`, then runs seed files. Port of Go's
  * `apply.MigrateAndSeed` (`internal/migration/apply/apply.go:16`) for the
- * `version`-set path (the EXPERIMENTAL declarative `applySchemaFiles` branch is
- * unreachable from `migration down`, which always passes a concrete version, so
- * it is intentionally not ported). Migration apply is gated on
- * `db.migrations.enabled`; seeding on `db.seed.enabled` (inside the seed helper).
+ * `version`-set path only — the EXPERIMENTAL declarative `applySchemaFiles` branch
+ * is NOT ported here. That branch is unreachable from `migration down` (which always
+ * passes a concrete version), but IS reachable from `start`'s fresh-volume setup
+ * (`commands/start/lib/db-setup.ts`, which calls this with `version: ""`), where real
+ * Go WOULD take it on `--experimental`. This is a known, pre-existing parity gap
+ * (not introduced by this PR) deliberately left out of CLI-1958's scope, tracked as
+ * CLI-2040 ("`supabase start --experimental` doesn't apply schema files on a fresh
+ * volume, parity gap with Go's `SetupLocalDatabase`") — see that issue's own PR for
+ * the port. Migration apply is gated on `db.migrations.enabled`; seeding on
+ * `db.seed.enabled` (inside the seed helper).
  */
 export const legacyMigrateAndSeed = (
   session: LegacyDbSession,

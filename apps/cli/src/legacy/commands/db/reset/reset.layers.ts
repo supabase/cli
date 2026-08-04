@@ -19,9 +19,11 @@ import { legacyDbBootstrapSeamLayer } from "../shared/legacy-db-bootstrap.seam.l
  * Runtime layer for `supabase db reset`. Same composition as `db push` / `db lint`:
  * the Postgres connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache, all over the lazy management-API factory so the local /
- * `--db-url` paths never resolve an access token at layer-build time. Both the local
- * and remote reset paths (including the `--experimental` remote schema-files apply,
- * CLI-1958) are fully native — no `LegacyGoProxy` dependency remains.
+ * `--db-url` paths never resolve an access token at layer-build time. The remote
+ * reset path (including the `--experimental` remote schema-files apply, CLI-1958)
+ * is fully native. The local path's container primitives still reach `LegacyGoProxy`
+ * through the bootstrap seam below (`legacyDbBootstrapSeamLayer`, ambient from the
+ * root) — that native port is CLI-1955's scope, not this one.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));

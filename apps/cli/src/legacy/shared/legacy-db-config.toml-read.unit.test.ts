@@ -293,6 +293,91 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
+    () => {
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "a.sql, b.sql";
+      const dir = withConfig(["[db.migrations]", 'schema_paths = ["ignored.sql"]', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "decodes a STRING db.migrations.schema_paths via StringToSliceHookFunc (comma, no trim)",
+    () => {
+      const dir = withConfig(["[db.migrations]", 'schema_paths = "a.sql,b.sql"', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("filters non-string db.migrations.schema_paths array elements", () => {
+    const dir = withConfig(
+      ["[db.migrations]", 'schema_paths = [42, "schemas/*.sql"]', ""].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.schemaPaths).toEqual(["supabase/schemas/*.sql"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+    () => {
+      // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
+      // (config.go:635-637), so an explicit remote value wins over the env var.
+      const ref = "schmschmschmschmschm";
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-only.sql";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          'db.migrations.schema_paths = ["remote-only.sql"]',
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/remote-only.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("decodes a numeric db.seed.enabled = 0 as false (Go weak-bool decode)", () => {
     const dir = withConfig(["[db.seed]", "enabled = 0", ""].join("\n"));
     return read(dir).pipe(

@@ -8,7 +8,7 @@ import {
   legacyReadSeedTable,
   UPSERT_SEED_FILE,
 } from "./legacy-migration-history.ts";
-import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "./legacy-path-match.ts";
+import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
 /** Applying a seed file failed (Go's `SeedData` / `ExecBatchWithCache` errors). */
@@ -33,14 +33,6 @@ interface LegacyPendingSeed {
   readonly dirty: boolean;
 }
 
-// Go's `io/fs.hasMeta` magic-character set is `*`, `?`, `[`, and `\` (escape) —
-// `glob.go` `hasMeta`. `\` must count so a pattern whose only meta syntax is a
-// backslash escape (e.g. `foo\.sql`, `seed\*.sql`) is globbed via `legacyPathMatch`
-// (which handles the escape) instead of being treated as a literal filename and
-// missing the real file. Go applies `filepath.ToSlash` before globbing, so a `\`
-// here is always a glob escape, never a path separator.
-const hasMeta = (pattern: string): boolean => /[*?[\\]/u.test(pattern);
-
 // Go globs/reads seed paths through an OS-root-rooted `afero.NewOsFs`, where the
 // CLI's "workdir" is just `os.Chdir(workdir)` (`internal/utils/misc.go`) — which
 // only affects RELATIVE paths. An absolute `[db.seed].sql_paths` entry, preserved
@@ -52,46 +44,14 @@ const resolveUnderWorkdir = (path: Path.Path, workdir: string, p: string): strin
   path.isAbsolute(p) ? p : path.join(workdir, p);
 
 /**
- * Resolves a single glob pattern against the workdir, returning the matched
- * paths RELATIVE to the workdir (so `seed_files.path` stays Go-compatible).
- * Mirrors Go's `fs.Glob`: a literal pattern returns itself iff it exists; a
- * pattern with metacharacters lists each parent directory and matches per
- * segment via `legacyPathMatch` (Go's `path.Match`). The caller validates the
- * whole pattern up front, so a malformed class never reaches here.
+ * Resolves `[db.seed].sql_paths` to existing files, porting Go's `config.Glob.SQLFiles`
+ * (`pkg/migration/seed.go:35`, via the shared {@link legacySqlFilesGlob} traversal —
+ * also used by `legacyGetPendingSeeds` (`legacy-seed-ops.ts`) for the same Go field on
+ * the `db push`/`db reset` path, and by `legacyApplySchemaFiles` (`legacy-migration-apply.ts`)
+ * for `[db.migrations].schema_paths`). Go's `GetPendingSeeds` prints a single unconditional
+ * `WARN: <joined>` line for any glob problem (`seed.go:36-38`) — unlike the schema-files
+ * apply path, which only warns when NO pattern matched anything at all.
  */
-const globPattern = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  pattern: string,
-): Effect.Effect<ReadonlyArray<string>> =>
-  Effect.gen(function* () {
-    if (!hasMeta(pattern)) {
-      const exists = yield* fs
-        .exists(resolveUnderWorkdir(path, workdir, pattern))
-        .pipe(Effect.orElseSucceed(() => false));
-      return exists ? [pattern] : [];
-    }
-    const slash = pattern.lastIndexOf("/");
-    const dirPattern = slash === -1 ? "" : pattern.slice(0, slash);
-    const filePattern = slash === -1 ? pattern : pattern.slice(slash + 1);
-    const dirs = hasMeta(dirPattern)
-      ? yield* globPattern(fs, path, workdir, dirPattern)
-      : [dirPattern];
-    const result: Array<string> = [];
-    for (const dir of dirs) {
-      const absDir = dir.length === 0 ? workdir : resolveUnderWorkdir(path, workdir, dir);
-      const names = yield* fs.readDirectory(absDir).pipe(Effect.orElseSucceed(() => []));
-      for (const name of names) {
-        if (legacyPathMatch(filePattern, name).matched) {
-          result.push(dir.length === 0 ? name : `${dir}/${name}`);
-        }
-      }
-    }
-    return result;
-  });
-
-/** Go's `config.Glob.Files`: glob each pattern, sort, dedup; warn on bad/no-match. */
 const resolveSeedFiles = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -100,30 +60,9 @@ const resolveSeedFiles = (
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
-    const seen = new Set<string>();
-    const result: Array<string> = [];
-    const unmatched: Array<string> = [];
-    for (const pattern of patterns) {
-      // Go's `fs.Glob` validates the whole pattern up front (`Match(pattern, "")`);
-      // a malformed glob is reported as `failed to glob files: <ErrBadPattern>` and
-      // contributes no matches, exactly like `Glob.Files`'s error branch.
-      if (legacyPathMatch(pattern, "").badPattern) {
-        unmatched.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
-        continue;
-      }
-      const matches = [...(yield* globPattern(fs, path, workdir, pattern))].sort();
-      if (matches.length === 0) unmatched.push(`no files matched pattern: ${pattern}`);
-      for (const match of matches) {
-        if (!seen.has(match)) {
-          seen.add(match);
-          result.push(match);
-        }
-      }
-    }
-    // Go collects all glob errors into one `errors.Join` and prints a single
-    // `WARN: <joined>` line (`config.Glob.Files` → `seed.go:37`), not one per pattern.
-    if (unmatched.length > 0) yield* output.raw(`WARN: ${unmatched.join("\n")}\n`, "stderr");
-    return result;
+    const { files, warnings } = yield* legacySqlFilesGlob(fs, path, patterns, workdir);
+    if (warnings.length > 0) yield* output.raw(`WARN: ${warnings.join("\n")}\n`, "stderr");
+    return files;
   });
 
 /**
