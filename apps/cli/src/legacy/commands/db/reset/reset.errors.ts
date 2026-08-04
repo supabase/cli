@@ -51,9 +51,15 @@ export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbReset
   readonly message: string;
 }> {}
 
-/** A drop / migrate / seed / vault statement failed during the remote reset. */
+/**
+ * A drop / migrate / seed / vault statement failed during the remote reset. `suggestion`
+ * is Go's `CmdSuggestion` — set only by the `--experimental` schema-files apply branch
+ * (`"See schema file: <Bold(fp)>"`, `apply.go:63`); every other apply failure on this
+ * command leaves it unset, matching Go.
+ */
 export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetApplyError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {}
 
 /**

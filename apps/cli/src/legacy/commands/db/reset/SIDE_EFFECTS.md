@@ -2,12 +2,16 @@
 
 Native TypeScript port of `apps/cli-go/internal/db/reset/reset.go`. Reinitialises a
 database from local migrations (plus seed). The **remote** path (`--linked`, or a
-remote `--db-url`) is native: drop all user schemas, upsert vault secrets, then
-re-apply migrations and seed. The **local** path (`--local`/default, or a `--db-url`
+remote `--db-url`) is native: drop all user schemas, upsert vault secrets, then either
+re-apply migrations (the default) or, on a versionless `--experimental`/
+`SUPABASE_EXPERIMENTAL` reset with pg-delta not enabled, apply the declarative
+`[db.migrations].schema_paths` files instead (Go's `apply.MigrateAndSeed` EXPERIMENTAL
+branch, CLI-1958), then seed. The **local** path (`--local`/default, or a `--db-url`
 pointing at the local stack) is also native: TS orchestrates the running check,
 messages, bucket seeding, and git-branch line, while the container-recreate
-primitives run behind the hidden Go `db __db-bootstrap` seam. Only the niche
-**`--experimental`** remote schema-files path still delegates to the Go binary.
+primitives run behind the hidden Go `db __db-bootstrap` seam — that seam forwards
+`--experimental` to the Go child itself, so the local path's own schema-files branch
+is still handled by Go (CLI-1955 scope, unaffected by CLI-1958).
 
 ## Files Read
 
@@ -19,6 +23,7 @@ primitives run behind the hidden Go `db __db-bootstrap` seam. Only the niche
 | `~/.supabase/<hash>/project-ref`                       | plain text | `--linked`, to resolve the ref                                                                                        |
 | `~/.supabase/access-token`                             | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                              |
 | seed files from `--sql-paths` or `[db.seed].sql_paths` | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                             |
+| schema files from `[db.migrations].schema_paths`       | SQL        | remote path only, when the `--experimental` schema-files branch is taken (see Notes)                                  |
 | `<workdir>/supabase/buckets/`                          | files      | local path, when storage is up and `[storage.buckets]` configure objects                                              |
 
 ## Files Written
@@ -29,31 +34,32 @@ primitives run behind the hidden Go `db __db-bootstrap` seam. Only the niche
 | `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush) |
 
 On the local path the Go seam additionally recreates the `supabase_db_<project>`
-container/volume and applies the initial schema (`SetupLocalDatabase`); the
-`--experimental` remote path produces whatever the delegated Go binary writes.
+container/volume and applies the initial schema (`SetupLocalDatabase`).
 
 ## Subprocesses
 
-| Command                                                                     | When                                | Purpose                                                                 |
-| --------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------- |
-| `docker container inspect supabase_db_<project>`                            | local path                          | `AssertSupabaseDbIsRunning` probe (Podman fallback)                     |
-| `supabase-go db __db-bootstrap --mode recreate [--version <v>] [--no-seed]` | local path                          | recreate container + init schema + migrate + seed + restart services    |
-| `supabase-go db __db-bootstrap --mode await-storage`                        | local path                          | storage health gate before bucket seeding (`ready` / `absent`)          |
-| `supabase-go db reset --linked\|--db-url … [--no-seed]`                     | `--experimental` remote, no version | the un-ported experimental schema-files apply path (telemetry disabled) |
+| Command                                                                     | When       | Purpose                                                              |
+| --------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------- |
+| `docker container inspect supabase_db_<project>`                            | local path | `AssertSupabaseDbIsRunning` probe (Podman fallback)                  |
+| `supabase-go db __db-bootstrap --mode recreate [--version <v>] [--no-seed]` | local path | recreate container + init schema + migrate + seed + restart services |
+| `supabase-go db __db-bootstrap --mode await-storage`                        | local path | storage health gate before bucket seeding (`ready` / `absent`)       |
 
 The seam subprocesses run with `SUPABASE_TELEMETRY_DISABLED=1`, stderr inherited;
-`--network-id` / a flag-selected `--profile` are forwarded.
+`--network-id` / a flag-selected `--profile` (plus `--experimental`, so the seam's own
+`MigrateAndSeed` takes Go's schema-files branch on a versionless local reset) are
+forwarded.
 
 ## Database Mutations
 
 ### Remote path (native, in TS)
 
-| Statement                                                                                                                                        | When                                                         |
-| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                                  | always, first                                                |
-| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                       |
-| migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | when `[db.migrations].enabled`, for migrations `≤ --version` |
-| seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed`                 |
+| Statement                                                                                                                                        | When                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                                  | always, first                                                                 |
+| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                                        |
+| schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta not enabled (see Notes)     |
+| migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | otherwise, when `[db.migrations].enabled`, for migrations `≤ --version`       |
+| seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed` (runs after either branch above) |
 
 ### Local path (inside the Go seam)
 
@@ -81,35 +87,36 @@ races a restarting gateway.
 | `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path     | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection       | no                                                      |
 | `SUPABASE_YES`          | auto-confirm the reset prompt                   | no (also `--yes`)                                       |
-| `SUPABASE_EXPERIMENTAL` | routes the experimental schema-files path to Go | no (also `--experimental`)                              |
+| `SUPABASE_EXPERIMENTAL` | selects the remote schema-files apply branch    | no (also `--experimental`)                              |
 | `SUPABASE_PROJECT_ID`   | overrides the local container id (`utils.DbId`) | no                                                      |
 
 ## Exit Codes
 
-| Code                 | Condition                                                                                                                  |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `0`                  | success                                                                                                                    |
-| `1`                  | mutually exclusive target flags (`[db-url linked local]`)                                                                  |
-| `1`                  | `--version` + `--last` together (`[last version]`)                                                                         |
-| `1`                  | `--version` not an integer (`invalid version number`)                                                                      |
-| `1`                  | `--version` has no matching migration file                                                                                 |
-| `1`                  | local: database not running (`supabase start is not running.`)                                                             |
-| `1`                  | user declined the reset confirmation (`context canceled`)                                                                  |
-| `1`                  | `config.toml` parse failure                                                                                                |
-| `1`                  | drop / migrate / seed / vault apply failure, or connection error                                                           |
-| child's exact code\* | local: container recreate / storage health-gate failure (seam), or `--experimental`/`--linked` delegate (proxy) child exit |
+| Code                 | Condition                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| `0`                  | success                                                                                   |
+| `1`                  | mutually exclusive target flags (`[db-url linked local]`)                                 |
+| `1`                  | `--version` + `--last` together (`[last version]`)                                        |
+| `1`                  | `--version` not an integer (`invalid version number`)                                     |
+| `1`                  | `--version` has no matching migration file                                                |
+| `1`                  | local: database not running (`supabase start is not running.`)                            |
+| `1`                  | user declined the reset confirmation (`context canceled`)                                 |
+| `1`                  | `config.toml` parse failure                                                               |
+| `1`                  | drop / migrate / seed / vault apply failure, or connection error                          |
+| `1`                  | no `[db.migrations].schema_paths` pattern matched anything on the `--experimental` branch |
+| child's exact code\* | local: container recreate / storage health-gate failure (seam)                            |
 
-\* The `db __db-bootstrap` seam and the `--experimental` remote delegate both
-propagate the spawned `supabase-go` child's real exit code (e.g. `130` after a
-Ctrl-C mid-recreate) instead of collapsing every failure to `1` — in every
-`--output-format` (CLI-1879).
+\* The `db __db-bootstrap` seam propagates the spawned `supabase-go` child's real exit
+code (e.g. `130` after a Ctrl-C mid-recreate) instead of collapsing every failure to
+`1` — in every `--output-format` (CLI-1879).
 
 ## Output
 
-The remote path prints `Resetting remote database…` to **stderr**, then the
-drop/migrate/seed progress (`Applying migration …`, `Seeding data from …`). Go
-connects with `io.Discard`, so there is **no** `Connecting to … database…` line and
-**no** `Finished …` line on the remote path.
+The remote path prints `Resetting remote database…` to **stderr**, then either the
+schema-files branch's apply (no per-file progress — Go's `applySchemaFiles` prints
+nothing, CLI-1958) or the migrate/seed progress (`Applying migration …`, `Seeding
+data from …`). Go connects with `io.Discard`, so there is **no** `Connecting to …
+database…` line and **no** `Finished …` line on the remote path.
 
 The local path prints `Resetting local database…` to **stderr**, then the seam's
 `Recreating database...` / `Restarting containers...` progress, and finally
@@ -118,9 +125,8 @@ in Aqua).
 
 ### `--output-format text` (Go CLI compatible)
 
-Byte-matches Go's stderr progress for both the remote and local paths. The
-`--experimental` remote path passes the delegated Go binary's output through
-unchanged.
+Byte-matches Go's stderr progress for both the remote and local paths, including the
+silent (no-progress-line) `--experimental` schema-files apply.
 
 ### `--output-format json` / `stream-json`
 
@@ -152,6 +158,27 @@ path has no confirmation prompt.
 - `--last n` reverts the most recent `n` migrations; if `n ≥ total`, the reset target
   version becomes `-` (revert everything). Mutually exclusive with `--version`.
 - `--db-url`, `--linked`, and `--local` (default true) are mutually exclusive.
-- **Known interim**: only `--experimental` remote resets run via the Go binary; the
-  best-effort pg-delta catalog cache (inside the seam) is not surfaced (no output
-  impact). `encrypted:` vault secrets are skipped on the remote path.
+- **`--experimental` remote schema-files apply** (Go's `apply.MigrateAndSeed`
+  EXPERIMENTAL branch, `apps/cli-go/internal/migration/apply/apply.go:19,51-68`;
+  ported natively CLI-1958): taken on the remote path when `--experimental` /
+  `SUPABASE_EXPERIMENTAL` is set, no `--version`/`--last` resolved a version, AND
+  `[experimental.pgdelta].enabled` is NOT set. A hard `if`/`else if` in Go — taking
+  this branch means timestamped migrations never run at all, even when
+  `[db.migrations].schema_paths` matches nothing. Faithfully reproduces two
+  undocumented Go quirks: (1) the `schema_paths` default is `[]`, so a stock project
+  running an experimental remote reset silently applies NOTHING (drops schemas,
+  seeds, but replays no SQL) rather than falling back to migrations; (2) a partial
+  glob failure (some patterns match, others don't) is silently dropped — only a
+  TOTAL failure (no pattern matches anything) aborts the reset, with Go's joined
+  `no files matched pattern: …` text and no `CmdSuggestion`. A per-file apply
+  failure attaches Go's `See schema file: <file>` suggestion. No progress line is
+  printed per file (Go's `applySchemaFiles` has no output), no migration-history row
+  is inserted, and no `RESET ALL` runs between files. Seeding still runs afterward,
+  unconditionally, exactly as on the migrations branch. The best-effort pg-delta
+  catalog-cache warning (`down.go:58-59`, gated on `SUPABASE_EXPERIMENTAL_PG_DELTA`)
+  is not ported (no output impact) — same known gap as the migrations branch.
+  `encrypted:` vault secrets are skipped on the remote path (both branches).
+- The local path's own `--experimental` schema-files branch is still handled by the
+  Go child behind the `db __db-bootstrap` seam (CLI-1955 scope) — this command's
+  handler forwards `--experimental` to that seam but does not implement the branch
+  itself for the local target.

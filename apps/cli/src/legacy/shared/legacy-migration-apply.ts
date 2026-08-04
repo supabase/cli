@@ -1,6 +1,7 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
@@ -8,6 +9,7 @@ import {
   MIGRATE_FILE_PATTERN,
   legacyCreateMigrationTable,
 } from "./legacy-migration-history.ts";
+import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
 /**
@@ -355,3 +357,59 @@ export const legacyExecSqlFile = <E>(
   filePath: string,
   mapError: (message: string) => E,
 ): Effect.Effect<void, E> => execMigrationBatch(session, fs, path, filePath, mapError, true);
+
+/**
+ * Applies Go's EXPERIMENTAL declarative schema-files branch of `apply.MigrateAndSeed`
+ * (`apps/cli-go/internal/migration/apply/apply.go:19,51-68`). Reads `[db.migrations]
+ * schema_paths` (already resolved to Go's config-load form — supabase-joined when
+ * relative, verbatim when absolute) via the shared `Glob.SQLFiles` port
+ * ({@link legacySqlFilesGlob}), then runs each matched file's statements with
+ * {@link legacyExecSqlFile} in glob order — no history table, no history row, and no
+ * `RESET ALL` between files, matching Go's `schema.Version = ""` discard (`apply.go:61`)
+ * and the fact that `ExecBatch` (unlike `ApplyMigrations`) never resets connection state.
+ *
+ * Callers gate the call on Go's three-conjunct condition (`--experimental` + no resolved
+ * version + pg-delta NOT enabled, `apply.go:19`) themselves — this function only performs
+ * the branch's body, mirroring `applySchemaFiles`'s own signature (it never re-checks the
+ * gate). It is the caller's responsibility to skip `legacyApplyMigrations` entirely when
+ * this is called (Go's `if`/`else if` is mutually exclusive, `apply.go:19-27`).
+ *
+ * Faithfully reproduces two undocumented, unfixed-upstream Go quirks that are load-bearing
+ * for the strict 1:1 contract (CLI-1958):
+ *  - **Empty `schema_paths` (the `supabase init` default) silently applies nothing** and
+ *    returns success — `Config.Db.Migrations.SchemaPaths.SQLFiles` returns a `nil` error
+ *    when there are zero patterns to glob (`errors.Join()` with no arguments is `nil`), so
+ *    `applySchemaFiles` returns `nil` too (`apply.go:53-54`).
+ *  - **A PARTIAL glob failure is silently dropped**: per-pattern warnings are only
+ *    surfaced (as the returned failure) when NO pattern matched anything at all
+ *    (`declared` empty, `apply.go:53-55`); once at least one file is found, every other
+ *    pattern's warning is discarded — unlike the seed path's `WARN:` line.
+ *
+ * On a per-file exec failure, attaches Go's `CmdSuggestion = "See schema file: <Bold(fp)>"`
+ * (`apply.go:63`) via the optional second argument of `mapError`.
+ */
+export const legacyApplySchemaFiles = <E>(
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  schemaPaths: ReadonlyArray<string>,
+  mapError: (message: string, suggestion?: string) => E,
+): Effect.Effect<void, E> =>
+  Effect.gen(function* () {
+    const { files, warnings } = yield* legacySqlFilesGlob(fs, path, schemaPaths, workdir);
+    if (files.length === 0) {
+      // Go: `if len(declared) == 0 { return err }` — `err` is `nil` when there were no
+      // patterns to glob at all, and the joined per-pattern warnings otherwise.
+      if (warnings.length > 0) {
+        return yield* Effect.fail(mapError(warnings.join("\n")));
+      }
+      return;
+    }
+    for (const file of files) {
+      const absolutePath = path.isAbsolute(file) ? file : path.join(workdir, file);
+      yield* legacyExecSqlFile(session, fs, path, absolutePath, (message) =>
+        mapError(message, `See schema file: ${legacyBold(file)}`),
+      );
+    }
+  });

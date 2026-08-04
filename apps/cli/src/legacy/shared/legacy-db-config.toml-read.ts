@@ -98,6 +98,14 @@ export interface LegacyDbTomlValues {
   readonly baseline: LegacyBaselineTomlConfig;
   /** `[db.migrations] enabled` (default true) — gates `up`/`down` migration apply. */
   readonly migrationsEnabled: boolean;
+  /**
+   * `[db.migrations] schema_paths` glob patterns, default `[]`, each supabase-prefixed
+   * when relative (Go's `config.resolve`, `config.go:976-980`) — the same resolution
+   * `[db.seed].sql_paths` gets, but resolved unconditionally (not gated on
+   * `db.migrations.enabled`). Feeds `apply.MigrateAndSeed`'s EXPERIMENTAL declarative
+   * branch (`legacyApplySchemaFiles`) — see `db reset`'s `--experimental` remote path.
+   */
+  readonly schemaPaths: ReadonlyArray<string>;
   /** `[db.seed]` enabled + supabase-prefixed `sql_paths` globs — used by `down`. */
   readonly seed: LegacyDbSeedTomlConfig;
   /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
@@ -283,6 +291,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.shadow_port",
   "db.major_version",
   "db.migrations.enabled",
+  "db.migrations.schema_paths",
   "db.seed.enabled",
   "db.seed.sql_paths",
   "auth.enabled",
@@ -1860,6 +1869,27 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // resolve each to Go's config-load form (absolute verbatim, relative supabase-joined).
   const seedSqlPaths = sqlPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
 
+  // `[db.migrations] schema_paths` — Go default `[]` (`pkg/config/templates/config.toml:64`),
+  // resolved through the exact same decode + env-expand + supabase-join pipeline as
+  // `[db.seed].sql_paths` above, but UNCONDITIONALLY (Go's resolve loop for schema_paths,
+  // `config.go:976-980`, is not gated on `db.migrations.enabled` the way the seed loop is
+  // gated on `db.seed.enabled`, `config.go:968-975`).
+  const rawSchemaPaths = migrationsRaw?.["schema_paths"];
+  const schemaPathsOverride = remoteOverrideKeys.has("db.migrations.schema_paths")
+    ? undefined
+    : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS");
+  const schemaPathPatterns =
+    schemaPathsOverride !== undefined
+      ? splitGoSeedPaths(schemaPathsOverride)
+      : Array.isArray(rawSchemaPaths)
+        ? rawSchemaPaths
+            .filter((pattern): pattern is string => typeof pattern === "string")
+            .map((pattern) => legacyExpandEnv(pattern, lookup))
+        : typeof rawSchemaPaths === "string"
+          ? splitGoSeedPaths(rawSchemaPaths)
+          : [];
+  const schemaPaths = schemaPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
+
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
   // ciphertext. `resolved` mirrors Go's `len(SHA256) > 0` gate (Go sets SHA256 only
   // after a successful decrypt-or-passthrough; `UpsertVaultSecrets` upserts only
@@ -1953,6 +1983,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       vaultNames,
     },
     migrationsEnabled,
+    schemaPaths,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote,
