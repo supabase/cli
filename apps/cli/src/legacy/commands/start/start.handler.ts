@@ -85,6 +85,7 @@ import {
   legacyResolveGotrueWeb3,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
+  legacyResolveThirdPartyProviders,
   type LegacyLocalConfigValues,
   type LegacyResolvedAuthEmail,
 } from "../../shared/legacy-local-config-values.ts";
@@ -588,6 +589,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         config.auth.external,
         projectEnvValues,
       ),
+    );
+    // Same gap for `auth.third_party.<provider>.{enabled,...}` — Go's `Auth.ThirdParty`
+    // (`pkg/config/auth.go:187-198`) is value-typed exactly like `auth.web3`/`auth.oauth_server`
+    // above, decoded in the SAME unconditional `Config.Load` pass regardless of `auth.enabled`,
+    // even though `(tpa *thirdParty) validate()` itself only runs `if c.Auth.Enabled`
+    // (`config.go:1151-1153`). `legacyResolveThirdPartyProviders` is otherwise never called by
+    // this handler at all (GoTrue's own container build never wires third-party JWT settings —
+    // Go's `internal/start/start.go` never references `Auth.ThirdParty` either, matching
+    // `db start`'s identical decode-only, discard-the-result battery) — so a malformed override
+    // (e.g. `SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=bogus`) would otherwise never fail this
+    // command at all, unlike Go (review: PRRT_kwDOErm0O86WXFqj).
+    yield* wrapConfigOverride("auth.third_party", () =>
+      legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
     );
     // Go's `function` struct (`pkg/config/config.go:290-296`) has no `env` field — `Config.Load`'s
     // `v.UnmarshalExact` (`ErrorUnused: true`, `config.go:749,1041`) rejects any unknown key

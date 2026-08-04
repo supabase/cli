@@ -1946,6 +1946,124 @@ export function legacyResolveGotrueOAuthServer(
   };
 }
 
+/**
+ * Go's `(tpa *thirdParty) validate()` fixed provider order (`pkg/config/config.go:1635-1683`) —
+ * only enabled providers are forwarded, in that order. Each provider struct
+ * (`tpaFirebase`/`tpaAuth0`/`tpaCognito`/`tpaClerk`/`tpaWorkOs`, `auth.go:191-198`) is
+ * value-typed, same no-presence-gate reasoning as {@link legacyResolveGotrueWeb3} — so
+ * `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides always apply, including `workos`, whose
+ * default template omits `[auth.third_party.workos]` entirely, before `Auth.ThirdParty.
+ * validate()` runs.
+ *
+ * Hoisted here (originally private to {@link legacyResolveLocalConfigValues}) once
+ * `commands/db/start/start.handler.ts`'s eager pre-probe battery became a second caller — both
+ * need the same eager `auth.third_party.*` resolution to reproduce Go's unconditional
+ * `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" (review:
+ * PRRT_kwDOErm0O86WXFqj).
+ */
+export function legacyResolveThirdPartyProviders(
+  thirdParty: ProjectConfig["auth"]["third_party"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ReadonlyArray<LegacyThirdPartyInput> {
+  const resolved: Array<LegacyThirdPartyInput> = [];
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+      thirdParty.firebase.enabled,
+      "auth.third_party.firebase.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "firebase",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+          thirdParty.firebase.project_id,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+      thirdParty.auth0.enabled,
+      "auth.third_party.auth0.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "auth0",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+          thirdParty.auth0.tenant,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+      thirdParty.aws_cognito.enabled,
+      "auth.third_party.aws_cognito.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "cognito",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+          thirdParty.aws_cognito.user_pool_id,
+          projectEnvValues,
+        ) ?? "",
+      cognitoUserPoolRegion: legacyEnvOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+        thirdParty.aws_cognito.user_pool_region,
+        projectEnvValues,
+      ),
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+      thirdParty.clerk.enabled,
+      "auth.third_party.clerk.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "clerk",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+          thirdParty.clerk.domain,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+      thirdParty.workos.enabled,
+      "auth.third_party.workos.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "workos",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+          thirdParty.workos.issuer_url,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  return resolved;
+}
+
 /** Go's `(s *sms) validate()` fixed provider priority (`pkg/config/config.go:1348-1410`) — a
  * `switch` that validates ONLY the first enabled provider in this order. */
 const LEGACY_SMS_PROVIDER_ORDER = [
@@ -2932,107 +3050,10 @@ export function legacyResolveLocalConfigValues(
           };
 
     // Go's `(tpa *thirdParty) validate()` fixed provider order (`pkg/config/config.go:1635-1683`)
-    // — only enabled providers are forwarded, in that order. Like `Auth.MFA` above, each provider
-    // struct (`tpaFirebase`/`tpaAuth0`/`tpaCognito`/`tpaClerk`/`tpaWorkOs`, `auth.go:191-198`) is
-    // value-typed, so `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides always apply — including
-    // `workos`, whose default template omits `[auth.third_party.workos]` entirely — before
-    // `Auth.ThirdParty.validate()` runs; no raw-document presence gate needed.
-    const thirdParty: Array<LegacyThirdPartyInput> = [];
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        config.auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "firebase",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-            config.auth.third_party.firebase.project_id,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        config.auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "auth0",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-            config.auth.third_party.auth0.tenant,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        config.auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "cognito",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-            config.auth.third_party.aws_cognito.user_pool_id,
-            projectEnvValues,
-          ) ?? "",
-        cognitoUserPoolRegion: legacyEnvOverride(
-          "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-          config.auth.third_party.aws_cognito.user_pool_region,
-          projectEnvValues,
-        ),
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        config.auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "clerk",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-            config.auth.third_party.clerk.domain,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        config.auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "workos",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-            config.auth.third_party.workos.issuer_url,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
+    // — only enabled providers are forwarded, in that order. {@link legacyResolveThirdPartyProviders}
+    // is the SAME hoisted resolver `commands/db/start/start.handler.ts`'s eager pre-probe battery
+    // calls, so both callers apply identical `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides.
+    const thirdParty = legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues);
 
     authInput = {
       siteUrl: siteUrl ?? "",

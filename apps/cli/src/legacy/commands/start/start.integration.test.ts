@@ -1985,6 +1985,39 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally in Go's
+        // Config.Load (pkg/config/auth.go:210-240), same override-only-throw reasoning as the
+        // web3/oauth_server tests above (review: PRRT_kwDOErm0O86WXFqj).
+        const previous = process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
+        process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.third_party");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
+              else process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
       () => {
         // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes

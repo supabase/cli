@@ -739,6 +739,7 @@ describe("legacy db start", () => {
     ["db.pooler.enabled", "SUPABASE_DB_POOLER_ENABLED", "not-a-bool"],
     ["auth.web3", "SUPABASE_AUTH_WEB3_SOLANA_ENABLED", "not-a-bool"],
     ["auth.oauth_server", "SUPABASE_AUTH_OAUTH_SERVER_ENABLED", "not-a-bool"],
+    ["auth.third_party", "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED", "not-a-bool"],
     ["api.enabled", "SUPABASE_API_ENABLED", "not-a-bool"],
     ["storage.vector.enabled", "SUPABASE_STORAGE_VECTOR_ENABLED", "not-a-bool"],
   ] as const)(

@@ -46,6 +46,7 @@ import {
   legacyResolveGotrueWeb3,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
+  legacyResolveThirdPartyProviders,
 } from "../../../shared/legacy-local-config-values.ts";
 import {
   legacyParseGoDuration,
@@ -406,6 +407,20 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         config.auth.external,
         projectEnvValues,
       ),
+    );
+    // Same gap for `auth.third_party.<provider>.{enabled,...}` — Go's `Auth.ThirdParty`
+    // (`pkg/config/auth.go:187-198`) is value-typed exactly like `auth.web3`/`auth.oauth_server`
+    // above, decoded in the SAME unconditional `Config.Load` pass regardless of `auth.enabled`,
+    // even though `(tpa *thirdParty) validate()` itself only runs `if c.Auth.Enabled`
+    // (`config.go:1151-1153`). `legacyCheckDbToml`'s own third-party validation (run via
+    // `legacyValidateResolvedConfig`, above) only sees raw TOML `enabled =` values, not
+    // `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_ENABLED` AutomaticEnv overrides, and
+    // `legacyResolveThirdPartyProviders` is otherwise only reached via
+    // `legacyResolveLocalConfigValues`'s not-running-only call — so a malformed override (e.g.
+    // `SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=bogus`) would otherwise be silently accepted
+    // whenever Postgres is already running, unlike Go (review: PRRT_kwDOErm0O86WXFqj).
+    yield* wrapDbConfigOverride("auth.third_party", () =>
+      legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
     );
     // Same gap for `auth.hook.<type>.{enabled,uri,secrets}` — Go's `hook.validate()`
     // (`pkg/config/config.go:1453-1485`) reads pointer-backed `*hookConfig` fields Viper-bound
