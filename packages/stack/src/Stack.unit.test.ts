@@ -490,4 +490,18 @@ describe("Stack", () => {
       }).pipe(Effect.provide(coordinatorLayer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
+
+  it.live("rejects a cached activation after the stack has stopped", () => {
+    const { coordinatorLayer } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      yield* coordinator.activateService("auth");
+      yield* coordinator.stop();
+
+      const error = yield* coordinator.activateService("auth").pipe(Effect.flip);
+      expect(error._tag).toBe("StackNotRunningError");
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
 });

@@ -568,14 +568,17 @@ export class StackLifecycleCoordinator extends Context.Service<
             const beginActivation = withActivationLocks(
               inactiveClosure,
               Effect.gen(function* () {
+                yield* beforeStart;
                 const inactiveServices = services.filter(
                   (service) => !activatedServices.has(service),
                 );
                 if (inactiveServices.length === 0) {
                   return [];
                 }
-                yield* beforeStart;
-                const inactiveServiceClosure = publicServiceClosure(runtime, inactiveServices);
+                const inactiveServiceClosure = publicServiceClosure(
+                  runtime,
+                  inactiveServices,
+                ).filter((service) => !activatedServices.has(service));
                 const explicitlyStoppedDependency = inactiveServiceClosure.find((service) =>
                   manuallyStoppedServices.has(service),
                 );
