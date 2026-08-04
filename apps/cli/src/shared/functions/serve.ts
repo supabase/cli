@@ -49,6 +49,7 @@ import { ProcessControl } from "../runtime/process-control.service.ts";
 import {
   buildDockerBinds,
   discoverFunctionSlugs,
+  dockerBindContainerPath,
   dockerBindHostPath,
   dockerProjectLabels,
   dockerWorkdirLabel,
@@ -1063,6 +1064,22 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
   return { paths, values, loadedPaths, sources } satisfies ProjectEnvironment;
 });
 
+/**
+ * Whether any bind mounts something at `containerPath` or below it, i.e. whether
+ * that path exists inside the container. Docker creates a missing `--workdir`,
+ * but Podman rejects the container outright (supabase/cli#6035), so the flag can
+ * only be set for a path a bind actually materializes.
+ */
+function hasBindUnder(binds: Iterable<string>, containerPath: string): boolean {
+  for (const bind of binds) {
+    const target = dockerBindContainerPath(bind);
+    if (target === containerPath || target.startsWith(`${containerPath}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyArray<WatchSpec>> {
   const specs = new Map<string, WatchSpec>();
 
@@ -1617,6 +1634,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       ).pipe(
         Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
       );
+      const containerProjectRoot = toDockerPath(input.projectRoot);
       const command = [
         "run",
         "-d",
@@ -1626,8 +1644,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         networkMode,
         "--network-alias",
         "edge_runtime",
-        "--workdir",
-        toDockerPath(input.projectRoot),
+        ...(hasBindUnder(binds, containerProjectRoot) ? ["--workdir", containerProjectRoot] : []),
         "--ulimit",
         "nofile=65536:65536",
         "--label",

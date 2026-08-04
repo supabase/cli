@@ -26,6 +26,14 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
+  legacyPflagBoolValue,
+  legacyPflagEnumValue,
+  legacyPflagSliceValue,
+  legacyPflagStringValue,
+  legacyResolvePflagProfile,
+  legacyValidatePflagWorkdir,
+} from "../../../shared/legacy-pflag-reconcile.ts";
+import {
   LegacySsoAddAttributeMappingFileError,
   LegacySsoAddMetadataFileError,
   LegacySsoAddNetworkError,
@@ -40,14 +48,6 @@ import {
 } from "../sso.errors.ts";
 import { renderSingleProvider, toLegacySsoProviderView } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import {
-  legacySsoPflagBoolValue,
-  legacySsoPflagEnumValue,
-  legacySsoPflagSliceValue,
-  legacySsoPflagStringValue,
-  legacySsoResolvePflagProfile,
-  legacySsoValidatePflagWorkdir,
-} from "../sso.pflag-reconcile.ts";
 import {
   LEGACY_SSO_NAME_ID_FORMATS,
   readAttributeMappingFile,
@@ -145,12 +145,12 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // values; `--type`'s stays unused because every valid occurrence is the
     // enum's single member, so the parsed `flags.type` is already
     // pflag-effective whenever this validation passes.
-    yield* Result.match(legacySsoPflagEnumValue(occurrences, "type", ["saml"], "-t, --type"), {
+    yield* Result.match(legacyPflagEnumValue(occurrences, "type", ["saml"], "-t, --type"), {
       onFailure: (message: string) => Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
       onSuccess: Effect.succeed,
     });
     const skipUrlValidation = yield* Result.match(
-      legacySsoPflagBoolValue(occurrences, "skip-url-validation"),
+      legacyPflagBoolValue(occurrences, "skip-url-validation"),
       {
         onFailure: (message: string) =>
           Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
@@ -158,7 +158,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       },
     );
     const nameIdFormat = yield* Result.match(
-      legacySsoPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
+      legacyPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
       {
         onFailure: (message: string) =>
           Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
@@ -193,7 +193,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // contacts (binary-verified, PR #5974 review round 7). Where the scan
     // and the parser agree, this resolves to `none` and the config layer's
     // apiUrl below is already pflag-effective.
-    const reconciledProfile = yield* legacySsoResolvePflagProfile(scan);
+    const reconciledProfile = yield* legacyResolvePflagProfile(scan);
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Reconciled-profile credentials, resolved ONCE for the main request and
     // every auxiliary call (linked-project cache fill, upgrade-gate fallback
@@ -232,7 +232,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // metadata — without this check the reconciliation below would silently
     // drop the metadata source and POST a provider Go never creates
     // (binary-verified, PR #5974 review round 6).
-    yield* legacySsoValidatePflagWorkdir(scan);
+    yield* legacyValidatePflagWorkdir(scan);
 
     // `MarkFlagRequired("type")` (`cmd/sso.go:165`): when pflag consumed the
     // `--type` or `-t` token as another flag's value (e.g. `--domains --type
@@ -271,11 +271,11 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // required-flag check above). `--name-id-format` and
     // `--skip-url-validation` were reconciled above, alongside their pflag
     // value validation.
-    const projectRef = legacySsoPflagStringValue(occurrences, "project-ref");
-    const metadataFile = legacySsoPflagStringValue(occurrences, "metadata-file");
-    const metadataUrl = legacySsoPflagStringValue(occurrences, "metadata-url");
-    const attributeMappingFile = legacySsoPflagStringValue(occurrences, "attribute-mapping-file");
-    const domains = legacySsoPflagSliceValue(occurrences, "domains", flags.domains);
+    const projectRef = legacyPflagStringValue(occurrences, "project-ref");
+    const metadataFile = legacyPflagStringValue(occurrences, "metadata-file");
+    const metadataUrl = legacyPflagStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = legacyPflagStringValue(occurrences, "attribute-mapping-file");
+    const domains = legacyPflagSliceValue(occurrences, "domains", flags.domains);
 
     const ref = yield* resolver.resolve(projectRef);
 
