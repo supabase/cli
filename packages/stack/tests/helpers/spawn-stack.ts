@@ -100,8 +100,10 @@ export function spawnStandaloneStack(
     });
 
     child.on("error", (err) => settle({ error: err }));
-    // Any exit before readiness is a failure — including a clean 0.
-    child.on("exit", (code) => {
+    // Any exit before readiness is a failure — including a clean 0. `close`
+    // rather than `exit`: it waits for the stdio pipes to drain, so the tails
+    // below always carry whatever the child managed to say.
+    child.on("close", (code) => {
       settle({
         error: new Error(
           `Stack process exited with code ${code} before readiness\n${outputTail()}`,
