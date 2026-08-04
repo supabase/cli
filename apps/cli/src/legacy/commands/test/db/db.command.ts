@@ -1,6 +1,8 @@
 import { Command } from "effect/unstable/cli";
 
 import {
+  LEGACY_TEST_DB_DESCRIPTION,
+  LEGACY_TEST_DB_SHORT,
   legacyRunTestDbCommand,
   legacyTestDbConfig,
 } from "../../../shared/legacy-test-db.command-handler.ts";
@@ -15,10 +17,8 @@ import { legacyTestDbRuntimeLayer } from "../../../shared/legacy-test-db.layers.
  * `legacy/shared/legacy-test-db.*` — see that module's doc comment for why.
  */
 export const legacyTestDbCommand = Command.make("db", legacyTestDbConfig).pipe(
-  // Byte-matches Go's Short text, identical on both commands (`cmd/test.go:19`:
-  // `Short: dbTestCmd.Short`; `cmd/db.go:425`).
-  Command.withDescription("Tests local database with pgTAP."),
-  Command.withShortDescription("Tests local database with pgTAP"),
+  Command.withDescription(LEGACY_TEST_DB_DESCRIPTION),
+  Command.withShortDescription(LEGACY_TEST_DB_SHORT),
   Command.withHandler(legacyRunTestDbCommand),
   Command.provide(legacyTestDbRuntimeLayer(["test", "db"])),
 );

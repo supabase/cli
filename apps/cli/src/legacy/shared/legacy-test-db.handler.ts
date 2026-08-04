@@ -61,7 +61,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
 
   yield* Effect.gen(function* () {
     // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local")
-    // (`apps/cli-go/cmd/db.go:485`). Selection is keyed off flag PRESENCE (cobra's
+    // (`apps/cli-go/cmd/db.go:740`). Selection is keyed off flag PRESENCE (cobra's
     // `Changed`), not boolean value — `--linked=false` and `--no-linked` both count
     // as explicitly setting the `linked` flag (`db_url.go:46-63`).
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
@@ -101,7 +101,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     // Network selection mirrors Go's DockerRunOnceWithConfig: a non-empty
     // `--network-id` overrides everything (even host mode); otherwise local uses
     // the generated `supabase_network_<project_id>` network and remote uses host
-    // networking (`apps/cli-go/internal/utils/docker.go:267-271`, `test.go:79-87`).
+    // networking (`apps/cli-go/internal/utils/docker.go:379-384`, `test.go:79-87`).
     const networkId = Option.getOrUndefined(networkIdFlag);
     const network =
       networkId !== undefined && networkId.length > 0
@@ -163,7 +163,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
 
         // Bitbucket Pipelines rejects `--security-opt`, so Go clears
         // `hostConfig.SecurityOpt` when `BITBUCKET_CLONE_DIR` is set
-        // (`apps/cli-go/internal/utils/docker.go:288-293`). Match that exactly:
+        // (`apps/cli-go/internal/utils/docker.go:401-405`). Match that exactly:
         // omit the option in Bitbucket CI, where it would abort container creation.
         const inBitbucket = (process.env["BITBUCKET_CLONE_DIR"] ?? "") !== "";
         // Go adds `host.docker.internal:host-gateway` to every container's

@@ -10,6 +10,15 @@ import { LegacyTestDbRunError } from "./legacy-test-db.errors.ts";
 import { legacyTestDb } from "./legacy-test-db.handler.ts";
 
 /**
+ * Short/description text shared verbatim by both Go-parity entry points
+ * (`legacy/commands/test/db/db.command.ts`, `legacy/commands/db/test/test.command.ts`),
+ * mirroring Go's own single-source (`cmd/test.go:19`: `Short: dbTestCmd.Short`).
+ * Byte-matches Go's Short text (`cmd/db.go:425`).
+ */
+export const LEGACY_TEST_DB_DESCRIPTION = "Tests local database with pgTAP.";
+export const LEGACY_TEST_DB_SHORT = "Tests local database with pgTAP";
+
+/**
  * `test db` has no machine-format envelope: its entire output is the streamed
  * pg_prove TAP on stdout (Go has no `--output-format` for it). On a *run* failure
  * (failing tests), the default `withJsonErrorHandling` would append a JSON error
