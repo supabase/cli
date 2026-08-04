@@ -301,6 +301,12 @@ export async function acquireManagedPortLock(
         if ((await readOwnerContents(lockPath)) !== ownerContents) continue;
       } catch (error) {
         await rm(candidatePath, { recursive: true, force: true });
+        if (installed) {
+          const quarantinePath = await moveLockGeneration(lockPath, ownerContents);
+          if (quarantinePath !== undefined) {
+            await rm(quarantinePath, { recursive: true, force: true });
+          }
+        }
         throw error;
       }
 
@@ -314,10 +320,7 @@ export async function acquireManagedPortLock(
         }
       };
     } catch (error) {
-      if (
-        installed ||
-        (errorCode(error) !== "EEXIST" && errorCode(error) !== "ENOTEMPTY")
-      ) {
+      if (installed || (errorCode(error) !== "EEXIST" && errorCode(error) !== "ENOTEMPTY")) {
         throw error;
       }
     }
