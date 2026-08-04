@@ -589,4 +589,23 @@ describe("Stack", () => {
       expect(error._tag).toBe("StackNotRunningError");
     }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
   });
+
+  it.live("resets inactive service state when a lazy stack starts again", () => {
+    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const { coordinatorLayer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      yield* coordinator.stopService("auth");
+      yield* Effect.sleep("20 millis");
+      expect((yield* coordinator.getState("auth")).status).toBe("Stopped");
+
+      yield* coordinator.stop();
+      yield* coordinator.start();
+
+      expect((yield* coordinator.getState("auth")).status).toBe("Pending");
+      yield* coordinator.stop();
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
 });

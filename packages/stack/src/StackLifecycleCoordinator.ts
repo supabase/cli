@@ -684,6 +684,20 @@ export class StackLifecycleCoordinator extends Context.Service<
               const runtime = yield* ensureRuntime;
               yield* configureFunctions(config);
               if (config.startupMode === "lazy") {
+                yield* SubscriptionRef.update(stateRef, (states) =>
+                  states.map(
+                    (state) =>
+                      new StackServiceState({
+                        name: state.name,
+                        status: "Pending",
+                        pid: null,
+                        exitCode: null,
+                        restartCount: 0,
+                        startedAt: null,
+                        error: null,
+                      }),
+                  ),
+                );
                 const eagerTargets = new Set<ServiceName>();
                 for (const service of eagerServices(enabledServices)) {
                   for (const target of activationTargetsForService(enabledServices, service)) {
