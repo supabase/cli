@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants, readFileSync } from "node:fs";
+import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 
@@ -34,8 +34,25 @@ const processIsAlive = (pid: number): boolean => {
   }
 };
 
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
+const abortReason = (signal: AbortSignal): unknown =>
+  signal.reason ?? new Error("Managed-port lock acquisition was aborted");
+
+const delay = (milliseconds: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted === true) {
+      reject(abortReason(signal));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      if (signal !== undefined) reject(abortReason(signal));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 
 const currentBootMinute = (): number => Math.round((Date.now() - uptime() * 1_000) / 60_000);
 
@@ -180,22 +197,34 @@ const reclaimLock = async (lockPath: string, expectedOwner: string | undefined):
   }
 };
 
-const prepareSharedLockRoot = async (): Promise<void> => {
+const prepareSharedLockRoot = async (signal?: AbortSignal): Promise<void> => {
   if (process.platform === "win32") {
     await mkdir(SHARED_LOCK_ROOT, { recursive: true });
     return;
   }
 
   for (let attempt = 0; attempt < 200; attempt++) {
+    signal?.throwIfAborted();
     await mkdir(SHARED_LOCK_ROOT, { recursive: true, mode: 0o777 });
+    const handle = await open(
+      SHARED_LOCK_ROOT,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
     try {
-      await chmod(SHARED_LOCK_ROOT, 0o777);
-    } catch (error) {
-      if (errorCode(error) !== "EPERM" && errorCode(error) !== "EACCES") throw error;
+      const info = await handle.stat();
+      if (!info.isDirectory()) {
+        throw new Error(`Shared managed-port lock root is not a directory: ${SHARED_LOCK_ROOT}`);
+      }
+      try {
+        await handle.chmod(0o777);
+      } catch (error) {
+        if (errorCode(error) !== "EPERM" && errorCode(error) !== "EACCES") throw error;
+      }
+      if (((await handle.stat()).mode & 0o007) === 0o007) return;
+    } finally {
+      await handle.close();
     }
-    const info = await stat(SHARED_LOCK_ROOT);
-    if ((info.mode & 0o007) === 0o007) return;
-    await delay(LOCK_RETRY_AFTER_MS);
+    await delay(LOCK_RETRY_AFTER_MS, signal);
   }
   throw new Error(`Shared managed-port lock directory is not writable: ${SHARED_LOCK_ROOT}`);
 };
@@ -205,11 +234,13 @@ export type ReleaseManagedPortLock = () => Promise<void>;
 /** Serialize port selection and lease handoff across foreground and detached stacks. */
 export async function acquireManagedPortLock(
   lockPath = DEFAULT_LOCK_PATH,
+  signal?: AbortSignal,
 ): Promise<ReleaseManagedPortLock> {
   if (lockPath === DEFAULT_LOCK_PATH) {
-    await prepareSharedLockRoot();
+    await prepareSharedLockRoot(signal);
   }
   for (;;) {
+    signal?.throwIfAborted();
     const startIdentity = processStartIdentity(process.pid);
     const ownerContents = JSON.stringify({
       pid: process.pid,
@@ -254,6 +285,6 @@ export async function acquireManagedPortLock(
       await reclaimLock(lockPath, observed.ownerContents);
       continue;
     }
-    await delay(LOCK_RETRY_AFTER_MS);
+    await delay(LOCK_RETRY_AFTER_MS, signal);
   }
 }

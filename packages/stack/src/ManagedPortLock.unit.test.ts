@@ -29,6 +29,27 @@ describe("ManagedPortLock", () => {
     }
   });
 
+  it("cancels a waiter without acquiring the lock later", async () => {
+    const root = await mkdtemp(join(tmpdir(), "managed-port-lock-abort-"));
+    const lockPath = join(root, "allocation.lock");
+
+    try {
+      const releaseFirst = await acquireManagedPortLock(lockPath);
+      const controller = new AbortController();
+      const pending = acquireManagedPortLock(lockPath, controller.signal);
+      const interrupted = expect(pending).rejects.toBeDefined();
+
+      controller.abort();
+      await interrupted;
+      await releaseFirst();
+
+      const releaseNext = await acquireManagedPortLock(lockPath);
+      await releaseNext();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates lock generations that other users can remove", async () => {
     const root = await mkdtemp(join(tmpdir(), "managed-port-lock-mode-"));
     const lockPath = join(root, "allocation.lock");

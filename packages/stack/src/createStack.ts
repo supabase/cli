@@ -689,7 +689,7 @@ export const projectDaemonLayer = (opts: {
   FileSystem.FileSystem | Path.Path | UnixHttpClient
 > =>
   Effect.acquireUseRelease(
-    Effect.promise(() => acquireManagedPortLock()),
+    Effect.promise((signal) => acquireManagedPortLock(undefined, signal)),
     () =>
       Effect.gen(function* () {
         const config = yield* Effect.promise(() =>
