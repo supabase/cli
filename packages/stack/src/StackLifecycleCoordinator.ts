@@ -216,6 +216,7 @@ export class StackLifecycleCoordinator extends Context.Service<
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
         const activatedServices = new Set<ServiceName>();
         const manuallyStoppedServices = new Set<ServiceName>();
+        const restartIntents = new Set<ServiceName>();
         const lifecycleLock = Semaphore.makeUnsafe(1);
         const activationLocks = new Map(
           SERVICE_NAMES.map((service) => [service, Semaphore.makeUnsafe(1)] as const),
@@ -666,7 +667,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
               config,
             }).pipe(Effect.ensuring(Ref.set(phaseRef, "stopped")));
-          });
+          }).pipe(withLifecycleLock);
 
         yield* Effect.addFinalizer(disposeOnce);
 
@@ -679,6 +680,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* Ref.set(phaseRef, "starting");
               activatedServices.clear();
               manuallyStoppedServices.clear();
+              restartIntents.clear();
               const runtime = yield* ensureRuntime;
               yield* configureFunctions(config);
               if (config.startupMode === "lazy") {
@@ -788,6 +790,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                           .startOrderFor(activated)
                           .some((definition) => definition.name === target)
                       ) {
+                        restartIntents.add(activated);
                         activatedServices.delete(activated);
                       }
                     }
@@ -800,6 +803,15 @@ export class StackLifecycleCoordinator extends Context.Service<
               const service = yield* requireKnownServiceName(name);
               const runtime = yield* ensureRuntime;
               const companionTargets = lifecycleTargetsForService(enabledServices, service);
+              const interruptedTargets = SERVICE_NAMES.filter(
+                (candidate) =>
+                  restartIntents.has(candidate) &&
+                  companionTargets.some((target) =>
+                    runtime.graph
+                      .startOrderFor(candidate)
+                      .some((definition) => definition.name === target),
+                  ),
+              );
               const restartRoots = companionTargets.filter(
                 (candidate) =>
                   !companionTargets.some(
@@ -810,7 +822,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                         .some((definition) => definition.name === other),
                   ),
               );
-              const affected = new Set<ServiceName>(companionTargets);
+              const affected = new Set<ServiceName>([...companionTargets, ...interruptedTargets]);
               for (const activated of activatedServices) {
                 if (
                   companionTargets.some((target) =>
@@ -825,7 +837,9 @@ export class StackLifecycleCoordinator extends Context.Service<
               const lockTargets = SERVICE_NAMES.filter((candidate) => affected.has(candidate));
               const restoreTargets = lockTargets.filter(
                 (candidate) =>
-                  companionTargets.includes(candidate) || activatedServices.has(candidate),
+                  companionTargets.includes(candidate) ||
+                  activatedServices.has(candidate) ||
+                  restartIntents.has(candidate),
               );
               yield* withActivationLocks(
                 lockTargets,
@@ -835,6 +849,9 @@ export class StackLifecycleCoordinator extends Context.Service<
                   }
                   for (const target of companionTargets) {
                     manuallyStoppedServices.delete(target);
+                  }
+                  for (const target of restoreTargets) {
+                    restartIntents.delete(target);
                   }
                   for (const root of restartRoots) {
                     yield* runtime.orchestrator.restartService(root);
