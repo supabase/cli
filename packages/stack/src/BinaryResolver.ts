@@ -78,6 +78,21 @@ const cachePath = (baseDir: string, info: AssetInfo): string =>
 const CACHE_COMPLETE_MARKER = ".supabase-cache-complete";
 
 /**
+ * The file each service's runner actually executes from a resolved directory
+ * (see `services/*.ts`). A markerless legacy cache entry is only trusted as a
+ * download-failure fallback when this file is present — mere non-emptiness
+ * would also accept a partial leftover from a killed pre-staging writer, and
+ * "resolving" one of those masks the DownloadError that lets the stack fall
+ * back to a Docker image instead of exec-ing a missing binary.
+ */
+const SERVICE_ENTRYPOINT: Partial<Record<BinarySpec["service"], string>> = {
+  postgres: "share/supabase-cli/bin/supabase-postgres-init.sh",
+  postgrest: "postgrest",
+  auth: "auth",
+  "edge-runtime": "bin/edge-runtime",
+};
+
+/**
  * Age threshold for reaping abandoned `.tmp-*` staging siblings (see the
  * sweep in `resolveWithMetadata`). Generous on purpose: well beyond how long
  * any of these downloads/extracts should realistically take, so it can
@@ -441,14 +456,14 @@ export class BinaryResolver extends Context.Service<
               // fetched (offline, GitHub outage), that previously-working
               // binary is strictly better than a hard failure — the same
               // trade every pre-marker release already made on every resolve.
-              Effect.catchTag("DownloadError", (error) =>
-                fs.readDirectory(cacheDir).pipe(
+              Effect.catchTag("DownloadError", (error) => {
+                const entrypoint = SERVICE_ENTRYPOINT[spec.service];
+                if (entrypoint === undefined) return Effect.fail(error);
+                return fs.exists(path.join(cacheDir, entrypoint)).pipe(
                   Effect.mapError(() => error),
-                  Effect.flatMap((entries) =>
-                    entries.length > 0 ? Effect.succeed(false) : Effect.fail(error),
-                  ),
-                ),
-              ),
+                  Effect.flatMap((usable) => (usable ? Effect.succeed(false) : Effect.fail(error))),
+                );
+              }),
             );
 
             return {

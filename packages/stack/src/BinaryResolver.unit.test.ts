@@ -731,13 +731,41 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
       // A markerless legacy cacheDir from before this resolver's staging
       // model existed — a binary that served every earlier release. When
       // the replacement cannot be fetched, resolving to it beats failing.
-      fakeFs.seedDirWithFile(cacheDir, "bin/postgrest");
+      fakeFs.seedDirWithFile(cacheDir, "postgrest");
 
       const result = yield* resolver.resolveWithMetadata(spec);
 
       expect(result.path).toBe(cacheDir);
       expect(result.downloaded).toBe(false);
-      expect(fakeFs.files.has(`${cacheDir}/bin/postgrest`)).toBe(true);
+      expect(fakeFs.files.has(`${cacheDir}/postgrest`)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a partial markerless leftover that lacks the service entrypoint", () => {
+    // A pre-staging writer killed mid-extraction leaves a non-empty dir with
+    // no executable. Resolving it would mask the DownloadError that lets the
+    // stack fall back to a Docker image — so non-emptiness is not enough.
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
+
+      fakeFs.seedDirWithFile(cacheDir, "_download-interrupted.tar");
+
+      const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(DownloadError);
     }).pipe(Effect.provide(layer));
   });
 
