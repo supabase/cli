@@ -32,6 +32,7 @@ export type ServiceEvent =
 const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
   "Pending:DependenciesSatisfied",
   "Pending:DependencyFailed",
+  "Pending:SpawnFailed",
   "Pending:StopRequested",
   "Starting:ProcessSpawned",
   "Starting:SpawnFailed",

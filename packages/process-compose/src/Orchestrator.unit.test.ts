@@ -1613,6 +1613,24 @@ describe("Orchestrator", () => {
     });
   });
 
+  it.live("fails readiness when a pre-start hook fails", () => {
+    const { layer } = setupOrchestrator([svc("api")], { exitDelay: "5 seconds" });
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api", {
+        beforeStart: () => Effect.fail(new Error("port reservation failed")),
+      });
+
+      const error = yield* orc.waitReady("api").pipe(Effect.flip);
+      expect(error._tag).toBe("ServiceReadyError");
+      if (error._tag === "ServiceReadyError") {
+        expect(error.reason).toContain("port reservation failed");
+      }
+      expect((yield* orc.getState("api")).status).toBe("Failed");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   describe("unhealthy restart", () => {
     it.live("restarts service when it becomes unhealthy and restart policy allows", () => {
       let checkCalls = 0;
