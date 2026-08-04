@@ -1,8 +1,30 @@
 import { createStack } from "../../src/node.ts";
 
+// Registered before any bring-up work: the spawning harness SIGTERMs a stack
+// that misses its readiness deadline, and without these the default signal
+// disposition kills the process mid-start with temp dirs and containers left
+// behind for the leak check to trip over. A pre-readiness signal is remembered
+// and honored at the next await boundary via a dispose-then-exit.
+let earlyShutdownRequested = false;
+const onEarlySignal = () => {
+  earlyShutdownRequested = true;
+};
+process.once("SIGINT", onEarlySignal);
+process.once("SIGTERM", onEarlySignal);
+
 const parentPid = readParentPid(process.argv.slice(2));
 const stack = await createStack();
+if (earlyShutdownRequested) {
+  await stack.dispose();
+  process.exit(0);
+}
 await stack.start();
+if (earlyShutdownRequested) {
+  await stack.dispose();
+  process.exit(0);
+}
+process.off("SIGINT", onEarlySignal);
+process.off("SIGTERM", onEarlySignal);
 
 // Signal readiness to parent process
 console.log(JSON.stringify({ url: stack.url, dbUrl: stack.dbUrl }));
