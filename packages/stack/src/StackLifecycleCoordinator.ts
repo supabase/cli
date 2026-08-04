@@ -853,8 +853,16 @@ export class StackLifecycleCoordinator extends Context.Service<
           reloadFunctions: (opts) =>
             Effect.gen(function* () {
               yield* requireKnownService("edge-runtime");
-              const runtime = yield* ensureRuntime;
               yield* configureFunctions(configWithFunctionOptions(opts));
+              if (config.startupMode === "lazy" && !activatedServices.has("edge-runtime")) {
+                manuallyStoppedServices.delete("edge-runtime");
+                yield* startServices(
+                  activationTargetsForService(enabledServices, "edge-runtime"),
+                  Effect.void,
+                );
+                return;
+              }
+              const runtime = yield* ensureRuntime;
               yield* withActivationLocks(
                 ["edge-runtime"],
                 runtime.orchestrator
@@ -878,9 +886,9 @@ export class StackLifecycleCoordinator extends Context.Service<
               }
 
               yield* configureFunctions(nextConfig);
-              yield* withActivationLocks(
-                ["edge-runtime"],
-                runtime.orchestrator.updateServiceDefinition("edge-runtime", edgeRuntimeDef).pipe(
+              const updateDefinition = runtime.orchestrator
+                .updateServiceDefinition("edge-runtime", edgeRuntimeDef)
+                .pipe(
                   Effect.mapError(
                     (cause) =>
                       new StackBuildError({
@@ -888,6 +896,19 @@ export class StackLifecycleCoordinator extends Context.Service<
                         cause,
                       }),
                   ),
+                );
+              if (config.startupMode === "lazy" && !activatedServices.has("edge-runtime")) {
+                yield* updateDefinition;
+                manuallyStoppedServices.delete("edge-runtime");
+                yield* startServices(
+                  activationTargetsForService(enabledServices, "edge-runtime"),
+                  Effect.void,
+                );
+                return;
+              }
+              yield* withActivationLocks(
+                ["edge-runtime"],
+                updateDefinition.pipe(
                   Effect.andThen(runtime.orchestrator.restartService("edge-runtime")),
                   Effect.andThen(runtime.orchestrator.waitReady("edge-runtime")),
                 ),
