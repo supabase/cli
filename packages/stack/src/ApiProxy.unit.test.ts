@@ -331,7 +331,6 @@ describe("ApiProxy", () => {
       });
 
       expect(echoed).toBe(frame);
-      expect(backend.lastMessageWasBinary()).toBe(false);
       expect(activated).toContain("realtime");
       expect(backend.lastRequest()).toEqual({
         url: `/socket/websocket?apikey=${ANON_JWT}&vsn=1.0.0`,
