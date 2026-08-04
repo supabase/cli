@@ -1,9 +1,14 @@
 interface ChildLike {
   readonly pid?: number;
+  readonly exitCode?: number | null;
+  readonly signalCode?: NodeJS.Signals | null;
   kill: (signal?: NodeJS.Signals) => boolean | void;
   once: (event: "exit", listener: () => void) => void;
   off: (event: "exit", listener: () => void) => void;
 }
+
+const hasAlreadyExited = (child: ChildLike): boolean =>
+  child.exitCode != null || child.signalCode != null;
 
 export const terminateChildProcess = async (
   child: ChildLike,
@@ -12,6 +17,11 @@ export const terminateChildProcess = async (
   } = {},
 ): Promise<void> => {
   if (child.pid == null) {
+    return;
+  }
+  // An already-exited child never fires another `exit` event, so the waits
+  // below would burn their full SIGTERM + SIGKILL timeouts listening for one.
+  if (hasAlreadyExited(child)) {
     return;
   }
 
@@ -23,6 +33,9 @@ export const terminateChildProcess = async (
   } catch {}
 
   if (await termExit) {
+    return;
+  }
+  if (hasAlreadyExited(child)) {
     return;
   }
 
