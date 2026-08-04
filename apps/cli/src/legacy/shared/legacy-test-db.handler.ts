@@ -1,29 +1,29 @@
 import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
-import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyTelemetryState } from "../telemetry/legacy-telemetry-state.service.ts";
+import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
+import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
+import { LegacyDbConnection } from "./legacy-db-connection.service.ts";
+import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
+import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
+import { resolveLegacyDbTargetFlags } from "./legacy-db-target-flags.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
-} from "../../../../shared/legacy/global-flags.ts";
-import { Output } from "../../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import type { LegacyTestDbFlags } from "./db.command.ts";
+} from "../../shared/legacy/global-flags.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import type { LegacyTestDbFlags } from "./legacy-test-db.command-handler.ts";
 import {
   LegacyTestDbEnablePgtapError,
   LegacyTestDbMutuallyExclusiveFlagsError,
   LegacyTestDbRunError,
-} from "./db.errors.ts";
-import { buildLegacyPgProveArgs } from "./db.pg-prove-args.ts";
+} from "./legacy-test-db.errors.ts";
+import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
 
 // Go: `apps/cli-go/internal/db/test/test.go:24-25`.
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";

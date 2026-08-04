@@ -1,30 +1,36 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyDbTest } from "./test.handler.ts";
+import { Command } from "effect/unstable/cli";
 
-const config = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Tests the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(
-    Flag.withDescription("Runs pgTAP tests on the linked project."),
-  ),
-  local: Flag.boolean("local").pipe(
-    Flag.withDescription("Runs pgTAP tests on the local database."),
-  ),
-  paths: Argument.string("path").pipe(
-    Argument.withDescription("Paths to test files or directories."),
-    Argument.variadic(),
-  ),
-} as const;
+import {
+  legacyRunTestDbCommand,
+  legacyTestDbConfig,
+} from "../../../shared/legacy-test-db.command-handler.ts";
+import { legacyTestDbRuntimeLayer } from "../../../shared/legacy-test-db.layers.ts";
 
-export type LegacyDbTestFlags = CliCommand.Command.Config.Infer<typeof config>;
-
-export const legacyDbTestCommand = Command.make("test", config).pipe(
+/**
+ * `db test` is a hidden Go-parity alias for `test db` (registered hidden by
+ * the parent, `../db.command.ts`'s `legacyDbTestCommand.pipe(Command.withHidden)`,
+ * matching cobra's `Hidden: true` on `dbTestCmd`, `apps/cli-go/cmd/db.go:423`).
+ *
+ * Go itself defines `db test`'s `RunE` first (`cmd/db.go:422-429`, calling
+ * `test.Run` directly) and then has `test db` borrow it verbatim
+ * (`cmd/test.go:19-20`: `RunE: dbTestCmd.RunE`) — one implementation, two
+ * cobra.Command registrations with identical flags and Short text. The native
+ * TS port mirrors that: both this file and `../../test/db/db.command.ts`
+ * import the shared config/handler/runtime-layer from
+ * `legacy/shared/legacy-test-db.*` instead of either command owning the
+ * implementation directly — `legacy/commands/<family>/` files may not import
+ * another family's internals (`code-structure.unit.test.ts`), so the
+ * implementation lives outside `legacy/commands/` entirely (CLI-1962).
+ */
+export const legacyDbTestCommand = Command.make("test", legacyTestDbConfig).pipe(
+  // Byte-matches Go's Short text (`cmd/db.go:425`), identical to `test db`'s
+  // (`cmd/test.go:19`: `Short: dbTestCmd.Short`).
   Command.withDescription("Tests local database with pgTAP."),
   Command.withShortDescription("Tests local database with pgTAP"),
-  Command.withHandler((flags) => legacyDbTest(flags)),
+  Command.withHandler(legacyRunTestDbCommand),
+  // `["db", "test"]`, not `["test", "db"]`: Go's `cli_command_executed`
+  // telemetry records the actual invoked `cmd.CommandPath()`
+  // (`cmd/root_analytics.go:33`), which differs by entry point even though
+  // `RunE` is identical — see `legacyTestDbRuntimeLayer`'s doc comment.
+  Command.provide(legacyTestDbRuntimeLayer(["db", "test"])),
 );

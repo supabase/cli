@@ -1,7 +1,7 @@
 import * as nodePath from "node:path";
 import { Option } from "effect";
 
-import { legacyToDockerPath } from "../../../shared/legacy-docker-path.ts";
+import { legacyToDockerPath } from "./legacy-docker-path.ts";
 
 export interface LegacyPgProveArgs {
   /** Full `pg_prove` argv (without the leading binary, which the image provides). */
