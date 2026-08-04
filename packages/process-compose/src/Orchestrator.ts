@@ -102,6 +102,7 @@ export class Orchestrator extends Context.Service<
           completed: Deferred.Deferred<number>;
           stopped: Deferred.Deferred<void>;
           readonly readinessWaiters: Set<Deferred.Deferred<void>>;
+          readonly completionWaiters: Set<Deferred.Deferred<number>>;
           stoppedByUser: boolean;
           requested: boolean;
         }
@@ -117,6 +118,7 @@ export class Orchestrator extends Context.Service<
             completed: Deferred.makeUnsafe<number>(),
             stopped: Deferred.makeUnsafe<void>(),
             readinessWaiters: new Set(),
+            completionWaiters: new Set(),
             stoppedByUser: false,
             requested: false,
           });
@@ -454,8 +456,14 @@ export class Orchestrator extends Context.Service<
             const handleResult = (r: SpawnResult) =>
               Effect.gen(function* () {
                 if (r._tag === "Exited") {
-                  const completeSig = services.get(def.name)?.completed;
-                  if (completeSig) yield* Deferred.succeed(completeSig, r.exitCode);
+                  const service = services.get(def.name);
+                  if (service !== undefined) {
+                    yield* Effect.forEach(
+                      [service.completed, ...service.completionWaiters],
+                      (waiter) => Deferred.succeed(waiter, r.exitCode),
+                      { discard: true },
+                    );
+                  }
                   if (r.exitCode !== 0 && r.exitCode !== 143) {
                     yield* appendRecentServiceLogs(
                       def.name,
@@ -579,8 +587,17 @@ export class Orchestrator extends Context.Service<
             }
 
             if (restartPolicy === "no") {
-              // One-shot: wait for completed, check exit code
-              return Deferred.await(svc.completed).pipe(
+              const completion = Deferred.makeUnsafe<number>();
+              svc.completionWaiters.add(completion);
+              return Deferred.isDone(svc.completed).pipe(
+                Effect.flatMap((alreadyCompleted) =>
+                  alreadyCompleted
+                    ? Deferred.await(svc.completed).pipe(
+                        Effect.flatMap((exitCode) => Deferred.succeed(completion, exitCode)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(Deferred.await(completion)),
                 Effect.flatMap((exitCode) =>
                   exitCode === 0
                     ? Effect.void
@@ -592,6 +609,7 @@ export class Orchestrator extends Context.Service<
                         }),
                       ),
                 ),
+                Effect.ensuring(Effect.sync(() => svc.completionWaiters.delete(completion))),
               );
             }
 

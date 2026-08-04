@@ -703,6 +703,46 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("preserves one-shot readiness waiters when a dependency retry relaunches them", () => {
+    let attempts = 0;
+    const { layer } = setupOrchestrator(
+      [
+        svc("db", {
+          restart: "no",
+          hooks: [
+            {
+              on: "started",
+              run: () =>
+                Effect.suspend(() => {
+                  attempts++;
+                  return attempts === 1
+                    ? Effect.fail(new Error("first attempt failed"))
+                    : Effect.void;
+                }),
+            },
+          ],
+        }),
+        svc("setup", {
+          restart: "no",
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "20 millis" },
+    );
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("setup");
+      yield* waitForFailed(orc, "db");
+      const ready = yield* orc.waitReady("setup").pipe(Effect.forkScoped);
+
+      yield* orc.startService("db");
+      yield* Fiber.join(ready);
+
+      expect(attempts).toBe(2);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("startService leaves never-requested dependents pending when retrying a service", () => {
     let attempts = 0;
     const { layer, proc } = setupOrchestrator(
