@@ -78,6 +78,35 @@ const cachePath = (baseDir: string, info: AssetInfo): string =>
 const CACHE_COMPLETE_MARKER = ".supabase-cache-complete";
 
 /**
+ * The paths each service's runner actually executes from a resolved directory
+ * (see `services/*.ts`), checked as an AND-of-ORs: every inner group must have
+ * at least one member present (alternates cover e.g. postgrest's Windows .zip
+ * carrying the .exe suffix). A markerless legacy cache entry is only trusted
+ * as a download-failure fallback when the full layout is present — mere
+ * non-emptiness would also accept a partial leftover from a killed
+ * pre-staging writer, and "resolving" one of those masks the DownloadError
+ * that lets the stack fall back to a Docker image instead of exec-ing a
+ * missing binary.
+ */
+const SERVICE_ENTRYPOINTS: Partial<
+  Record<BinarySpec["service"], ReadonlyArray<ReadonlyArray<string>>>
+> = {
+  postgres: [
+    ["share/supabase-cli/bin/supabase-postgres-init.sh"],
+    ["bin/pg_isready"],
+    ["bin/postgres", "bin/postgres.exe"],
+    // The init service drives all provisioning through psql, and the server
+    // loads its shared libraries from lib/ (LD_/DYLD_LIBRARY_PATH in
+    // services/postgres.ts) — a cache missing either can't boot.
+    ["bin/psql", "bin/psql.exe"],
+    ["lib"],
+  ],
+  postgrest: [["postgrest", "postgrest.exe"]],
+  auth: [["auth"]],
+  "edge-runtime": [["bin/edge-runtime"]],
+};
+
+/**
  * Age threshold for reaping abandoned `.tmp-*` staging siblings (see the
  * sweep in `resolveWithMetadata`). Generous on purpose: well beyond how long
  * any of these downloads/extracts should realistically take, so it can
@@ -433,7 +462,28 @@ export class BinaryResolver extends Context.Service<
                 );
 
               return yield* attemptPublish();
-            }).pipe(Effect.ensuring(cleanupTmpDir));
+            }).pipe(
+              Effect.ensuring(cleanupTmpDir),
+              // A cache entry written by a pre-marker CLI release is non-empty
+              // but markerless, so it fails the completeness check above and
+              // lands here to be replaced. When the replacement cannot be
+              // fetched (offline, GitHub outage), that previously-working
+              // binary is strictly better than a hard failure — the same
+              // trade every pre-marker release already made on every resolve.
+              Effect.catchTag("DownloadError", (error) => {
+                const requirements = SERVICE_ENTRYPOINTS[spec.service];
+                if (requirements === undefined) return Effect.fail(error);
+                return Effect.forEach(requirements, (alternatives) =>
+                  Effect.forEach(alternatives, (entry) =>
+                    fs.exists(path.join(cacheDir, entry)).pipe(Effect.mapError(() => error)),
+                  ).pipe(Effect.map((found) => found.some(Boolean))),
+                ).pipe(
+                  Effect.flatMap((groups) =>
+                    groups.every(Boolean) ? Effect.succeed(false) : Effect.fail(error),
+                  ),
+                );
+              }),
+            );
 
             return {
               path: cacheDir,
