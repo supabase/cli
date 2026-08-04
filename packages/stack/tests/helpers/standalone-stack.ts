@@ -6,9 +6,16 @@ import { createStack } from "../../src/node.ts";
 // behind for the leak check to trip over. A pre-readiness signal is remembered
 // and honored at the next await boundary via a dispose-then-exit.
 let earlyShutdownRequested = false;
-const onEarlySignal = () => {
+let signalEarlyShutdown = () => {
   earlyShutdownRequested = true;
 };
+const earlyShutdown = new Promise<"early-shutdown">((resolveSignal) => {
+  signalEarlyShutdown = () => {
+    earlyShutdownRequested = true;
+    resolveSignal("early-shutdown");
+  };
+});
+const onEarlySignal = () => signalEarlyShutdown();
 process.once("SIGINT", onEarlySignal);
 process.once("SIGTERM", onEarlySignal);
 
@@ -18,7 +25,20 @@ if (earlyShutdownRequested) {
   await stack.dispose();
   process.exit(0);
 }
-await stack.start();
+// Raced rather than awaited directly: a signal during a HUNG start() must
+// still dispose whatever was already created — a flag alone can't run until
+// the await returns, which is exactly when it never will.
+const starting = stack.start().then(
+  () => "started" as const,
+  (error) => {
+    if (!earlyShutdownRequested) throw error;
+    return "start-failed" as const;
+  },
+);
+if ((await Promise.race([starting, earlyShutdown])) !== "started") {
+  await stack.dispose();
+  process.exit(0);
+}
 if (earlyShutdownRequested) {
   await stack.dispose();
   process.exit(0);
