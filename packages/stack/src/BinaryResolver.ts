@@ -85,12 +85,23 @@ const CACHE_COMPLETE_MARKER = ".supabase-cache-complete";
  * "resolving" one of those masks the DownloadError that lets the stack fall
  * back to a Docker image instead of exec-ing a missing binary.
  */
-const SERVICE_ENTRYPOINTS: Partial<Record<BinarySpec["service"], ReadonlyArray<string>>> = {
-  postgres: ["share/supabase-cli/bin/supabase-postgres-init.sh"],
-  // The Windows asset is a .zip whose executable carries the .exe suffix.
-  postgrest: ["postgrest", "postgrest.exe"],
-  auth: ["auth"],
-  "edge-runtime": ["bin/edge-runtime"],
+/**
+ * AND-of-ORs: every inner group must have at least one member present. The
+ * paths are exactly what each services/*.ts invokes from a resolved directory
+ * — postgres needs BOTH its init script and the bin/ payload the script and
+ * health check run, while postgrest's Windows .zip carries the .exe suffix.
+ */
+const SERVICE_ENTRYPOINTS: Partial<
+  Record<BinarySpec["service"], ReadonlyArray<ReadonlyArray<string>>>
+> = {
+  postgres: [
+    ["share/supabase-cli/bin/supabase-postgres-init.sh"],
+    ["bin/pg_isready"],
+    ["bin/postgres", "bin/postgres.exe"],
+  ],
+  postgrest: [["postgrest", "postgrest.exe"]],
+  auth: [["auth"]],
+  "edge-runtime": [["bin/edge-runtime"]],
 };
 
 /**
@@ -458,13 +469,15 @@ export class BinaryResolver extends Context.Service<
               // binary is strictly better than a hard failure — the same
               // trade every pre-marker release already made on every resolve.
               Effect.catchTag("DownloadError", (error) => {
-                const entrypoints = SERVICE_ENTRYPOINTS[spec.service];
-                if (entrypoints === undefined) return Effect.fail(error);
-                return Effect.forEach(entrypoints, (entry) =>
-                  fs.exists(path.join(cacheDir, entry)).pipe(Effect.mapError(() => error)),
+                const requirements = SERVICE_ENTRYPOINTS[spec.service];
+                if (requirements === undefined) return Effect.fail(error);
+                return Effect.forEach(requirements, (alternatives) =>
+                  Effect.forEach(alternatives, (entry) =>
+                    fs.exists(path.join(cacheDir, entry)).pipe(Effect.mapError(() => error)),
+                  ).pipe(Effect.map((found) => found.some(Boolean))),
                 ).pipe(
-                  Effect.flatMap((found) =>
-                    found.some(Boolean) ? Effect.succeed(false) : Effect.fail(error),
+                  Effect.flatMap((groups) =>
+                    groups.every(Boolean) ? Effect.succeed(false) : Effect.fail(error),
                   ),
                 );
               }),
