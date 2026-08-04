@@ -78,18 +78,15 @@ const cachePath = (baseDir: string, info: AssetInfo): string =>
 const CACHE_COMPLETE_MARKER = ".supabase-cache-complete";
 
 /**
- * The file each service's runner actually executes from a resolved directory
- * (see `services/*.ts`). A markerless legacy cache entry is only trusted as a
- * download-failure fallback when this file is present — mere non-emptiness
- * would also accept a partial leftover from a killed pre-staging writer, and
- * "resolving" one of those masks the DownloadError that lets the stack fall
- * back to a Docker image instead of exec-ing a missing binary.
- */
-/**
- * AND-of-ORs: every inner group must have at least one member present. The
- * paths are exactly what each services/*.ts invokes from a resolved directory
- * — postgres needs BOTH its init script and the bin/ payload the script and
- * health check run, while postgrest's Windows .zip carries the .exe suffix.
+ * The paths each service's runner actually executes from a resolved directory
+ * (see `services/*.ts`), checked as an AND-of-ORs: every inner group must have
+ * at least one member present (alternates cover e.g. postgrest's Windows .zip
+ * carrying the .exe suffix). A markerless legacy cache entry is only trusted
+ * as a download-failure fallback when the full layout is present — mere
+ * non-emptiness would also accept a partial leftover from a killed
+ * pre-staging writer, and "resolving" one of those masks the DownloadError
+ * that lets the stack fall back to a Docker image instead of exec-ing a
+ * missing binary.
  */
 const SERVICE_ENTRYPOINTS: Partial<
   Record<BinarySpec["service"], ReadonlyArray<ReadonlyArray<string>>>
