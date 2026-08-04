@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { stripAnsi } from "../../../../../../../tests/helpers/ansi.ts";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
 import {
@@ -357,9 +358,15 @@ describe("legacy db schema declarative generate integration", () => {
         ),
       );
       expect(written).toBe("create table players ();");
-      expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
-        true,
-      );
+      // Go prints the relative `utils.GetDeclarativeDir()` verbatim
+      // (`declarative.go:156`) — never the resolved absolute dir.
+      expect(
+        s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
+      ).toContainEqual({
+        text: `Declarative schema written to ${join("supabase", "database")}\n`,
+        stream: "stderr",
+      });
+      expect(s.out.rawChunks.some((c) => c.text.includes(tmp.current))).toBe(false);
       // Go runs ensureLocalDatabaseStarted before generating from local.
       expect(s.ensureStartedCalls).toBe(1);
     }).pipe(Effect.provide(s.layer));
@@ -462,6 +469,13 @@ describe("legacy db schema declarative generate integration", () => {
       expect(
         readFileSync(join(absSchema, "schemas", "public", "tables", "players.sql"), "utf8"),
       ).toBe("create table players ();");
+      // Go prints the configured value verbatim — absolute here, never workdir-prefixed.
+      expect(
+        s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
+      ).toContainEqual({
+        text: `Declarative schema written to ${absSchema}\n`,
+        stream: "stderr",
+      });
       rmSync(absSchema, { recursive: true, force: true });
     }).pipe(Effect.provide(s.layer));
   });
@@ -646,9 +660,10 @@ describe("legacy db schema declarative generate integration", () => {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
       expect(s.seamCalls).toEqual(["baseline", "declarative"]);
       // Go's PromptYesNo echoes the auto-accepted question to stderr under the
-      // global YES flag (`console.go:70-72`) — the echo must not be skipped.
-      expect(s.out.stderrText).toContain(
-        ". Regenerate from database? This will overwrite existing files. [y/N] y\n",
+      // global YES flag (`console.go:70-72`) — the echo must not be skipped, and
+      // the prompt renders the relative dir (`db_schema_declarative.go:268`).
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        `Declarative schema already exists at ${join("supabase", "database")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
       );
       expect(
         s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
@@ -668,8 +683,8 @@ describe("legacy db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
       expect(s.seamCalls).toEqual(["baseline", "declarative"]);
-      expect(s.out.stderrText).toContain(
-        ". Regenerate from database? This will overwrite existing files. [y/N] y\n",
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        `Declarative schema already exists at ${join("supabase", "database")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
       );
     }).pipe(
       Effect.ensuring(
