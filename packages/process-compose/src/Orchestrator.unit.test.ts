@@ -693,9 +693,11 @@ describe("Orchestrator", () => {
       const orc = yield* Orchestrator;
       yield* orc.startService("api");
       yield* waitForFailed(orc, "db");
+      const ready = yield* orc.waitReady("api").pipe(Effect.forkScoped);
 
       yield* orc.startService("db");
       yield* proc.waitForSpawn("api");
+      yield* Fiber.join(ready);
 
       expect(proc.spawned.map((record) => record.command)).toEqual(["db", "db", "api"]);
     }).pipe(Effect.provide(layer), Effect.scoped);

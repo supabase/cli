@@ -101,6 +101,7 @@ export class Orchestrator extends Context.Service<
           healthy: Deferred.Deferred<void>;
           completed: Deferred.Deferred<number>;
           stopped: Deferred.Deferred<void>;
+          readonly readinessWaiters: Set<Deferred.Deferred<void>>;
           stoppedByUser: boolean;
           requested: boolean;
         }
@@ -115,6 +116,7 @@ export class Orchestrator extends Context.Service<
             healthy: Deferred.makeUnsafe<void>(),
             completed: Deferred.makeUnsafe<number>(),
             stopped: Deferred.makeUnsafe<void>(),
+            readinessWaiters: new Set(),
             stoppedByUser: false,
             requested: false,
           });
@@ -133,6 +135,13 @@ export class Orchestrator extends Context.Service<
           if (svc === undefined) return Effect.succeed(null);
           return transition(svc.state, event);
         };
+
+        const signalHealthy = (svc: ServiceSignals): Effect.Effect<void> =>
+          Effect.forEach(
+            [svc.healthy, ...svc.readinessWaiters],
+            (waiter) => Deferred.succeed(waiter, void 0),
+            { discard: true },
+          );
 
         // Helper: run all hooks for a given trigger in sequence
         const runHooks = (def: ServiceDef, trigger: HookTrigger): Effect.Effect<void> =>
@@ -353,7 +362,7 @@ export class Orchestrator extends Context.Service<
                               yield* runHooks(def, "healthy");
                               const current = SubscriptionRef.getUnsafe(svcSig.state);
                               if (current.status !== "Failed") {
-                                yield* Deferred.succeed(svcSig.healthy, void 0);
+                                yield* signalHealthy(svcSig);
                               }
                             }
                           }
@@ -386,7 +395,7 @@ export class Orchestrator extends Context.Service<
                     if (svcSig) {
                       const current = SubscriptionRef.getUnsafe(svcSig.state);
                       if (current.status !== "Failed") {
-                        yield* Deferred.succeed(svcSig.healthy, void 0);
+                        yield* signalHealthy(svcSig);
                       }
                     }
                   }
@@ -595,28 +604,45 @@ export class Orchestrator extends Context.Service<
               );
             }
 
-            // Long-running: race healthy vs a terminal state
-            return Effect.race(
-              Deferred.await(svc.healthy),
-              SubscriptionRef.changes(svc.state).pipe(
-                Stream.filter((s) => s.status === "Failed" || s.status === "Stopped"),
-                Stream.take(1),
-                Stream.runDrain,
-                Effect.andThen(
-                  Effect.gen(function* () {
-                    const current = SubscriptionRef.getUnsafe(svc.state);
-                    return yield* Effect.fail(
-                      new ServiceReadyError({
-                        name: def.name,
-                        reason:
-                          current.status === "Stopped"
-                            ? "Service stopped before becoming ready"
-                            : (current.error ?? "Service entered Failed state"),
-                      }),
-                    );
-                  }),
+            // A waiter belongs to the readiness request, not to one service signal
+            // generation. Dependency retries may replace svc.healthy while this
+            // request is pending, so signal the stable waiter from any generation.
+            const readiness = Deferred.makeUnsafe<void>();
+            svc.readinessWaiters.add(readiness);
+            return Deferred.isDone(svc.healthy).pipe(
+              Effect.flatMap((alreadyHealthy) =>
+                alreadyHealthy ? Deferred.succeed(readiness, void 0) : Effect.void,
+              ),
+              Effect.andThen(
+                Effect.race(
+                  Deferred.await(readiness),
+                  SubscriptionRef.changes(svc.state).pipe(
+                    Stream.filter(
+                      (state) => state.status === "Failed" || state.status === "Stopped",
+                    ),
+                    Stream.take(1),
+                    Stream.runDrain,
+                    Effect.andThen(
+                      Deferred.isDone(readiness).pipe(
+                        Effect.flatMap((ready) => {
+                          if (ready) return Effect.void;
+                          const terminal = SubscriptionRef.getUnsafe(svc.state);
+                          return Effect.fail(
+                            new ServiceReadyError({
+                              name: def.name,
+                              reason:
+                                terminal.status === "Stopped"
+                                  ? "Service stopped before becoming ready"
+                                  : (terminal.error ?? "Service entered Failed state"),
+                            }),
+                          );
+                        }),
+                      ),
+                    ),
+                  ),
                 ),
               ),
+              Effect.ensuring(Effect.sync(() => svc.readinessWaiters.delete(readiness))),
             );
           });
 
