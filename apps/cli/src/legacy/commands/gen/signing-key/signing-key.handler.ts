@@ -16,7 +16,7 @@ import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import {
   legacyReadSigningKeysFile,
   legacyResolveSigningKeysConfigPaths,
-  type StoredSigningKeyJwk,
+  type LegacyStoredSigningKeyJwk,
 } from "../gen.signing-keys-config.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
 import {
@@ -55,7 +55,7 @@ interface ResolvedSigningKeysConfig {
   readonly configured: Option.Option<{
     actualPath: string;
     displayPath: string;
-    existingKeys: ReadonlyArray<StoredSigningKeyJwk>;
+    existingKeys: ReadonlyArray<LegacyStoredSigningKeyJwk>;
   }>;
 }
 

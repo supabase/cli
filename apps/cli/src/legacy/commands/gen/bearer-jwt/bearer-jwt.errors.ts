@@ -53,6 +53,19 @@ export class LegacyGenBearerJwtKeyNotFoundError extends Data.TaggedError(
 }> {}
 
 /**
+ * Go's `getSigningKey` Branch C (`bearerjwt.go:70-79`): the TTY key picker
+ * (`utils.PromptChoice`, `internal/utils/prompt.go:120-140`) given ZERO available
+ * keys quits immediately without ever letting the user select anything. Byte-matches
+ * Go's bare, unwrapped `"user aborted"` — `getSigningKey` returns `PromptChoice`'s
+ * error as-is, with no additional wrapping.
+ */
+export class LegacyGenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
+  "LegacyGenBearerJwtKeyPickerAbortedError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
  * Go's `parseClaims` payload merge (`cmd/gen.go:209-211`). Byte-matches
  * `"failed to parse payload: %w"`.
  */

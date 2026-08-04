@@ -162,6 +162,27 @@ function ensureRsaCrtParams(jwk: LegacyJwk): LegacyJwk {
 type LegacySupportedJwtAlgorithm = "RS256" | "ES256";
 
 /**
+ * Go's `config.Algorithm.UnmarshalText` (`apps/cli-go/pkg/config/auth.go:80-86`) —
+ * `encoding/json` calls this automatically whenever a JWK's `alg` field decodes from
+ * a JSON STRING (the only shape a pasted stdin JWK or a `signing_keys_path` file ever
+ * provides), rejecting anything other than `RS256`/`ES256` at JSON-DECODE time — well
+ * BEFORE the JWK ever reaches signing. An absent `alg` never reaches this check at
+ * all (`encoding/json` only calls `UnmarshalText` for a key present in the source
+ * JSON; a missing key just leaves the struct field at its zero value), so that case
+ * is caught later, at SIGN time, by {@link legacySignJwtWithJwk}'s own `unsupported
+ * algorithm: ` check instead. Throws Go's own bare `UnmarshalText` error text
+ * unwrapped; callers apply their own decode-context wrapping (`"failed to parse
+ * JWK: %w"` for a pasted stdin JWK, `"failed to decode signing keys: failed to parse
+ * response body: %w"` for a `signing_keys_path` file — see `fetcher.ParseJSON`,
+ * `apps/cli-go/pkg/fetcher/http.go:144-151`).
+ */
+export function legacyAssertDecodableJwkAlgorithm(alg: string | undefined): void {
+  if (alg !== undefined && alg !== "RS256" && alg !== "ES256") {
+    throw new Error("must be one of [RS256 ES256]");
+  }
+}
+
+/**
  * Go's `jwkToPrivateKey` (`apps/cli-go/pkg/config/apikeys.go:120-129`): validates
  * `jwk.kty`/`jwk.crv` ONLY — it has no awareness of `jwk.alg` at all. Throws Go's
  * own unwrapped message text; the caller ({@link legacySignJwtWithJwk}) applies

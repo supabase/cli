@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { encodeGoJsonCompact, encodeGoJsonIndented, escapeGoJsonString } from "./legacy-go-json.ts";
+import {
+  encodeGoJsonCompact,
+  encodeGoJsonIndented,
+  escapeGoJsonString,
+  legacyGoJsonKindName,
+} from "./legacy-go-json.ts";
 
 describe("escapeGoJsonString", () => {
   it("escapes quotes and backslashes like Go", () => {
@@ -69,5 +74,17 @@ describe("encodeGoJsonCompact", () => {
     expect(encodeGoJsonCompact({ b: [1, 2], a: { c: true } })).toBe('{"b":[1,2],"a":{"c":true}}');
     expect(encodeGoJsonCompact([])).toBe("[]");
     expect(encodeGoJsonCompact(null)).toBe("null");
+  });
+});
+
+describe("legacyGoJsonKindName", () => {
+  it("names every JSON-representable kind, including the generic fallback", () => {
+    expect(legacyGoJsonKindName([])).toBe("array");
+    expect(legacyGoJsonKindName(1)).toBe("number");
+    expect(legacyGoJsonKindName("s")).toBe("string");
+    expect(legacyGoJsonKindName(true)).toBe("bool");
+    // Never reachable from real JSON.parse output (every call site already excludes
+    // null/array/object before calling this) — exercised directly for completeness.
+    expect(legacyGoJsonKindName(undefined)).toBe("value");
   });
 });

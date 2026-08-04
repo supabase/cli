@@ -26,6 +26,47 @@ describe("legacyParseBearerJwtExp", () => {
       'invalid argument "2020-01-01T00:00:00" for "--exp" flag:',
     );
   });
+
+  it("rejects an invalid calendar date instead of silently rolling it over (CLI-1961)", () => {
+    // Verified directly against Go's `time.Parse`: `2030-02-30` genuinely errors
+    // ("day out of range"), it does NOT roll over to March 2nd the way `Date.parse`
+    // does — Go's pflag wrapper discards that specific error text and falls back to
+    // the same generic message used for a syntactically-malformed value.
+    expect(() => legacyParseBearerJwtExp("2030-02-30T03:04:05Z")).toThrow(
+      'invalid argument "2030-02-30T03:04:05Z" for "--exp" flag: invalid time format `2030-02-30T03:04:05Z` must be one of: `2006-01-02T15:04:05Z07:00`',
+    );
+  });
+
+  it("rejects February 29th in a non-leap year but accepts it in a leap year", () => {
+    expect(() => legacyParseBearerJwtExp("1900-02-29T00:00:00Z")).toThrow(
+      'invalid argument "1900-02-29T00:00:00Z" for "--exp" flag:',
+    );
+    expect(legacyParseBearerJwtExp("2000-02-29T00:00:00Z")).toBe(951782400);
+  });
+
+  it("rejects an out-of-range hour/minute/second the same way Go's time.Parse does", () => {
+    expect(() => legacyParseBearerJwtExp("2030-01-01T25:00:00Z")).toThrow(
+      '"--exp" flag: invalid time format',
+    );
+    expect(() => legacyParseBearerJwtExp("2030-01-01T00:60:00Z")).toThrow(
+      '"--exp" flag: invalid time format',
+    );
+    expect(() => legacyParseBearerJwtExp("2030-01-01T00:00:60Z")).toThrow(
+      '"--exp" flag: invalid time format',
+    );
+  });
+
+  it("trims surrounding whitespace before parsing, matching pflag's strings.TrimSpace", () => {
+    expect(legacyParseBearerJwtExp(" 2030-01-01T00:00:00Z ")).toBe(
+      legacyParseBearerJwtExp("2030-01-01T00:00:00Z"),
+    );
+  });
+
+  it("embeds the TRIMMED value (not the raw argument) in the error message", () => {
+    expect(() => legacyParseBearerJwtExp(" notatime ")).toThrow(
+      'invalid argument "notatime" for "--exp" flag: invalid time format `notatime` must be one of: `2006-01-02T15:04:05Z07:00`',
+    );
+  });
 });
 
 describe("legacyParseBearerJwtValidFor", () => {
@@ -38,9 +79,21 @@ describe("legacyParseBearerJwtValidFor", () => {
     expect(legacyParseBearerJwtValidFor("-5m")).toBe(-300);
   });
 
+  it("preserves sub-second precision instead of flooring it away (CLI-1961)", () => {
+    // Flooring here (this port's previous behavior) would silently discard the 0.5s
+    // fraction before it ever reaches `legacyBuildBearerJwtClaims`'s final truncation.
+    expect(legacyParseBearerJwtValidFor("1.5s")).toBe(1.5);
+  });
+
   it("rejects a malformed value with pflag's exact wrapped message", () => {
     expect(() => legacyParseBearerJwtValidFor("xyz")).toThrow(
       'invalid argument "xyz" for "--valid-for" flag: time: invalid duration "xyz"',
+    );
+  });
+
+  it("does NOT trim surrounding whitespace, unlike --exp (pflag's duration Value.Set has no TrimSpace)", () => {
+    expect(() => legacyParseBearerJwtValidFor(" 30m ")).toThrow(
+      'invalid argument " 30m " for "--valid-for" flag: time: invalid duration " 30m "',
     );
   });
 });

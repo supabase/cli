@@ -1,5 +1,6 @@
 import { loadProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Option, Path } from "effect";
+import { legacyAssertDecodableJwkAlgorithm } from "../../shared/legacy-go-jwt.ts";
 
 /**
  * Shared `[auth].signing_keys_path` config-loading logic for the `gen` command
@@ -16,7 +17,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
  * hierarchies while sharing the actual file-resolution/read/decode logic.
  */
 
-export type StoredSigningKeyJwk = Readonly<Record<string, unknown>>;
+export type LegacyStoredSigningKeyJwk = Readonly<Record<string, unknown>>;
 
 interface LegacyGenSigningKeysConfigPaths {
   /** CWD-relative `supabase/config.toml` (or the resolved config file's own display path). */
@@ -99,6 +100,14 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
  * "expected a JSON array [of objects]" shape check matches this package's own pre-existing
  * `gen signing-key` behavior (not a literal Go error string; Go's decode failures come from
  * `encoding/json`'s own type-mismatch errors, which `readJwkArray`'s two checks approximate).
+ *
+ * The `alg` allowlist check below IS a literal Go error string, unlike the shape checks
+ * above: Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) decodes straight
+ * into `[]config.JWK`, and `config.Algorithm.UnmarshalText` (`pkg/config/auth.go:80-86`)
+ * runs automatically during that decode for every element with a string `alg`, rejecting
+ * anything other than `RS256`/`ES256` — wrapped here as `"failed to decode signing keys:
+ * failed to parse response body: %w"`, matching `ParseJSON`'s own wrap on top of
+ * `Config.Validate`'s.
  */
 export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
   actualPath: string,
@@ -125,5 +134,17 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
       );
     }
   }
-  return decoded as ReadonlyArray<StoredSigningKeyJwk>;
+  for (const item of decoded as ReadonlyArray<Record<string, unknown>>) {
+    const alg = item["alg"];
+    try {
+      legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
+    } catch (cause) {
+      return yield* Effect.fail(
+        onDecodeError(
+          `failed to decode signing keys: failed to parse response body: ${cause instanceof Error ? cause.message : String(cause)}`,
+        ),
+      );
+    }
+  }
+  return decoded as ReadonlyArray<LegacyStoredSigningKeyJwk>;
 });

@@ -67,8 +67,10 @@ Same as `text` above.
 - `--sub` sets the `sub` (subject/user ID) claim. Its Go help text cosmetically shows
   `(default "anonymous")`, but the real default is unset — an omitted `--sub` never
   puts a `sub` claim in the token at all.
-- When `--role authenticated` is used with no `--sub`, the token gets `is_anonymous:
-true`. Any other role, or `authenticated` with a `--sub`, never sets it.
+- When `--role authenticated` is used with no `--sub`, OR with `--sub ""` (an
+  explicitly-passed EMPTY value — Go's gate is `len(claims.Subject) == 0`, which an
+  empty string also satisfies), the token gets `is_anonymous: true`. Any other role,
+  or `authenticated` with a NON-EMPTY `--sub`, never sets it.
 - `--exp` (RFC3339, e.g. `2030-01-01T00:00:00Z`) sets an explicit expiry; `iat` is then
   computed as `exp - --valid-for`. Without `--exp`, `iat` is "now" and `exp` is `iat +
 --valid-for`.

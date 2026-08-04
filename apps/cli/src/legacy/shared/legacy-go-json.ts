@@ -119,3 +119,24 @@ export function encodeGoJsonIndented(value: unknown): string {
 export function encodeGoJsonCompact(value: unknown): string {
   return walk(value, 0, false);
 }
+
+/**
+ * Go's `encoding/json` type names for the JSON-representable kinds `json.Unmarshal`
+ * rejects. Shared by every legacy command that reproduces Go's exact `"json: cannot
+ * unmarshal <kind> into Go value of type <target>"` wording against its own target
+ * type — `gen bearer-jwt`'s `jwt.MapClaims` (`bearer-jwt.claims.ts`) and `config.JWK`
+ * (`bearer-jwt.signing-key.ts`) are today's two callers.
+ */
+export function legacyGoJsonKindName(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  switch (typeof value) {
+    case "number":
+      return "number";
+    case "string":
+      return "string";
+    case "boolean":
+      return "bool";
+    default:
+      return "value";
+  }
+}

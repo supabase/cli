@@ -206,6 +206,28 @@ describe("legacy gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "computes iat with a sub-second --valid-for, truncating only the final timestamp (CLI-1961)",
+    () => {
+      // Verified against the real binary: `--exp 2030-01-01T00:00:00Z --valid-for 1.5s`
+      // (unix 1893456000) yields Go `iat=1893455998` — flooring the 1.5s duration to 1s
+      // BEFORE subtracting (this port's previous behavior) would wrongly yield
+      // 1893455999.
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* legacyGenBearerJwt({
+          ...baseFlags,
+          exp: Option.some(1_893_456_000),
+          validFor: 1.5,
+        });
+        const [, payload] = tokenFrom(out).split(".");
+        const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+        expect(claims["exp"]).toBe(1_893_456_000);
+        expect(claims["iat"]).toBe(1_893_455_998);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("merges --payload on top of the computed claims", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
@@ -341,9 +363,32 @@ describe("legacy gen bearer-jwt integration", () => {
   });
 
   it.live(
-    "Branch A: a literal 'null' pasted at the stdin JWK prompt falls back to the default key",
+    "Branch A: a literal 'null' pasted at the stdin JWK prompt is rejected, NOT the default key",
     () => {
-      const { layer, out } = setup({ pipedAnswer: "null" });
+      // Verified against the real binary (CLI-1961): Go's `json.Unmarshal([]byte("null"),
+      // &key)` is a documented no-op for a non-pointer struct target — it leaves `key` at
+      // its zero value rather than erroring, and rather than falling back to the default
+      // key. That zero-value JWK (empty `kty`) then fails downstream at SIGN time.
+      const { layer } = setup({ pipedAnswer: "null" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtSignError");
+          expect(json).toContain("failed to convert JWK to private key: unsupported key type: ");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch A: a truly blank answer at the stdin JWK prompt still falls back to the default key",
+    () => {
+      // Distinct from the literal-'null' case above: an EMPTY answer never reaches
+      // `JSON.parse` at all (Go: `len(kid) == 0` gate), so it's the only input that
+      // legitimately falls back to the built-in default key.
+      const { layer, out } = setup({ pipedAnswer: "" });
       return Effect.gen(function* () {
         yield* legacyGenBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -353,6 +398,42 @@ describe("legacy gen bearer-jwt integration", () => {
           kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
           typ: "JWT",
         });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch A: rejects a pasted JWK with an unsupported alg at decode time, not sign time",
+    () => {
+      // Go's `config.Algorithm.UnmarshalText` (`pkg/config/auth.go:80-86`) rejects
+      // anything other than RS256/ES256 DURING JSON decode, before the JWK ever
+      // reaches signing — verified against the real binary (CLI-1961).
+      const { layer } = setup({ pipedAnswer: JSON.stringify({ kty: "oct", alg: "HS256" }) });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtKeyParseError");
+          expect(json).toContain("failed to parse JWK: must be one of [RS256 ES256]");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch A: accepts a pasted JWK missing alg entirely (validated later, at sign time, not decode time)",
+    () => {
+      const { alg: _alg, ...jwkWithoutAlg } = generateEcJwk("no-alg-kid");
+      const { layer } = setup({ pipedAnswer: JSON.stringify(jwkWithoutAlg) });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtSignError");
+          expect(json).toContain("unsupported algorithm: ");
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -417,6 +498,59 @@ describe("legacy gen bearer-jwt integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "Branch B: rejects a configured signing key with an unsupported alg at decode time, not sign time",
+    () => {
+      // Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) decodes straight
+      // into `[]config.JWK`, running `config.Algorithm.UnmarshalText`'s RS256/ES256
+      // allowlist DURING that decode — verified against the real binary (CLI-1961).
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeSigningKeys(JSON.stringify([{ kty: "oct", alg: "HS256" }])),
+        );
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtDecodeError");
+          expect(json).toContain(
+            "failed to decode signing keys: failed to parse response body: must be one of [RS256 ES256]",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch C: TTY with zero configured signing keys fails with Go's exact 'user aborted' text",
+    () => {
+      // Go's bubbletea `PromptChoice` (`internal/utils/prompt.go:110-140`), given a
+      // zero-item list, quits immediately without ever letting the user select
+      // anything — verified against the real binary (CLI-1961). Previously this
+      // crashed with an unhandled `TypeError` instead of failing gracefully.
+      const { layer } = setup({ stdinIsTty: true });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys("[]"));
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtKeyPickerAbortedError");
+          expect(json).toContain("user aborted");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "Branch B: selects a key by exact kid match among several (bearerjwt_test.go parity)",

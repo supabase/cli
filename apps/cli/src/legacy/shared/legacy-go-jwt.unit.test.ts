@@ -3,6 +3,7 @@ import { importJWK, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
 
 import {
+  legacyAssertDecodableJwkAlgorithm,
   legacyGenerateAsymmetricGoJwt,
   legacyGenerateGoJwt,
   legacySignJwtWithJwk,
@@ -197,7 +198,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
     const jwk = generateEcJwk();
     const { crv: _crv, ...jwkWithoutCurve } = jwk;
     expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutCurve, "anon")).toThrow(
-      "unsupported curve: ",
+      "failed to convert JWK to private key: unsupported curve: ",
     );
   });
 });
@@ -216,5 +217,22 @@ describe("legacySignJwtWithJwk", () => {
     const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
     const { payload: verified } = await jwtVerify(token, publicKey);
     expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
+  });
+});
+
+describe("legacyAssertDecodableJwkAlgorithm", () => {
+  it("accepts RS256 and ES256", () => {
+    expect(() => legacyAssertDecodableJwkAlgorithm("RS256")).not.toThrow();
+    expect(() => legacyAssertDecodableJwkAlgorithm("ES256")).not.toThrow();
+  });
+
+  it("accepts an absent alg (validated later, at sign time, not at decode time)", () => {
+    expect(() => legacyAssertDecodableJwkAlgorithm(undefined)).not.toThrow();
+  });
+
+  it("rejects an unsupported algorithm with Go's exact UnmarshalText message", () => {
+    expect(() => legacyAssertDecodableJwkAlgorithm("HS256")).toThrow(
+      "must be one of [RS256 ES256]",
+    );
   });
 });

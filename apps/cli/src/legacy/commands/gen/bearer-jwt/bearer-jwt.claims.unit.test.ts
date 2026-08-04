@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   legacyBuildBearerJwtClaims,
   legacyEncodeBearerJwtClaims,
-  legacyGoJsonKindName,
   legacyMergeBearerJwtPayload,
 } from "./bearer-jwt.claims.ts";
 
@@ -43,6 +42,35 @@ describe("legacyBuildBearerJwtClaims", () => {
     });
     expect(claims["exp"]).toBe(2_000_000_000);
     expect(claims["iat"]).toBe(2_000_000_000 - 1800);
+  });
+
+  it("floors only the FINAL iat, applying a sub-second --valid-for before truncating (CLI-1961)", () => {
+    // Verified against the real binary: `--exp 2030-01-01T00:00:00Z --valid-for 1.5s`
+    // yields Go `iat=1893455998` — flooring the 1.5s duration to 1s BEFORE subtracting
+    // (this port's previous behavior) would wrongly yield 1893455999.
+    const claims = legacyBuildBearerJwtClaims({
+      role: "anon",
+      sub: Option.none(),
+      expiresAt: Option.some(1_893_456_000),
+      validForSeconds: 1.5,
+      nowSeconds: NOW,
+    });
+    expect(claims["exp"]).toBe(1_893_456_000);
+    expect(claims["iat"]).toBe(1_893_455_998);
+  });
+
+  it("sets is_anonymous when --sub is explicitly passed as an empty string (CLI-1961)", () => {
+    // Go's gate is `len(claims.Subject) == 0` (`cmd/gen.go:195`) — an explicitly-passed
+    // EMPTY `--sub ""` still counts as "no subject", not just an omitted flag.
+    const claims = legacyBuildBearerJwtClaims({
+      role: "authenticated",
+      sub: Option.some(""),
+      expiresAt: Option.none(),
+      validForSeconds: 1800,
+      nowSeconds: NOW,
+    });
+    expect(claims["is_anonymous"]).toBe(true);
+    expect("sub" in claims).toBe(false);
   });
 
   it("sets is_anonymous when role is 'authenticated' (case-insensitive) and sub is absent", () => {
@@ -160,37 +188,102 @@ describe("legacyMergeBearerJwtPayload", () => {
     expect(merged["sub"]).toBeNull();
   });
 
-  it("falls back to a generic message for malformed JSON with no valid prefix at all", () => {
-    // Accepted gap (see this module's own doc comment): `bearerjwt_test.go` has no
-    // `--payload` parsing fixture at all, so this exact wording is not Go-verified.
+  it("reports a partial keyword match against Go's exact 'in literal' wording", () => {
+    // `not-json-at-all` starts with `n`, which Go's scanner reads as the start of the
+    // `null` literal; the second byte `o` mismatches `null`'s `u` — Go's own scanner
+    // text for this is `invalid character 'o' in literal null (expecting 'u')`.
     expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "not-json-at-all")).toThrow(
-      "invalid character looking for beginning of value",
+      "invalid character 'o' in literal null (expecting 'u')",
+    );
+  });
+
+  it("rejects a truncated object with Go's exact 'unexpected end of JSON input'", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, '{"a":1')).toThrow(
+      "unexpected end of JSON input",
+    );
+  });
+
+  it("rejects a truncated array with Go's exact 'unexpected end of JSON input'", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "[1,2")).toThrow(
+      "unexpected end of JSON input",
+    );
+  });
+
+  it("rejects an object truncated inside a nested unterminated string", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, '{"a')).toThrow(
+      "unexpected end of JSON input",
+    );
+  });
+
+  it("reports trailing garbage after a validly nested container, not on the inner close", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "{[]}x")).toThrow(
+      "invalid character 'x' after top-level value",
+    );
+  });
+
+  it("rejects an unterminated string with Go's exact 'unexpected end of JSON input'", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, '"unterminated')).toThrow(
+      "unexpected end of JSON input",
+    );
+  });
+
+  it("reports trailing garbage after a valid string value", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, '"abc"def')).toThrow(
+      "invalid character 'd' after top-level value",
+    );
+  });
+
+  it("skips over an escaped quote inside a string when finding where it closes", () => {
+    // The actual payload bytes are: `"` `a` `\` `"` `b` `"` `c` — a string containing an
+    // escaped quote (`a"b`), followed by trailing garbage `c`.
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, '"a\\"b"c')).toThrow(
+      "invalid character 'c' after top-level value",
+    );
+  });
+
+  it("rejects a truncated literal (a strict prefix of a keyword) as truncated, not a mismatch", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "tru")).toThrow(
+      "unexpected end of JSON input",
+    );
+  });
+
+  it("reports trailing garbage after a FULLY matched literal keyword", () => {
+    // "null" matches completely; JSC's own tokenizer reports this generically (no
+    // position), unlike a partial mismatch — this exercises that specific fall-through.
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "nullx")).toThrow(
+      "invalid character 'x' after top-level value",
+    );
+  });
+
+  it("rejects a lone digit-less minus sign with Go's exact 'unexpected end of JSON input'", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "-")).toThrow(
+      "unexpected end of JSON input",
+    );
+  });
+
+  it("reports trailing garbage after a valid number value", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "123abc")).toThrow(
+      "invalid character 'a' after top-level value",
+    );
+  });
+
+  it("reports the actual first invalid character for a byte that can never start a value", () => {
+    expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "@")).toThrow(
+      "invalid character '@' looking for beginning of value",
     );
   });
 
   it("falls back to the generic message when the only valid prefix is the WHOLE trimmed string", () => {
     // A leading vertical tab is in JS's `\s` regex class (so `trimmed` strips it) but is
     // NOT valid JSON whitespace (so the original `JSON.parse(payload)` call still fails
-    // on it) — the longest-valid-prefix loop's first (longest) candidate then succeeds
-    // with nothing left over, which must fall through to the generic message rather than
-    // reporting on an empty `rest`. Built via `String.fromCharCode` rather than a literal
-    // escape so no raw control byte sits in the source file.
+    // on it) — `trimmed` alone ("{}") is then a single complete, valid JSON value with
+    // nothing left over, which must fall through to the generic message rather than
+    // reporting on empty leftover content. Built via `String.fromCharCode` rather than a
+    // literal escape so no raw control byte sits in the source file.
     const verticalTab = String.fromCharCode(11);
     expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, `${verticalTab}{}`)).toThrow(
       "invalid character looking for beginning of value",
     );
-  });
-});
-
-describe("legacyGoJsonKindName", () => {
-  it("names every JSON-representable kind, including the generic fallback", () => {
-    expect(legacyGoJsonKindName([])).toBe("array");
-    expect(legacyGoJsonKindName(1)).toBe("number");
-    expect(legacyGoJsonKindName("s")).toBe("string");
-    expect(legacyGoJsonKindName(true)).toBe("bool");
-    // Never reachable from real JSON.parse output (both call sites already exclude
-    // null/array/object before calling this) — exercised directly for completeness.
-    expect(legacyGoJsonKindName(undefined)).toBe("value");
   });
 });
 

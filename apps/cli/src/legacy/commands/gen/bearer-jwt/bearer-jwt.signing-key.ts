@@ -3,17 +3,22 @@ import {
   legacyReadSigningKeysFile,
   legacyResolveSigningKeysConfigPaths,
 } from "../gen.signing-keys-config.ts";
-import { LEGACY_DEFAULT_SIGNING_KEY, type LegacyJwk } from "../../../shared/legacy-go-jwt.ts";
+import {
+  legacyAssertDecodableJwkAlgorithm,
+  LEGACY_DEFAULT_SIGNING_KEY,
+  type LegacyJwk,
+} from "../../../shared/legacy-go-jwt.ts";
+import { legacyGoJsonKindName } from "../../../shared/legacy-go-json.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
-import { legacyGoJsonKindName } from "./bearer-jwt.claims.ts";
 import {
   legacyBearerJwtErrorMessage,
   LegacyGenBearerJwtConfigParseError,
   LegacyGenBearerJwtDecodeError,
   LegacyGenBearerJwtKeyNotFoundError,
   LegacyGenBearerJwtKeyParseError,
+  LegacyGenBearerJwtKeyPickerAbortedError,
   LegacyGenBearerJwtReadError,
 } from "./bearer-jwt.errors.ts";
 
@@ -114,11 +119,16 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
       }),
     );
   }
-  // A JSON `null` answer is treated the same as blank (no-op / use the default) —
-  // matching `legacyMergeBearerJwtPayload`'s own null-is-a-no-op judgment call for
-  // this un-tested-by-Go edge case; see that module's doc comment.
+  // A JSON `null` answer decodes into a ZERO-VALUE `config.JWK{}` in Go — verified
+  // against the real binary (CLI-1961): `json.Unmarshal([]byte("null"), &key)` where
+  // `key` is a non-pointer struct is a documented Go no-op (it leaves every field at
+  // its zero value: `kty: ""`, `alg: ""`, ...) rather than an error, and rather than
+  // the built-in default key. This must reach the SAME zero-value JWK the empty-object
+  // shape below does, so it fails downstream at SIGN time with "unsupported key type:
+  // " (empty kty) — Go genuinely rejects a `null` answer where a truly BLANK answer
+  // (handled above, before `JSON.parse` is ever called) falls back to the default key.
   if (parsed === null) {
-    return LEGACY_DEFAULT_SIGNING_KEY;
+    return normalizeStoredJwk({});
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     return yield* Effect.fail(
@@ -127,7 +137,18 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
       }),
     );
   }
-  return normalizeStoredJwk(parsed as Record<string, unknown>);
+  const record = parsed as Record<string, unknown>;
+  const alg = record["alg"];
+  try {
+    legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
+  } catch (cause) {
+    return yield* Effect.fail(
+      new LegacyGenBearerJwtKeyParseError({
+        message: `failed to parse JWK: ${legacyBearerJwtErrorMessage(cause)}`,
+      }),
+    );
+  }
+  return normalizeStoredJwk(record);
 });
 
 /**
@@ -161,6 +182,19 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     }
     return yield* Effect.fail(
       new LegacyGenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` }),
+    );
+  }
+
+  if (availableKeys.length === 0) {
+    // Go's bubbletea `PromptChoice` (`internal/utils/prompt.go:110-140`), given a
+    // ZERO-item list, quits immediately without ever letting the user select anything:
+    // `errors.New("user aborted")`, unwrapped. Guarded here rather than ever reaching
+    // `output.promptSelect` — `@clack/prompts`' own `select()` has no equivalent
+    // "immediately quit on an empty option list" behavior to lean on, and calling it
+    // with zero options would otherwise resolve to an out-of-range index and crash
+    // with a raw `TypeError` when `.kid` is accessed below.
+    return yield* Effect.fail(
+      new LegacyGenBearerJwtKeyPickerAbortedError({ message: "user aborted" }),
     );
   }
 
