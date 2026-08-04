@@ -63,7 +63,8 @@ const sameState = (a: StackServiceState | undefined, b: StackServiceState): bool
   a.exitCode === b.exitCode &&
   a.restartCount === b.restartCount &&
   a.startedAt === b.startedAt &&
-  a.error === b.error;
+  a.error === b.error &&
+  a.dormant === b.dormant;
 
 const initialPublicStates = (config: ResolvedStackConfig): ReadonlyArray<StackServiceState> =>
   enabledServicesForConfig(config).map(
@@ -214,6 +215,7 @@ export class StackLifecycleCoordinator extends Context.Service<
         const info = stackInfoFor(config);
         const enabledServices = enabledServicesForConfig(config);
         const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
+        const dormancyRevision = yield* SubscriptionRef.make(0);
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
         const activatedServices = new Set<ServiceName>();
         const manuallyStoppedServices = new Set<ServiceName>();
@@ -522,17 +524,6 @@ export class StackLifecycleCoordinator extends Context.Service<
               },
             };
           });
-        const allStateChanges = () =>
-          SubscriptionRef.changes(stateRef).pipe(
-            Stream.mapAccum<
-              ReadonlyArray<StackServiceState> | undefined,
-              ReadonlyArray<StackServiceState>,
-              StackServiceState
-            >(
-              () => undefined,
-              (previous, current) => [current, changedStatesBetween(previous, current)],
-            ),
-          );
         const annotateDormancy = (state: StackServiceState): StackServiceState => {
           const service = SERVICE_NAMES.find((candidate) => candidate === state.name);
           const dormant =
@@ -544,7 +535,27 @@ export class StackLifecycleCoordinator extends Context.Service<
             !manuallyStoppedServices.has(service);
           return dormant ? new StackServiceState({ ...state, dormant: true }) : state;
         };
-        const publicAllStateChanges = () => allStateChanges().pipe(Stream.map(annotateDormancy));
+        const publishDormancyChange = SubscriptionRef.update(
+          dormancyRevision,
+          (value) => value + 1,
+        );
+        const publicAllStateChanges = () =>
+          Stream.merge(
+            SubscriptionRef.changes(stateRef),
+            SubscriptionRef.changes(dormancyRevision).pipe(
+              Stream.map(() => SubscriptionRef.getUnsafe(stateRef)),
+            ),
+          ).pipe(
+            Stream.map((states) => states.map(annotateDormancy)),
+            Stream.mapAccum<
+              ReadonlyArray<StackServiceState> | undefined,
+              ReadonlyArray<StackServiceState>,
+              StackServiceState
+            >(
+              () => undefined,
+              (previous, current) => [current, changedStatesBetween(previous, current)],
+            ),
+          );
         const publicServiceClosure = (
           runtime: RuntimeState,
           services: ReadonlyArray<ServiceName>,
@@ -610,6 +621,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                 for (const service of inactiveServiceClosure) {
                   activatedServices.add(service);
                 }
+                yield* publishDormancyChange;
                 yield* Effect.forEach(
                   inactiveServices,
                   (service) =>
@@ -625,10 +637,11 @@ export class StackLifecycleCoordinator extends Context.Service<
                   { discard: true },
                 ).pipe(
                   Effect.onError(() =>
-                    Effect.sync(() => {
+                    Effect.gen(function* () {
                       for (const service of inactiveServiceClosure) {
                         activatedServices.delete(service);
                       }
+                      yield* publishDormancyChange;
                     }),
                   ),
                 );
@@ -656,10 +669,11 @@ export class StackLifecycleCoordinator extends Context.Service<
               Effect.onError(() =>
                 withActivationLocks(
                   newlyActivated,
-                  Effect.sync(() => {
+                  Effect.gen(function* () {
                     for (const service of newlyActivated) {
                       activatedServices.delete(service);
                     }
+                    yield* publishDormancyChange;
                   }),
                 ),
               ),
@@ -768,6 +782,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                 yield* runtime.orchestrator.waitAllReady();
               }
               yield* Ref.set(phaseRef, "running");
+              yield* publishDormancyChange;
             }).pipe(
               Effect.onError(() => Ref.set(phaseRef, "stopped")),
               withLifecycleLock,
@@ -781,6 +796,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* Ref.set(phaseRef, "stopping");
               yield* withActivationLocks(SERVICE_NAMES, runtimeState.orchestrator.stop());
               yield* Ref.set(phaseRef, "stopped");
+              yield* publishDormancyChange;
             }).pipe(withLifecycleLock),
           dispose: disposeOnce,
           startService: (name) =>
@@ -831,6 +847,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                       }
                     }
                   }
+                  yield* publishDormancyChange;
                 }),
               );
             }).pipe(withLifecycleLock),

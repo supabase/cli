@@ -489,10 +489,16 @@ describe("Stack", () => {
         const coordinator = yield* StackLifecycleCoordinator;
         yield* coordinator.start();
         expect((yield* coordinator.getState("auth")).dormant).toBe(true);
+        const activeStateFiber = yield* coordinator.allStateChanges().pipe(
+          Stream.filter((state) => state.name === "auth" && state.dormant !== true),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
         const activationFiber = yield* coordinator
           .activateService("auth")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(spawnStarted);
+        expect((yield* Fiber.join(activeStateFiber))._tag).toBe("Some");
         expect((yield* coordinator.getState("auth")).dormant).toBeUndefined();
 
         const readyFiber = yield* coordinator
