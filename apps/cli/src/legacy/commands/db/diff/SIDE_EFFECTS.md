@@ -82,3 +82,38 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   binary (their side effects are Go's); the Go child's telemetry is disabled so the
   single `cli_command_executed` event comes from this TS command.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
+
+### `--use-pg-schema` is deprecated (CLI-1960) — sole remaining Go delegation
+
+`--use-pg-schema` wraps the in-process Go library `stripe/pg-schema-diff`
+(`apps/cli-go/internal/db/diff/pgschema.go`). Unlike `--use-pgadmin` (which shells
+out to a container/binary path that could in principle be re-invoked from TS), this
+engine is called **in-process** inside the Go binary — there is no container image,
+no TS binding, and no WASM build of the library available or reasonably buildable
+within the M9 "Final Cleanup — Go Removal" milestone's scope. It was evaluated
+against that milestone's keep-in-Go policy and is the milestone's own sanctioned
+exception: after every other Go delegation in this command (and this milestone) is
+removed, `--use-pg-schema` is intended to be the **sole remaining Go delegation** in
+the whole CLI.
+
+Given that, the flag is now deprecated rather than ported:
+
+- A TS-only stderr deprecation warning is printed immediately before delegating
+  (both text and machine `--output-format` modes — diagnostics stay stderr-only,
+  the CLI-1546 rule): `--use-pg-schema is deprecated and will be removed in a
+future release. Use --use-pg-delta (or the default migra engine) instead.`
+- This is **additive** to (printed before) Go's own pre-existing "experimental"
+  warning (`cmd/db.go:121`, unchanged): `--use-pg-schema flag is experimental and
+may not include all entities, such as views and grants.` The delegated child
+  still prints its own warning; the TS wrapper does not suppress or replace it.
+- `--help` for the flag now also carries a `Deprecated: …` suffix pointing at the
+  same migration path.
+- Actual flag removal and any PostHog usage-telemetry gate for that removal are
+  explicitly out of scope for CLI-1960 — this is a documentation/deprecation-notice
+  change only, tracked as a follow-up decision outside this milestone.
+
+Going forward, any review finding that argues this delegation should instead be
+ported belongs against this documented decision (see
+`~/.claude/skills/go-removal-sweep/references/keep-in-go-policy.md`), not
+re-litigated per PR — re-open only if a TS/WASM binding for
+`stripe/pg-schema-diff` ships.
