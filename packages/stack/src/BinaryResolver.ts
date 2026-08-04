@@ -433,7 +433,23 @@ export class BinaryResolver extends Context.Service<
                 );
 
               return yield* attemptPublish();
-            }).pipe(Effect.ensuring(cleanupTmpDir));
+            }).pipe(
+              Effect.ensuring(cleanupTmpDir),
+              // A cache entry written by a pre-marker CLI release is non-empty
+              // but markerless, so it fails the completeness check above and
+              // lands here to be replaced. When the replacement cannot be
+              // fetched (offline, GitHub outage), that previously-working
+              // binary is strictly better than a hard failure — the same
+              // trade every pre-marker release already made on every resolve.
+              Effect.catchTag("DownloadError", (error) =>
+                fs.readDirectory(cacheDir).pipe(
+                  Effect.mapError(() => error),
+                  Effect.flatMap((entries) =>
+                    entries.length > 0 ? Effect.succeed(false) : Effect.fail(error),
+                  ),
+                ),
+              ),
+            );
 
             return {
               path: cacheDir,

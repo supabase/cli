@@ -711,36 +711,55 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
     },
   );
 
-  it.live(
-    "does not destroy a markerless legacy cacheDir before a download attempt that then fails",
-    () => {
-      const fakeFs = createFakeCacheFs();
-      const spawner = mockExtractingSpawner(fakeFs);
-      const httpLayer = mockOfflineHttpClient();
+  it.live("falls back to a markerless legacy cacheDir when the replacement download fails", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
 
-      const layer = BinaryResolver.make("/cache-root").pipe(
-        Layer.provide(fakeFs.layer),
-        Layer.provide(Path.layer),
-        Layer.provide(httpLayer),
-        Layer.provide(spawner.layer),
-      );
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
 
-      return Effect.gen(function* () {
-        const resolver = yield* BinaryResolver;
-        const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
-        const cacheDir = yield* resolvePostgrestCacheDir;
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
 
-        // A markerless legacy cacheDir from before this resolver's staging
-        // model existed — still a perfectly usable binary on disk.
-        fakeFs.seedDirWithFile(cacheDir, "bin/postgrest");
+      // A markerless legacy cacheDir from before this resolver's staging
+      // model existed — a binary that served every earlier release. When
+      // the replacement cannot be fetched, resolving to it beats failing.
+      fakeFs.seedDirWithFile(cacheDir, "bin/postgrest");
 
-        const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+      const result = yield* resolver.resolveWithMetadata(spec);
 
-        expect(error).toBeInstanceOf(DownloadError);
-        // The legacy binary must survive an offline/failed download attempt
-        // — it must not be deleted before we know we can replace it.
-        expect(fakeFs.files.has(`${cacheDir}/bin/postgrest`)).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      expect(result.path).toBe(cacheDir);
+      expect(result.downloaded).toBe(false);
+      expect(fakeFs.files.has(`${cacheDir}/bin/postgrest`)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still fails offline when no legacy cache entry exists to fall back to", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+
+      const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(DownloadError);
+    }).pipe(Effect.provide(layer));
+  });
 });
