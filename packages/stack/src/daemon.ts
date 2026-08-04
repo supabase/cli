@@ -79,7 +79,7 @@ export async function runDaemon(
       Effect.suspend(() =>
         daemonState === undefined
           ? Effect.void
-          : localStateManager.removeOwned(daemonState).pipe(Effect.ignore),
+          : localStateManager.removeOwned(daemonState).pipe(Effect.catchCause(() => Effect.void)),
       ),
     ).pipe(
       Layer.provide(Layer.succeed(Stack, localStack)),

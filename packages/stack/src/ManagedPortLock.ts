@@ -2,25 +2,19 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { constants, readFileSync } from "node:fs";
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
-import { tmpdir, uptime } from "node:os";
+import { homedir, tmpdir, uptime } from "node:os";
 import { dirname, join } from "node:path";
 
 const LOCK_STALE_AFTER_MS = 5_000;
 const LOCK_RETRY_AFTER_MS = 25;
-const CURRENT_UID = process.getuid?.();
 const SHARED_LOCK_ROOT = join(
   process.platform === "win32" ? tmpdir() : "/tmp",
   "supabase-stack-managed-port-locks",
 );
-const PRIVATE_LOCK_ROOT = join(
-  tmpdir(),
-  process.platform === "win32"
-    ? "supabase-stack-state-locks"
-    : `supabase-stack-state-locks-${CURRENT_UID ?? "user"}`,
-);
+const PRIVATE_LOCK_ROOT = join(homedir(), ".supabase", "stack-state-locks");
 const DEFAULT_LOCK_PATH = join(SHARED_LOCK_ROOT, "allocation.lock");
 
-/** Build a stable per-user lock path without exposing caller-controlled path segments. */
+/** Build a stable lock path below an already user-owned state root. */
 export const privateManagedLockPath = (scope: string): string =>
   join(PRIVATE_LOCK_ROOT, `${createHash("sha256").update(scope).digest("hex")}.lock`);
 
@@ -264,23 +258,7 @@ const prepareSharedLockRoot = async (signal?: AbortSignal): Promise<void> => {
 
 const preparePrivateLockRoot = async (): Promise<void> => {
   await mkdir(PRIVATE_LOCK_ROOT, { recursive: true, mode: 0o700 });
-  if (process.platform === "win32") return;
-
-  const handle = await open(
-    PRIVATE_LOCK_ROOT,
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-  );
-  try {
-    const info = await handle.stat();
-    if (!info.isDirectory() || CURRENT_UID === undefined || info.uid !== CURRENT_UID) {
-      throw new Error(
-        `Private stack lock root is not owned by the current user: ${PRIVATE_LOCK_ROOT}`,
-      );
-    }
-    await handle.chmod(0o700);
-  } finally {
-    await handle.close();
-  }
+  if (process.platform !== "win32") await chmod(PRIVATE_LOCK_ROOT, 0o700);
 };
 
 export type ReleaseManagedPortLock = () => Promise<void>;

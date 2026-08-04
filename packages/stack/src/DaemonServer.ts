@@ -136,10 +136,13 @@ export class DaemonServer extends Context.Service<
             "/stop",
             Effect.gen(function* () {
               yield* stack.stop();
-              yield* beforeShutdown;
-              yield* Deferred.succeed(shutdownDeferred, void 0).pipe(
-                Effect.delay("25 millis"),
-                Effect.forkDetach,
+              yield* beforeShutdown.pipe(
+                Effect.ensuring(
+                  Deferred.succeed(shutdownDeferred, void 0).pipe(
+                    Effect.delay("25 millis"),
+                    Effect.forkDetach,
+                  ),
+                ),
               );
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }),

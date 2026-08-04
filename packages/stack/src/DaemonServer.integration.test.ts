@@ -396,4 +396,19 @@ describe("DaemonServer", () => {
       await freshRuntime.dispose();
     }
   });
+
+  test("POST /stop resolves awaitShutdown when cleanup defects", async () => {
+    const freshRuntime = ManagedRuntime.make(
+      buildDaemonLayer(mockStack(), Effect.die("state cleanup failed")),
+    );
+    try {
+      const daemon = await freshRuntime.runPromise(DaemonServer);
+      const shutdownPromise = freshRuntime.runPromise(daemon.awaitShutdown);
+
+      await fetch(`${getUrl(daemon.address)}/stop`, { method: "POST" });
+      await shutdownPromise;
+    } finally {
+      await freshRuntime.dispose();
+    }
+  });
 });
