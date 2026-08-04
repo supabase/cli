@@ -7,6 +7,7 @@ import { StackBuildError } from "./errors.ts";
 import { Stack, StackInfoSchema } from "./Stack.ts";
 import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
+import { SERVICE_NAMES } from "./versions.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,6 +48,13 @@ const decodeLogEntryEvent = Schema.decodeUnknownSync(LogEntryEventSchema);
 function requestHeaders(init?: RequestInit) {
   return Object.fromEntries(new Headers(init?.headers).entries());
 }
+
+const publicServicePath = (name: string): Effect.Effect<string, ServiceNotFoundError> => {
+  const service = SERVICE_NAMES.find((candidate) => candidate === name);
+  return service === undefined
+    ? Effect.fail(new ServiceNotFoundError({ name }))
+    : Effect.succeed(encodeURIComponent(service));
+};
 
 function makeRequest(path: string, init?: RequestInit) {
   const url = `http://localhost${path}`;
@@ -278,13 +286,10 @@ export const RemoteStack = {
           startService: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(
-                  socketPath,
-                  `/services/${encodeURIComponent(name)}/start`,
-                  {
-                    method: "POST",
-                  },
-                );
+                const servicePath = yield* publicServicePath(name);
+                const response = yield* unixResponse(socketPath, `/services/${servicePath}/start`, {
+                  method: "POST",
+                });
                 yield* expectDaemonOk(response, name);
               }),
             ),
@@ -292,13 +297,10 @@ export const RemoteStack = {
           stopService: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(
-                  socketPath,
-                  `/services/${encodeURIComponent(name)}/stop`,
-                  {
-                    method: "POST",
-                  },
-                );
+                const servicePath = yield* publicServicePath(name);
+                const response = yield* unixResponse(socketPath, `/services/${servicePath}/stop`, {
+                  method: "POST",
+                });
                 yield* expectDaemonOk(response, name).pipe(
                   Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
                 );
@@ -308,9 +310,10 @@ export const RemoteStack = {
           restartService: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
+                const servicePath = yield* publicServicePath(name);
                 const response = yield* unixResponse(
                   socketPath,
-                  `/services/${encodeURIComponent(name)}/restart`,
+                  `/services/${servicePath}/restart`,
                   {
                     method: "POST",
                   },
@@ -395,9 +398,10 @@ export const RemoteStack = {
             withUnixHttpClient(
               withAbortSignal((signal) =>
                 Effect.gen(function* () {
+                  const servicePath = yield* publicServicePath(name);
                   const response = yield* unixResponse(
                     socketPath,
-                    `/services/${encodeURIComponent(name)}/ready`,
+                    `/services/${servicePath}/ready`,
                     { signal },
                   );
                   yield* expectDaemonOk(response, name);

@@ -1,4 +1,4 @@
-import { Data, Effect, Layer, Schema, Context } from "effect";
+import { Data, Effect, Layer, Schedule, Schema, Context } from "effect";
 import { FileSystem, Path } from "effect";
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
@@ -323,10 +323,14 @@ function makeWrite(deps: StateManagerDeps) {
     Effect.gen(function* () {
       const dir = deps.stackDir(state.name);
       yield* deps.fs.makeDirectory(dir, { recursive: true });
-      yield* writeFileAtomic(
-        deps.fs,
-        deps.stateFile(state.name),
-        encodePrettyJson(encodeStackState(state)),
+      yield* withStateLock(
+        deps,
+        state.name,
+        writeFileAtomic(
+          deps.fs,
+          deps.stateFile(state.name),
+          encodePrettyJson(encodeStackState(state)),
+        ),
       );
     }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
 }
@@ -440,7 +444,40 @@ function makeScanMetadata(deps: StateManagerDeps) {
     }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
 }
 
-function makeRemove(deps: StateManagerDeps) {
+function withStateLock<A, E, R>(
+  deps: StateManagerDeps,
+  name: string,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  const stateLockBusy = "StateLockBusy";
+  const lockPath = `${deps.stackDir(name)}.state.lock`;
+  const acquire = deps.fs.makeDirectory(lockPath).pipe(
+    Effect.result,
+    Effect.flatMap((result) => {
+      if (result._tag === "Success") return Effect.void;
+      return result.failure.reason._tag === "AlreadyExists"
+        ? Effect.fail(stateLockBusy)
+        : Effect.die(result.failure);
+    }),
+    Effect.retry({
+      while: (error) => error === stateLockBusy,
+      schedule: Schedule.spaced("10 millis"),
+    }),
+    Effect.orDie,
+  );
+  return deps.fs.makeDirectory(deps.stacksRoot, { recursive: true }).pipe(
+    Effect.orDie,
+    Effect.andThen(
+      Effect.acquireUseRelease(
+        acquire,
+        () => effect,
+        () => deps.fs.remove(lockPath, { recursive: true }).pipe(Effect.ignore),
+      ),
+    ),
+  );
+}
+
+function makeRemoveUnlocked(deps: StateManagerDeps) {
   return (name: string): Effect.Effect<void> =>
     Effect.gen(function* () {
       yield* deps.fs.remove(deps.stateFile(name)).pipe(Effect.ignore);
@@ -459,17 +496,30 @@ function makeRemove(deps: StateManagerDeps) {
     }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
 }
 
-function makeRemoveOwned(read: ReturnType<typeof makeRead>, remove: ReturnType<typeof makeRemove>) {
+function makeRemove(deps: StateManagerDeps) {
+  const remove = makeRemoveUnlocked(deps);
+  return (name: string): Effect.Effect<void> => withStateLock(deps, name, remove(name));
+}
+
+function makeRemoveOwned(
+  deps: StateManagerDeps,
+  read: ReturnType<typeof makeRead>,
+  remove: ReturnType<typeof makeRemoveUnlocked>,
+) {
   return (expected: StackState): Effect.Effect<void, InvalidStackStateError> =>
-    read(expected.name).pipe(
-      Effect.flatMap((current) =>
-        current.pid === expected.pid &&
-        current.startedAt === expected.startedAt &&
-        current.socketPath === expected.socketPath
-          ? remove(expected.name)
-          : Effect.void,
+    withStateLock(
+      deps,
+      expected.name,
+      read(expected.name).pipe(
+        Effect.flatMap((current) =>
+          current.pid === expected.pid &&
+          current.startedAt === expected.startedAt &&
+          current.socketPath === expected.socketPath
+            ? remove(expected.name)
+            : Effect.void,
+        ),
+        Effect.catchTag("StateNotFoundError", () => Effect.void),
       ),
-      Effect.catchTag("StateNotFoundError", () => Effect.void),
     );
 }
 
@@ -666,6 +716,7 @@ export class StateManager extends Context.Service<
           runtimeDir,
         };
         const read = makeRead(deps);
+        const removeUnlocked = makeRemoveUnlocked(deps);
         const remove = makeRemove(deps);
         const scan = makeScan(deps);
         const writeMetadata = makeWriteMetadata(deps);
@@ -686,7 +737,7 @@ export class StateManager extends Context.Service<
           readMetadata,
           scanMetadata: makeScanMetadata(deps),
           remove,
-          removeOwned: makeRemoveOwned(read, remove),
+          removeOwned: makeRemoveOwned(deps, read, removeUnlocked),
           deleteStack: makeDeleteStack(deps),
           resolve: makeResolve(path, scan),
           isAlive: makeIsAlive(),

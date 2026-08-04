@@ -272,6 +272,14 @@ describe("RemoteStack integration", () => {
     expect(mock.serviceCalls).toContain("ready:auth");
   });
 
+  test("waitReady rejects dot path segments locally", async () => {
+    const error = await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.waitReady("..")).pipe(Effect.flip),
+    );
+    expect(error._tag).toBe("ServiceNotFoundError");
+    expect(mock.serviceCalls).not.toContain("ready:all");
+  });
+
   test("waitAllReady delegates to the daemon coordinator", async () => {
     await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.waitAllReady()));
     expect(mock.serviceCalls).toContain("ready:all");
