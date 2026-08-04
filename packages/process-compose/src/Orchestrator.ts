@@ -584,7 +584,7 @@ export class Orchestrator extends Context.Service<
           runService(def, options).pipe(
             Effect.catch((error) =>
               sendEvent(def.name, {
-                _tag: "DependencyFailed",
+                _tag: "SpawnFailed",
                 error: `Spawn failed: ${error.service} - ${String(error.cause)}`,
               }).pipe(Effect.asVoid),
             ),

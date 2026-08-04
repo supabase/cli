@@ -139,11 +139,14 @@ const readOwnerContents = async (lockPath: string): Promise<string | undefined> 
 
 const ownerIsActive = (contents: string): boolean => {
   const owner = parseOwner(contents);
+  const observedStartIdentity = owner === undefined ? undefined : processStartIdentity(owner.pid);
   return (
     owner !== undefined &&
     Math.abs(owner.bootMinute - currentBootMinute()) <= 2 &&
     processIsAlive(owner.pid) &&
-    (owner.startIdentity === undefined || processStartIdentity(owner.pid) === owner.startIdentity)
+    (owner.startIdentity === undefined ||
+      observedStartIdentity === undefined ||
+      observedStartIdentity === owner.startIdentity)
   );
 };
 
