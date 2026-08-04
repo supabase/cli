@@ -1568,7 +1568,7 @@ describe("legacy sso update integration", () => {
         // The merge seeds from the reconciled host's GET response.
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
-        expect(api.requests.some((r) => r.url.startsWith("http://first.example"))).toBe(false);
+        expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
         // The raw GET stitches identity through the shared per-command guard,
         // like Go's identityTransport on every Management API response.
         expect(testSetup.stitchedResponses).toBeGreaterThan(0);
@@ -1879,7 +1879,7 @@ describe("legacy sso update integration", () => {
         const entitlements = api.requests.find((r) => r.url.includes("/entitlements"));
         expect(project?.url).toBe(`http://second.example/v1/projects/${LEGACY_VALID_REF}`);
         expect(entitlements?.url).toBe("http://second.example/v1/organizations/acme/entitlements");
-        expect(api.requests.some((r) => r.url.startsWith("http://first.example"))).toBe(false);
+        expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );
