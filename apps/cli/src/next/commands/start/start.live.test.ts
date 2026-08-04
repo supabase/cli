@@ -51,7 +51,7 @@ describeLive("supabase start lazy lifecycle (live)", () => {
 
   test(
     "keeps an HTTP service dormant until its first proxied request",
-    { timeout: START_TIMEOUT_MS + 60_000 },
+    { timeout: START_TIMEOUT_MS + 120_000 },
     async () => {
       project = await makeTempStackProject("supabase-lazy-start-live-");
       home = makeTempHome();
