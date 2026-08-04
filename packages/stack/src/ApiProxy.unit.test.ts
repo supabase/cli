@@ -343,6 +343,32 @@ describe("ApiProxy", () => {
     }
   });
 
+  test("preserves binary Realtime frames whose payload is valid JSON", async () => {
+    const backend = await startWebSocketEchoBackend();
+    const proxy = await startProxy(configForPort(backend.port));
+    const frame = Buffer.from(JSON.stringify({ type: "binary" }));
+
+    try {
+      const echoedAsBinary = await new Promise<boolean>((resolve, reject) => {
+        const socket = new NodeWS.WebSocket(
+          `${proxy.url.replace("http://", "ws://")}/realtime/v1/websocket`,
+        );
+        socket.once("open", () => socket.send(frame, { binary: true }));
+        socket.once("message", (_data, isBinary) => {
+          resolve(isBinary);
+          socket.close();
+        });
+        socket.once("error", reject);
+      });
+
+      expect(echoedAsBinary).toBe(true);
+      expect(backend.lastMessageWasBinary()).toBe(true);
+    } finally {
+      await proxy.dispose();
+      await backend.stop();
+    }
+  });
+
   test("rejects non-upgrade Realtime requests without activating the service", async () => {
     const activated: ServiceName[] = [];
     const activatorLayer = Layer.succeed(StackServiceActivator, {

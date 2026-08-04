@@ -266,17 +266,6 @@ export const isWebSocketUpgradeRequest = (
   );
 };
 
-const realtimeUpstreamFrame = (data: string | Uint8Array): string | Uint8Array => {
-  if (typeof data === "string") return data;
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
-    JSON.parse(text);
-    return text;
-  } catch {
-    return data;
-  }
-};
-
 function makeRealtimeWebSocketHandler(
   config: ProxyConfig,
   activator: StackServiceActivator["Service"],
@@ -394,7 +383,7 @@ function makeRealtimeWebSocketHandler(
           const onDownstreamOpen = Deferred.succeed(downstreamOpened, undefined);
           const forwardUpstream = (data: string | Uint8Array) =>
             Effect.sync(() => {
-              if (!Queue.offerUnsafe(upstreamQueue, realtimeUpstreamFrame(data))) {
+              if (!Queue.offerUnsafe(upstreamQueue, data)) {
                 upstream.close(1011, "Realtime upstream backpressure exceeded");
               }
             });
