@@ -98,6 +98,11 @@ const SERVICE_ENTRYPOINTS: Partial<
     ["share/supabase-cli/bin/supabase-postgres-init.sh"],
     ["bin/pg_isready"],
     ["bin/postgres", "bin/postgres.exe"],
+    // The init service drives all provisioning through psql, and the server
+    // loads its shared libraries from lib/ (LD_/DYLD_LIBRARY_PATH in
+    // services/postgres.ts) — a cache missing either can't boot.
+    ["bin/psql", "bin/psql.exe"],
+    ["lib"],
   ],
   postgrest: [["postgrest", "postgrest.exe"]],
   auth: [["auth"]],

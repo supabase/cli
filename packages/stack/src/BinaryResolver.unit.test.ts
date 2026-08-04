@@ -828,6 +828,8 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
       fakeFs.seedDirWithFile(cacheDir, "share/supabase-cli/bin/supabase-postgres-init.sh");
       fakeFs.seedDirWithFile(cacheDir, "bin/pg_isready");
       fakeFs.seedDirWithFile(cacheDir, "bin/postgres");
+      fakeFs.seedDirWithFile(cacheDir, "bin/psql");
+      fakeFs.seedDirWithFile(cacheDir, "lib/libpq.dylib");
 
       const result = yield* resolver.resolveWithMetadata(spec);
       expect(result.path).toBe(cacheDir);
