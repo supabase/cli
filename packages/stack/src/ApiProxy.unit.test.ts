@@ -734,7 +734,7 @@ describe("isWebSocketUpgradeRequest", () => {
 
   test("accepts a canonical 16-byte WebSocket key", () => {
     expect(
-      isWebSocketUpgradeRequest({
+      isWebSocketUpgradeRequest("GET", {
         ...baseHeaders,
         "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
       }),
@@ -744,7 +744,18 @@ describe("isWebSocketUpgradeRequest", () => {
   test.each(["", "not-base64", "c2hvcnQ="])(
     "rejects malformed WebSocket key %j before activation",
     (key) => {
-      expect(isWebSocketUpgradeRequest({ ...baseHeaders, "sec-websocket-key": key })).toBe(false);
+      expect(isWebSocketUpgradeRequest("GET", { ...baseHeaders, "sec-websocket-key": key })).toBe(
+        false,
+      );
     },
   );
+
+  test("rejects non-GET requests with valid upgrade headers before activation", () => {
+    expect(
+      isWebSocketUpgradeRequest("POST", {
+        ...baseHeaders,
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+      }),
+    ).toBe(false);
+  });
 });

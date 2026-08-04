@@ -248,6 +248,7 @@ const webSocketProtocols = (headers: Headers.Headers): ReadonlyArray<string> | u
 };
 
 export const isWebSocketUpgradeRequest = (
+  method: string,
   headers: Readonly<Record<string, string | undefined>>,
 ): boolean => {
   const connectionTokens = (headers.connection ?? "")
@@ -259,6 +260,7 @@ export const isWebSocketUpgradeRequest = (
     /^[A-Za-z0-9+/]{22}==$/.test(key) &&
     Buffer.from(key, "base64").byteLength === 16;
   return (
+    method === "GET" &&
     connectionTokens.includes("upgrade") &&
     headers.upgrade?.toLowerCase() === "websocket" &&
     validKey &&
@@ -273,7 +275,7 @@ function makeRealtimeWebSocketHandler(
 ) {
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
-      if (!isWebSocketUpgradeRequest(req.headers)) {
+      if (!isWebSocketUpgradeRequest(req.method, req.headers)) {
         return HttpServerResponse.text("WebSocket upgrade required", { status: 426 });
       }
 
