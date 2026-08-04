@@ -32,8 +32,8 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
 import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
-import { legacyGetPendingSeeds, legacySeedData } from "../shared/legacy-seed-ops.ts";
 import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
+import { legacyGetPendingSeeds, legacySeedData } from "../../../shared/legacy-seed-ops.ts";
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
 import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";

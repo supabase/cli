@@ -6,8 +6,12 @@ import { legacyPlatformApiFactoryFromApiLayer } from "../../auth/legacy-platform
 import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
+import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
+import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
+import { legacyEdgeRuntimeScriptLayer } from "../../shared/legacy-edge-runtime-script.layer.ts";
 import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -25,9 +29,9 @@ import { legacyTemplateServiceLayer } from "./bootstrap.templates.ts";
 // Shared sub-layers are memoised by reference so the merge reuses one keyring
 // reader / one debug-logging HTTP wrapper / one config loader.
 //
-// `Output`, `Analytics`, `Stdio`, `Tty`, `RuntimeInfo`, `ProcessControl`,
-// `LegacyGoProxy`, and `BunServices` (`FileSystem` / `Path` / `ChildProcessSpawner`)
-// come from the root layer (`legacy/cli/root.ts` + `runCli`). `LegacyDebugLogger` is
+// `Output`, `Analytics`, `Stdio`, `Tty`, `RuntimeInfo`, `ProcessControl`, and
+// `BunServices` (`FileSystem` / `Path` / `ChildProcessSpawner`) come from the root
+// layer (`legacy/cli/root.ts` + `runCli`). `LegacyDebugLogger` is
 // NOT provided by the root, so every base layer that reads it for `--debug` traces
 // (`legacyCliConfigLayer`, `legacyHttpClientLayer`, `legacyCredentialsLayer`,
 // `legacyPlatformApiLayer`) is fed `legacyDebugLoggerLayer` here — matching `login.layers.ts`.
@@ -46,6 +50,14 @@ const platformApi = legacyPlatformApiLayer.pipe(
   Layer.provide(legacyIdentityStitchLayer),
 );
 const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(Layer.provide(platformApi));
+// `legacyDbPushCore` (the native push step, CLI-1953) needs a Postgres connection
+// and the edge-runtime/pg-delta stack for its best-effort migrations-catalog cache
+// — same sub-layers `db push` itself composes (`push.layers.ts`), reusing this
+// file's own `cliConfig` reference rather than a second parallel one.
+const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(cliConfig),
+);
 
 export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   platformApi,
@@ -61,6 +73,14 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
     Layer.provide(legacyIdentityStitchLayer),
   ),
   legacyTelemetryStateLayer,
+  legacyDbConnectionLayer,
+  legacyDockerRunLayer,
+  edgeRuntime,
+  legacyPgDeltaSslProbeLayer,
+  // Exposed bare (not just used to feed sibling sub-layers, as elsewhere in this
+  // file) because `bootstrap.handler.ts` now calls `legacyResolveLinkedConn`
+  // (CLI-1953's IPv4-pooler-fallback push connection) directly, which reads it.
+  debugLogger,
   // The one per-command identity stitcher (Go's single root-context `sync.Once`),
   // exposed at top level so `withLegacyCommandInstrumentation` can read
   // `stitchedDistinctId()` and attribute the cli_command_executed event to the

@@ -265,6 +265,7 @@ export const legacyDiffMigra = Effect.fnUntraced(function* (
       binds: [`${legacyEdgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`],
       errPrefix: "error diffing schema",
       denoVersion: ctx.denoVersion,
+      workdir: ctx.cwd,
     })
     .pipe(
       Effect.catch((cause) =>

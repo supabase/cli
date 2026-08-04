@@ -1,5 +1,5 @@
-import { legacyBold } from "../../../shared/legacy-colors.ts";
-import { legacySortMigrationPathsByVersion } from "../../../shared/legacy-migration-history.ts";
+import { legacyBold } from "./legacy-colors.ts";
+import { legacySortMigrationPathsByVersion } from "./legacy-migration-history.ts";
 
 /**
  * `pkg/migration/file.go` — local migration filenames are `<digits>_<name>.sql`.
