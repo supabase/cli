@@ -692,11 +692,15 @@ export class StackLifecycleCoordinator extends Context.Service<
                   SERVICE_NAMES.filter((service) => eagerTargets.has(service)),
                   Effect.void,
                 );
+                const postgresInitStartedByEagerService = [...eagerTargets].some((service) =>
+                  runtime.graph
+                    .startOrderFor(service)
+                    .some((definition) => definition.name === "postgres-init"),
+                );
                 if (
                   runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
                 ) {
-                  const postgresInit = yield* runtime.orchestrator.getState("postgres-init");
-                  if (postgresInit.status === "Pending") {
+                  if (!postgresInitStartedByEagerService) {
                     yield* runtime.orchestrator.startService("postgres-init").pipe(
                       Effect.mapError(
                         (cause) =>
