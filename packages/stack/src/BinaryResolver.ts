@@ -89,10 +89,7 @@ const LEGACY_CACHE_LOCK_OWNER_FILE = "owner.pid";
 const CACHE_LOCK_OWNER_PREFIX = "owner.";
 const CACHE_LOCK_OWNER_GRACE_MS = 5_000;
 const STALE_STAGING_AGE_MS = 24 * 60 * 60 * 1_000;
-const CACHE_LOCK_RETRY_SCHEDULE = Schedule.max([
-  Schedule.spaced("100 millis"),
-  Schedule.recurs(600),
-]);
+const CACHE_LOCK_RETRY_SCHEDULE = Schedule.spaced("100 millis");
 
 interface CacheLockOwner {
   readonly pid: number;
