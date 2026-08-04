@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { constants, readFileSync } from "node:fs";
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { tmpdir, uptime } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const LOCK_STALE_AFTER_MS = 5_000;
 const LOCK_RETRY_AFTER_MS = 25;
@@ -12,6 +12,10 @@ const SHARED_LOCK_ROOT = join(
   "supabase-stack-managed-port-locks",
 );
 const DEFAULT_LOCK_PATH = join(SHARED_LOCK_ROOT, "allocation.lock");
+
+/** Build a stable, host-wide lock path without exposing caller-controlled path segments. */
+export const managedLockPath = (scope: string): string =>
+  join(SHARED_LOCK_ROOT, `${createHash("sha256").update(scope).digest("hex")}.lock`);
 
 interface LockOwner {
   readonly pid: number;
@@ -258,7 +262,7 @@ export async function acquireManagedPortLock(
   lockPath = DEFAULT_LOCK_PATH,
   signal?: AbortSignal,
 ): Promise<ReleaseManagedPortLock> {
-  if (lockPath === DEFAULT_LOCK_PATH) {
+  if (dirname(lockPath) === SHARED_LOCK_ROOT) {
     await prepareSharedLockRoot(signal);
   }
   for (;;) {

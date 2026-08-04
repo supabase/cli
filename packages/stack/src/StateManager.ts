@@ -1,8 +1,9 @@
-import { Data, Effect, Layer, Schedule, Schema, Context } from "effect";
+import { Data, Effect, Layer, Schema, Context } from "effect";
 import { FileSystem, Path } from "effect";
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
+import { acquireManagedPortLock, managedLockPath } from "./ManagedPortLock.ts";
 import {
   PartialVersionManifestSchema,
   STACK_METADATA_SCHEMA_VERSION,
@@ -449,31 +450,11 @@ function withStateLock<A, E, R>(
   name: string,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> {
-  const stateLockBusy = "StateLockBusy";
-  const lockPath = `${deps.stackDir(name)}.state.lock`;
-  const acquire = deps.fs.makeDirectory(lockPath).pipe(
-    Effect.result,
-    Effect.flatMap((result) => {
-      if (result._tag === "Success") return Effect.void;
-      return result.failure.reason._tag === "AlreadyExists"
-        ? Effect.fail(stateLockBusy)
-        : Effect.die(result.failure);
-    }),
-    Effect.retry({
-      while: (error) => error === stateLockBusy,
-      schedule: Schedule.spaced("10 millis"),
-    }),
-    Effect.orDie,
-  );
-  return deps.fs.makeDirectory(deps.stacksRoot, { recursive: true }).pipe(
-    Effect.orDie,
-    Effect.andThen(
-      Effect.acquireUseRelease(
-        acquire,
-        () => effect,
-        () => deps.fs.remove(lockPath, { recursive: true }).pipe(Effect.ignore),
-      ),
-    ),
+  const lockPath = managedLockPath(`stack-state:${deps.stackDir(name)}`);
+  return Effect.acquireUseRelease(
+    Effect.promise((signal) => acquireManagedPortLock(lockPath, signal)),
+    () => effect,
+    (release) => Effect.promise(release),
   );
 }
 
