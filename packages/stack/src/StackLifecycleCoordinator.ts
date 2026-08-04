@@ -659,12 +659,13 @@ export class StackLifecycleCoordinator extends Context.Service<
               return;
             }
             disposed = true;
+            yield* Ref.set(phaseRef, "stopping");
             yield* cleanupLocalStackResources({
               stop: () =>
                 runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
               cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
               config,
-            });
+            }).pipe(Effect.ensuring(Ref.set(phaseRef, "stopped")));
           });
 
         yield* Effect.addFinalizer(disposeOnce);
@@ -694,15 +695,18 @@ export class StackLifecycleCoordinator extends Context.Service<
                 if (
                   runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
                 ) {
-                  yield* runtime.orchestrator.startService("postgres-init").pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new StackBuildError({
-                          detail: "Prepared graph does not contain postgres-init",
-                          cause,
-                        }),
-                    ),
-                  );
+                  const postgresInit = yield* runtime.orchestrator.getState("postgres-init");
+                  if (postgresInit.status === "Pending") {
+                    yield* runtime.orchestrator.startService("postgres-init").pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new StackBuildError({
+                            detail: "Prepared graph does not contain postgres-init",
+                            cause,
+                          }),
+                      ),
+                    );
+                  }
                   yield* runtime.orchestrator.waitReady("postgres-init").pipe(
                     Effect.catchTag("ServiceNotFoundError", (cause) =>
                       Effect.fail(
