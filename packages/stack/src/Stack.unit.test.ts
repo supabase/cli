@@ -497,10 +497,9 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const coordinator = yield* StackLifecycleCoordinator;
       yield* coordinator.start();
-      yield* coordinator.activateService("auth");
       yield* coordinator.stop();
 
-      const error = yield* coordinator.activateService("auth").pipe(Effect.flip);
+      const error = yield* coordinator.activateService("postgres").pipe(Effect.flip);
       expect(error._tag).toBe("StackNotRunningError");
     }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
   });
