@@ -7,7 +7,6 @@ import {
 } from "@supabase/config";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
-import { legacyIsDockerClientEnvKey } from "./db-bootstrap/docker-create-args.ts";
 import { LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY } from "./legacy-bitbucket-pipeline.ts";
 import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
@@ -97,30 +96,45 @@ export const legacyLoadLocalProjectContext = <E>(
     // Go's `godotenv.Load` (`loadEnvIfExists`, called by `loadNestedEnv` above this same
     // `Config.Load` pass, `pkg/config/config.go:1261`) installs every parsed dotenv key into
     // the process's OWN environment via `os.Setenv` — never overriding an already-set key —
-    // so it's visible to every subsequent Docker-client-facing call in THIS process, not just
-    // to `Config.Load`'s own field decoding. `legacyGetHostname()` right below, and every
-    // Docker subprocess this context's callers (`start`/`stop`/`status`/`db start`) spawn
-    // afterward, read `DOCKER_HOST`/`DOCKER_CONTEXT`/etc straight from `process.env`
-    // (`legacy-hostname.ts`, `extendEnv: true` at every `docker`/`podman` spawn site) — a
-    // daemon target configured ONLY in a project `.env` file (never exported to the shell)
-    // must land here, before `legacyGetHostname()` runs, or this whole context resolves
-    // against the WRONG daemon. Deliberately permanent (unlike `legacyApplyProjectEnv`'s own
-    // narrower, explicitly-scoped opt-in around a single command's container work) — matching
-    // Go's own non-reverting `os.Setenv`, which persists for that single-command process's
-    // entire lifetime.
-    //
-    // `BITBUCKET_CLONE_DIR` is included alongside the Docker-client keys for the same
-    // subsequent-process-env-read reason, even though it isn't itself a Docker-client-targeting
-    // var (see {@link LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY}'s own doc comment for why this one, and
-    // not `SUPABASE_SERVICES_HOSTNAME` right below, must be installed here: review:
-    // PRRT_kwDOErm0O86VmHkm).
+    // so it's visible to every subsequent call in THIS process that reads `process.env` at
+    // CALL time, not just to `Config.Load`'s own field decoding. `BITBUCKET_CLONE_DIR` is the
+    // one key this applies to today: Go's `os.Getenv("BITBUCKET_CLONE_DIR")` read
+    // (`apps/cli-go/internal/utils/docker.go:401`) lives inside `DockerStart`, a regular
+    // function invoked during the command's own `Run()`, well after `flags.LoadConfig` ->
+    // `godotenv.Load` has already installed dotenv keys into the process env — not in a
+    // package-level `var` initializer evaluated before `godotenv.Load` ever runs (see
+    // {@link LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY}'s own doc comment; review:
+    // PRRT_kwDOErm0O86VmHkm) — so a value set ONLY in a project `.env` file genuinely reaches
+    // Go too. Deliberately permanent (unlike `legacyApplyProjectEnv`'s own narrower,
+    // explicitly-scoped opt-in around a single command's container work) — matching Go's own
+    // non-reverting `os.Setenv`, which persists for that single-command process's entire
+    // lifetime.
     for (const [key, value] of Object.entries(projectEnvValues)) {
-      const installsFromProjectDotenv =
-        legacyIsDockerClientEnvKey(key) || key === LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY;
-      if (installsFromProjectDotenv && process.env[key] === undefined) {
+      if (key === LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY && process.env[key] === undefined) {
         process.env[key] = value;
       }
     }
+
+    // Deliberately NOT extended to Docker-client keys (`DOCKER_HOST`/`DOCKER_CONTEXT`/
+    // `DOCKER_CONFIG`/etc, `legacyIsDockerClientEnvKey`), unlike an earlier version of this
+    // function — same reasoning as `SUPABASE_SERVICES_HOSTNAME` right below, with even more
+    // direct evidence: Go's ENTIRE Docker connectivity is the package-level
+    // `var Docker = NewDocker()` (`apps/cli-go/internal/utils/docker.go:39`), whose
+    // `cli.Initialize(&dockerFlags.ClientOptions{})` reads these exact env vars once, at Go
+    // BINARY STARTUP — before `main()` runs, before cobra parses argv, before any command's
+    // `Run()` calls `flags.LoadConfig` -> `Config.Load` -> `loadNestedEnv` -> `godotenv.Load`.
+    // Go never shells out to a `docker`/`podman` binary for its own container work (there is no
+    // `exec.Command("docker", ...)` anywhere under `apps/cli-go`) — every container operation
+    // goes through that single already-frozen SDK client, so a project-dotenv-only Docker-client
+    // override can NEVER retarget Go's daemon, any more than it can retarget
+    // `utils.Config.Hostname` below. Verified empirically (a scratch probe reproducing the exact
+    // package-var-init-before-dotenv-load ordering): a value installed via `os.Setenv` after a
+    // package var has already captured the environment never reaches that var. Installing these
+    // keys here would make native `db start`/`start`/`stop`/`status` — which DO read
+    // `process.env` at each `docker`/`podman` subprocess spawn (`legacy-hostname.ts`,
+    // `extendEnv: true` at every spawn site) — inspect and mutate a DIFFERENT daemon than the Go
+    // command targets: a NEW divergence from Go, not a fix for one (review:
+    // PRRT_kwDOErm0O86WXFqw).
 
     // Deliberately NOT extended to `SUPABASE_SERVICES_HOSTNAME` (review: PRRT_kwDOErm0O86VlqIJ):
     // Go's `GetHostname()` (`apps/cli-go/internal/utils/misc.go:305-311`) has exactly one call
