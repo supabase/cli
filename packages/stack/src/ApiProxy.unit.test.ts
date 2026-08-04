@@ -758,4 +758,17 @@ describe("isWebSocketUpgradeRequest", () => {
       }),
     ).toBe(false);
   });
+
+  test.each(["phoenix,", ",phoenix", "phoenix, bad protocol", "phoenix, phoenix"])(
+    "rejects malformed WebSocket protocols %j before activation",
+    (protocols) => {
+      expect(
+        isWebSocketUpgradeRequest("GET", {
+          ...baseHeaders,
+          "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+          "sec-websocket-protocol": protocols,
+        }),
+      ).toBe(false);
+    },
+  );
 });

@@ -247,6 +247,18 @@ const webSocketProtocols = (headers: Headers.Headers): ReadonlyArray<string> | u
   return protocols.length === 0 ? undefined : protocols.slice(0, 1);
 };
 
+const WEB_SOCKET_PROTOCOL_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+const hasValidWebSocketProtocols = (value: string | undefined): boolean => {
+  if (value === undefined) return true;
+  const protocols = value.split(",").map((protocol) => protocol.trim());
+  return (
+    protocols.length > 0 &&
+    protocols.every((protocol) => WEB_SOCKET_PROTOCOL_TOKEN.test(protocol)) &&
+    new Set(protocols).size === protocols.length
+  );
+};
+
 export const isWebSocketUpgradeRequest = (
   method: string,
   headers: Readonly<Record<string, string | undefined>>,
@@ -264,7 +276,8 @@ export const isWebSocketUpgradeRequest = (
     connectionTokens.includes("upgrade") &&
     headers.upgrade?.toLowerCase() === "websocket" &&
     validKey &&
-    headers["sec-websocket-version"] === "13"
+    headers["sec-websocket-version"] === "13" &&
+    hasValidWebSocketProtocols(headers["sec-websocket-protocol"])
   );
 };
 
