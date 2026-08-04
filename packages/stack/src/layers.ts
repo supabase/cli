@@ -1,4 +1,6 @@
 import { fork, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { Data, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { FileSystem, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -224,7 +226,10 @@ export const daemonLayer = (
     yield* fs
       .makeDirectory(runtimeDir, { recursive: true })
       .pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
-    const socketPath = stateManager.socketPath(config.name);
+    // A daemon generation owns its socket pathname for its entire lifetime.
+    // Reusing a fixed pathname lets a delayed shutdown unlink a replacement
+    // daemon's socket after the replacement has already bound it.
+    const socketPath = join(runtimeDir, `daemon-${randomUUID().slice(0, 12)}.sock`);
 
     // Clean up stale socket file if present
     yield* fs.remove(socketPath).pipe(Effect.ignore);
