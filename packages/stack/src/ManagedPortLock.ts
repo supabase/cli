@@ -270,17 +270,19 @@ export async function acquireManagedPortLock(
       token: randomUUID(),
       ...(startIdentity === undefined ? {} : { startIdentity }),
     } satisfies LockOwner);
+    const candidatePath = `${lockPath}.${randomUUID()}.candidate`;
+    let installed = false;
 
     try {
-      await mkdir(lockPath, { mode: 0o777 });
+      await mkdir(candidatePath, { mode: 0o777 });
       try {
         if (process.platform !== "win32") {
           // The shared generation must remain removable by a different user.
           // mkdir applies the process umask, so make the effective mode explicit.
-          await chmod(lockPath, 0o777);
+          await chmod(candidatePath, 0o777);
         }
         const ownerHandle = await open(
-          join(lockPath, "owner"),
+          join(candidatePath, "owner"),
           constants.O_WRONLY |
             constants.O_CREAT |
             constants.O_EXCL |
@@ -292,14 +294,13 @@ export async function acquireManagedPortLock(
         } finally {
           await ownerHandle.close();
         }
+        await rename(candidatePath, lockPath);
+        installed = true;
         if ((await readOwnerContents(lockPath)) !== ownerContents) continue;
         await delay(LOCK_RETRY_AFTER_MS, signal);
         if ((await readOwnerContents(lockPath)) !== ownerContents) continue;
       } catch (error) {
-        const quarantinePath = await moveLockGeneration(lockPath, ownerContents);
-        if (quarantinePath !== undefined) {
-          await rm(quarantinePath, { recursive: true, force: true });
-        }
+        await rm(candidatePath, { recursive: true, force: true });
         throw error;
       }
 
@@ -313,7 +314,12 @@ export async function acquireManagedPortLock(
         }
       };
     } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
+      if (
+        installed ||
+        (errorCode(error) !== "EEXIST" && errorCode(error) !== "ENOTEMPTY")
+      ) {
+        throw error;
+      }
     }
 
     const observed = await shouldReclaimLock(lockPath);
