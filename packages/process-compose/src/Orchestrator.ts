@@ -102,6 +102,7 @@ export class Orchestrator extends Context.Service<
           completed: Deferred.Deferred<number>;
           stopped: Deferred.Deferred<void>;
           stoppedByUser: boolean;
+          requested: boolean;
         }
         const services = new Map<string, ServiceSignals>();
 
@@ -115,6 +116,7 @@ export class Orchestrator extends Context.Service<
             completed: Deferred.makeUnsafe<number>(),
             stopped: Deferred.makeUnsafe<void>(),
             stoppedByUser: false,
+            requested: false,
           });
         }
 
@@ -540,10 +542,15 @@ export class Orchestrator extends Context.Service<
             }
           };
           collectDependents(name);
-          return graph.startOrder.filter(
-            (def) =>
-              names.has(def.name) && (def.name === name || FiberMap.hasUnsafe(fibers, def.name)),
-          );
+          return graph.startOrder.filter((def) => {
+            const service = services.get(def.name);
+            return (
+              names.has(def.name) &&
+              (def.name === name ||
+                FiberMap.hasUnsafe(fibers, def.name) ||
+                (service?.requested === true && service.stoppedByUser !== true))
+            );
+          });
         };
 
         const waitReadySingle = (def: ServiceDef): Effect.Effect<void, ServiceReadyError> =>
@@ -617,6 +624,8 @@ export class Orchestrator extends Context.Service<
           start: () =>
             Effect.gen(function* () {
               for (const def of graph.startOrder) {
+                const service = services.get(def.name);
+                if (service !== undefined) service.requested = true;
                 yield* FiberMap.run(fibers, def.name, runServiceSafe(def));
               }
             }),
@@ -669,6 +678,7 @@ export class Orchestrator extends Context.Service<
                   yield* resetService(d.name);
                   resetNames.add(d.name);
                 }
+                if (service !== undefined) service.requested = true;
                 yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
               }
 
@@ -688,6 +698,7 @@ export class Orchestrator extends Context.Service<
                 ) {
                   yield* FiberMap.remove(fibers, d.name);
                   yield* resetService(d.name);
+                  service.requested = true;
                   yield* FiberMap.run(fibers, d.name, runServiceSafe(d), {
                     onlyIfMissing: true,
                   });
@@ -776,6 +787,8 @@ export class Orchestrator extends Context.Service<
                 yield* resetService(affectedDef.name);
               }
               for (const affectedDef of affected) {
+                const service = services.get(affectedDef.name);
+                if (service !== undefined) service.requested = true;
                 yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef));
               }
             }),
