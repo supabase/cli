@@ -9,17 +9,25 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
   const initialStates = yield* stack.getAllStates();
   const stateNames = new Set(initialStates.map((state) => state.name));
   const statesByName = new Map(initialStates.map((state) => [state.name, state] as const));
-  const readyNames = new Set(
-    initialStates.filter((state) => state.status === "Healthy").map((state) => state.name),
+  const completedNames = new Set(
+    initialStates
+      .filter((state) => state.status === "Healthy" || state.dormant === true)
+      .map((state) => state.name),
   );
   const prog = yield* output.progress({ max: initialStates.length });
   yield* prog.start("Waiting for services...");
+  if (completedNames.size > 0) {
+    yield* prog.advance(completedNames.size, "Already ready");
+  }
 
   const fiber = yield* Stream.runForEach(stack.allStateChanges(), (state) =>
     Effect.sync(() => {
       const previousState = statesByName.get(state.name);
       statesByName.set(state.name, state);
-      if (!stateNames.has(state.name) || previousState?.status === state.status) {
+      if (
+        !stateNames.has(state.name) ||
+        (previousState?.status === state.status && previousState.dormant === state.dormant)
+      ) {
         return [];
       }
       return [state];
@@ -28,13 +36,18 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
         Effect.forEach(
           changedStates,
           (serviceState) => {
-            if (serviceState.status === "Healthy") {
-              if (readyNames.has(serviceState.name)) {
+            if (serviceState.status === "Healthy" || serviceState.dormant === true) {
+              if (completedNames.has(serviceState.name)) {
                 return Effect.void;
               }
 
-              readyNames.add(serviceState.name);
-              return prog.advance(1, `${serviceState.name} is ready`);
+              completedNames.add(serviceState.name);
+              return prog.advance(
+                1,
+                serviceState.dormant === true
+                  ? `${serviceState.name} is dormant`
+                  : `${serviceState.name} is ready`,
+              );
             }
 
             return prog.message(`${serviceState.name}: ${serviceState.status}`);

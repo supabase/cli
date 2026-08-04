@@ -605,7 +605,11 @@ export function mockTelemetryRuntime(
 export function mockStack(
   opts: {
     info?: Partial<StackInfo>;
-    stateChanges?: Array<{ name: string; status: StackServiceState["status"] }>;
+    stateChanges?: Array<{
+      name: string;
+      status: StackServiceState["status"];
+      dormant?: boolean;
+    }>;
     startError?: unknown;
     startPending?: boolean;
     stopPending?: boolean;
@@ -633,6 +637,7 @@ export function mockStack(
         restartCount: 0,
         startedAt: null,
         error: null,
+        ...(change.dormant === undefined ? {} : { dormant: change.dormant }),
       }),
     );
   }
@@ -726,6 +731,7 @@ export function mockStack(
                       restartCount: 0,
                       startedAt: null,
                       error: null,
+                      ...(change.dormant === undefined ? {} : { dormant: change.dormant }),
                     }),
                 ),
               )
@@ -743,7 +749,11 @@ export function mockStack(
     get stopped() {
       return stopped;
     },
-    emitStateChange(change: { name: string; status: StackServiceState["status"] }) {
+    emitStateChange(change: {
+      name: string;
+      status: StackServiceState["status"];
+      dormant?: boolean;
+    }) {
       stateHistory.push(change);
       PubSub.publishUnsafe(
         statePubSub,
@@ -755,6 +765,7 @@ export function mockStack(
           restartCount: 0,
           startedAt: null,
           error: null,
+          ...(change.dormant === undefined ? {} : { dormant: change.dormant }),
         }),
       );
     },
@@ -939,6 +950,17 @@ export function mockStateManager(
     remove: (name: string) =>
       Effect.sync(() => {
         states.delete(name);
+      }),
+    removeOwned: (expected: StackState) =>
+      Effect.sync(() => {
+        const current = states.get(expected.name);
+        if (
+          current?.pid === expected.pid &&
+          current.startedAt === expected.startedAt &&
+          current.socketPath === expected.socketPath
+        ) {
+          states.delete(expected.name);
+        }
       }),
     deleteStack: (name: string) =>
       Effect.sync(() => {
