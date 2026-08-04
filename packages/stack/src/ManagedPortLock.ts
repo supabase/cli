@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { constants, readFileSync } from "node:fs";
-import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 
@@ -189,6 +189,25 @@ const moveLockGeneration = async (
     await rename(quarantinePath, lockPath);
   } catch (error) {
     if (errorCode(error) !== "EEXIST" && errorCode(error) !== "ENOTEMPTY") throw error;
+
+    // Another contender filled the pathname while we verified the moved
+    // generation. Put the earlier, live generation back and quarantine the
+    // contender. New owners validate again after a stabilization interval, so
+    // the displaced contender cannot report successful acquisition.
+    const displacedPath = `${lockPath}.${randomUUID()}.superseded`;
+    try {
+      await rename(lockPath, displacedPath);
+      await rename(quarantinePath, lockPath);
+    } catch (restoreError) {
+      try {
+        await rename(displacedPath, lockPath);
+      } catch {
+        // Preserve the original failure, which explains why ownership could
+        // not be restored. A later acquisition can reclaim either generation.
+      }
+      throw restoreError;
+    }
+    await rm(displacedPath, { recursive: true, force: true });
   }
   return undefined;
 };
@@ -260,7 +279,21 @@ export async function acquireManagedPortLock(
           // mkdir applies the process umask, so make the effective mode explicit.
           await chmod(lockPath, 0o777);
         }
-        await writeFile(join(lockPath, "owner"), ownerContents, "utf8");
+        const ownerHandle = await open(
+          join(lockPath, "owner"),
+          constants.O_WRONLY |
+            constants.O_CREAT |
+            constants.O_EXCL |
+            (process.platform === "win32" ? 0 : constants.O_NOFOLLOW),
+          0o644,
+        );
+        try {
+          await ownerHandle.writeFile(ownerContents, "utf8");
+        } finally {
+          await ownerHandle.close();
+        }
+        if ((await readOwnerContents(lockPath)) !== ownerContents) continue;
+        await delay(LOCK_RETRY_AFTER_MS, signal);
         if ((await readOwnerContents(lockPath)) !== ownerContents) continue;
       } catch (error) {
         const quarantinePath = await moveLockGeneration(lockPath, ownerContents);

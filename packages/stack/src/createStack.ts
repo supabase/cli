@@ -733,24 +733,26 @@ export async function createStack(
   let resolved: ResolvedStackConfig;
   const releasePortLock = await acquireManagedPortLock();
   try {
-    resolved = await resolveConfig(config, {
-      portAllocator: (input, options) =>
-        reservePorts(input, options).pipe(
-          Effect.tap((lease) =>
-            Effect.sync(() => {
-              portLease = lease;
-            }),
+    try {
+      resolved = await resolveConfig(config, {
+        portAllocator: (input, options) =>
+          reservePorts(input, options).pipe(
+            Effect.tap((lease) =>
+              Effect.sync(() => {
+                portLease = lease;
+              }),
+            ),
+            Effect.map((lease) => lease.ports),
           ),
-          Effect.map((lease) => lease.ports),
-        ),
-    });
+      });
+    } finally {
+      await releasePortLock();
+    }
   } catch (error: unknown) {
     if (portLease !== undefined) {
       await Effect.runPromise(portLease.releaseAll);
     }
     throw error;
-  } finally {
-    await releasePortLock();
   }
 
   if (portLease === undefined) {

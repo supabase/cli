@@ -520,7 +520,8 @@ describe("Stack", () => {
               )
             : Effect.void,
       });
-      const { coordinatorLayer } = setupLayer({ ...defaultConfig, startupMode: "lazy" }, spawner);
+      const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+      const { coordinatorLayer } = setupLayer(config, noopPortLease(config.ports), spawner);
 
       yield* Effect.gen(function* () {
         const coordinator = yield* StackLifecycleCoordinator;
