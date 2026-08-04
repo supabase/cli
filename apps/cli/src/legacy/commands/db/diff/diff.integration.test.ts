@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -652,16 +653,48 @@ describe("legacy db diff", () => {
     },
   );
 
-  it.effect("explicit --from migrations resolves a shadow catalog via the seam", () => {
+  it.effect("explicit --from migrations resolves a shadow catalog natively", () => {
+    // CLI-1959: the migrations ref now resolves via `provisionShadow` (Go's
+    // unchanged `db __shadow --mode diff`) + a native pg-delta catalog export,
+    // instead of the retired `exportCatalog({mode:"migrations"})` seam call.
     const s = setup(tmp.current, { diffSql: "create table m ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
-      expect(s.exportCalls).toEqual(["migrations"]);
+      expect(s.exportCalls).toEqual([]);
+      expect(s.provisionCalls).toEqual([
+        { mode: "diff", targetLocal: false, usePgDelta: false, projectRef: undefined },
+      ]);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect(
-    "explicit --from linked --to migrations exports the catalog with the linked ref",
+    "explicit --from migrations reuses an already-cached catalog without provisioning a shadow",
+    () => {
+      // A cache pre-warmed by a prior `db push` (`legacyTryCacheMigrationsCatalog`)
+      // or `db diff --from migrations` run keys off the BARE migrations hash
+      // (`pgcache.HashMigrations` — no setup-inputs token; see
+      // `legacyResolveMigrationsCatalogRef`'s doc comment), so it must be reused
+      // here without spinning up a new shadow database at all.
+      const noMigrationsHash = createHash("sha256").digest("hex");
+      const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      const cachedPath = join(tempDir, `catalog-local-migrations-${noMigrationsHash}-1000.json`);
+      writeFileSync(cachedPath, '{"cached":true}');
+      const s = setup(tmp.current, { diffSql: "create table m ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
+        expect(s.provisionCalls).toEqual([]);
+        expect(s.exportCalls).toEqual([]);
+        const diffCall = s.edgeCalls.find((c) => c.script.includes("renderPlanFiles"));
+        expect(diffCall?.env["SOURCE"]).toBe(
+          `/workspace/${join("supabase", ".temp", "pgdelta", `catalog-local-migrations-${noMigrationsHash}-1000.json`)}`,
+        );
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "explicit --from linked --to migrations provisions the shadow with the linked ref",
     () => {
       // Go resolves linked first (LoadConfig merges [remotes.<ref>]), so the later
       // migrations catalog is built from the remote-merged config (explicit.go).
@@ -672,13 +705,13 @@ describe("legacy db diff", () => {
       });
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
-        const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+        const migrations = s.provisionCalls.find((c) => c.mode === "diff" && !c.targetLocal);
         expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
-  it.effect("explicit --from migrations --to linked exports the catalog with base config", () => {
+  it.effect("explicit --from migrations --to linked provisions the shadow with base config", () => {
     // Migrations is resolved BEFORE linked here, so Go's LoadConfig(ref) hasn't run
     // yet — the catalog must use base config (no ref forwarded), matching order.
     const s = setup(tmp.current, {
@@ -688,7 +721,7 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
-      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+      const migrations = s.provisionCalls.find((c) => c.mode === "diff" && !c.targetLocal);
       expect(migrations?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(s.layer));
   });
@@ -711,7 +744,7 @@ describe("legacy db diff", () => {
           linked: Option.some(true),
         }),
       );
-      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+      const migrations = s.provisionCalls.find((c) => c.mode === "diff" && !c.targetLocal);
       expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(s.layer));
   });

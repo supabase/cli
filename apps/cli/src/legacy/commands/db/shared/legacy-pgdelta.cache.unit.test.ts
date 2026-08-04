@@ -22,7 +22,10 @@ import {
   legacyHashMigrations,
   legacyListLocalMigrations,
   legacyMigrationCatalogFileName,
+  legacyMigrationsCatalogCacheKey,
   legacyResolveDeclarativeCatalogPath,
+  legacyResolveMigrationCatalogPath,
+  legacyResolveSetupInputs,
   legacySanitizedCatalogPrefix,
   legacySetupInputsToken,
   legacyWriteMigrationCatalogSnapshot,
@@ -101,6 +104,16 @@ describe("catalog keys + file names", () => {
     expect(legacyBaselineCatalogKey(BASE)).toBe(`17.6.1.135-${legacySetupInputsToken(BASE)}`);
     expect(legacyDeclarativeCatalogCacheKey("setup12chars", "schemahash")).toBe(
       "setup12chars-schemahash",
+    );
+  });
+
+  it("composes the migrations cache key used by `db schema declarative sync` (setup-token-folded)", () => {
+    // Mirrors Go's `migrationsCatalogCacheKey` (`declarative.go:765`) — deliberately
+    // different from `db diff`'s bare `pgcache.HashMigrations` key (CLI-1959): this
+    // one folds the setup-inputs token in so a baseline/config change self-
+    // invalidates the sync migrations catalog too.
+    expect(legacyMigrationsCatalogCacheKey("setup12chars", "migrationshash")).toBe(
+      "setup12chars-migrationshash",
     );
   });
 
@@ -361,6 +374,92 @@ describe("legacyCatalogPrefixFromConfig", () => {
       .update(`${conn.user}@${conn.host}:${conn.port}/${conn.database}`, "utf8")
       .digest("hex");
     expect(legacyCatalogPrefixFromConfig(conn, false)).toBe(`url-${digest.slice(0, 12)}`);
+  });
+});
+
+describe("legacyResolveMigrationCatalogPath", () => {
+  it.effect("resolves the newest snapshot for the (hash, prefix) family", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    mkdirSync(tempDir, { recursive: true });
+    for (const ts of [100, 300, 200]) {
+      writeFileSync(join(tempDir, `catalog-local-migrations-h-${ts}.json`), "{}");
+    }
+    // A different hash in the same prefix family must not be picked up.
+    writeFileSync(join(tempDir, "catalog-local-migrations-other-500.json"), "{}");
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const latest = yield* legacyResolveMigrationCatalogPath(fs, path, tempDir, "h", "local");
+        expect(Option.getOrNull(latest)?.endsWith("catalog-local-migrations-h-300.json")).toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
+
+  it.effect("returns None on a cache miss (no matching family member)", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const resolved = yield* legacyResolveMigrationCatalogPath(fs, path, tempDir, "h", "local");
+        expect(Option.isNone(resolved)).toBe(true);
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
+});
+
+describe("legacyResolveSetupInputs", () => {
+  it.effect("resolves the image and tolerates a missing roles.sql", () => {
+    const dir = withTemp();
+    return withServices((fs, path) =>
+      legacyResolveSetupInputs(fs, path, dir, 17, undefined, {
+        authEnabled: true,
+        storageEnabled: false,
+        realtimeEnabled: true,
+        apiAutoExposeNewTables: Option.none(),
+        vaultNames: ["a_secret"],
+      }),
+    ).pipe(
+      Effect.tap((inputs) =>
+        Effect.sync(() => {
+          expect(inputs).toMatchObject({
+            majorVersion: 17,
+            authEnabled: true,
+            storageEnabled: false,
+            realtimeEnabled: true,
+            autoExpose: false,
+            vaultNames: ["a_secret"],
+            rolesSql: "",
+          });
+          expect(inputs.image.length).toBeGreaterThan(0);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reads roles.sql content and resolves the effective auto-expose bool", () => {
+    const dir = withTemp();
+    mkdirSync(join(dir, "supabase"), { recursive: true });
+    writeFileSync(join(dir, "supabase", "roles.sql"), "create role app;");
+    return withServices((fs, path) =>
+      legacyResolveSetupInputs(fs, path, dir, 17, undefined, {
+        authEnabled: true,
+        storageEnabled: true,
+        realtimeEnabled: true,
+        apiAutoExposeNewTables: Option.some(true),
+        vaultNames: [],
+      }),
+    ).pipe(
+      Effect.tap((inputs) =>
+        Effect.sync(() => {
+          expect(inputs.rolesSql).toBe("create role app;");
+          expect(inputs.autoExpose).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
   });
 });
 
