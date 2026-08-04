@@ -1210,6 +1210,7 @@ function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   const spawner = mockChildProcessSpawner(); // from @supabase/process-compose mocks
   const portLease: PortLease = {
     ports: config.ports,
+    reserve: () => Effect.void,
     release: () => Effect.void,
     releaseAll: Effect.void,
   };

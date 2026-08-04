@@ -559,6 +559,7 @@ export class StackLifecycleCoordinator extends Context.Service<
           );
         const withLifecycleLock = lifecycleLock.withPermit;
         const serviceStartOptions = {
+          beforeStart: (name: string) => portLease.reserve(portFieldsForService(name)),
           beforeSpawn: (name: string) => portLease.release(portFieldsForService(name)),
         };
         const startServices = <E, R>(

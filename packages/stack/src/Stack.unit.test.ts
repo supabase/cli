@@ -102,6 +102,7 @@ const edgeRuntimeConfig: ResolvedStackConfig = {
 
 const noopPortLease = (ports: AllocatedPorts): PortLease => ({
   ports,
+  reserve: () => Effect.void,
   release: () => Effect.void,
   releaseAll: Effect.void,
 });
@@ -628,6 +629,7 @@ describe("Stack", () => {
     const released = new Set<PortField>();
     const lease: PortLease = {
       ports: defaultPorts,
+      reserve: () => Effect.void,
       release: (fields) =>
         Effect.sync(() => {
           for (const field of fields) released.add(field);

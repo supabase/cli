@@ -52,7 +52,7 @@ describe("ServiceTransition", () => {
     });
 
     it("Starting + SpawnFailed → Failed with error", () => {
-      const result = applyEvent(state("Starting"), {
+      const result = applyEvent(make("db", { status: "Starting" }), {
         _tag: "SpawnFailed",
         error: "spawn gate failed",
       });

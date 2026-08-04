@@ -90,6 +90,8 @@ export interface OrchestratorConfig {
 }
 
 export interface ServiceStartOptions {
+  /** Runs when a service lifecycle starts and again after each process exit before backoff. */
+  readonly beforeStart?: (name: string) => Effect.Effect<void, unknown>;
   /** Runs after dependencies are satisfied and immediately before each spawn. */
   readonly beforeSpawn?: (name: string) => Effect.Effect<void>;
 }

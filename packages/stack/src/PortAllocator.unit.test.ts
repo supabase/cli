@@ -142,6 +142,12 @@ describe("allocatePorts", () => {
       await Effect.runPromise(lease.release(["apiPort"]));
       const available = await Effect.runPromise(allocatePorts({ apiPort: lease.ports.apiPort }));
       expect(available.apiPort).toBe(lease.ports.apiPort);
+
+      await Effect.runPromise(lease.reserve(["apiPort"]));
+      const reservedAgain = await Effect.runPromise(
+        allocatePorts({ apiPort: lease.ports.apiPort }).pipe(Effect.exit),
+      );
+      expect(reservedAgain._tag).toBe("Failure");
     } finally {
       await Effect.runPromise(lease.releaseAll);
     }

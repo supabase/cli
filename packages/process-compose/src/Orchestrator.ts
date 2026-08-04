@@ -204,6 +204,14 @@ export class Orchestrator extends Context.Service<
             let restartCount = 0;
             const maxRestarts = def.maxRestarts ?? defaults.maxRestarts;
             const restartPolicy = def.restart ?? defaults.restart;
+            const prepareStart = () =>
+              options
+                ?.beforeStart?.(def.name)
+                .pipe(
+                  Effect.mapError((cause) => new SpawnError({ service: def.command, cause })),
+                ) ?? Effect.void;
+
+            yield* prepareStart();
 
             // Re-create signals on each run (needed for restarts)
             const resetSignals = Effect.sync(() => {
@@ -556,6 +564,10 @@ export class Orchestrator extends Context.Service<
 
             while (shouldRestart(result) && (maxRestarts === 0 || restartCount < maxRestarts)) {
               restartCount++;
+
+              // The previous process scope has closed, so external resources can
+              // be reserved safely for the duration of this restart's backoff.
+              yield* prepareStart();
 
               if (result._tag === "UnhealthyRestart") {
                 yield* appendRecentServiceLogs(

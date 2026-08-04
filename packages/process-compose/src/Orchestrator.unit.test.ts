@@ -1616,6 +1616,7 @@ describe("Orchestrator", () => {
   describe("unhealthy restart", () => {
     it.live("restarts service when it becomes unhealthy and restart policy allows", () => {
       let checkCalls = 0;
+      const prepared: string[] = [];
       const { layer, proc } = setupOrchestrator(
         [
           svc("a", {
@@ -1645,11 +1646,14 @@ describe("Orchestrator", () => {
       );
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
-        yield* orc.start();
+        yield* orc.start({
+          beforeStart: (name) => Effect.sync(() => prepared.push(name)),
+        });
         yield* proc.waitForSpawn("a", 2);
         // Should have spawned the main service twice (original + 1 restart)
         const mainSpawns = proc.spawned.filter((s) => s.command === "a");
         expect(mainSpawns.length).toBe(2);
+        expect(prepared).toEqual(["a", "a"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 

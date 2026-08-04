@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:net";
-import { Data, Effect, Schema } from "effect";
+import { Data, Effect, Schema, Semaphore } from "effect";
 
 export const DEFAULT_API_PORT = 54321;
 export const DEFAULT_DB_PORT = 54322;
@@ -233,6 +233,7 @@ const bindPort = (port: number): Effect.Effect<BoundPort, PortAllocationError> =
 
 export interface PortLease {
   readonly ports: AllocatedPorts;
+  readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
   readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
   readonly releaseAll: Effect.Effect<void>;
 }
@@ -254,11 +255,39 @@ const releaseReservations = (
     { discard: true },
   );
 
-const makePortLease = (ports: AllocatedPorts, reservations: Map<PortField, Server>): PortLease => ({
-  ports,
-  release: (fields) => releaseReservations(reservations, fields),
-  releaseAll: Effect.suspend(() => releaseReservations(reservations, [...reservations.keys()])),
-});
+const reserveReservations = (
+  ports: AllocatedPorts,
+  reservations: Map<PortField, Server>,
+  fields: ReadonlyArray<PortField>,
+): Effect.Effect<void, PortAllocationError> =>
+  Effect.suspend(() => {
+    const acquired: Array<PortField> = [];
+    return Effect.forEach(
+      fields,
+      (field) => {
+        if (reservations.has(field)) return Effect.void;
+        return Effect.tap(bindPort(ports[field]), ({ server }) =>
+          Effect.sync(() => {
+            reservations.set(field, server);
+            acquired.push(field);
+          }),
+        );
+      },
+      { discard: true },
+    ).pipe(Effect.onError(() => releaseReservations(reservations, acquired)));
+  });
+
+const makePortLease = (ports: AllocatedPorts, reservations: Map<PortField, Server>): PortLease => {
+  const lock = Semaphore.makeUnsafe(1);
+  return {
+    ports,
+    reserve: (fields) => lock.withPermit(reserveReservations(ports, reservations, fields)),
+    release: (fields) => lock.withPermit(releaseReservations(reservations, fields)),
+    releaseAll: lock.withPermit(
+      Effect.suspend(() => releaseReservations(reservations, [...reservations.keys()])),
+    ),
+  };
+};
 
 const reserveRandomPort = (
   exclude: ReadonlySet<number>,
