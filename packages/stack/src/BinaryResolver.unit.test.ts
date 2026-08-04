@@ -741,6 +741,32 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("accepts a Windows legacy cache whose executable carries the .exe suffix", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
+
+      fakeFs.seedDirWithFile(cacheDir, "postgrest.exe");
+
+      const result = yield* resolver.resolveWithMetadata(spec);
+
+      expect(result.path).toBe(cacheDir);
+      expect(result.downloaded).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("rejects a partial markerless leftover that lacks the service entrypoint", () => {
     // A pre-staging writer killed mid-extraction leaves a non-empty dir with
     // no executable. Resolving it would mask the DownloadError that lets the
