@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
-import { Output } from "../../../../shared/output/output.service.ts";
-import type { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
-import { legacyCreateSeedTable } from "../../../shared/legacy-migration-history.ts";
-import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "../../../shared/legacy-path-match.ts";
-import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { legacyCreateSeedTable } from "./legacy-migration-history.ts";
+import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "./legacy-path-match.ts";
+import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
 /**
  * Seed-history DML, verbatim from Go's `pkg/migration/history.go`. The schema/table

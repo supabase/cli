@@ -10,7 +10,15 @@ import { legacyGetRegistryImageUrlCandidates } from "./legacy-docker-registry.ts
 
 type Spawner = ChildProcessSpawner["Service"];
 
-export const LEGACY_DOCKER_PULL_RETRY_DELAYS_MS = [4_000, 8_000] as const;
+const DOCKER_PULL_RETRY_DELAYS_MS = [4_000, 8_000] as const;
+
+/**
+ * Distinguishes a deadline-bounded pull attempt expiring from a spawn failure:
+ * the loop below treats a failed `pullImage` EFFECT as "docker itself is
+ * broken" and aborts every remaining candidate, which is exactly wrong for a
+ * timeout — a slow registry is the one failure the next candidate can fix.
+ */
+const PULL_TIMED_OUT = Symbol("PULL_TIMED_OUT");
 
 const spawnError = () =>
   // Never embed the spawn error verbatim: it can leak the full argv and
@@ -53,7 +61,7 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  * unconditionally — Go retries on any non-nil error as long as the context
  * wasn't canceled, with no message-pattern gating — up to 2 times per
  * candidate (3 total attempts) with an escalating 4s/8s backoff
- * (`LEGACY_DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds for `i` in
+ * (`DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds for `i` in
  * `0,1`. A spawn failure (the Docker/Podman binary itself couldn't be run) is
  * a different, non-retryable case — see `spawnError` below. Used by both the
  * foreground `db dump`-style run-to-completion containers
@@ -70,7 +78,7 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
 export function legacyMakeDockerImageResolver(
   spawner: Spawner,
   projectEnvValues?: Readonly<Record<string, string>>,
-): (image: string) => Effect.Effect<string, LegacyDockerRunError> {
+): (image: string, deadline?: number) => Effect.Effect<string, LegacyDockerRunError> {
   const hasLocalImage = (image: string): Effect.Effect<boolean, LegacyDockerRunError> =>
     Effect.gen(function* () {
       // `stdout: "ignore"`: `docker image inspect` writes the full image JSON
@@ -174,7 +182,7 @@ export function legacyMakeDockerImageResolver(
       };
     }).pipe(Effect.scoped);
 
-  return (image: string): Effect.Effect<string, LegacyDockerRunError> =>
+  return (image: string, deadline?: number): Effect.Effect<string, LegacyDockerRunError> =>
     Effect.gen(function* () {
       const candidates = legacyGetRegistryImageUrlCandidates(image, projectEnvValues);
       for (const candidate of candidates) {
@@ -184,24 +192,66 @@ export function legacyMakeDockerImageResolver(
       }
 
       const failures: Array<string> = [];
-      for (const candidate of candidates) {
+      for (const [candidateIndex, candidate] of candidates.entries()) {
+        // `deadline` (epoch ms) is opt-in and no production caller passes one:
+        // a human watching `supabase start` can Ctrl-C a slow pull, CI cannot,
+        // so only the e2e helper (`tests/helpers/docker-image.ts`) bounds the
+        // resolve. Remaining time is split across the candidates still to run
+        // — recomputed per candidate so a fast failure carries its unused
+        // share forward and the last candidate gets all remaining time — and
+        // a stalled registry can never starve the fallbacks behind it.
+        let candidateShareMs: number | undefined;
+        let candidateDeadline: number | undefined;
+        if (deadline !== undefined) {
+          candidateShareMs = Math.max(
+            1,
+            Math.floor((deadline - Date.now()) / (candidates.length - candidateIndex)),
+          );
+          candidateDeadline = Math.min(Date.now() + candidateShareMs, deadline);
+        }
+        // Whether the most recent failed attempt's teed output ended with a
+        // newline — read by the retry banner below, which runs outside the
+        // block the pull result is scoped to.
+        let lastPullEndedWithNewline = true;
         for (
           let attemptIndex = 0;
-          attemptIndex <= LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length;
+          attemptIndex <= DOCKER_PULL_RETRY_DELAYS_MS.length;
           attemptIndex += 1
         ) {
           const attempt = attemptIndex + 1;
-          const result = yield* Effect.exit(pullImage(candidate));
+          const remainingMs =
+            candidateDeadline === undefined ? undefined : candidateDeadline - Date.now();
+          if (remainingMs !== undefined && remainingMs <= 0) {
+            failures.push(
+              `${candidate} attempt ${attempt}: candidate budget exhausted (${candidateShareMs}ms share)`,
+            );
+            break;
+          }
+          const result = yield* Effect.exit(
+            remainingMs === undefined
+              ? pullImage(candidate)
+              : Effect.timeoutOrElse(pullImage(candidate), {
+                  duration: `${remainingMs} millis`,
+                  orElse: () => Effect.succeed(PULL_TIMED_OUT),
+                }),
+          );
           if (Exit.isSuccess(result)) {
-            if (result.value.exitCode === 0) {
+            if (result.value === PULL_TIMED_OUT) {
+              failures.push(`${candidate} attempt ${attempt}: timed out after ${remainingMs}ms`);
+              // The share is spent — move straight to the next candidate.
+              break;
+            }
+            const pulled = result.value;
+            lastPullEndedWithNewline = pulled.endedWithNewline;
+            if (pulled.exitCode === 0) {
               return candidate;
             }
             const message =
-              result.value.stderr.length > 0
-                ? result.value.stderr
-                : `docker pull exited with code ${result.value.exitCode}`;
+              pulled.stderr.length > 0
+                ? pulled.stderr
+                : `docker pull exited with code ${pulled.exitCode}`;
             failures.push(`${candidate} attempt ${attempt}: ${message}`);
-            if (attemptIndex === LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length) {
+            if (attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
               break;
             }
           } else {
@@ -215,8 +265,13 @@ export function legacyMakeDockerImageResolver(
             return yield* Effect.fail(spawnError());
           }
 
-          const delay = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
+          const delay = DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
           if (delay === undefined) {
+            break;
+          }
+          // Never sleep past this candidate's share — the backoff would spend
+          // budget the remaining registries still need.
+          if (candidateDeadline !== undefined && Date.now() + delay >= candidateDeadline) {
             break;
           }
           // Go prints a per-retry banner before sleeping (`docker.go:314`):
@@ -230,7 +285,7 @@ export function legacyMakeDockerImageResolver(
           // the banner would glue onto the error text where Go prints two
           // lines.
           yield* Effect.sync(() => {
-            if (!result.value.endedWithNewline) {
+            if (!lastPullEndedWithNewline) {
               globalThis.process.stderr.write("\n");
             }
             globalThis.process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);

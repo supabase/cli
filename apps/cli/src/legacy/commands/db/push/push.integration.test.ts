@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -62,13 +62,16 @@ const DEFAULT_FLAGS: LegacyDbPushFlags = {
   password: Option.none(),
 };
 
-function mockResolver(opts: { isLocal?: boolean } = {}) {
+function mockResolver(opts: { isLocal?: boolean; onResolve?: () => void } = {}) {
   return Layer.succeed(LegacyDbConfigResolver, {
     resolve: (_flags: LegacyDbConfigFlags) =>
-      Effect.succeed({
-        conn: LOCAL_CONN,
-        isLocal: opts.isLocal ?? true,
-      } satisfies LegacyResolvedDbConfig),
+      Effect.sync(() => {
+        opts.onResolve?.();
+        return {
+          conn: LOCAL_CONN,
+          isLocal: opts.isLocal ?? true,
+        } satisfies LegacyResolvedDbConfig;
+      }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
@@ -166,6 +169,13 @@ function setup(
     catalogStdout?: string;
     catalogExportFailWith?: string;
     noProjectId?: boolean;
+    // Simulates the real `LegacyDbConfigResolver`'s own "Initialising login
+    // role..." stderr line (`legacy-db-config.layer.ts`'s `initLoginRole`),
+    // fired as part of `resolve()`'s own connection-resolution work — i.e.
+    // strictly before `legacyDbPushCore` (and its "DRY RUN: …" line) ever runs.
+    // `mockResolver` is otherwise silent, so tests pin real Go output ordering
+    // (`db_url.go:204` before `push.go:22-24`) against this stand-in line.
+    simulateInitialisingLoginRole?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -219,7 +229,15 @@ function setup(
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
-    mockResolver({ isLocal: opts.isLocal ?? true }),
+    mockResolver({
+      isLocal: opts.isLocal ?? true,
+      onResolve:
+        opts.simulateInitialisingLoginRole === true
+          ? () => {
+              out.rawChunks.push({ text: "Initialising login role...\n", stream: "stderr" });
+            }
+          : undefined,
+    }),
     mockLegacyCliConfig({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
@@ -239,7 +257,15 @@ function setup(
     edge,
     sslProbe,
   );
-  return { layer, out, conn, telemetry, linkedCache, edgeRunCalls, registryEnvAtRunTime };
+  return {
+    layer,
+    out,
+    conn,
+    telemetry,
+    linkedCache,
+    edgeRunCalls,
+    registryEnvAtRunTime,
+  };
 }
 
 const MIGRATION_DIR = "supabase/migrations";
@@ -373,9 +399,85 @@ describe("legacy db push", () => {
     });
   });
 
-  it.live("caches the migrations catalog with an empty projectId when none is resolved", () => {
+  it.live(
+    "falls back to config.toml's project_id for the pg-delta volume when SUPABASE_PROJECT_ID is unset",
+    () => {
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        // Go's `Config.ProjectId` resolves config.toml's `project_id` (here "test")
+        // once no `SUPABASE_PROJECT_ID` env override wins — the pg-delta Deno-cache
+        // volume must key off that same id, not fall through to an empty/shared name.
+        expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_test:/root/.cache/deno:rw");
+      });
+    },
+  );
+
+  it.live(
+    "falls back to the workdir basename for the pg-delta volume when config.toml has no project_id",
+    () => {
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: "[experimental.pgdelta]\nenabled = true\n",
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        const expectedId = basename(tmp.current);
+        expect(edgeRunCalls[0]?.binds).toContain(
+          `supabase_edge_runtime_${expectedId}:/root/.cache/deno:rw`,
+        );
+      });
+    },
+  );
+
+  it.live(
+    "falls back to the linked project ref for the pg-delta volume when config.toml has no project_id",
+    () => {
+      // Go's `flags.LoadConfig` (`internal/utils/flags/config_path.go:11`) seeds
+      // `Config.ProjectId = ProjectRef` BEFORE `Config.Load` runs, so on the
+      // linked path (the default target here — no `--local`/`--db-url`) an
+      // absent `project_id` retains the linked ref rather than falling to the
+      // workdir basename; only `--local`/`--db-url` (the previous test, where
+      // `ProjectRef` is never seeded) fall through to the basename.
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: "[experimental.pgdelta]\nenabled = true\n",
+        args: ["db", "push", "--linked"],
+        isLocal: false,
+        projectRef: LEGACY_VALID_REF,
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+          Effect.provide(layer),
+        );
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        expect(edgeRunCalls[0]?.binds).toContain(
+          `supabase_edge_runtime_${LEGACY_VALID_REF}:/root/.cache/deno:rw`,
+        );
+      });
+    },
+  );
+
+  it.live("sanitizes an invalid config.toml project_id before naming the pg-delta volume", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      toml: 'project_id = "my app"\n[experimental.pgdelta]\nenabled = true\n',
       files: migrationFile("20240101000000"),
       confirm: [true],
       catalogStdout: '{"snapshot":"ok"}',
@@ -385,6 +487,11 @@ describe("legacy db push", () => {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("failed to cache migrations catalog");
       expect(edgeRunCalls).toHaveLength(1);
+      // Go's `Config.Validate` (`config.go:992-995`) sanitizes an invalid
+      // `project_id` (replacing the disallowed run with `_`) once at
+      // config-load time, so every later reader — including `EdgeRuntimeId` —
+      // sees the sanitized form, never the raw `"my app"`.
+      expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_my_app:/root/.cache/deno:rw");
     });
   });
 
@@ -463,6 +570,36 @@ describe("legacy db push", () => {
       expect(conn.execs).not.toContain("BEGIN");
     });
   });
+
+  it.live(
+    "prints the DRY RUN heads-up line after the connection resolves, not before (Go's push.Run order)",
+    () => {
+      // Go's actual order (verified against apps/cli-go): the connection-resolution
+      // phase (`flags.ParseDatabaseConfig` → `NewDbConfigWithPassword`, which prints
+      // "Initialising login role..." when minting a temp role, `db_url.go:204`) runs
+      // BEFORE `push.Run` is even invoked — and "DRY RUN: …" is the literal first line
+      // of `push.Run` itself (`push.go:22-24`), so it prints AFTER that resolution
+      // output, never before. `simulateInitialisingLoginRole` stands in for the real
+      // resolver's stderr line (the fake resolver is otherwise silent) so this
+      // asserts on actual accumulated stderr text ordering, not internal call timing.
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        simulateInitialisingLoginRole: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
+        const loginRoleIndex = out.stderrText.indexOf("Initialising login role...");
+        const dryRunIndex = out.stderrText.indexOf(
+          "DRY RUN: migrations will *not* be pushed to the database.",
+        );
+        expect(loginRoleIndex).toBeGreaterThanOrEqual(0);
+        expect(dryRunIndex).toBeGreaterThan(loginRoleIndex);
+        // ...and, in turn, before the connect step's own progress line.
+        const connectingIndex = out.stderrText.indexOf("Connecting to local database...");
+        expect(connectingIndex).toBeGreaterThan(dryRunIndex);
+      });
+    },
+  );
 
   it.live("fails with a repair suggestion when remote has versions missing locally", () => {
     const { layer, out } = setup(tmp.current, {

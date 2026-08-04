@@ -278,6 +278,39 @@ describe("legacyMakeDockerImageResolver", () => {
       }),
   );
 
+  it.live("gives every registry candidate its share when a deadline is passed", () => {
+    // Fail-fast pulls with a small budget: each candidate still gets a turn
+    // (unused share carries forward), and the guarded backoff never sleeps a
+    // 4s retry into the next candidate's time — the test finishing in
+    // milliseconds rather than seconds is itself the assertion.
+    const mock = mockSpawner([
+      { exitCode: 1, stderr: "denied" },
+      { exitCode: 1, stderr: "denied" },
+      { exitCode: 1, stderr: "denied" },
+    ]);
+    const resolve = legacyMakeDockerImageResolver(mock.spawner);
+    return resolve("supabase/postgres:15", Date.now() + 500).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(LegacyDockerRunError);
+        expect(mock.pulls.length).toBe(3);
+        expect(new Set(mock.pulls).size).toBe(3);
+      }),
+    );
+  });
+
+  it.live("reports exhausted candidate budgets instead of pulling past a spent deadline", () => {
+    const mock = mockSpawner([]);
+    const resolve = legacyMakeDockerImageResolver(mock.spawner);
+    return resolve("supabase/postgres:15", Date.now() - 1_000).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error.message).toContain("candidate budget exhausted");
+        expect(mock.pulls.length).toBe(0);
+      }),
+    );
+  });
+
   it.effect("prints no Retrying banner when the first pull attempt succeeds", () =>
     Effect.gen(function* () {
       const previousRegistry = process.env[REGISTRY_ENV];

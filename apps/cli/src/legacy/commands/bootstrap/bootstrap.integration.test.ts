@@ -28,12 +28,21 @@ import {
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
+  LegacyNetworkIdFlag,
   LegacyWorkdirFlag,
   LegacyYesFlag,
   LegacyOutputFlag,
 } from "../../../shared/legacy/global-flags.ts";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { LegacyDbConnectError } from "../../shared/legacy-db-connection.errors.ts";
+import {
+  LegacyDbConnection,
+  type LegacyPgConnInput,
+} from "../../shared/legacy-db-connection.service.ts";
+import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
+import { LegacyEdgeRuntimeScript } from "../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyTemplateService, type LegacyStarterTemplate } from "./bootstrap.templates.ts";
 import { legacyBootstrap } from "./bootstrap.handler.ts";
 import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
@@ -78,6 +87,15 @@ interface SetupOpts {
   readonly debug?: boolean;
   readonly samples?: ReadonlyArray<LegacyStarterTemplate>;
   readonly apiKeysFailTimes?: number;
+  readonly pushConnectFailTimes?: number;
+  /**
+   * When `false`, the pooler-config route reports no PRIMARY pooler (Go's
+   * `utils.GetPoolerConfig` returning nil) — `legacyLinkServicesCore`'s
+   * best-effort `linkPooler` step then never writes `<workdir>/supabase/.temp/
+   * pooler-url`, so `legacyResolveLinkedConn`'s push-connection resolution has
+   * neither a reachable direct host nor a saved pooler URL to fall back to.
+   */
+  readonly poolerAvailable?: boolean;
   readonly health?: { readonly status: number; readonly body: unknown };
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
@@ -118,7 +136,37 @@ function setup(opts: SetupOpts = {}) {
     if (url.includes("/v1/organizations")) {
       return Effect.succeed(legacyJsonResponse(request, 200, ORGS));
     }
-    // storage/pooler config + tenant version probes — best-effort, ignored.
+    // Pooler config: the in-process test's direct db host is never reachable (no
+    // real network), so `legacyResolveLinkedConn`'s push-connection resolution
+    // always falls back to the IPv4 pooler — matching the real-world "common
+    // case" this fallback exists for (CLI-1953). `legacyLinkServicesCore`'s own
+    // `linkPooler` step (step I) fetches this same route and saves it to
+    // `<workdir>/supabase/.temp/pooler-url`, which the fallback then reads.
+    if (recorded.method === "GET" && url.includes("/config/database/pooler")) {
+      if (opts.poolerAvailable === false) {
+        // No PRIMARY entry — mirrors Go's `utils.GetPoolerConfig` returning nil.
+        return Effect.succeed(legacyJsonResponse(request, 200, []));
+      }
+      return Effect.succeed(
+        legacyJsonResponse(request, 200, [
+          {
+            identifier: "primary",
+            database_type: "PRIMARY",
+            is_using_scram_auth: true,
+            db_user: "postgres",
+            db_host: "db.example",
+            db_port: 5432,
+            db_name: "postgres",
+            connection_string: `postgres://postgres.${CREATED.ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+            connectionString: `postgres://postgres.${CREATED.ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+            default_pool_size: null,
+            max_client_conn: null,
+            pool_mode: "transaction",
+          },
+        ]),
+      );
+    }
+    // storage/tenant version probes — best-effort, ignored.
     return Effect.succeed(legacyJsonResponse(request, 404, {}));
   };
   const api = mockLegacyPlatformApi({ handler });
@@ -139,13 +187,37 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
 
-  const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
-  const proxyLayer = Layer.succeed(LegacyGoProxy, {
-    exec: (args: ReadonlyArray<string>, execOpts?: { env?: Record<string, string> }) =>
-      Effect.sync(() => {
-        proxyCalls.push({ args, env: execOpts?.env });
+  // Native push (CLI-1953): the scratch/downloaded-template fixtures never scaffold
+  // migrations/seed.sql/roles.sql, so `legacyDbPushCore` always reaches the "up to
+  // date" short-circuit right after connecting — no query results or edge-runtime
+  // invocation are needed beyond a successful connect.
+  const pushConnectCalls: Array<LegacyPgConnInput> = [];
+  const dbConnectionLayer = Layer.succeed(LegacyDbConnection, {
+    connect: (conn: LegacyPgConnInput) =>
+      Effect.suspend(() => {
+        pushConnectCalls.push(conn);
+        // Fails the first N connect attempts (retry coverage for the push step's
+        // own `legacyBootstrapRetryNotify()` + `Effect.retry(retry)` wrap, CLI-1953)
+        // before succeeding, mirroring `apiKeysFailTimes`'s pattern above.
+        if (pushConnectCalls.length <= (opts.pushConnectFailTimes ?? 0)) {
+          return Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
+        }
+        return Effect.succeed({
+          extensionExists: () => Effect.succeed(false),
+          copyToCsv: () => Effect.succeed(new Uint8Array()),
+          queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+          exec: () => Effect.void,
+          query: () => Effect.succeed([]),
+        });
       }),
-    execCapture: () => Effect.succeed(""),
+  });
+  const edgeRuntimeLayer = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: () =>
+      Effect.die("edge-runtime not needed: scratch/template fixtures never push migrations"),
+  });
+  const sslProbeLayer = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.die("pg-delta ssl probe not needed for this test"),
+    requireSslForHost: () => Effect.die("pg-delta ssl probe not needed for this test"),
   });
 
   const loginApi = mockLegacyLoginApi({ gotrueId: "gotrue-user" });
@@ -167,7 +239,9 @@ function setup(opts: SetupOpts = {}) {
     analytics.layer,
     credentials.layer,
     templateLayer,
-    proxyLayer,
+    dbConnectionLayer,
+    edgeRuntimeLayer,
+    sslProbeLayer,
     loginApi.layer,
     loginCrypto.layer,
     mockBrowser(),
@@ -176,7 +250,10 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(LegacyWorkdirFlag, opts.workdir ?? Option.some(tempRoot.current)),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
+    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
+    legacyDebugLoggerLayer.pipe(Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false))),
   );
 
   return {
@@ -189,7 +266,7 @@ function setup(opts: SetupOpts = {}) {
     api,
     workdir: tempRoot.current,
     downloads,
-    proxyCalls,
+    pushConnectCalls,
     loginApi,
     get apiKeysCalls() {
       return apiKeysCalls;
@@ -349,6 +426,24 @@ describe("legacy bootstrap integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.live("retries the native push connection until it succeeds", () => {
+    // Regression coverage: `legacyBootstrapRetryNotify()` + `Effect.retry(retry)`
+    // wraps the push step the same way as the api-keys/health-poll retries above
+    // (`bootstrap.go:122-127`'s `backoff.RetryNotify`). Deleting that wrap would
+    // leave this test's second and third connect attempts unreached.
+    const s = setup({ pushConnectFailTimes: 2, debug: true });
+    return Effect.gen(function* () {
+      yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+      expect(s.pushConnectCalls).toHaveLength(3);
+      // Failures 1-2 go to the debug logger; the notice reaches stderr only from
+      // the 3rd failure onward (`legacyBootstrapRetryNotify`'s `failureCount * 3 >
+      // maxRetries` gate) — with only 2 failures here, this never fires, so assert
+      // via `--debug` instead (`debug: true` above) that both attempts were logged.
+      const retryLines = s.out.stderrText.match(/connection refused\nRetry \(\d\/8\): /g) ?? [];
+      expect(retryLines.length).toBe(2);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.live("fails when a service stays unhealthy", () => {
     const s = setup({
       health: { status: 200, body: [{ name: "db", healthy: false, status: "UNHEALTHY" }] },
@@ -399,37 +494,76 @@ describe("legacy bootstrap integration", () => {
     return Effect.gen(function* () {
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
       expect(s.out.stderrText).toContain("Failed to create .env file:");
-      // Bootstrap still completes through the db push step.
-      expect(s.proxyCalls).toHaveLength(1);
+      // Bootstrap still completes through the native db push step.
+      expect(s.pushConnectCalls).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live("forwards a --password flag to the Go proxy as a flag (flag stays a flag)", () => {
+  it.live(
+    "pushes natively — falls back to the IPv4 pooler when the direct host is unreachable, no Go subprocess",
+    () => {
+      // The in-process test's direct db host is never reachable (no real network),
+      // so `legacyResolveLinkedConn` transparently falls back to the IPv4 pooler
+      // (CLI-1953) — exactly the real-world path new (IPv6-only) Supabase projects
+      // take. `setup()`'s pooler-config mock feeds `legacyLinkServicesCore`'s saved
+      // `<workdir>/supabase/.temp/pooler-url`, which this fallback reads.
+      const s = setup();
+      return Effect.gen(function* () {
+        yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+        expect(s.pushConnectCalls).toHaveLength(1);
+        expect(s.pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
+        expect(s.pushConnectCalls[0]?.user).toBe(`postgres.${LEGACY_VALID_REF}`);
+        expect(s.out.stderrText).toContain("Connecting to remote database...");
+        expect(s.out.stdoutText).toContain("Remote database is up to date.");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.live(
+    "falls back to the direct-host config and keeps retrying push when connection resolution itself fails",
+    () => {
+      // Regression coverage (review thread on CLI-1953): when the direct host is
+      // unreachable AND no pooler URL was ever saved, `legacyResolveLinkedConn`
+      // fails with `LegacyDbConfigIpv6Error`. Go's `NewDbConfigWithPassword`
+      // (`db_url.go:161-163`) logs that same error and presses on with its
+      // best-effort direct-host config, letting the retry-wrapped `push.Run`
+      // (`bootstrap.go:115-127`) get real reconnect attempts instead of aborting
+      // bootstrap outright. This asserts the native flow does the same instead of
+      // failing before `legacyDbPushCore` ever runs.
+      const s = setup({ poolerAvailable: false, pushConnectFailTimes: 1 });
+      return Effect.gen(function* () {
+        yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+        expect(s.out.stderrText).toContain("IPv6 is not supported on your current network");
+        // Falls back to the same direct-host shape as the `.env` config (step K),
+        // not the pooler — and still reaches/retries the native push.
+        expect(s.pushConnectCalls).toHaveLength(2);
+        expect(s.pushConnectCalls[0]?.host).toBe(`db.${LEGACY_VALID_REF}.supabase.co`);
+        expect(s.pushConnectCalls[0]?.port).toBe(5432);
+        expect(s.pushConnectCalls[0]?.user).toBe("postgres");
+        expect(s.pushConnectCalls[0]?.database).toBe("postgres");
+        expect(s.pushConnectCalls[0]?.password).toBe("s3cret");
+        expect(s.out.stdoutText).toContain("Remote database is up to date.");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.live("pushes with the flag-sourced password (used as the create password too)", () => {
     const s = setup();
     return Effect.gen(function* () {
       yield* legacyBootstrap(
         flags({ template: Option.some("scratch"), password: Option.some("pw123") }),
         FAST_BACKOFF,
       );
-      expect(s.proxyCalls).toHaveLength(1);
-      // Flag-sourced password travels as a flag, never re-mapped to an env var.
-      expect(s.proxyCalls[0]?.args).toEqual([
-        "db",
-        "push",
-        "--include-roles",
-        "--include-seed",
-        "--password",
-        "pw123",
-      ]);
-      expect(s.proxyCalls[0]?.env).toBeUndefined();
+      expect(s.pushConnectCalls[0]?.password).toBe("pw123");
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live("forwards the prompted password (not the empty flag) when --password is empty", () => {
+  it.live("pushes with the prompted password when --password is empty", () => {
     // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by
-    // the shell) leaves the password empty, so the create step prompts. Go reads
-    // the prompted value from viper for the in-process push, so the subprocess
-    // must receive the prompted password — never the literal empty flag value.
+    // the shell) leaves the password empty, so the create step prompts — and the
+    // in-process push reuses that exact same resolved connection (Go's push step
+    // always uses the create-resolved password; there is no separate flag/env
+    // channel to preserve once the call is in-process, CLI-1953).
     const s = setup({ promptPasswordResponses: ["prompted-pw"] });
     const prev = process.env["SUPABASE_DB_PASSWORD"];
     delete process.env["SUPABASE_DB_PASSWORD"];
@@ -438,9 +572,7 @@ describe("legacy bootstrap integration", () => {
         flags({ template: Option.some("scratch"), password: Option.some("") }),
         FAST_BACKOFF,
       );
-      expect(s.proxyCalls).toHaveLength(1);
-      expect(s.proxyCalls[0]?.args).toEqual(["db", "push", "--include-roles", "--include-seed"]);
-      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_DB_PASSWORD: "prompted-pw" });
+      expect(s.pushConnectCalls[0]?.password).toBe("prompted-pw");
     }).pipe(
       Effect.provide(s.layer),
       Effect.ensuring(
@@ -452,7 +584,7 @@ describe("legacy bootstrap integration", () => {
     );
   });
 
-  it.live("forwards a SUPABASE_DB_PASSWORD env var to the proxy as an env var", () => {
+  it.live("pushes with a SUPABASE_DB_PASSWORD env var-sourced password", () => {
     const s = setup();
     const prev = process.env["SUPABASE_DB_PASSWORD"];
     process.env["SUPABASE_DB_PASSWORD"] = "env-pw";
@@ -461,35 +593,7 @@ describe("legacy bootstrap integration", () => {
         flags({ template: Option.some("scratch"), password: Option.none() }),
         FAST_BACKOFF,
       );
-      expect(s.proxyCalls).toHaveLength(1);
-      // Env-sourced password stays an env var — no --password flag mapping (CLI-1617).
-      expect(s.proxyCalls[0]?.args).toEqual(["db", "push", "--include-roles", "--include-seed"]);
-      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_DB_PASSWORD: "env-pw" });
-    }).pipe(
-      Effect.provide(s.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = prev;
-        }),
-      ),
-    );
-  });
-
-  it.live("forwards a prompted password to the proxy as an env var, not a flag", () => {
-    const s = setup({ promptPasswordResponses: ["prompted-pw"] });
-    const prev = process.env["SUPABASE_DB_PASSWORD"];
-    delete process.env["SUPABASE_DB_PASSWORD"];
-    return Effect.gen(function* () {
-      yield* legacyBootstrap(
-        flags({ template: Option.some("scratch"), password: Option.none() }),
-        FAST_BACKOFF,
-      );
-      expect(s.proxyCalls).toHaveLength(1);
-      // Go funnels the prompted value into viper DB_PASSWORD; the subprocess
-      // equivalent is the SUPABASE_DB_PASSWORD env var.
-      expect(s.proxyCalls[0]?.args).toEqual(["db", "push", "--include-roles", "--include-seed"]);
-      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_DB_PASSWORD: "prompted-pw" });
+      expect(s.pushConnectCalls[0]?.password).toBe("env-pw");
     }).pipe(
       Effect.provide(s.layer),
       Effect.ensuring(

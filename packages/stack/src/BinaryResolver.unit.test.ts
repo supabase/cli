@@ -16,7 +16,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver, type BinarySpec } from "./BinaryResolver.ts";
 import { DownloadError } from "./errors.ts";
-import { detectPlatform, postgrestAssetName } from "./Platform.ts";
+import { detectPlatform, postgresAssetName, postgrestAssetName } from "./Platform.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const postgresVersion = DEFAULT_VERSIONS.postgres;
@@ -450,6 +450,20 @@ describe("BinaryResolver.resolveWithMetadata concurrency", () => {
   );
 });
 
+/** Resolves the real cacheDir a `postgres` spec would use on the host running the test. */
+const resolvePostgresCacheDir = Effect.gen(function* () {
+  const platform = yield* detectPlatform;
+  const assetName = postgresAssetName(platform);
+  if (assetName === null) {
+    return yield* Effect.die(`unsupported test platform: ${platform.os}-${platform.arch}`);
+  }
+  return BinaryResolver.cachePath("/cache-root/bin", {
+    service: "postgres",
+    version: postgresVersion,
+    assetName,
+  });
+});
+
 /** Resolves the real cacheDir a `postgrest` spec would use on the host running the test. */
 const resolvePostgrestCacheDir = Effect.gen(function* () {
   const platform = yield* detectPlatform;
@@ -711,36 +725,165 @@ describe("BinaryResolver.resolveWithMetadata cache completeness", () => {
     },
   );
 
-  it.live(
-    "does not destroy a markerless legacy cacheDir before a download attempt that then fails",
-    () => {
-      const fakeFs = createFakeCacheFs();
-      const spawner = mockExtractingSpawner(fakeFs);
-      const httpLayer = mockOfflineHttpClient();
+  it.live("falls back to a markerless legacy cacheDir when the replacement download fails", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
 
-      const layer = BinaryResolver.make("/cache-root").pipe(
-        Layer.provide(fakeFs.layer),
-        Layer.provide(Path.layer),
-        Layer.provide(httpLayer),
-        Layer.provide(spawner.layer),
-      );
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
 
-      return Effect.gen(function* () {
-        const resolver = yield* BinaryResolver;
-        const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
-        const cacheDir = yield* resolvePostgrestCacheDir;
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
 
-        // A markerless legacy cacheDir from before this resolver's staging
-        // model existed — still a perfectly usable binary on disk.
-        fakeFs.seedDirWithFile(cacheDir, "bin/postgrest");
+      // A markerless legacy cacheDir from before this resolver's staging
+      // model existed — a binary that served every earlier release. When
+      // the replacement cannot be fetched, resolving to it beats failing.
+      fakeFs.seedDirWithFile(cacheDir, "postgrest");
 
-        const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+      const result = yield* resolver.resolveWithMetadata(spec);
 
-        expect(error).toBeInstanceOf(DownloadError);
-        // The legacy binary must survive an offline/failed download attempt
-        // — it must not be deleted before we know we can replace it.
-        expect(fakeFs.files.has(`${cacheDir}/bin/postgrest`)).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      expect(result.path).toBe(cacheDir);
+      expect(result.downloaded).toBe(false);
+      expect(fakeFs.files.has(`${cacheDir}/postgrest`)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("accepts a Windows legacy cache whose executable carries the .exe suffix", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
+
+      fakeFs.seedDirWithFile(cacheDir, "postgrest.exe");
+
+      const result = yield* resolver.resolveWithMetadata(spec);
+
+      expect(result.path).toBe(cacheDir);
+      expect(result.downloaded).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a postgres legacy cache with the init script but no bin payload", () => {
+    // The init script alone cannot run postgres — the health check invokes
+    // bin/pg_isready and the script needs the server binaries. A partial
+    // extraction stopping after share/ must not suppress the Docker fallback.
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgres", version: postgresVersion };
+      const cacheDir = yield* resolvePostgresCacheDir;
+
+      fakeFs.seedDirWithFile(cacheDir, "share/supabase-cli/bin/supabase-postgres-init.sh");
+
+      const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DownloadError);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("accepts a postgres legacy cache carrying the full expected layout", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgres", version: postgresVersion };
+      const cacheDir = yield* resolvePostgresCacheDir;
+
+      fakeFs.seedDirWithFile(cacheDir, "share/supabase-cli/bin/supabase-postgres-init.sh");
+      fakeFs.seedDirWithFile(cacheDir, "bin/pg_isready");
+      fakeFs.seedDirWithFile(cacheDir, "bin/postgres");
+      fakeFs.seedDirWithFile(cacheDir, "bin/psql");
+      fakeFs.seedDirWithFile(cacheDir, "lib/libpq.dylib");
+
+      const result = yield* resolver.resolveWithMetadata(spec);
+      expect(result.path).toBe(cacheDir);
+      expect(result.downloaded).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a partial markerless leftover that lacks the service entrypoint", () => {
+    // A pre-staging writer killed mid-extraction leaves a non-empty dir with
+    // no executable. Resolving it would mask the DownloadError that lets the
+    // stack fall back to a Docker image — so non-emptiness is not enough.
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+      const cacheDir = yield* resolvePostgrestCacheDir;
+
+      fakeFs.seedDirWithFile(cacheDir, "_download-interrupted.tar");
+
+      const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(DownloadError);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still fails offline when no legacy cache entry exists to fall back to", () => {
+    const fakeFs = createFakeCacheFs();
+    const spawner = mockExtractingSpawner(fakeFs);
+    const httpLayer = mockOfflineHttpClient();
+
+    const layer = BinaryResolver.make("/cache-root").pipe(
+      Layer.provide(fakeFs.layer),
+      Layer.provide(Path.layer),
+      Layer.provide(httpLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const spec: BinarySpec = { service: "postgrest", version: postgrestVersion };
+
+      const error = yield* resolver.resolveWithMetadata(spec).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(DownloadError);
+    }).pipe(Effect.provide(layer));
+  });
 });
