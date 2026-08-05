@@ -89,11 +89,11 @@ const unsupportedNonDefaultRuntimeField: LocalStackConfigParityDecision = {
     "Only a value that differs from the generated project-config default changes local runtime behavior.",
 };
 
-const unsupportedEnabledProviderField: LocalStackConfigParityDecision = {
+const unsupportedEnabledSubtreeField: LocalStackConfigParityDecision = {
   _tag: "unsupported-blocking",
   presence: "enabled-subtree",
   rationale:
-    "This setting changes local authentication behavior only when its provider is effectively enabled; generated disabled provider stubs do not count.",
+    "This setting changes local runtime behavior only when its enclosing feature is effectively enabled; generated disabled stubs do not count.",
 };
 
 const mappedAutoExposeNewTables: LocalStackConfigParityDecision = {
@@ -179,13 +179,13 @@ const unsupportedFutureRuntimeField: LocalStackConfigParityDecision = {
 };
 
 const authExternalProviderParity = {
-  enabled: unsupportedEnabledProviderField,
-  client_id: unsupportedEnabledProviderField,
+  enabled: unsupportedEnabledSubtreeField,
+  client_id: unsupportedEnabledSubtreeField,
   secret: unsupportedSecretRuntimeField,
-  url: unsupportedEnabledProviderField,
-  redirect_uri: unsupportedEnabledProviderField,
-  skip_nonce_check: unsupportedEnabledProviderField,
-  email_optional: unsupportedEnabledProviderField,
+  url: unsupportedEnabledSubtreeField,
+  redirect_uri: unsupportedEnabledSubtreeField,
+  skip_nonce_check: unsupportedEnabledSubtreeField,
+  email_optional: unsupportedEnabledSubtreeField,
 } satisfies Record<keyof ProjectConfig["auth"]["external"]["apple"], Node>;
 
 type AuthExternalParity = {
@@ -196,8 +196,8 @@ type AuthExternalParity = {
 };
 
 const authHookParity = {
-  enabled: unsupportedRuntimeField,
-  uri: unsupportedOptionalRuntimeField,
+  enabled: unsupportedEnabledSubtreeField,
+  uri: unsupportedEnabledSubtreeField,
   secrets: unsupportedSecretRuntimeField,
 } satisfies Record<keyof ProjectConfig["auth"]["hook"]["send_email"], Node>;
 
@@ -236,7 +236,7 @@ const authExternalParity = {
 const authExternalWithCustomParity = {
   ...authExternalParity,
   "*": {
-    decision: unsupportedEnabledProviderField,
+    decision: unsupportedEnabledSubtreeField,
     children: authExternalProviderParity,
   },
 } satisfies LocalStackConfigParitySection;
@@ -251,36 +251,36 @@ const authHooksParity = {
 } satisfies Record<keyof ProjectConfig["auth"]["hook"], Node>;
 
 const authSmsParity = {
-  enable_signup: unsupportedEnabledProviderField,
-  enable_confirmations: unsupportedEnabledProviderField,
-  template: unsupportedEnabledProviderField,
-  max_frequency: unsupportedEnabledProviderField,
+  enable_signup: unsupportedEnabledSubtreeField,
+  enable_confirmations: unsupportedEnabledSubtreeField,
+  template: unsupportedEnabledSubtreeField,
+  max_frequency: unsupportedEnabledSubtreeField,
   twilio: {
-    enabled: unsupportedEnabledProviderField,
-    account_sid: unsupportedEnabledProviderField,
-    message_service_sid: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
+    account_sid: unsupportedEnabledSubtreeField,
+    message_service_sid: unsupportedEnabledSubtreeField,
     auth_token: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio"], Node>,
   twilio_verify: {
-    enabled: unsupportedEnabledProviderField,
-    account_sid: unsupportedEnabledProviderField,
-    message_service_sid: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
+    account_sid: unsupportedEnabledSubtreeField,
+    message_service_sid: unsupportedEnabledSubtreeField,
     auth_token: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio_verify"], Node>,
   messagebird: {
-    enabled: unsupportedEnabledProviderField,
-    originator: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
+    originator: unsupportedEnabledSubtreeField,
     access_key: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["messagebird"], Node>,
   textlocal: {
-    enabled: unsupportedEnabledProviderField,
-    sender: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
+    sender: unsupportedEnabledSubtreeField,
     api_key: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["textlocal"], Node>,
   vonage: {
-    enabled: unsupportedEnabledProviderField,
-    from: unsupportedEnabledProviderField,
-    api_key: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
+    from: unsupportedEnabledSubtreeField,
+    api_key: unsupportedEnabledSubtreeField,
     api_secret: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["vonage"], Node>,
   test_otp: unsupportedOptionalRuntimeField,
@@ -290,7 +290,7 @@ const authParity = {
   enabled: unsupportedNonDefaultRuntimeField,
   external_url: unsupportedRuntimeField,
   passkey: {
-    enabled: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
   },
   webauthn: {
     rp_display_name: unsupportedRuntimeField,
@@ -323,21 +323,21 @@ const authParity = {
   hook: authHooksParity,
   mfa: {
     totp: {
-      enroll_enabled: unsupportedRuntimeField,
-      verify_enabled: unsupportedRuntimeField,
+      enroll_enabled: unsupportedNonDefaultRuntimeField,
+      verify_enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["mfa"]["totp"], Node>,
     phone: {
-      enroll_enabled: unsupportedRuntimeField,
-      verify_enabled: unsupportedRuntimeField,
-      otp_length: unsupportedRuntimeField,
-      template: unsupportedRuntimeField,
-      max_frequency: unsupportedRuntimeField,
+      enroll_enabled: unsupportedNonDefaultRuntimeField,
+      verify_enabled: unsupportedNonDefaultRuntimeField,
+      otp_length: unsupportedEnabledSubtreeField,
+      template: unsupportedEnabledSubtreeField,
+      max_frequency: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["mfa"]["phone"], Node>,
     web_authn: {
-      enroll_enabled: unsupportedRuntimeField,
-      verify_enabled: unsupportedRuntimeField,
+      enroll_enabled: unsupportedNonDefaultRuntimeField,
+      verify_enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["mfa"]["web_authn"], Node>,
-    max_enrolled_factors: unsupportedRuntimeField,
+    max_enrolled_factors: unsupportedNonDefaultRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["mfa"], Node>,
   sessions: {
     timebox: unsupportedOptionalRuntimeField,
@@ -352,13 +352,13 @@ const authParity = {
     otp_length: unsupportedNonDefaultRuntimeField,
     otp_expiry: unsupportedNonDefaultRuntimeField,
     smtp: {
-      enabled: unsupportedRuntimeField,
-      host: unsupportedOptionalRuntimeField,
-      port: unsupportedOptionalRuntimeField,
-      user: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledSubtreeField,
+      host: unsupportedEnabledSubtreeField,
+      port: unsupportedEnabledSubtreeField,
+      user: unsupportedEnabledSubtreeField,
       pass: unsupportedSecretRuntimeField,
-      admin_email: unsupportedOptionalRuntimeField,
-      sender_name: unsupportedOptionalRuntimeField,
+      admin_email: unsupportedEnabledSubtreeField,
+      sender_name: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof NonNullable<ProjectConfig["auth"]["email"]["smtp"]>, Node>,
     template: {
       "*": {
@@ -391,32 +391,32 @@ const authParity = {
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["ethereum"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["web3"], Node>,
   oauth_server: {
-    enabled: unsupportedEnabledProviderField,
-    authorization_url_path: unsupportedEnabledProviderField,
-    allow_dynamic_registration: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
+    authorization_url_path: unsupportedEnabledSubtreeField,
+    allow_dynamic_registration: unsupportedEnabledSubtreeField,
   } satisfies Record<keyof ProjectConfig["auth"]["oauth_server"], Node>,
   third_party: {
     firebase: {
-      enabled: unsupportedEnabledProviderField,
-      project_id: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      project_id: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["firebase"], Node>,
     auth0: {
-      enabled: unsupportedEnabledProviderField,
-      tenant: unsupportedEnabledProviderField,
-      tenant_region: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      tenant: unsupportedEnabledSubtreeField,
+      tenant_region: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["auth0"], Node>,
     aws_cognito: {
-      enabled: unsupportedEnabledProviderField,
-      user_pool_id: unsupportedEnabledProviderField,
-      user_pool_region: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      user_pool_id: unsupportedEnabledSubtreeField,
+      user_pool_region: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["aws_cognito"], Node>,
     clerk: {
-      enabled: unsupportedEnabledProviderField,
-      domain: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      domain: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["clerk"], Node>,
     workos: {
-      enabled: unsupportedEnabledProviderField,
-      issuer_url: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      issuer_url: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["workos"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["third_party"], Node>,
 } satisfies Record<keyof ProjectConfig["auth"], Node> & LocalStackConfigParitySection;
@@ -476,9 +476,9 @@ const localStackConfigParity = {
     max_rows: unsupportedNonDefaultRuntimeField,
     auto_expose_new_tables: mappedAutoExposeNewTables,
     tls: {
-      enabled: unsupportedEnabledProviderField,
-      cert_path: unsupportedEnabledProviderField,
-      key_path: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      cert_path: unsupportedEnabledSubtreeField,
+      key_path: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["api"]["tls"], Node>,
     external_url: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof ProjectConfig["api"], Node>,
@@ -561,13 +561,13 @@ const localStackConfigParity = {
       enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["storage"]["s3_protocol"], Node>,
     analytics: {
-      enabled: unsupportedEnabledProviderField,
-      max_namespaces: unsupportedEnabledProviderField,
-      max_tables: unsupportedEnabledProviderField,
-      max_catalogs: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      max_namespaces: unsupportedEnabledSubtreeField,
+      max_tables: unsupportedEnabledSubtreeField,
+      max_catalogs: unsupportedEnabledSubtreeField,
       buckets: {
         "*": {
-          decision: unsupportedEnabledProviderField,
+          decision: unsupportedEnabledSubtreeField,
           children: {} satisfies Record<
             keyof ProjectConfig["storage"]["analytics"]["buckets"][string],
             Node
@@ -576,12 +576,12 @@ const localStackConfigParity = {
       },
     } satisfies Record<keyof ProjectConfig["storage"]["analytics"], Node>,
     vector: {
-      enabled: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
       max_buckets: hostedConfigurationField,
       max_indexes: hostedConfigurationField,
       buckets: {
         "*": {
-          decision: unsupportedEnabledProviderField,
+          decision: unsupportedEnabledSubtreeField,
           children: {} satisfies Record<
             keyof ProjectConfig["storage"]["vector"]["buckets"][string],
             Node
@@ -593,7 +593,7 @@ const localStackConfigParity = {
   studio: {
     enabled: unsupportedNonDefaultRuntimeField,
     port: unsupportedNonDefaultRuntimeField,
-    api_url: unsupportedRuntimeField,
+    api_url: unsupportedNonDefaultRuntimeField,
     openai_api_key: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["studio"], Node>,
   experimental: {
