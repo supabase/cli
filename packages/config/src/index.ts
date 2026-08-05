@@ -1,4 +1,9 @@
-export { ProjectConfigSchema, type ProjectConfig, type ProjectConfigJson } from "./base.ts";
+export {
+  ProjectConfigSchema,
+  toProjectConfigJsonSchema,
+  type ProjectConfig,
+  type ProjectConfigJson,
+} from "./base.ts";
 export {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
