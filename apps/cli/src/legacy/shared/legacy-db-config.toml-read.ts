@@ -1899,6 +1899,37 @@ const readDbTomlCore = Effect.fnUntraced(function* (
           `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`,
         );
   };
+  // A TOP-LEVEL raw value that is neither an array nor a string (e.g.
+  // `schema_paths = 42`/`true`, or a stray inline table) still reaches
+  // mapstructure's `decodeSlice`, which is weakly typed the same way an array
+  // ELEMENT is (see `legacyWeakCoerceGlobEntry` above): a zero-length map
+  // decodes straight to an empty slice; anything else is wrapped into a
+  // synthetic single-element `[]any{value}` and decoded through the exact
+  // same per-element rules as a real array entry — a scalar weakly coerces,
+  // an unconvertible value (map/array) fails with `'<keyPath>[0]' expected
+  // type 'string', got unconvertible type '...'` (mapstructure always
+  // reports the synthetic wrapped index, which is `0`). Verified empirically
+  // against `apps/cli-go`: `schema_paths = 42` → `["42"]`, `= true` →
+  // `["1"]`, `= {}` → `[]`, `[db.migrations.schema_paths]\nfoo = "bar"` →
+  // `failed to parse config: … 'db.migrations.schema_paths[0]' expected type
+  // 'string', got unconvertible type 'map[string]interface {}'`. Never
+  // called with `undefined` — an absent key has its own Go-matching default
+  // per caller below, so callers guard that case before reaching here.
+  const legacyResolveScalarGlobFallback = (
+    keyPath: string,
+    value: unknown,
+  ): Effect.Effect<ReadonlyArray<string>, LegacyDbConfigLoadError> =>
+    Effect.gen(function* () {
+      if (typeof value === "object" && value !== null && Object.keys(value).length === 0) {
+        return [];
+      }
+      const coerced = legacyWeakCoerceGlobEntry(value);
+      if (coerced !== undefined) {
+        return [coerced];
+      }
+      yield* legacyFailOnUnconvertibleGlobEntries(keyPath, [value]);
+      return [];
+    });
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathsOverride = remoteOverrideKeys.has("db.seed.sql_paths")
     ? undefined
@@ -1916,7 +1947,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
             .map((pattern) => legacyExpandEnv(pattern, lookup))
         : typeof rawSqlPaths === "string"
           ? splitGoSeedPaths(rawSqlPaths)
-          : ["seed.sql"];
+          : rawSqlPaths === undefined
+            ? ["seed.sql"]
+            : (yield* legacyResolveScalarGlobFallback("db.seed.sql_paths", rawSqlPaths)).map(
+                (pattern) => legacyExpandEnv(pattern, lookup),
+              );
   // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split);
   // resolve each to Go's config-load form (absolute verbatim, relative supabase-joined).
   const seedSqlPaths = sqlPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
@@ -1943,7 +1978,12 @@ const readDbTomlCore = Effect.fnUntraced(function* (
             .map((pattern) => legacyExpandEnv(pattern, lookup))
         : typeof rawSchemaPaths === "string"
           ? splitGoSeedPaths(rawSchemaPaths)
-          : [];
+          : rawSchemaPaths === undefined
+            ? []
+            : (yield* legacyResolveScalarGlobFallback(
+                "db.migrations.schema_paths",
+                rawSchemaPaths,
+              )).map((pattern) => legacyExpandEnv(pattern, lookup));
   const schemaPaths = schemaPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
 
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`

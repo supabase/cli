@@ -373,6 +373,91 @@ describe("legacyReadDbToml", () => {
   );
 
   it.effect(
+    "weakly coerces a TOP-LEVEL scalar db.migrations.schema_paths (Go mapstructure weak-decode of a []string field)",
+    () => {
+      // Go's `decodeSlice` wraps a non-array/non-string value into a synthetic
+      // single-element `[]any{value}` and decodes it through the same per-element
+      // rules as a real array entry — it does NOT fall back to the `[]` default the
+      // way an absent key does. Verified empirically against `apps/cli-go`:
+      // `schema_paths = 42` → `["42"]` (resolves to `supabase/42`), `= true` → `["1"]`.
+      const dirNumber = withConfig(["[db.migrations]", "schema_paths = 42", ""].join("\n"));
+      const dirBool = withConfig(["[db.migrations]", "schema_paths = true", ""].join("\n"));
+      return Effect.all([read(dirNumber), read(dirBool)]).pipe(
+        Effect.tap(([numberResult, boolResult]) =>
+          Effect.sync(() => {
+            expect(numberResult.schemaPaths).toEqual(["supabase/42"]);
+            expect(boolResult.schemaPaths).toEqual(["supabase/1"]);
+            rmSync(dirNumber, { recursive: true, force: true });
+            rmSync(dirBool, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "treats a TOP-LEVEL empty-table db.migrations.schema_paths as no patterns (Go mapstructure zero-length-map special case)",
+    () => {
+      // Go's `decodeSlice` special-cases a zero-length map BEFORE the generic weak-typing
+      // wrap above: it decodes straight to an empty slice. Verified empirically against
+      // `apps/cli-go`: `schema_paths = {}` → `[]`.
+      const dir = withConfig(["[db.migrations]", "schema_paths = {}", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a TOP-LEVEL table db.migrations.schema_paths (Go mapstructure UnconvertibleTypeError, synthetic index 0)",
+    () => {
+      // A non-empty map isn't weakly coercible, so Go's `decodeSlice` wraps it into
+      // `[]any{value}` and fails decoding element 0 the same way a nested-array/table
+      // ARRAY element does. Verified empirically against `apps/cli-go`:
+      // `[db.migrations.schema_paths]\nfoo = "bar"` fails with this exact message.
+      const dir = withConfig(["[db.migrations.schema_paths]", 'foo = "bar"', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "weakly coerces a TOP-LEVEL scalar db.seed.sql_paths instead of falling back to the ['seed.sql'] default",
+    () => {
+      // The absent-key default (`["seed.sql"]`) only applies when the key is missing
+      // entirely — a PRESENT scalar still goes through Go's weak-decode wrap, same as
+      // schema_paths above. Verified empirically against `apps/cli-go`:
+      // `[db.seed]\nenabled = true\nsql_paths = 42` → `["42"]`, not `["seed.sql"]`.
+      const dir = withConfig(["[db.seed]", "enabled = true", "sql_paths = 42", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.sqlPaths).toEqual(["supabase/42"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "aborts the whole config load on a non-scalar db.migrations.schema_paths element (Go mapstructure UnconvertibleTypeError)",
     () => {
       // Unlike a bool/number (weakly coerced above), a nested array/table is
