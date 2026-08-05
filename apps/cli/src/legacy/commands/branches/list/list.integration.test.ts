@@ -17,7 +17,7 @@ import { legacyBranchesList } from "./list.handler.ts";
 type Branches = typeof V1ListAllBranchesOutput.Type;
 
 const SAMPLE_BRANCH: Branches[number] = {
-  id: "11111111-2222-3333-4444-555555555555",
+  id: "11111111-2222-4333-8444-555555555555",
   name: "feat-1",
   project_ref: "aaaaaaaaaaaaaaaaaaaa",
   parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",
@@ -171,7 +171,7 @@ describe("legacy branches list integration", () => {
       expect(out.stdoutText).toBe(`- createdat: 2026-05-27T01:02:03Z
   deletionscheduledat: null
   gitbranch: feat-1
-  id: 11111111-2222-3333-4444-555555555555
+  id: 11111111-2222-4333-8444-555555555555
   isdefault: false
   latestcheckrunid: null
   name: feat-1
@@ -226,7 +226,7 @@ describe("legacy branches list integration", () => {
       expect(out.stdoutText).toBe(`[[branches]]
   CreatedAt = 2026-05-27T01:02:03Z
   GitBranch = "feat-1"
-  Id = "11111111-2222-3333-4444-555555555555"
+  Id = "11111111-2222-4333-8444-555555555555"
   IsDefault = false
   Name = "feat-1"
   ParentProjectRef = "bbbbbbbbbbbbbbbbbbbb"
