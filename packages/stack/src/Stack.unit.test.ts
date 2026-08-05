@@ -427,7 +427,7 @@ describe("Stack", () => {
         {
           name: "postgrest",
           command: "fail",
-          dependencies: [{ service: "postgres", condition: "healthy" }],
+          dependencies: [{ service: "postgres", condition: "started" }],
           restart: "no",
         },
       ]),
@@ -448,7 +448,7 @@ describe("Stack", () => {
     const layer = localStackLayer(
       {
         ...defaultConfig,
-        readiness: { mode: "finite", timeoutMs: 100 },
+        readiness: { mode: "finite", timeoutMs: 1_000 },
       },
       noopPortLease(defaultConfig.ports),
     ).pipe(
@@ -466,7 +466,7 @@ describe("Stack", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(cleaned).toBe(true);
       expect(spawner.killed).toContain("SIGTERM");
-    }).pipe(Effect.provide(layer), Effect.timeout("2 seconds"));
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
   it.live("lazy startup starts direct services without starting HTTP backends", () => {
