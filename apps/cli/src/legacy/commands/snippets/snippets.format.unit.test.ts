@@ -16,7 +16,7 @@ describe("renderSnippetsTable", () => {
   it("preserves literal `|` characters in name, visibility, and owner (Glamour decodes Go's escape back)", () => {
     const out = renderSnippetsTable([
       {
-        id: "00000000-0000-0000-0000-000000000001",
+        id: "00000000-0000-4000-8000-000000000001",
         name: "name|here",
         visibility: "user|public",
         owner: { username: "user|name" },
@@ -35,7 +35,7 @@ describe("renderSnippetsTable", () => {
   it("formats RFC3339 timestamps as UTC YYYY-MM-DD HH:MM:SS", () => {
     const out = renderSnippetsTable([
       {
-        id: "00000000-0000-0000-0000-000000000001",
+        id: "00000000-0000-4000-8000-000000000001",
         name: "n",
         visibility: "user",
         owner: { username: "u" },

@@ -17,11 +17,18 @@ async function loadEszip(bytes: Uint8Array) {
 async function extractEszip(
   destPath: string,
   entrypointUrl: string,
+  rootPath: string,
   parser: Parser,
   specifiers: string[],
 ) {
   const entrypointPath = path.fromFileUrl(entrypointUrl);
   const basePath = path.dirname(entrypointPath);
+  // Containment is enforced against rootPath (the shared functions
+  // directory), not destPath (this function's own directory): a common
+  // layout imports a sibling like "../_shared/cors.ts", which legitimately
+  // resolves one level above destPath, but must never resolve outside
+  // rootPath entirely.
+  const resolvedRoot = path.resolve(rootPath);
   for (const specifier of specifiers) {
     // skip remote dependencies
     if (!specifier.startsWith("file:")) {
@@ -32,16 +39,33 @@ async function extractEszip(
     const absPath = path.fromFileUrl(specifier);
     const relPath = path.relative(basePath, absPath);
     const dest = path.join(destPath, relPath);
+
+    const resolvedDest = path.resolve(dest);
+    const relToRoot = path.relative(resolvedRoot, resolvedDest);
+    if (
+      relToRoot === ".." ||
+      relToRoot.startsWith(`..${path.SEP}`) ||
+      path.isAbsolute(relToRoot)
+    ) {
+      throw new Error(
+        `Refusing to extract "${specifier}" outside of ${rootPath}`,
+      );
+    }
+
     console.info(path.resolve(dest));
     await write(dest, module);
   }
 }
 
-async function extractSource(destPath: string, entrypointUrl: string) {
+async function extractSource(
+  destPath: string,
+  entrypointUrl: string,
+  rootPath: string,
+) {
   const buf = await readAll(Deno.stdin);
 
   const { parser, specifiers } = await loadEszip(buf);
-  await extractEszip(destPath, entrypointUrl, parser, specifiers);
+  await extractEszip(destPath, entrypointUrl, rootPath, parser, specifiers);
 }
 
 extractSource(...Deno.args);

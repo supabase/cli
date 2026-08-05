@@ -131,7 +131,7 @@ export const SERVICE_CATALOG = {
   postgrest: {
     name: "postgrest",
     configKey: "postgrest",
-    defaultVersion: "14.15",
+    defaultVersion: "14.16",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { ownership: "supabase", repository: "postgrest", tagPrefix: "v" },
@@ -155,7 +155,7 @@ export const SERVICE_CATALOG = {
   auth: {
     name: "auth",
     configKey: "auth",
-    defaultVersion: "2.194.0",
+    defaultVersion: "2.195.0",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { ownership: "supabase", repository: "gotrue", tagPrefix: "v" },
@@ -178,7 +178,7 @@ export const SERVICE_CATALOG = {
   "edge-runtime": {
     name: "edge-runtime",
     configKey: "edgeRuntime",
-    defaultVersion: "1.74.2",
+    defaultVersion: "1.74.3",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { ownership: "supabase", repository: "edge-runtime", tagPrefix: "v" },
@@ -201,7 +201,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "2.120.3",
+    defaultVersion: "2.123.1",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "realtime", tagPrefix: "v" } },
     activation: { startup: "eager", activates: [], owns: [] },
@@ -210,7 +210,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "1.67.20",
+    defaultVersion: "1.68.1",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "storage-api", tagPrefix: "v" } },
     activation: { startup: "lazy", activates: ["imgproxy"], owns: ["imgproxy"] },
@@ -248,7 +248,7 @@ export const SERVICE_CATALOG = {
   studio: {
     name: "studio",
     configKey: "studio",
-    defaultVersion: "2026.07.27-sha-cbb076d",
+    defaultVersion: "2026.08.03-sha-022b374",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "studio" } },
     activation: { startup: "eager", activates: ["analytics"], owns: [] },
@@ -257,7 +257,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "1.47.1",
+    defaultVersion: "1.49.2",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "logflare" } },
     activation: { startup: "lazy", activates: ["vector"], owns: ["vector"] },
