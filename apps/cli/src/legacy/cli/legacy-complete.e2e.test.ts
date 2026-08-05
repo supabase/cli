@@ -37,6 +37,6 @@ describe("supabase __complete (legacy)", () => {
       entrypoint: "legacy",
     });
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("--debug\tOutput debug logs to stderr.");
+    expect(stdout).toContain("--debug\toutput debug logs to stderr");
   });
 });

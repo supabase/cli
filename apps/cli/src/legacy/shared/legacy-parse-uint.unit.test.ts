@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyParseUintBase0 } from "./legacy-parse-uint.ts";
+import { legacyIsValidBase0Int64, legacyParseUintBase0 } from "./legacy-parse-uint.ts";
 
 // Every expectation in this file is ground truth captured from go1.26:
 // `strconv.ParseUint(s, 0, 64)` — the exact call pflag makes for a `UintVarP`
@@ -60,5 +60,43 @@ describe("legacyParseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
     expect(legacyParseUintBase0("18446744073709551615")).toEqual({
       value: Number(18446744073709551615n),
     });
+  });
+});
+
+// Every expectation in this file is ground truth captured from go1.26:
+// `strconv.ParseInt(s, 0, 64)` — the exact call pflag makes for an
+// `Int64VarP` flag (`int64Value.Set`, `pflag/int64.go`), e.g. `backups
+// restore --timestamp` (`apps/cli-go/cmd/backups.go:43`).
+describe("legacyIsValidBase0Int64 (Go strconv.ParseInt(s, 0, 64) parity)", () => {
+  it("accepts int64's exact bounds, both signs", () => {
+    expect(legacyIsValidBase0Int64("9223372036854775807")).toBe(true); // int64 max
+    expect(legacyIsValidBase0Int64("-9223372036854775808")).toBe(true); // int64 min
+  });
+
+  it("rejects a magnitude one past int64's bound on each side — the asymmetric two's-complement range", () => {
+    // 9223372036854775808 is a syntactically valid uint64 (well under
+    // MAX_UINT64) but exceeds int64's positive bound by exactly one.
+    expect(legacyIsValidBase0Int64("9223372036854775808")).toBe(false);
+    // -9223372036854775809's magnitude, 9223372036854775809, exceeds int64's
+    // negative-side bound (9223372036854775808) by one too.
+    expect(legacyIsValidBase0Int64("-9223372036854775809")).toBe(false);
+  });
+
+  it("still enforces the uint64 ceiling for a wildly out-of-range magnitude", () => {
+    expect(legacyIsValidBase0Int64("18446744073709551616")).toBe(false); // one past uint64 max
+  });
+
+  it("accepts plain decimals and Go's base-0 prefix forms, signed", () => {
+    expect(legacyIsValidBase0Int64("0")).toBe(true);
+    expect(legacyIsValidBase0Int64("42")).toBe(true);
+    expect(legacyIsValidBase0Int64("-42")).toBe(true);
+    expect(legacyIsValidBase0Int64("0x10")).toBe(true);
+    expect(legacyIsValidBase0Int64("-0x10")).toBe(true);
+  });
+
+  it("rejects non-numeric junk the same way the uint64 parser does", () => {
+    expect(legacyIsValidBase0Int64("bogus")).toBe(false);
+    expect(legacyIsValidBase0Int64("3.5")).toBe(false);
+    expect(legacyIsValidBase0Int64("")).toBe(false);
   });
 });
