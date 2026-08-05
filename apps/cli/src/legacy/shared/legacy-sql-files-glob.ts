@@ -18,6 +18,31 @@ const GLOB_META_CHARS = /[*?[]/u;
 // that escape — see `legacyPathMatch`'s escape handling below.
 const toSlash = (p: string): string => (process.platform === "win32" ? p.replaceAll("\\", "/") : p);
 
+// Go's `sort.Strings` (used by both `Glob.SQLFiles`, `config.go:155`, and
+// `walkMatchedDir`, `config.go:207`) orders strings by their raw UTF-8 BYTES —
+// Go strings are just byte slices, so `strings.Compare` never decodes runes. JS's
+// default `Array.prototype.sort()` instead compares UTF-16 CODE UNITS, which
+// disagrees with UTF-8 byte order for any character outside the Basic Multilingual
+// Plane: a supplementary-plane code point (`U+10000`+, a UTF-16 surrogate PAIR
+// starting `0xD800`-`0xDBFF`) always UTF-8-encodes to 4 bytes leading `0xF0`-`0xF4`,
+// while every 3-byte-encoded BMP character (`U+0800`-`U+FFFF`, UTF-8 lead byte
+// `0xE0`-`0xEF`) is numerically SMALLER as a lead byte but can have a LARGER lone
+// UTF-16 code unit than the surrogate pair's lead unit — so the two orderings can
+// disagree. Verified empirically: sorting a 4-byte emoji filename against a
+// 3-byte fullwidth-exclamation filename, Go's `sort.Strings` places the fullwidth
+// exclamation FIRST, while JS's default `.sort()` places the emoji first.
+const UTF8_ENCODER = new TextEncoder();
+const utf8Compare = (a: string, b: string): number => {
+  const bytesA = UTF8_ENCODER.encode(a);
+  const bytesB = UTF8_ENCODER.encode(b);
+  const len = Math.min(bytesA.length, bytesB.length);
+  for (let i = 0; i < len; i++) {
+    const diff = bytesA[i]! - bytesB[i]!;
+    if (diff !== 0) return diff;
+  }
+  return bytesA.length - bytesB.length;
+};
+
 // Joins a matched directory (or glob-split directory prefix) with a child/entry name,
 // delegating to the injected `Path.Path` service for Go's `path.Join`-equivalent
 // cleaning. Two Go call sites build a path exactly this way, and both need the same
@@ -227,7 +252,7 @@ const legacyWalkSqlFiles = (
         }
       });
     yield* walk(dir);
-    return collected.sort();
+    return collected.sort(utf8Compare);
   });
 
 /** Result of resolving SQL-file glob patterns against the workspace. */
@@ -327,7 +352,7 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
       }
       continue;
     }
-    for (const match of [...matches].sort()) {
+    for (const match of [...matches].sort(utf8Compare)) {
       const fp = toSlash(match);
       // A directory match is expanded to its regular `.sql` files recursively
       // (`walkMatchedDir`, sorted); a file match is kept verbatim (`config.go:157-183`).

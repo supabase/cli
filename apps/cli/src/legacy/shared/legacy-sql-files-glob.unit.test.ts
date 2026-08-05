@@ -502,4 +502,33 @@ describe("legacySqlFilesGlob", () => {
       );
     },
   );
+
+  it.effect(
+    "sorts direct wildcard matches by UTF-8 byte order, not UTF-16 code units (Go sort.Strings parity)",
+    () => {
+      // Go's `sort.Strings` (`Glob.SQLFiles`, `config.go:155`) orders the raw UTF-8 bytes
+      // of each match. A supplementary-plane character (here, an emoji — 4-byte UTF-8,
+      // lead byte 0xF0) always sorts AFTER a 3-byte-encoded BMP character (here, a
+      // fullwidth exclamation mark — lead byte 0xEF) in Go, because 0xF0 > 0xEF. JS's
+      // default `Array.prototype.sort()` instead compares UTF-16 code units, under which
+      // the emoji's surrogate-pair lead unit (0xD83D) sorts BEFORE the fullwidth
+      // exclamation mark's code unit (0xFF01) — the opposite order. Verified empirically
+      // against a real Go `sort.Strings` call: it places the fullwidth-exclamation file
+      // first.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-utf8-sort-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "\u{1F600}.sql"), "select 1;"); // 😀
+      writeFileSync(join(schemasDir, "！.sql"), "select 2;"); // ！
+      return run(["schemas/*.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/！.sql", "schemas/\u{1F600}.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });
