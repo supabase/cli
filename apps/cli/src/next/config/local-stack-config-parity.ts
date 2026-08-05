@@ -3,32 +3,34 @@ import type { ProjectConfig } from "@supabase/config";
 /**
  * The disposition of one project-config leaf in the next local-stack flow.
  *
- * `presence` tells the future launch resolver whether the decoded value is
- * sufficient or whether it must also inspect the loaded source document. Most
- * schema defaults erase the distinction between an omitted field and an
- * explicitly configured default value, which matters when unsupported fields
- * must be rejected or warned about without rejecting untouched defaults.
+ * `presence` tells the future launch resolver how to determine whether a field
+ * affects the local runtime. Most schema defaults erase the distinction between
+ * an omitted field and an explicitly configured default value. Secrets need an
+ * additional check: generated `env(...)` placeholders that did not resolve and
+ * secrets inside disabled subtrees do not affect the runtime.
  */
+type LocalStackConfigParityPresence = "decoded-value" | "effective-secret" | "raw-document";
+
 type LocalStackConfigParityDecision =
   | {
       readonly _tag: "mapped";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly mappedBy: "start" | "functions-dev" | "stack-functions-runtime";
       readonly rationale: string;
     }
   | {
       readonly _tag: "not-applicable";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly rationale: string;
     }
   | {
       readonly _tag: "unsupported-blocking";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly rationale: string;
     }
   | {
       readonly _tag: "unsupported-warning";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly rationale: string;
     };
 
@@ -62,9 +64,9 @@ const unsupportedOptionalRuntimeField: LocalStackConfigParityDecision = {
 
 const unsupportedSecretRuntimeField: LocalStackConfigParityDecision = {
   _tag: "unsupported-blocking",
-  presence: "decoded-value",
+  presence: "effective-secret",
   rationale:
-    "An explicitly configured secret changes local runtime credentials but the next stack launch Adapter does not translate it yet.",
+    "A concrete resolved secret in an enabled runtime subtree changes local credentials but the next stack launch Adapter does not translate it yet; unresolved generated env placeholders do not count.",
 };
 
 const mappedAutoExposeNewTables: LocalStackConfigParityDecision = {
@@ -80,7 +82,14 @@ const mappedFunctionManifest: LocalStackConfigParityDecision = {
   presence: "raw-document",
   mappedBy: "stack-functions-runtime",
   rationale:
-    "The current stack functions runtime resolves every configured function entry, including enablement, JWT verification, paths, static files, and environment values.",
+    "The current stack functions runtime resolves every configured function entry, including enablement, JWT verification, paths, and static files.",
+};
+
+const unsupportedPerFunctionEnv: LocalStackConfigParityDecision = {
+  _tag: "unsupported-blocking",
+  presence: "raw-document",
+  rationale:
+    "The current stack functions runtime merges every function environment into one global record, so per-function overrides are not preserved.",
 };
 
 const functionConfigParity = {
@@ -89,7 +98,7 @@ const functionConfigParity = {
   import_map: mappedFunctionManifest,
   entrypoint: mappedFunctionManifest,
   static_files: mappedFunctionManifest,
-  env: mappedFunctionManifest,
+  env: unsupportedPerFunctionEnv,
 } satisfies Record<keyof ProjectConfig["functions"][string], Node>;
 
 const mappedFunctionsDevEdgeRuntime: LocalStackConfigParityDecision = {
@@ -138,6 +147,13 @@ const authExternalProviderParity = {
   email_optional: unsupportedRuntimeField,
 } satisfies Record<keyof ProjectConfig["auth"]["external"]["apple"], Node>;
 
+type AuthExternalParity = {
+  readonly [Provider in keyof ProjectConfig["auth"]["external"]]: Record<
+    keyof ProjectConfig["auth"]["external"][Provider],
+    Node
+  >;
+};
+
 const authHookParity = {
   enabled: unsupportedRuntimeField,
   uri: unsupportedOptionalRuntimeField,
@@ -174,7 +190,7 @@ const authExternalParity = {
   spotify: authExternalProviderParity,
   workos: authExternalProviderParity,
   zoom: authExternalProviderParity,
-} satisfies Record<keyof ProjectConfig["auth"]["external"], Node>;
+} satisfies AuthExternalParity;
 
 const authHooksParity = {
   mfa_verification_attempt: authHookParity,

@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 12,
+      mapped: 11,
       "not-applicable": 10,
-      "unsupported-blocking": 337,
+      "unsupported-blocking": 338,
       "unsupported-warning": 6,
     });
   });
@@ -39,7 +39,6 @@ describe("localStackConfigParity", () => {
       "functions.*",
       "functions.*.enabled",
       "functions.*.entrypoint",
-      "functions.*.env",
       "functions.*.import_map",
       "functions.*.static_files",
       "functions.*.verify_jwt",
@@ -61,7 +60,6 @@ describe("localStackConfigParity", () => {
       "stack-functions-runtime:functions.*.import_map",
       "stack-functions-runtime:functions.*.entrypoint",
       "stack-functions-runtime:functions.*.static_files",
-      "stack-functions-runtime:functions.*.env",
     ]);
   });
 
@@ -75,6 +73,8 @@ describe("localStackConfigParity", () => {
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("storage.buckets.*")?.presence).toBe("raw-document");
     expect(byPath.get("experimental.webhooks.enabled")?.presence).toBe("raw-document");
+    expect(byPath.get("auth.external.apple.secret")?.presence).toBe("effective-secret");
+    expect(byPath.get("studio.openai_api_key")?.presence).toBe("effective-secret");
   });
 
   it("keeps non-runtime project configuration out of StackConfig", () => {
