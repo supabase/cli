@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createStack, type StackHandle } from "../src/node.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
-const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 5_000;
+const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 180_000;
 const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS = 90_000;
 
 function hasDockerDaemon(): boolean {
