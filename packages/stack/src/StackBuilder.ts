@@ -32,6 +32,7 @@ import {
 } from "./services/storage.ts";
 import { makeStudioServiceDocker } from "./services/studio.ts";
 import { makeVectorServiceDocker } from "./services/vector.ts";
+import { dependencyTimeoutSecondsForService } from "./services/health-budgets.ts";
 import type { PreparedStackArtifacts, ServiceResolution } from "./StackPreparation.ts";
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
@@ -517,6 +518,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, []),
               dependencies: [{ service: "analytics", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: dependencyTimeoutSecondsForService("analytics"),
             enabled: true,
           });
         }
@@ -586,6 +588,7 @@ export class StackBuilder extends Context.Service<
                       { service: "analytics", condition: "healthy" },
                     ],
             }),
+            dependencyTimeoutSeconds: dependencyTimeoutSecondsForService("analytics"),
             enabled: true,
           });
         }
