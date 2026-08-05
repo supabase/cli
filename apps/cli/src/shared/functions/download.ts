@@ -904,6 +904,23 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   // per call site here — left open (review round on CLI-1963's `functions
   // download` port).
   const denoVersion = loadedConfig?.config?.edge_runtime.deno_version;
+  // `?? projectRef` only substitutes on `null`/`undefined`, so a config.toml
+  // with an explicit `project_id = ""` still resolves to the empty string
+  // here (`supabase_network_`/`supabase_edge_runtime_`) instead of failing
+  // up front. Go's `Config.Validate` rejects that same config with "Missing
+  // required field in config: project_id" (`pkg/config/config.go:990-991`)
+  // before `flags.LoadConfig` ever returns to `Run` — before any Docker/API
+  // work. Pre-existing and cross-cutting, not introduced by this PR:
+  // `deploy.ts`'s identical `deployConfig?.project_id ?? projectRef`
+  // fallback (`deploy.ts:2201`) has the same gap, and no native `functions`
+  // Docker path (`deploy`, `serve`, `download`) routes a loaded config
+  // through `Config.Validate` parity checks at all — that port has one home
+  // today, `legacy-config-validate.ts`'s `legacyValidateResolvedConfig`,
+  // wired up only for the db/migration loader and the status/stop resolver.
+  // Wiring `Config.Validate` into every native config-consuming command
+  // belongs in the shared config-loading layer, not duplicated per
+  // Docker-path call site here — left open, same as the config-defaults gap
+  // above (review round on CLI-1963's `functions download` port).
   const projectId = loadedConfig?.config?.project_id ?? projectRef;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
     denoVersion,
