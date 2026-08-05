@@ -206,6 +206,12 @@ const hostedConfigurationField: LocalStackConfigParityDecision = {
   rationale:
     "This hosted-service limit is used by configuration management but does not change the local stack runtime.",
 };
+const legacyIgnoredLocalRuntimeField: LocalStackConfigParityDecision = {
+  _tag: "not-applicable",
+  presence: "raw-document",
+  rationale:
+    "The legacy local start runtime ignores this field, so it cannot change local stack behavior.",
+};
 const remoteOverlayField: LocalStackConfigParityDecision = {
   _tag: "not-applicable",
   presence: "raw-document",
@@ -251,7 +257,7 @@ const authHookParity = {
 } satisfies Record<keyof ProjectConfig["auth"]["hook"]["send_email"], Node>;
 
 const authRateLimitParity = {
-  email_sent: unsupportedRuntimeField,
+  email_sent: legacyIgnoredLocalRuntimeField,
   sms_sent: unsupportedRuntimeField,
   anonymous_users: unsupportedRuntimeField,
   token_refresh: unsupportedRuntimeField,
@@ -337,6 +343,15 @@ const authSmsParity = {
 
 const authParity = {
   enabled: mappedAuthRuntimeField,
+  external_url: unsupportedRuntimeField,
+  passkey: {
+    enabled: unsupportedEnabledProviderField,
+  },
+  webauthn: {
+    rp_display_name: unsupportedRuntimeField,
+    rp_id: unsupportedRuntimeField,
+    rp_origins: unsupportedRuntimeField,
+  },
   site_url: mappedAuthRuntimeField,
   additional_redirect_urls: mappedAuthRuntimeField,
   jwt_expiry: mappedAuthRuntimeField,
@@ -418,10 +433,10 @@ const authParity = {
   external: authExternalWithCustomParity,
   web3: {
     solana: {
-      enabled: unsupportedRuntimeField,
+      enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["solana"], Node>,
     ethereum: {
-      enabled: unsupportedRuntimeField,
+      enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["ethereum"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["web3"], Node>,
   oauth_server: {
@@ -453,7 +468,7 @@ const authParity = {
       issuer_url: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["workos"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["third_party"], Node>,
-} satisfies Record<keyof ProjectConfig["auth"], Node>;
+} satisfies Record<keyof ProjectConfig["auth"], Node> & LocalStackConfigParitySection;
 
 const dbSettingsParity = {
   effective_cache_size: unsupportedOptionalRuntimeField,
@@ -521,7 +536,7 @@ const localStackConfigParity = {
     port: mappedCoreTopologyField,
     shadow_port: commandOnlyDatabaseField,
     health_timeout: mappedDatabaseHealthTimeout,
-    major_version: unsupportedRuntimeField,
+    major_version: unsupportedNonDefaultRuntimeField,
     pooler: {
       enabled: mappedCoreTopologyField,
       port: mappedCoreTopologyField,

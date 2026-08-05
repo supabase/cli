@@ -7,7 +7,7 @@ describe("localStackConfigParity", () => {
   it("classifies every fixed project-config leaf exactly once", () => {
     const paths = entries.map(({ path }) => path);
 
-    expect(paths).toHaveLength(370);
+    expect(paths).toHaveLength(375);
     expect(new Set(paths).size).toBe(paths.length);
     expect(
       Object.fromEntries(
@@ -18,8 +18,8 @@ describe("localStackConfigParity", () => {
       ),
     ).toEqual({
       mapped: 262,
-      "not-applicable": 13,
-      "unsupported-blocking": 89,
+      "not-applicable": 14,
+      "unsupported-blocking": 93,
       "unsupported-warning": 6,
     });
   });
@@ -113,6 +113,11 @@ describe("localStackConfigParity", () => {
     expect(byPath.get("storage.analytics.max_tables")?.presence).toBe("enabled-subtree");
     expect(byPath.get("edge_runtime.deno_version")?.presence).toBe("non-default-value");
     expect(byPath.get("auth.jwt_secret")?.presence).toBe("decoded-value");
+    expect(byPath.get("auth.web3.solana.enabled")?.presence).toBe("non-default-value");
+    expect(byPath.get("db.major_version")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.external_url")?.presence).toBe("raw-document");
+    expect(byPath.get("auth.passkey.enabled")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.webauthn.rp_id")?.presence).toBe("raw-document");
     expect(byPath.get("auth.external.*")?.presence).toBe("enabled-subtree");
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("storage.buckets.*")?.presence).toBe("raw-document");
@@ -136,6 +141,7 @@ describe("localStackConfigParity", () => {
         .sort(),
     ).toEqual(
       [
+        "auth.rate_limit.email_sent",
         "db.network_restrictions.allowed_cidrs",
         "db.network_restrictions.allowed_cidrs_v6",
         "db.network_restrictions.enabled",
