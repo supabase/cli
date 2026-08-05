@@ -283,6 +283,7 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
               env: childEnv,
               stdio: "ignore",
               timeout: action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS,
+              killSignal: "SIGKILL",
             });
           } else if (action._tag === "RemovePath") {
             await removePathWithRetry(action);

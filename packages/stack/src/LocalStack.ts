@@ -416,6 +416,7 @@ export const localStackLayer = (
       });
 
       let disposed = false;
+      let disposing = false;
       const runtimeHost = Effect.gen(function* () {
         const prepared = yield* ensurePrepared;
         const platform = yield* detectPlatform;
@@ -598,32 +599,35 @@ export const localStackLayer = (
       });
       const requireMutable = (operation: string) =>
         Effect.suspend(() =>
-          disposed
+          disposed || disposing
             ? Effect.fail(
                 new StackBuildError({
-                  detail: `Cannot ${operation} after the stack has been disposed`,
+                  detail: `Cannot ${operation} after stack disposal has begun`,
                 }),
               )
             : Effect.void,
         );
       const disposeOnce = () =>
-        Effect.gen(function* () {
-          if (disposed) {
-            return;
-          }
-          disposed = true;
-          yield* Ref.set(phaseRef, "stopping");
-          yield* cleanupLocalStackResources({
-            stop: () =>
-              runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
-            cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
-            config,
-          }).pipe(
-            Effect.ensuring(providePlatform(clearFunctionsRuntimeConfig(config.runtimeRoot))),
-            Effect.ensuring(portLease.releaseAll),
-            Effect.ensuring(Ref.set(phaseRef, "disposed")),
-          );
-        }).pipe(withLifecycleLock);
+        Effect.suspend(() => {
+          disposing = true;
+          return Effect.gen(function* () {
+            if (disposed) {
+              return;
+            }
+            disposed = true;
+            yield* Ref.set(phaseRef, "stopping");
+            yield* cleanupLocalStackResources({
+              stop: () =>
+                runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
+              cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
+              config,
+            }).pipe(
+              Effect.ensuring(providePlatform(clearFunctionsRuntimeConfig(config.runtimeRoot))),
+              Effect.ensuring(portLease.releaseAll),
+              Effect.ensuring(Ref.set(phaseRef, "disposed")),
+            );
+          }).pipe(withLifecycleLock);
+        }).pipe(Effect.uninterruptible);
 
       const withReadinessPolicy = <A, E, R>(
         effect: Effect.Effect<A, E, R>,
