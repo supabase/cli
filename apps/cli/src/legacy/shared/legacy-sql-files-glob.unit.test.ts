@@ -247,6 +247,47 @@ describe("legacySqlFilesGlob", () => {
     },
   );
 
+  it.effect(
+    "still includes a '.sql' child whose stat fails after it's already listed (Go WalkDir parity)",
+    () => {
+      // Go's `fs.WalkDir` types each child from the parent's `ReadDir`-returned `DirEntry`
+      // and never re-`Stat`s through it, so a `.sql` file that disappears between `ReadDir`
+      // and its own visit stays in Go's declared file list — only the later, real file-open
+      // fails. Simulate the stat failure directly (mocking a real race is flaky) by pointing
+      // the matched directory at one that lists a child but whose child path is unreadable:
+      // a broken symlink target used as a bare filename via a `readLink` failure isn't
+      // enough here (that's the earlier symlink test), so exercise the `fs.stat` failure
+      // path itself by removing the file the instant after `readDirectory` returns it, via
+      // a `FileSystem` layer that deletes on first `stat` call for that path.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-stat-race-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      const racyFile = join(schemasDir, "racy.sql");
+      writeFileSync(racyFile, "select 1;");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const racyFs: FileSystem.FileSystem = {
+          ...fs,
+          stat: (p: string) =>
+            p === racyFile
+              ? Effect.sync(() => rmSync(racyFile)).pipe(Effect.andThen(fs.stat(p)))
+              : fs.stat(p),
+        };
+        return yield* legacySqlFilesGlob(racyFs, path, ["schemas"], dir);
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/racy.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("still expands a real (non-symlinked) nested directory recursively", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-nested-"));
     const schemasDir = join(dir, "schemas");

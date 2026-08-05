@@ -166,10 +166,27 @@ const legacyWalkSqlFiles = (
           if (isSymlink) {
             continue;
           }
-          const childType = yield* fs.stat(childAbs).pipe(
-            Effect.map((info) => info.type),
-            Effect.orElseSucceed(() => "Unknown" as const),
-          );
+          const statResult = yield* fs.stat(childAbs).pipe(Effect.result);
+          if (Result.isFailure(statResult)) {
+            // TOCTOU: this `.sql` child existed a moment ago in `names` (this directory's
+            // `readDirectory` snapshot) but is gone by the time we stat it here — e.g. removed
+            // by a concurrent process. Go never hits this window: `fs.WalkDir` decides
+            // file-vs-directory from the SAME `DirEntry` its parent `ReadDir` already
+            // returned and never re-`Stat`s a child, so a `.sql` file that disappears here
+            // stays in Go's declared file list, and only the later, real file-open fails
+            // loudly. Verified empirically: a scratch `filepath.WalkDir` probe that deletes a
+            // sibling `.sql` file between `ReadDir` and that file's own visit still reports
+            // it `IsRegular` from the cached entry, keeps it in `declared`, and the
+            // subsequent `os.Open` on it fails with "no such file or directory" — never a
+            // silent drop. Losing the stat here must not silently drop the file and let the
+            // walk "succeed" having applied nothing — best-effort include it, matching Go's
+            // outcome, and let the real downstream read surface the failure.
+            if (childRel.endsWith(".sql")) {
+              collected.push(toSlash(childRel));
+            }
+            continue;
+          }
+          const childType = statResult.success.type;
           if (childType === "Directory") {
             yield* walk(childRel);
           } else if (childType === "File" && childRel.endsWith(".sql")) {
