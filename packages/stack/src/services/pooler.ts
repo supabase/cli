@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 type PoolMode = "transaction" | "session";
 
@@ -28,9 +29,7 @@ const poolerHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/api/health",
     scheme: "http",
   },
-  initialDelaySeconds: 2,
-  periodSeconds: 1,
-  failureThreshold: 60,
+  ...stackHealthBudgets.pooler,
 });
 
 const tenantScript = (

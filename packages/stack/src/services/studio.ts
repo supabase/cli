@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerStudioOptions {
   readonly image: string;
@@ -29,9 +30,7 @@ const studioHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/api/platform/profile",
     scheme: "http",
   },
-  initialDelaySeconds: 2,
-  periodSeconds: 1,
-  failureThreshold: 60,
+  ...stackHealthBudgets.studio,
 });
 
 export const makeStudioServiceDocker = (opts: DockerStudioOptions): ServiceDef =>
