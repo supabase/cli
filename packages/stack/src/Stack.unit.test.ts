@@ -745,8 +745,14 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const coordinator = yield* StackLifecycleCoordinator;
       yield* coordinator.start();
+      const stateChanges = yield* coordinator.stateChanges("auth");
+      const stoppedState = yield* stateChanges.pipe(
+        Stream.filter((state) => state.status === "Stopped"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
       yield* coordinator.stopService("auth");
-      yield* Effect.sleep("20 millis");
+      yield* Fiber.join(stoppedState);
       expect((yield* coordinator.getState("auth")).status).toBe("Stopped");
 
       yield* coordinator.stop();
