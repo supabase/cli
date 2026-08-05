@@ -384,6 +384,18 @@ function resolveSchema(document: OpenApiDocument, schema: OpenApiSchema): OpenAp
   return sanitizeOpenApiSchema(schema);
 }
 
+export function normalizeQueryParameterSchema(
+  parameter: OpenApiParameter,
+  schema: OpenApiSchema,
+): OpenApiSchema {
+  const acceptsBoolean =
+    schema.type === "string" &&
+    (typeof parameter.schema?.example === "boolean" ||
+      /\bboolean string\b/iu.test(parameter.description ?? ""));
+
+  return acceptsBoolean ? { anyOf: [schema, { type: "boolean" }] } : schema;
+}
+
 function getObjectShape(document: OpenApiDocument, schema: OpenApiSchema): ObjectShape | undefined {
   const resolved = resolveSchema(document, schema);
   if (resolved.type === "object" || resolved.properties !== undefined) {
@@ -514,7 +526,9 @@ function buildCombinedInputSchema(
     if (parameter.in === "cookie" || parameter.schema === undefined) {
       continue;
     }
-    properties[parameter.name] = resolveSchema(document, parameter.schema);
+    const schema = resolveSchema(document, parameter.schema);
+    properties[parameter.name] =
+      parameter.in === "query" ? normalizeQueryParameterSchema(parameter, schema) : schema;
     if (parameter.required === true) {
       required.add(parameter.name);
     }
@@ -666,7 +680,7 @@ function renderSchemaSource(
     parts.push("// recursive definitions");
     for (const [name, code] of recursiveEntries) {
       parts.push(
-        `export const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
+        `export type ${name} = ${code.Type}\nexport const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
       );
     }
   }

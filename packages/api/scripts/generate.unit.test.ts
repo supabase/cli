@@ -2,7 +2,7 @@ import * as JsonSchema from "effect/JsonSchema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { describe, expect, test } from "vitest";
 
-import { normalizeNullableJsonSchema } from "./generate.ts";
+import { normalizeNullableJsonSchema, normalizeQueryParameterSchema } from "./generate.ts";
 
 function renderOpenApiSchema(schema: Parameters<typeof JsonSchema.fromSchemaOpenApi3_0>[0]) {
   const normalized = normalizeNullableJsonSchema(JsonSchema.fromSchemaOpenApi3_0(schema).schema);
@@ -22,5 +22,41 @@ describe("generate", () => {
     expect(renderOpenApiSchema({ type: "string", format: "date-time", nullable: true })).toBe(
       'Schema.Union([Schema.String.annotate({ "format": "date-time" }), Schema.Null])',
     );
+  });
+
+  test("accepts booleans for string-encoded boolean query parameters", () => {
+    expect(
+      normalizeQueryParameterSchema(
+        {
+          name: "verify_jwt",
+          in: "query",
+          schema: { type: "string", example: true },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ anyOf: [{ type: "string" }, { type: "boolean" }] });
+
+    expect(
+      normalizeQueryParameterSchema(
+        {
+          name: "reveal",
+          in: "query",
+          description: "Boolean string, true or false",
+          schema: { type: "string", example: "true" },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ anyOf: [{ type: "string" }, { type: "boolean" }] });
+
+    expect(
+      normalizeQueryParameterSchema(
+        {
+          name: "slug",
+          in: "query",
+          schema: { type: "string", example: "hello-world" },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ type: "string" });
   });
 });

@@ -177,7 +177,7 @@ describe("api schema payload", () => {
             },
             upload: {
               flag: "--upload",
-              optional: {
+              required: {
                 file: {
                   type: "array",
                   items: {

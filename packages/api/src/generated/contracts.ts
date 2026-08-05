@@ -300,6 +300,13 @@ export const V1OrganizationMemberResponse = Schema.Struct({
   avatar_url: Schema.Union([Schema.String, Schema.Null]),
 });
 // recursive definitions
+export type UpdateCustomHostnameResponseJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<UpdateCustomHostnameResponseJsonValue>
+  | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
 export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite()), Schema.Boolean]),
@@ -319,6 +326,13 @@ export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
     ),
   ),
 ]).annotate({ description: "Any JSON-serializable value" });
+export type ListProjectAddonsResponseJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<ListProjectAddonsResponseJsonValue>
+  | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
 export const ListProjectAddonsResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite()), Schema.Boolean]),
@@ -836,8 +850,8 @@ export const V1CreateAFunctionInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   slug: Schema.optionalKey(Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")))),
   name: Schema.optionalKey(Schema.String),
-  verify_jwt: Schema.optionalKey(Schema.String),
-  import_map: Schema.optionalKey(Schema.String),
+  verify_jwt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
+  import_map: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   entrypoint_path: Schema.optionalKey(Schema.String),
   import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
@@ -1173,7 +1187,7 @@ export const V1CreateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  reveal: Schema.optionalKey(Schema.String),
+  reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   type: Schema.Literals(["publishable", "secret"]),
   name: Schema.String.check(Schema.isMinLength(4))
     .check(Schema.isMaxLength(64))
@@ -1454,7 +1468,7 @@ export const V1DeleteABranchInput = Schema.Struct({
       ),
     ),
   ]),
-  force: Schema.optionalKey(Schema.String),
+  force: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1DeleteABranchOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteAFunctionInput = Schema.Struct({
@@ -1593,8 +1607,8 @@ export const V1DeleteProjectApiKeyInput = Schema.Struct({
       ),
     ),
   ),
-  reveal: Schema.optionalKey(Schema.String),
-  was_compromised: Schema.optionalKey(Schema.String),
+  reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
+  was_compromised: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   reason: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteProjectApiKeyOutput = Schema.Struct({
@@ -1682,7 +1696,7 @@ export const V1DeployAFunctionInput = Schema.Struct({
   slug: Schema.optionalKey(
     Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$"))),
   ),
-  bundleOnly: Schema.optionalKey(Schema.String),
+  bundleOnly: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   body: Schema.Struct({
     file: Schema.Array(BinaryInput),
     metadata: Schema.Struct({
@@ -1735,7 +1749,7 @@ export const V1DiffABranchInput = Schema.Struct({
     ),
   ]),
   included_schemas: Schema.optionalKey(Schema.String),
-  pgdelta: Schema.optionalKey(Schema.String),
+  pgdelta: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1DiffABranchOutput = Schema.String;
 export const V1DisablePreviewBranchingInput = Schema.Struct({
@@ -3563,7 +3577,7 @@ export const V1GetProjectApiKeyInput = Schema.Struct({
       ),
     ),
   ),
-  reveal: Schema.optionalKey(Schema.String),
+  reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1GetProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -3613,7 +3627,7 @@ export const V1GetProjectApiKeysInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  reveal: Schema.optionalKey(Schema.String),
+  reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse);
 export const V1GetProjectClaimTokenInput = Schema.Struct({
@@ -5371,8 +5385,8 @@ export const V1UpdateAFunctionInput = Schema.Struct({
   function_slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$"))),
   slug: Schema.optionalKey(Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")))),
   name: Schema.optionalKey(Schema.String),
-  verify_jwt: Schema.optionalKey(Schema.String),
-  import_map: Schema.optionalKey(Schema.String),
+  verify_jwt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
+  import_map: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   entrypoint_path: Schema.optionalKey(Schema.String),
   import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
@@ -6987,7 +7001,7 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
       ),
     ),
   ),
-  reveal: Schema.optionalKey(Schema.String),
+  reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   name: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(4))
       .check(Schema.isMaxLength(64))
@@ -7049,7 +7063,7 @@ export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  enabled: Schema.String,
+  enabled: Schema.Union([Schema.String, Schema.Boolean]),
 });
 export const V1UpdateProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
 export const V1UpdateProjectSigningKeyInput = Schema.Struct({
