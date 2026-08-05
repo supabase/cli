@@ -4,6 +4,7 @@ import {
   dockerRunService,
   type ServiceDependency,
 } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerVectorOptions {
   readonly image: string;
@@ -67,9 +68,7 @@ ${VECTOR_CONFIG(opts.serviceHost, opts.analyticsPort, opts.analyticsApiKey)}EOF
       "sh",
       ["-ec", "wget -q -O /dev/null http://127.0.0.1:9001/health"],
       {
-        initialDelaySeconds: 1,
-        periodSeconds: 1,
-        failureThreshold: 30,
+        ...stackHealthBudgets.vector,
       },
     ),
   });

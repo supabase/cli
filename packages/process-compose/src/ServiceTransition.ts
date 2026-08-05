@@ -16,6 +16,8 @@ export type ServiceEvent =
     }
   | { readonly _tag: "HealthCheckPassed" }
   | { readonly _tag: "HealthCheckFailed" }
+  | { readonly _tag: "ProcessTerminated" }
+  | { readonly _tag: "UnhealthyRestartExhausted"; readonly error: string }
   | { readonly _tag: "ProcessExited"; readonly exitCode: number }
   | { readonly _tag: "StopRequested" }
   | {
@@ -39,6 +41,7 @@ const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
   "Starting:StopRequested",
   "Starting:HookFailed",
   "Running:HealthCheckPassed",
+  "Running:HealthCheckFailed",
   "Running:ProcessExited",
   "Running:StopRequested",
   "Healthy:HealthCheckPassed",
@@ -47,6 +50,7 @@ const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
   "Healthy:StopRequested",
   "Unhealthy:HealthCheckPassed",
   "Unhealthy:ProcessExited",
+  "Unhealthy:ProcessTerminated",
   "Unhealthy:StopRequested",
   "Stopping:ProcessExited",
   "Stopped:RestartTriggered",
@@ -54,6 +58,7 @@ const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
   "Failed:ProcessExited",
   "Failed:StopRequested",
   "Unhealthy:RestartTriggered",
+  "Unhealthy:UnhealthyRestartExhausted",
   "Restarting:StopRequested",
   "Restarting:SpawnFailed",
   "Restarting:BackoffElapsed",
@@ -95,12 +100,25 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
     case "HealthCheckFailed":
       return new ServiceState({ ...state, status: "Unhealthy" });
 
+    case "UnhealthyRestartExhausted":
+      return new ServiceState({
+        ...state,
+        status: "Failed",
+        pid: null,
+        exitCode: null,
+        error: event.error,
+      });
+
+    case "ProcessTerminated":
+      return new ServiceState({ ...state, pid: null });
+
     case "ProcessExited": {
       const status: ServiceStatus =
         state.status === "Stopping" ? "Stopped" : event.exitCode === 0 ? "Stopped" : "Failed";
       return new ServiceState({
         ...state,
         status,
+        pid: null,
         exitCode: event.exitCode,
       });
     }
@@ -116,6 +134,7 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
       return new ServiceState({
         ...state,
         status: "Restarting",
+        pid: null,
         restartCount: event.restartCount,
       });
 
@@ -133,6 +152,7 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
       return new ServiceState({
         ...state,
         status: "Failed",
+        pid: null,
         error: event.error,
       });
   }

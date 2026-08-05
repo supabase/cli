@@ -34,6 +34,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
       mode: "docker",
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
+      analytics: {},
     });
 
     try {
@@ -109,6 +110,20 @@ dockerDescribe("createStack e2e (docker mode)", () => {
       });
     },
   );
+
+  test("cold-starts analytics through lazy service activation", { timeout: 60_000 }, async () => {
+    await stack.startService("analytics");
+
+    const [runningImages, states] = await Promise.all([
+      Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
+      stack.getStatus(),
+    ]);
+
+    expect(runningImages).toContain("supabase/logflare");
+    expect(states).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "analytics", status: "Healthy" })]),
+    );
+  });
 
   test(
     "supports the docker auth signup and session golden path",
