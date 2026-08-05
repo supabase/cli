@@ -10,6 +10,7 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import { StackServiceActivator } from "./ServiceActivation.ts";
+import { StackReadinessError } from "./errors.ts";
 import type { ServiceName } from "./versions.ts";
 
 export interface ProxyConfig {
@@ -140,13 +141,25 @@ function makeProxyHandler(
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
       const activationEffect = activator.activate(opts.service);
-      const activation = yield* (
-        config.activationTimeout === "infinite"
-          ? activationEffect
-          : activationEffect.pipe(
-              Effect.timeout(config.activationTimeout ?? DEFAULT_SERVICE_ACTIVATION_TIMEOUT),
-            )
-      ).pipe(
+      const activation = yield* (() => {
+        if (config.activationTimeout === "infinite") {
+          return activationEffect;
+        }
+        const activationTimeout = config.activationTimeout ?? DEFAULT_SERVICE_ACTIVATION_TIMEOUT;
+        return activationEffect.pipe(
+          Effect.timeoutOrElse({
+            duration: activationTimeout,
+            orElse: () =>
+              Effect.fail(
+                new StackReadinessError({
+                  target: opts.service,
+                  timeoutMs: Duration.toMillis(activationTimeout),
+                  detail: `Timed out waiting for ${opts.service} activation`,
+                }),
+              ),
+          }),
+        );
+      })().pipe(
         Effect.tapError((error) =>
           error._tag === "StackReadinessError" ? signalTerminalFailure : Effect.void,
         ),

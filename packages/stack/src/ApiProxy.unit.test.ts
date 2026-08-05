@@ -289,6 +289,7 @@ describe("ApiProxy", () => {
       });
       expect(res.status).toBe(503);
       expect(res.headers.get("retry-after")).toBe("1");
+      await expect(proxy.awaitTerminalFailure()).resolves.toBeUndefined();
     } finally {
       await proxy.dispose();
     }
