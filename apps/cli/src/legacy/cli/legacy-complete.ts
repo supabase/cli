@@ -2,7 +2,12 @@ import { Option } from "effect";
 import { GlobalFlag } from "effect/unstable/cli";
 import type { Command, Param, Primitive } from "effect/unstable/cli";
 import process from "node:process";
+import {
+  LEGACY_QUERY_OUTPUT_FORMATS,
+  LEGACY_RESOURCE_OUTPUT_FORMATS,
+} from "../shared/legacy-go-output-flag.ts";
 import { legacyUnwrapParam } from "../shared/legacy-param-introspection.ts";
+import { legacyParseUintBase0 } from "../shared/legacy-parse-uint.ts";
 
 /**
  * Native TypeScript reimplementation of cobra's dynamic-completion protocol
@@ -574,6 +579,50 @@ function legacyMarkChangedShorthandCluster(
 }
 
 /**
+ * Go registers `--jobs`/`--last` as `UintVarP`/`UintVar` pflag values
+ * (`apps/cli-go/cmd/functions.go:161` — `functions deploy`;
+ * `cmd/migration.go:152` — `migration down`; `cmd/db.go:717` — `db reset`,
+ * the same bug class), which reject a leading `-`/`+` outright
+ * (`strconv.ParseUint(s, 0, 64)`) — unlike this TS tree's plain signed
+ * `Flag.integer("jobs"/"last")`. `legacyIsValidFlagValue`'s generic `Integer`
+ * regex accepts a leading sign, so it must consult this table to know when
+ * to defer to the stricter `legacyParseUintBase0` instead (verified
+ * empirically against a real `apps/cli-go` build: `functions deploy --jobs
+ * -1 --p`, `migration down --last -1 --d`, and `db reset --last -1 --d` all
+ * return zero candidates with the Default directive — CLI-1965 review
+ * finding). `storage cp --jobs` hits the same Go flag type but is already
+ * `Flag.string("jobs")` in TS (its own handler calls `legacyParseUintBase0`
+ * directly, `cp.command.ts`), so it never reaches this `Integer` branch and
+ * needs no entry here. Key = `<matched command path>:<flag name>`, matching
+ * `LEGACY_COMPLETION_REQUIRED_FLAGS`'s convention.
+ */
+const LEGACY_COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
+  "functions deploy:jobs",
+  "migration down:last",
+  "db reset:last",
+]);
+
+/**
+ * Go registers `--output`/`-o` as a command-scoped enum: the root persistent
+ * flag accepts `env|pretty|json|toml|yaml` (`internal/utils/output.go:30-38`)
+ * while `db query`'s own local flag accepts `json|table|csv` (`cmd/db.go:285-
+ * 288`) — two value sets that only overlap on `json`, on what this TS tree
+ * models as a single global `LegacyOutputFlag` whose `choiceKeys` is the
+ * union of both (`legacy-go-output-flag.ts`), so `flag.choiceKeys` alone
+ * can't tell which enum applies at the resolved command. This restores Go's
+ * per-command validation (verified empirically against a real `apps/cli-go`
+ * build: `--output table ""` outside `db query`, and `db query --output env
+ * ""`, are BOTH rejected with zero candidates and the Default directive,
+ * even though each value is accepted on the OTHER side — CLI-1965 review
+ * finding).
+ */
+function legacyOutputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray<string> {
+  return matchedPath.length === 2 && matchedPath[0] === "db" && matchedPath[1] === "query"
+    ? LEGACY_QUERY_OUTPUT_FORMATS
+    : LEGACY_RESOURCE_OUTPUT_FORMATS;
+}
+
+/**
  * Validates a flag's value the way pflag's typed `Value.Set` does inside
  * `finalCmd.ParseFlags()` — e.g. `-o not-a-format` (a `Choice`-typed
  * `--output`) or `--debug=maybe` (a `Boolean`-typed `--debug`) fail to parse
@@ -582,15 +631,28 @@ function legacyMarkChangedShorthandCluster(
  * return zero candidates with the Default directive, exactly like an
  * unresolved flag name). Only the primitive shapes pflag can actually reject
  * are checked; `String`/`Path`/`Date`/etc. flags accept any string in Go too,
- * so every other tag is unconditionally valid here.
+ * so every other tag is unconditionally valid here — except the two
+ * command-dependent overrides above (`LEGACY_COMPLETION_UINT_FLAGS`,
+ * `legacyOutputFlagChoiceKeys`), which a bare `LegacyFlagDescriptor` can't
+ * express on its own, hence the `matchedPath` parameter.
  */
-function legacyIsValidFlagValue(flag: LegacyFlagDescriptor, value: string): boolean {
+function legacyIsValidFlagValue(
+  matchedPath: ReadonlyArray<string>,
+  flag: LegacyFlagDescriptor,
+  value: string,
+): boolean {
   switch (flag.primitiveTag) {
     case "Boolean":
       return legacyParseGoBool(value) !== undefined;
     case "Choice":
+      if (flag.name === "output") {
+        return legacyOutputFlagChoiceKeys(matchedPath).includes(value);
+      }
       return flag.choiceKeys !== undefined && flag.choiceKeys.includes(value);
     case "Integer":
+      if (LEGACY_COMPLETION_UINT_FLAGS.has(`${matchedPath.join(" ")}:${flag.name}`)) {
+        return "value" in legacyParseUintBase0(value);
+      }
       return /^[+-]?\d+$/.test(value);
     case "Float":
       return value.trim().length > 0 && !Number.isNaN(Number(value));
@@ -702,6 +764,7 @@ function legacyFindUnresolvedFlagToken(
   trimmedArgs: ReadonlyArray<string>,
   toComplete: string,
   inScopeFlags: ReadonlyArray<LegacyFlagDescriptor>,
+  matchedPath: ReadonlyArray<string>,
 ): string | undefined {
   // See this function's doc comment: only a `toComplete` that's itself a
   // bare flag-shaped token (no `=`) blocks cobra's "rescue" of a trailing,
@@ -724,7 +787,8 @@ function legacyFindUnresolvedFlagToken(
       if (resolved === undefined) return token;
 
       if (equalsIndex !== -1) {
-        if (!legacyIsValidFlagValue(resolved, token.slice(equalsIndex + 1))) return token;
+        if (!legacyIsValidFlagValue(matchedPath, resolved, token.slice(equalsIndex + 1)))
+          return token;
         continue;
       }
       if (resolved.isBoolean) continue;
@@ -734,7 +798,8 @@ function legacyFindUnresolvedFlagToken(
       }
       const value = trimmedArgs[index];
       index++; // skip the consumed value token
-      if (value !== undefined && !legacyIsValidFlagValue(resolved, value)) return value;
+      if (value !== undefined && !legacyIsValidFlagValue(matchedPath, resolved, value))
+        return value;
       continue;
     }
 
@@ -742,7 +807,7 @@ function legacyFindUnresolvedFlagToken(
     if (cluster === undefined) return token;
     if (cluster.flag.isBoolean) continue;
     if (cluster.attachedValue !== undefined) {
-      if (!legacyIsValidFlagValue(cluster.flag, cluster.attachedValue)) return token;
+      if (!legacyIsValidFlagValue(matchedPath, cluster.flag, cluster.attachedValue)) return token;
       continue;
     }
     if (index >= trimmedArgs.length) {
@@ -751,7 +816,8 @@ function legacyFindUnresolvedFlagToken(
     }
     const value = trimmedArgs[index];
     index++; // skip the consumed value token
-    if (value !== undefined && !legacyIsValidFlagValue(cluster.flag, value)) return value;
+    if (value !== undefined && !legacyIsValidFlagValue(matchedPath, cluster.flag, value))
+      return value;
   }
   return undefined;
 }
@@ -770,6 +836,62 @@ function legacyFlagValueCompletion(
     };
   }
   return { candidates: [], directive: LegacyCompletionDirective.Default };
+}
+
+/**
+ * Mirrors cobra's auto-registered `help` command's own `ValidArgsFunction`
+ * (`command.go:1263-1310`, `InitDefaultHelpCmd`): `help` is a REAL subcommand
+ * of root, and its `ValidArgsFunction` re-resolves everything typed after it
+ * from root — via `c.Root().Find(args)` — then lists THAT resolved command's
+ * own visible subcommands, filtered by `toComplete`'s prefix. `help db d`
+ * therefore completes as if `d` were being completed inside `db` (`diff`,
+ * `dump`), not as an argument to `help` itself.
+ *
+ * Mirrors cobra's `legacyArgs` validator (`args.go:28-37`) for the "unknown
+ * command" error `Find` surfaces through `e`: it fires ONLY when the
+ * resolved command is root itself (no real descent happened at all) AND a
+ * token is left over — a token left over under any OTHER resolved command is
+ * never an error there (subcommands "will always accept arbitrary
+ * arguments"). On that error path cobra returns zero candidates, but still
+ * with the NoFileComp directive, same as the success path (verified
+ * empirically against a real `apps/cli-go` build: `help bogus d` -> no
+ * candidates; `help db bogus d` -> still `db`'s subcommands, since `db` is
+ * not root — CLI-1965 review finding).
+ *
+ * `root` here is always `finalCommand` from the outer resolution: `help` has
+ * no node anywhere in this TS tree (it is a synthesized candidate, not a
+ * real `Command.Command.Any` — see the comment where Case 3 pushes it
+ * below), so the outer `legacyResolveCommandPath` call always stops at root
+ * immediately when `trimmedArgs[0] === "help"`, making `finalCommand` and
+ * real cobra's `c.Root()` the same command.
+ */
+function legacyHelpArgumentCandidates(
+  root: Command.Command.Any,
+  argsAfterHelp: ReadonlyArray<string>,
+  toComplete: string,
+): LegacyCompletionResult {
+  const { matchedPath, leftoverArgs, commandChain } = legacyResolveCommandPath(root, argsAfterHelp);
+  if (matchedPath.length === 0 && leftoverArgs.length > 0) {
+    return { candidates: [], directive: LegacyCompletionDirective.NoFileComp };
+  }
+
+  const resolved = commandChain[commandChain.length - 1] ?? root;
+  const visibleSubcommands = legacyFlattenSubcommands(resolved).filter((sub) => !sub.hidden);
+  const candidates: Array<LegacyCompletionCandidate> = visibleSubcommands.map((sub) => ({
+    name: sub.name,
+    description: sub.shortDescription ?? sub.description,
+  }));
+  // Cobra's help command is itself one of root's `Commands()`, so re-resolving
+  // to root also re-lists `help` (verified empirically: `help h` -> `help`).
+  if (matchedPath.length === 0) {
+    candidates.push({ name: "help", description: "Help about any command" });
+  }
+  candidates.sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    candidates: candidates.filter((candidate) => candidate.name.startsWith(toComplete)),
+    directive: LegacyCompletionDirective.NoFileComp,
+  };
 }
 
 /**
@@ -803,7 +925,9 @@ export function legacyClassifyCompletion(
   const { finalCommand, matchedPath, leftoverArgs, trimmedArgs, toComplete, inScopeFlags } = input;
   const isAtRoot = matchedPath.length === 0;
 
-  if (legacyFindUnresolvedFlagToken(trimmedArgs, toComplete, inScopeFlags) !== undefined) {
+  if (
+    legacyFindUnresolvedFlagToken(trimmedArgs, toComplete, inScopeFlags, matchedPath) !== undefined
+  ) {
     return { candidates: [], directive: LegacyCompletionDirective.Default };
   }
 
@@ -896,6 +1020,17 @@ export function legacyClassifyCompletion(
   // Case 3: subcommand-name + required-flag (bare noun) completion.
   const candidates: Array<LegacyCompletionCandidate> = [];
   let directive: number = LegacyCompletionDirective.Default;
+
+  // `help` is a real cobra subcommand with its own `ValidArgsFunction` that
+  // completes a SECOND, independent command-path lookup from root — see
+  // `legacyHelpArgumentCandidates`'s doc comment. `isAtRoot &&
+  // trimmedArgs[0] === "help"` exactly identifies "this request is `help
+  // ...`": `help` isn't a node anywhere in this tree, so the outer
+  // `legacyResolveCommandPath` call always stops at root immediately when
+  // it's the first token (CLI-1965 review finding).
+  if (isAtRoot && trimmedArgs[0] === "help") {
+    return legacyHelpArgumentCandidates(finalCommand, trimmedArgs.slice(1), toComplete);
+  }
 
   // Once any flag or extra positional token has already appeared before this
   // position, subcommand-name completion is suppressed entirely (cobra's

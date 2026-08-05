@@ -477,6 +477,173 @@ describe("legacyRespondToComplete", () => {
     );
   });
 
+  describe("help's own ValidArgsFunction resolves a second command path from root (CLI-1965 review)", () => {
+    it("completes root subcommand names after `help`", () => {
+      // Cobra's auto-registered help command has its own ValidArgsFunction
+      // (command.go:1274-1290) that re-resolves everything after `help` from
+      // root — `help d` completes as if `d` were being completed at the
+      // root itself, not as an argument to `help` (verified empirically
+      // against a real apps/cli-go build: `db`, `domains`).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "d"]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["db", "domains"]),
+      );
+    });
+
+    it("completes a resolved subcommand's own children after `help <command>`", () => {
+      // `help db d` completes as `db d` would — db's own subcommands, not
+      // help's (verified empirically against a real apps/cli-go build:
+      // `diff`, `dump`).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "db", "d"]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["diff", "dump"]),
+      );
+    });
+
+    it("returns no candidates for a leaf command with no subcommands of its own", () => {
+      // `db dump` is a leaf; cobra's ValidArgsFunction loops over its empty
+      // Commands() and finds nothing, but still sets NoFileComp (verified
+      // empirically against a real apps/cli-go build).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "db", "dump", "s"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
+    });
+
+    it("returns no candidates for an unresolved token directly under root", () => {
+      // Cobra's legacyArgs validator (args.go:28-37) only errors the
+      // "unknown command" case when the resolved command IS root and a
+      // token is left over (verified empirically against a real
+      // apps/cli-go build: `help bogus d` -> zero candidates).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "bogus", "d"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
+    });
+
+    it("still lists a resolved non-root command's subcommands past an unresolved token", () => {
+      // The same legacyArgs validator never errors for a non-root resolved
+      // command, even with leftover args — subcommands "will always accept
+      // arbitrary arguments" (verified empirically against a real
+      // apps/cli-go build: `help db bogus d` still offers db's own
+      // subcommands).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "help",
+        "db",
+        "bogus",
+        "d",
+      ]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["diff", "dump"]),
+      );
+    });
+
+    it("includes the synthetic `help` candidate itself when resolved back to root", () => {
+      // Cobra's help command is one of root's own Commands(), so completing
+      // help's arguments back at root re-lists help too (verified
+      // empirically against a real apps/cli-go build: `help h` -> `help`).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "h"]);
+      expect(result).toEqual({
+        candidates: [{ name: "help", description: "Help about any command" }],
+        directive: LegacyCompletionDirective.NoFileComp,
+      });
+    });
+  });
+
+  describe("uint-backed flags reject a leading sign like real pflag's ParseUint (CLI-1965 review)", () => {
+    it.each([
+      { path: ["functions", "deploy"], flag: "jobs" },
+      { path: ["migration", "down"], flag: "last" },
+      { path: ["db", "reset"], flag: "last" },
+    ])("rejects a negative value for $path --$flag", ({ path, flag }) => {
+      // Go registers these as UintVarP/UintVar (strconv.ParseUint(s, 0, 64)),
+      // which rejects any sign prefix outright — unlike this tree's plain
+      // signed Flag.integer, whose generic regex accepts one (verified
+      // empirically against a real apps/cli-go build: zero candidates with
+      // the Default directive for all three).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        ...path,
+        `--${flag}`,
+        "-1",
+        "",
+      ]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("still accepts a valid uint value, including the zero boundary", () => {
+      // Regression guard: the stricter check must not reject what real Go
+      // accepts (verified empirically against a real apps/cli-go build:
+      // `db reset --last 0 --d` still offers --debug/--dns-resolver/--db-url).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "db",
+        "reset",
+        "--last",
+        "0",
+        "--d",
+      ]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["--debug", "--dns-resolver", "--db-url"]),
+      );
+    });
+  });
+
+  describe("--output's choice values are validated per-command, not the widened global union (CLI-1965 review)", () => {
+    it("rejects db query's own local values (table/csv) everywhere else", () => {
+      // The global LegacyOutputFlag's choiceKeys is the UNION of root's
+      // 5-value enum and db query's own 3-value enum (legacy-go-output-
+      // flag.ts), but real Go's root persistent --output only accepts
+      // env|pretty|json|toml|yaml (verified empirically against a real
+      // apps/cli-go build: `--output table ""` -> zero candidates with the
+      // Default directive).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "--output", "table", ""]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("rejects the resource-command values (env/pretty/toml/yaml) under db query", () => {
+      // The reverse direction of the same defect: db query's own Go enum is
+      // json|table|csv only (verified empirically against a real
+      // apps/cli-go build: `db query --output env ""` -> zero candidates
+      // with the Default directive, even though `env` is valid everywhere
+      // else).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "db",
+        "query",
+        "--output",
+        "env",
+        "",
+      ]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("accepts db query's own values (table/csv) under db query", () => {
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "db",
+        "query",
+        "--output",
+        "table",
+        "--li",
+      ]);
+      expect(result?.candidates.map((c) => c.name)).toContain("--linked");
+    });
+
+    it("accepts the resource-command values (env/pretty/toml/yaml) outside db query", () => {
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "--output", "env", ""]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toContain("branches");
+    });
+
+    it("still accepts json everywhere — the one value both Go enums share", () => {
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "--output", "json", ""]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toContain("branches");
+    });
+  });
+
   it("returns undefined for zero completion args (mirrors cobra's MinimumNArgs(1) failure)", () => {
     expect(legacyRespondToComplete(legacyRoot, ["__complete"])).toBeUndefined();
   });

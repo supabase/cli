@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyParseUintBase0 } from "./cp.parse-uint.ts";
+import { legacyParseUintBase0 } from "./legacy-parse-uint.ts";
 
 // Every expectation in this file is ground truth captured from go1.26:
 // `strconv.ParseUint(s, 0, 64)` — the exact call pflag makes for a `UintVarP`
@@ -56,7 +56,7 @@ describe("legacyParseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
     expect(legacyParseUintBase0("18446744073709551616")).toEqual({ cause: "value out of range" });
     expect(legacyParseUintBase0("0x10000000000000000")).toEqual({ cause: "value out of range" });
     // Max uint64 parses (the Number conversion is lossy up there — documented
-    // residual in cp.parse-uint.ts — but the accept/reject verdict matches Go).
+    // residual in legacy-parse-uint.ts — but the accept/reject verdict matches Go).
     expect(legacyParseUintBase0("18446744073709551615")).toEqual({
       value: Number(18446744073709551615n),
     });

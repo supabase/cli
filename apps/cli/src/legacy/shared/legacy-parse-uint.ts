@@ -1,8 +1,13 @@
 /**
  * Faithful port of Go's `strconv.ParseUint(s, 0, 64)` — the exact parser pflag
- * runs for a `UintVarP` flag like `storage cp --jobs` (`uintValue.Set`,
- * `pflag/uint.go`). Operating on the RAW flag token (instead of a
- * pre-normalized number) is load-bearing for parity:
+ * runs for a `UintVarP`/`UintVar` flag (`uintValue.Set`, `pflag/uint.go`).
+ * Hoisted here (from its original home under `commands/storage/cp/`, CLI-1965
+ * review) once a second family needed it: `legacy-complete.ts` validates
+ * `functions deploy --jobs`/`migration down --last`/`db reset --last` — all
+ * three declared `Flag.integer` in TS but `UintVar`/`UintVarP` in Go — the
+ * same way `storage cp --jobs` already does at parse time. Operating on the
+ * RAW flag token (instead of a pre-normalized number) is load-bearing for
+ * parity:
  *
  *  - every sign prefix is rejected, including `-0` and `+1` (a numeric
  *    normalization turns `-0` into negative zero, for which `value < 0` is
