@@ -961,9 +961,17 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       Effect.mapError(withLegacyBundleSuggestion(slug)),
     );
 
-    // Bind order matches `extractOne` (`download.go:260-266`) exactly.
+    // Bind order matches `extractOne` (`download.go:260-266`) exactly. Go's
+    // `DockerStart` drops the named-volume bind entirely on Bitbucket
+    // (`internal/utils/docker.go:400-405`) rather than just skipping its
+    // explicit creation — `docker run -v <name>:...` would otherwise still
+    // implicitly create the named volume, which Bitbucket's restricted Docker
+    // environment doesn't allow, same carve-out as `deploy.ts`'s
+    // `buildDockerBinds`.
     const binds = [
-      `${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`,
+      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined
+        ? [`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`]
+        : []),
       `${hostEszipPath}:${dockerEszipPath}:ro`,
       `${functionsDir}:${DOCKER_DENO_DIR}:rw`,
     ];

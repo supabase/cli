@@ -612,6 +612,72 @@ describe("legacy functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("omits the named Deno cache volume bind on Bitbucket", () => {
+    // Go's `DockerStart` drops the named-volume bind entirely on Bitbucket
+    // (`internal/utils/docker.go:400-405`) rather than just skipping its
+    // explicit creation — `docker run -v <name>:...` would otherwise still
+    // implicitly create the named volume, which Bitbucket's restricted Docker
+    // environment doesn't allow (review round on CLI-1963's `functions
+    // download` port; `deploy.ts`'s `buildDockerBinds` already applies this
+    // same carve-out).
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    const previousBitbucketCloneDir = process.env["BITBUCKET_CLONE_DIR"];
+    process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
+
+    return Effect.gen(function* () {
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      expect(runCommand?.args).not.toContain(
+        `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
+      );
+      const hostEszipPath = resolve(
+        tempRoot.current,
+        "supabase",
+        ".temp",
+        "output_hello-world.eszip",
+      );
+      expect(runCommand?.args).toContain(
+        `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
+      );
+    })
+      .pipe(Effect.provide(layer))
+      .pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousBitbucketCloneDir === undefined) {
+              delete process.env["BITBUCKET_CLONE_DIR"];
+            } else {
+              process.env["BITBUCKET_CLONE_DIR"] = previousBitbucketCloneDir;
+            }
+          }),
+        ),
+      );
+  });
+
   it.live("requests the raw eszip body instead of a negotiated JSON response", () => {
     // `v1GetAFunctionBody`'s generated contract marks its response
     // `kind: "json"`, so `executeRaw` would otherwise default to
