@@ -3,6 +3,7 @@ import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
+import { resolveLocalCredentials } from "./LocalCredentials.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
@@ -14,6 +15,9 @@ import type { StackPreparationInput } from "./StackPreparation.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters";
+const testCredentials = resolveLocalCredentials({
+  signing: { _tag: "SymmetricJwtSecret", secret: testJwtSecret },
+});
 
 const basePorts: AllocatedPorts = {
   apiPort: 3000,
@@ -44,6 +48,7 @@ const baseConfig: ResolvedStackConfig = {
   mode: "auto",
   startupMode: "eager",
   readiness: DEFAULT_STACK_READINESS_POLICY,
+  credentials: testCredentials,
   jwtSecret: testJwtSecret,
   ports: basePorts,
   apiPort: 3000,
@@ -71,8 +76,34 @@ const baseConfig: ResolvedStackConfig = {
   auth: {
     port: 9999,
     siteUrl: "http://localhost:3000",
+    additionalRedirectUrls: ["http://localhost:3000/**"],
     jwtExpiry: 3600,
+    jwtIssuer: "http://localhost:9999",
     externalUrl: "http://localhost:9999",
+    enableSignup: true,
+    enableAnonymousSignIns: false,
+    enableRefreshTokenRotation: true,
+    refreshTokenReuseInterval: 10,
+    enableManualLinking: false,
+    minimumPasswordLength: 6,
+    passwordRequirements: "",
+    email: {
+      enableSignup: true,
+      doubleConfirmChanges: true,
+      enableConfirmations: false,
+      securePasswordChange: false,
+      maxFrequency: "1s",
+      otpLength: 6,
+      otpExpiry: 3600,
+    },
+    sms: {
+      enableSignup: false,
+      enableConfirmations: false,
+      template: "Your code is {{ .Code }}",
+      maxFrequency: "5s",
+    },
+    externalProviders: {},
+    hooks: {},
     version: DEFAULT_VERSIONS.auth,
   },
   edgeRuntime: false,

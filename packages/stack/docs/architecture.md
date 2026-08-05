@@ -37,14 +37,15 @@ can use the same lifecycle calls against an in-process stack or a detached daemo
 ## Configuration and roots
 
 `StackConfig` is an in-memory library input, not the project configuration-file schema. Its
-top-level fields choose runtime mode, startup mode, cache/runtime roots, API keys, JWT secret,
+top-level fields choose runtime mode, startup mode, cache/runtime roots, local credentials,
 functions options, and per-service configuration. `false` disables an optional service.
 
 `StackConfigResolver.resolveConfig()`:
 
 1. chooses cache, durable stack, runtime, and project roots;
 2. allocates every required port through one port allocator;
-3. creates development JWTs and opaque publishable/secret keys;
+3. resolves `LocalCredentials`, including symmetric or asymmetric signing material, development
+   role JWTs, opaque publishable/secret keys, and an internal verifier set;
 4. applies per-service defaults and current `DEFAULT_VERSIONS`;
 5. records auto-managed paths for scoped cleanup.
 
@@ -123,6 +124,18 @@ PostgreSQL.
 
 Configuration validation prevents unsupported combinations, including imgproxy without Storage,
 Vector without Analytics, and Studio without Postgres Meta.
+
+Auth project configuration is translated by the CLI Adapter into the stack-owned `AuthConfig`
+domain model. The Auth factory owns GoTrue environment generation for redirects, signup and
+password policy, email and SMTP, SMS providers, external OAuth providers, hooks, token expiry, and
+signing keys. Secret values remain runtime inputs only: configuration failures identify field paths
+without embedding values. Email template content paths remain outside this contract until the
+stack owns a template-serving route.
+
+`ResolvedLocalCredentials.jwks` is internal runtime material. In symmetric mode its `oct` key is
+the shared secret, so it must never be exposed, persisted, or logged. In asymmetric mode the
+internal verifier set strips private fields. GoTrue separately receives the validated asymmetric
+signing array through `GOTRUE_JWT_KEYS`; any public JWKS endpoint must use only its public fields.
 
 ## Lifecycle ownership
 

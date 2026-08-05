@@ -65,4 +65,95 @@ describe("local stack launch config", () => {
       await rm(projectRoot, { recursive: true, force: true });
     }
   });
+
+  it("translates an Auth project scenario without retaining secret values in diagnostics", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "supabase-local-auth-launch-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(supabaseDir, { recursive: true });
+      await writeFile(
+        join(supabaseDir, ".env.local"),
+        [
+          "AUTH_JWT_SECRET=jwt-secret-with-at-least-32-characters",
+          "AUTH_SMTP_PASS=smtp-secret",
+          "AUTH_GITHUB_SECRET=github-secret",
+          "AUTH_HOOK_SECRET=hook-secret",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(supabaseDir, "config.toml"),
+        [
+          "[auth]",
+          'site_url = "https://app.example.com"',
+          'additional_redirect_urls = ["https://app.example.com/callback"]',
+          "jwt_expiry = 7200",
+          'jwt_secret = "env(AUTH_JWT_SECRET)"',
+          "enable_signup = false",
+          "",
+          "[auth.email]",
+          "enable_confirmations = true",
+          "",
+          "[auth.email.smtp]",
+          "enabled = true",
+          'host = "smtp.example.com"',
+          "port = 587",
+          'user = "mailer"',
+          'pass = "env(AUTH_SMTP_PASS)"',
+          'admin_email = "admin@example.com"',
+          "",
+          "[auth.external.github]",
+          "enabled = true",
+          'client_id = "github-client"',
+          'secret = "env(AUTH_GITHUB_SECRET)"',
+          "",
+          "[auth.hook.custom_access_token]",
+          "enabled = true",
+          'uri = "pg-functions://postgres/auth/custom-access-token"',
+          'secrets = "env(AUTH_HOOK_SECRET)"',
+          "",
+        ].join("\n"),
+      );
+
+      const projectEnvironment = await loadProjectEnvironmentFor({ cwd: projectRoot, baseEnv: {} });
+      expect(projectEnvironment).not.toBeNull();
+      if (projectEnvironment === null) return;
+      const loadedProjectConfig = await loadProjectConfig(projectRoot, {
+        projectEnv: projectEnvironment,
+      });
+      const result = await Effect.runPromise(
+        resolveLocalStackLaunch({
+          loadedProjectConfig,
+          projectEnvironment,
+          projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
+          mode: "auto",
+          exclude: [],
+          runtimeVersions: {},
+        }),
+      );
+
+      expect(result.stackConfig.credentials?.signing).toEqual({
+        _tag: "SymmetricJwtSecret",
+        secret: "jwt-secret-with-at-least-32-characters",
+      });
+      expect(result.stackConfig.auth).toMatchObject({
+        siteUrl: "https://app.example.com",
+        additionalRedirectUrls: ["https://app.example.com/callback"],
+        jwtExpiry: 7200,
+        enableSignup: false,
+        email: {
+          enableConfirmations: true,
+          smtp: { host: "smtp.example.com", pass: "smtp-secret" },
+        },
+        externalProviders: {
+          github: { enabled: true, clientId: "github-client", secret: "github-secret" },
+        },
+        hooks: {
+          custom_access_token: { enabled: true, secrets: "hook-secret" },
+        },
+      });
+      expect(result.warnings).toEqual([]);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
 });

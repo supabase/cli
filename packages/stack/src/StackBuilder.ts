@@ -3,7 +3,6 @@ import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
 import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
-import { generateJwks } from "./JwtGenerator.ts";
 import {
   detectPlatform,
   dockerHostAddress,
@@ -237,7 +236,7 @@ export class StackBuilder extends Context.Service<
         );
         const hasPostgresInit = postgresResolution.type === "binary";
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
-        const jwtJwks = generateJwks(config.jwtSecret);
+        const jwtJwks = config.credentials.jwks;
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
           {
@@ -320,14 +319,18 @@ export class StackBuilder extends Context.Service<
                   binPath: authResolution.path,
                   dbPort: config.dbPort,
                   authPort: config.auth.port,
-                  siteUrl: config.auth.siteUrl,
+                  config: config.auth,
+                  signing: config.credentials.signing,
                   jwtSecret: config.jwtSecret,
-                  jwtExpiry: config.auth.jwtExpiry,
-                  externalUrl: config.auth.externalUrl,
-                  smtpHost: config.mailpit !== false ? serviceHost : undefined,
-                  smtpPort: config.mailpit !== false ? config.mailpit.smtpTransportPort : undefined,
-                  smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
-                  smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
+                  smtpFallback:
+                    config.mailpit === false
+                      ? undefined
+                      : {
+                          host: "127.0.0.1",
+                          port: config.mailpit.smtpTransportPort,
+                          adminEmail: config.mailpit.adminEmail,
+                          senderName: config.mailpit.senderName,
+                        },
                   dependencies: postgresDeps,
                 })
               : makeAuthServiceDocker({
@@ -335,14 +338,18 @@ export class StackBuilder extends Context.Service<
                   dbHost: serviceHost,
                   dbPort: config.dbPort,
                   authPort: config.auth.port,
-                  siteUrl: config.auth.siteUrl,
+                  config: config.auth,
+                  signing: config.credentials.signing,
                   jwtSecret: config.jwtSecret,
-                  jwtExpiry: config.auth.jwtExpiry,
-                  externalUrl: config.auth.externalUrl,
-                  smtpHost: config.mailpit !== false ? serviceHost : undefined,
-                  smtpPort: config.mailpit !== false ? config.mailpit.smtpTransportPort : undefined,
-                  smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
-                  smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
+                  smtpFallback:
+                    config.mailpit === false
+                      ? undefined
+                      : {
+                          host: serviceHost,
+                          port: config.mailpit.smtpTransportPort,
+                          adminEmail: config.mailpit.adminEmail,
+                          senderName: config.mailpit.senderName,
+                        },
                   networkArgs: dockerNetworkArgs(platform.os, [config.auth.port]),
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,

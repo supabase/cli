@@ -10,6 +10,7 @@ export {
   ChecksumMismatchError,
   DockerPullError,
   DownloadError,
+  LocalCredentialsError,
   PortConflictError,
   StackBuildError,
   StackError,
@@ -40,6 +41,26 @@ export {
   generateJwt,
   JwtGenerator,
 } from "./JwtGenerator.ts";
+export type {
+  LocalCredentials,
+  LocalJwtSigningKey,
+  LocalJwtSigningMaterial,
+  ResolvedLocalCredentials,
+} from "./LocalCredentials.ts";
+export {
+  authSigningKeysJson,
+  resolveLocalCredentials,
+  validateLocalJwtSigningKeys,
+} from "./LocalCredentials.ts";
+export type {
+  AuthEmailConfig,
+  AuthExternalProviderConfig,
+  AuthHookConfig,
+  AuthRuntimeConfig,
+  AuthSmsConfig,
+  PasswordRequirements,
+  ResolvedAuthRuntimeConfig,
+} from "./AuthConfig.ts";
 
 export type {
   AllocatedPorts,

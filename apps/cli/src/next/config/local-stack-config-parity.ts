@@ -83,6 +83,26 @@ const mappedCoreTopologyField: LocalStackConfigParityDecision = {
     "The launch Adapter applies project values, legacy environment overrides, and CLI exclusions before constructing StackConfig.",
 };
 
+const mappedAuthRuntimeField: LocalStackConfigParityDecision = {
+  _tag: "mapped",
+  presence: "raw-document",
+  mappedBy: "start",
+  rationale:
+    "The Auth launch translator passes this project setting to the stack-owned Auth runtime configuration.",
+};
+
+const mappedAuthOptionalRuntimeField: LocalStackConfigParityDecision = {
+  ...mappedAuthRuntimeField,
+  presence: "decoded-value",
+};
+
+const mappedAuthSecretRuntimeField: LocalStackConfigParityDecision = {
+  ...mappedAuthRuntimeField,
+  presence: "decoded-value",
+  rationale:
+    "The Auth launch translator passes this credential to the stack without retaining it in diagnostics.",
+};
+
 const projectIdentityField: LocalStackConfigParityDecision = {
   _tag: "not-applicable",
   presence: "raw-document",
@@ -137,19 +157,19 @@ const unsupportedFutureRuntimeField: LocalStackConfigParityDecision = {
 };
 
 const authExternalProviderParity = {
-  enabled: unsupportedRuntimeField,
-  client_id: unsupportedRuntimeField,
-  secret: unsupportedSecretRuntimeField,
-  url: unsupportedRuntimeField,
-  redirect_uri: unsupportedRuntimeField,
-  skip_nonce_check: unsupportedRuntimeField,
-  email_optional: unsupportedRuntimeField,
+  enabled: mappedAuthRuntimeField,
+  client_id: mappedAuthRuntimeField,
+  secret: mappedAuthSecretRuntimeField,
+  url: mappedAuthRuntimeField,
+  redirect_uri: mappedAuthRuntimeField,
+  skip_nonce_check: mappedAuthRuntimeField,
+  email_optional: mappedAuthRuntimeField,
 } satisfies Record<keyof ProjectConfig["auth"]["external"]["apple"], Node>;
 
 const authHookParity = {
-  enabled: unsupportedRuntimeField,
-  uri: unsupportedOptionalRuntimeField,
-  secrets: unsupportedSecretRuntimeField,
+  enabled: mappedAuthRuntimeField,
+  uri: mappedAuthOptionalRuntimeField,
+  secrets: mappedAuthSecretRuntimeField,
 } satisfies Record<keyof ProjectConfig["auth"]["hook"]["send_email"], Node>;
 
 const authRateLimitParity = {
@@ -194,60 +214,60 @@ const authHooksParity = {
 } satisfies Record<keyof ProjectConfig["auth"]["hook"], Node>;
 
 const authSmsParity = {
-  enable_signup: unsupportedRuntimeField,
-  enable_confirmations: unsupportedRuntimeField,
-  template: unsupportedRuntimeField,
-  max_frequency: unsupportedRuntimeField,
+  enable_signup: mappedAuthRuntimeField,
+  enable_confirmations: mappedAuthRuntimeField,
+  template: mappedAuthRuntimeField,
+  max_frequency: mappedAuthRuntimeField,
   twilio: {
-    enabled: unsupportedRuntimeField,
-    account_sid: unsupportedRuntimeField,
-    message_service_sid: unsupportedRuntimeField,
-    auth_token: unsupportedSecretRuntimeField,
+    enabled: mappedAuthRuntimeField,
+    account_sid: mappedAuthRuntimeField,
+    message_service_sid: mappedAuthRuntimeField,
+    auth_token: mappedAuthSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio"], Node>,
   twilio_verify: {
-    enabled: unsupportedRuntimeField,
-    account_sid: unsupportedOptionalRuntimeField,
-    message_service_sid: unsupportedOptionalRuntimeField,
-    auth_token: unsupportedSecretRuntimeField,
+    enabled: mappedAuthRuntimeField,
+    account_sid: mappedAuthOptionalRuntimeField,
+    message_service_sid: mappedAuthOptionalRuntimeField,
+    auth_token: mappedAuthSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio_verify"], Node>,
   messagebird: {
-    enabled: unsupportedRuntimeField,
-    originator: unsupportedOptionalRuntimeField,
-    access_key: unsupportedSecretRuntimeField,
+    enabled: mappedAuthRuntimeField,
+    originator: mappedAuthOptionalRuntimeField,
+    access_key: mappedAuthSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["messagebird"], Node>,
   textlocal: {
-    enabled: unsupportedRuntimeField,
-    sender: unsupportedOptionalRuntimeField,
-    api_key: unsupportedSecretRuntimeField,
+    enabled: mappedAuthRuntimeField,
+    sender: mappedAuthOptionalRuntimeField,
+    api_key: mappedAuthSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["textlocal"], Node>,
   vonage: {
-    enabled: unsupportedRuntimeField,
-    from: unsupportedOptionalRuntimeField,
-    api_key: unsupportedOptionalRuntimeField,
-    api_secret: unsupportedSecretRuntimeField,
+    enabled: mappedAuthRuntimeField,
+    from: mappedAuthOptionalRuntimeField,
+    api_key: mappedAuthOptionalRuntimeField,
+    api_secret: mappedAuthSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["vonage"], Node>,
-  test_otp: unsupportedOptionalRuntimeField,
+  test_otp: mappedAuthOptionalRuntimeField,
 } satisfies Record<keyof ProjectConfig["auth"]["sms"], Node>;
 
 const authParity = {
-  enabled: mappedCoreTopologyField,
-  site_url: unsupportedRuntimeField,
-  additional_redirect_urls: unsupportedRuntimeField,
-  jwt_expiry: unsupportedRuntimeField,
-  jwt_issuer: unsupportedOptionalRuntimeField,
-  signing_keys_path: unsupportedOptionalRuntimeField,
-  enable_refresh_token_rotation: unsupportedRuntimeField,
-  refresh_token_reuse_interval: unsupportedRuntimeField,
-  enable_manual_linking: unsupportedRuntimeField,
-  enable_signup: unsupportedRuntimeField,
-  enable_anonymous_sign_ins: unsupportedRuntimeField,
-  minimum_password_length: unsupportedRuntimeField,
-  password_requirements: unsupportedRuntimeField,
-  publishable_key: unsupportedSecretRuntimeField,
-  secret_key: unsupportedSecretRuntimeField,
-  jwt_secret: unsupportedSecretRuntimeField,
-  anon_key: unsupportedSecretRuntimeField,
-  service_role_key: unsupportedSecretRuntimeField,
+  enabled: mappedAuthRuntimeField,
+  site_url: mappedAuthRuntimeField,
+  additional_redirect_urls: mappedAuthRuntimeField,
+  jwt_expiry: mappedAuthRuntimeField,
+  jwt_issuer: mappedAuthOptionalRuntimeField,
+  signing_keys_path: mappedAuthOptionalRuntimeField,
+  enable_refresh_token_rotation: mappedAuthRuntimeField,
+  refresh_token_reuse_interval: mappedAuthRuntimeField,
+  enable_manual_linking: mappedAuthRuntimeField,
+  enable_signup: mappedAuthRuntimeField,
+  enable_anonymous_sign_ins: mappedAuthRuntimeField,
+  minimum_password_length: mappedAuthRuntimeField,
+  password_requirements: mappedAuthRuntimeField,
+  publishable_key: mappedAuthSecretRuntimeField,
+  secret_key: mappedAuthSecretRuntimeField,
+  jwt_secret: mappedAuthSecretRuntimeField,
+  anon_key: mappedAuthSecretRuntimeField,
+  service_role_key: mappedAuthSecretRuntimeField,
   rate_limit: authRateLimitParity,
   captcha: {
     enabled: unsupportedRuntimeField,
@@ -278,21 +298,21 @@ const authParity = {
     inactivity_timeout: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof NonNullable<ProjectConfig["auth"]["sessions"]>, Node>,
   email: {
-    enable_signup: unsupportedRuntimeField,
-    double_confirm_changes: unsupportedRuntimeField,
-    enable_confirmations: unsupportedRuntimeField,
-    secure_password_change: unsupportedRuntimeField,
-    max_frequency: unsupportedRuntimeField,
-    otp_length: unsupportedRuntimeField,
-    otp_expiry: unsupportedRuntimeField,
+    enable_signup: mappedAuthRuntimeField,
+    double_confirm_changes: mappedAuthRuntimeField,
+    enable_confirmations: mappedAuthRuntimeField,
+    secure_password_change: mappedAuthRuntimeField,
+    max_frequency: mappedAuthRuntimeField,
+    otp_length: mappedAuthRuntimeField,
+    otp_expiry: mappedAuthRuntimeField,
     smtp: {
-      enabled: unsupportedRuntimeField,
-      host: unsupportedOptionalRuntimeField,
-      port: unsupportedOptionalRuntimeField,
-      user: unsupportedOptionalRuntimeField,
-      pass: unsupportedSecretRuntimeField,
-      admin_email: unsupportedOptionalRuntimeField,
-      sender_name: unsupportedOptionalRuntimeField,
+      enabled: mappedAuthRuntimeField,
+      host: mappedAuthOptionalRuntimeField,
+      port: mappedAuthOptionalRuntimeField,
+      user: mappedAuthOptionalRuntimeField,
+      pass: mappedAuthSecretRuntimeField,
+      admin_email: mappedAuthOptionalRuntimeField,
+      sender_name: mappedAuthOptionalRuntimeField,
     } satisfies Record<keyof NonNullable<ProjectConfig["auth"]["email"]["smtp"]>, Node>,
     template: {
       "*": {

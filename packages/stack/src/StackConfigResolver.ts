@@ -3,12 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { toStackError } from "./errors.ts";
-import {
-  defaultJwtSecret,
-  defaultPublishableKey,
-  defaultSecretKey,
-  generateJwt,
-} from "./JwtGenerator.ts";
+import { resolveLocalCredentials } from "./LocalCredentials.ts";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   defaultCacheRoot,
@@ -253,11 +248,38 @@ function resolveAuthConfig(
 ): ResolvedAuthConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
+  const externalUrl = cfg.externalUrl ?? `http://127.0.0.1:${apiPort}/auth/v1`;
   return {
     port: ports.authPort,
     siteUrl: cfg.siteUrl ?? "http://localhost:3000",
+    additionalRedirectUrls: cfg.additionalRedirectUrls ?? ["https://127.0.0.1:3000"],
     jwtExpiry: cfg.jwtExpiry ?? 3600,
-    externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
+    jwtIssuer: cfg.jwtIssuer ?? externalUrl,
+    externalUrl,
+    enableSignup: cfg.enableSignup ?? true,
+    enableAnonymousSignIns: cfg.enableAnonymousSignIns ?? false,
+    enableRefreshTokenRotation: cfg.enableRefreshTokenRotation ?? true,
+    refreshTokenReuseInterval: cfg.refreshTokenReuseInterval ?? 10,
+    enableManualLinking: cfg.enableManualLinking ?? false,
+    minimumPasswordLength: cfg.minimumPasswordLength ?? 6,
+    passwordRequirements: cfg.passwordRequirements ?? "",
+    email: cfg.email ?? {
+      enableSignup: true,
+      doubleConfirmChanges: true,
+      enableConfirmations: false,
+      securePasswordChange: false,
+      maxFrequency: "1s",
+      otpLength: 6,
+      otpExpiry: 3600,
+    },
+    sms: cfg.sms ?? {
+      enableSignup: false,
+      enableConfirmations: false,
+      template: "Your code is {{ .Code }}",
+      maxFrequency: "5s",
+    },
+    externalProviders: cfg.externalProviders ?? {},
+    hooks: cfg.hooks ?? {},
     version: cfg.version ?? DEFAULT_VERSIONS.auth,
   };
 }
@@ -498,9 +520,16 @@ export async function resolveConfig(
     throw toStackError(error);
   });
 
-  const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
-  const anonJwt = generateJwt(jwtSecret, "anon");
-  const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
+  const credentials = resolveLocalCredentials({
+    ...config.credentials,
+    signing:
+      config.credentials?.signing ??
+      (config.jwtSecret === undefined
+        ? undefined
+        : { _tag: "SymmetricJwtSecret", secret: config.jwtSecret }),
+    publishableKey: config.credentials?.publishableKey ?? config.publishableKey,
+    secretKey: config.credentials?.secretKey ?? config.secretKey,
+  });
 
   return {
     cacheRoot: roots.cacheRoot,
@@ -510,16 +539,17 @@ export async function resolveConfig(
     mode: resolvedMode,
     startupMode: config.startupMode ?? "eager",
     readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
-    jwtSecret,
+    credentials,
+    jwtSecret: credentials.jwtSecret,
     ports,
     apiPort: ports.apiPort,
     dbPort: ports.dbPort,
-    publishableKey: config.publishableKey ?? defaultPublishableKey,
-    secretKey: config.secretKey ?? defaultSecretKey,
+    publishableKey: credentials.publishableKey,
+    secretKey: credentials.secretKey,
     functions: resolveFunctionsConfig(config),
     autoManagedPaths: roots.autoManagedPaths,
-    anonJwt,
-    serviceRoleJwt,
+    anonJwt: credentials.anonKey,
+    serviceRoleJwt: credentials.serviceRoleKey,
     postgres: {
       port: ports.dbPort,
       dataDir: postgresDataDir,

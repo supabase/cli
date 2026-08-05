@@ -17,20 +17,19 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 42,
+      mapped: 247,
       "not-applicable": 10,
-      "unsupported-blocking": 303,
+      "unsupported-blocking": 98,
       "unsupported-warning": 6,
     });
   });
 
-  it("claims only behavior implemented by a current next local-runtime flow as mapped", () => {
-    expect(
-      entries
-        .filter(({ decision }) => decision._tag === "mapped")
-        .map(({ path }) => path)
-        .sort(),
-    ).toEqual([
+  it("maps core topology and Auth while leaving unimplemented domains explicit", () => {
+    const mappedPaths = entries
+      .filter(({ decision }) => decision._tag === "mapped")
+      .map(({ path }) => path);
+
+    expect(mappedPaths.filter((path) => !path.startsWith("auth.")).sort()).toEqual([
       "analytics.backend",
       "analytics.enabled",
       "analytics.port",
@@ -40,7 +39,6 @@ describe("localStackConfigParity", () => {
       "api.max_rows",
       "api.port",
       "api.schemas",
-      "auth.enabled",
       "db.health_timeout",
       "db.pooler.default_pool_size",
       "db.pooler.enabled",
@@ -74,6 +72,24 @@ describe("localStackConfigParity", () => {
       "studio.enabled",
       "studio.port",
     ]);
+    expect(mappedPaths.filter((path) => path.startsWith("auth."))).toHaveLength(206);
+    expect(mappedPaths).toEqual(
+      expect.arrayContaining([
+        "auth.enabled",
+        "auth.signing_keys_path",
+        "auth.email.smtp.pass",
+        "auth.sms.twilio.auth_token",
+        "auth.external.github.redirect_uri",
+        "auth.hook.custom_access_token.secrets",
+      ]),
+    );
+    expect(mappedPaths).not.toEqual(
+      expect.arrayContaining([
+        "auth.email.template.*.content_path",
+        "auth.mfa.totp.enroll_enabled",
+        "auth.rate_limit.email_sent",
+      ]),
+    );
   });
 
   it("preserves raw-document requirements for presence-sensitive sections", () => {

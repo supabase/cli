@@ -27,6 +27,39 @@ const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos
 const AUTH_BIN_PATH = `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`;
 const EDGE_RUNTIME_BIN_PATH = `/cache/edge-runtime/${DEFAULT_VERSIONS["edge-runtime"]}/aarch64-darwin`;
 const LINUX_HOST_GATEWAY_ARGS = ["--add-host", "host.docker.internal:host-gateway"];
+const AUTH_CONFIG = {
+  port: 9999,
+  siteUrl: "http://localhost:3000",
+  additionalRedirectUrls: ["http://localhost:3000/**"],
+  jwtExpiry: 3600,
+  jwtIssuer: `http://127.0.0.1:${API_PORT}/auth/v1`,
+  externalUrl: `http://127.0.0.1:${API_PORT}/auth/v1`,
+  enableSignup: true,
+  enableAnonymousSignIns: false,
+  enableRefreshTokenRotation: true,
+  refreshTokenReuseInterval: 10,
+  enableManualLinking: false,
+  minimumPasswordLength: 6,
+  passwordRequirements: "" as const,
+  email: {
+    enableSignup: true,
+    doubleConfirmChanges: true,
+    enableConfirmations: false,
+    securePasswordChange: false,
+    maxFrequency: "1s",
+    otpLength: 6,
+    otpExpiry: 3600,
+  },
+  sms: {
+    enableSignup: false,
+    enableConfirmations: false,
+    template: "Your code is {{ .Code }}",
+    maxFrequency: "5s",
+  },
+  externalProviders: {},
+  hooks: {},
+  version: DEFAULT_VERSIONS.auth,
+};
 
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
@@ -338,10 +371,9 @@ describe("makeAuthServiceNative", () => {
       binPath: AUTH_BIN_PATH,
       dbPort: DB_PORT,
       authPort: 9999,
-      siteUrl: "http://localhost:3000",
+      config: AUTH_CONFIG,
+      signing: { _tag: "SymmetricJwtSecret", secret: JWT_SECRET },
       jwtSecret: JWT_SECRET,
-      jwtExpiry: 3600,
-      externalUrl: `http://127.0.0.1:${API_PORT}`,
       dependencies: [{ service: "postgres-init", condition: "completed" }],
     });
 
@@ -360,6 +392,97 @@ describe("makeAuthServiceNative", () => {
     });
     expect(def.supervision).toBeDefined();
   });
+
+  it("maps Auth policy, SMTP, SMS, external providers, hooks, redirects, and signing keys", () => {
+    const def = makeAuthServiceNative({
+      binPath: AUTH_BIN_PATH,
+      dbPort: DB_PORT,
+      authPort: 9999,
+      jwtSecret: JWT_SECRET,
+      signing: {
+        _tag: "AsymmetricJwtKeys",
+        legacySecret: JWT_SECRET,
+        keys: [
+          {
+            kty: "EC",
+            kid: "local-auth-test",
+            use: "sig",
+            alg: "ES256",
+            crv: "P-256",
+            x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+            y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+            d: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+          },
+        ],
+      },
+      config: {
+        ...AUTH_CONFIG,
+        additionalRedirectUrls: ["https://app.example.com/callback"],
+        jwtExpiry: 7200,
+        enableSignup: false,
+        email: {
+          ...AUTH_CONFIG.email,
+          enableConfirmations: true,
+          smtp: {
+            host: "smtp.example.com",
+            port: 587,
+            user: "mailer",
+            pass: "smtp-secret",
+            adminEmail: "admin@example.com",
+            senderName: "Example",
+          },
+        },
+        sms: {
+          ...AUTH_CONFIG.sms,
+          enableSignup: true,
+          provider: {
+            _tag: "twilio",
+            accountSid: "account",
+            messageServiceSid: "service",
+            authToken: "sms-secret",
+          },
+        },
+        externalProviders: {
+          github: {
+            enabled: true,
+            clientId: "client",
+            secret: "provider-secret",
+            url: "",
+            skipNonceCheck: false,
+            emailOptional: false,
+          },
+        },
+        hooks: {
+          custom_access_token: {
+            enabled: true,
+            uri: "pg-functions://postgres/auth/custom-access-token",
+            secrets: "hook-secret",
+          },
+        },
+      },
+      dependencies: [{ service: "postgres-init", condition: "completed" }],
+    });
+
+    expect(def.env).toMatchObject({
+      GOTRUE_DISABLE_SIGNUP: "true",
+      GOTRUE_URI_ALLOW_LIST: "https://app.example.com/callback",
+      GOTRUE_JWT_EXP: "7200",
+      GOTRUE_MAILER_AUTOCONFIRM: "false",
+      GOTRUE_SMTP_HOST: "smtp.example.com",
+      GOTRUE_SMTP_PASS: "smtp-secret",
+      GOTRUE_SMS_PROVIDER: "twilio",
+      GOTRUE_SMS_TWILIO_AUTH_TOKEN: "sms-secret",
+      GOTRUE_EXTERNAL_GITHUB_ENABLED: "true",
+      GOTRUE_EXTERNAL_GITHUB_SECRET: "provider-secret",
+      GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: `${AUTH_CONFIG.jwtIssuer}/callback`,
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED: "true",
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS: "hook-secret",
+      GOTRUE_JWT_VALID_METHODS: "HS256,RS256,ES256",
+    });
+    expect(JSON.parse(def.env?.GOTRUE_JWT_KEYS ?? "[]")).toEqual([
+      expect.objectContaining({ kid: "local-auth-test", d: expect.any(String) }),
+    ]);
+  });
 });
 
 describe("makeAuthServiceDocker", () => {
@@ -368,10 +491,9 @@ describe("makeAuthServiceDocker", () => {
       image: dockerImageForService("auth", DEFAULT_VERSIONS.auth),
       dbPort: DB_PORT,
       authPort: 9999,
-      siteUrl: "http://localhost:3000",
+      config: AUTH_CONFIG,
+      signing: { _tag: "SymmetricJwtSecret", secret: JWT_SECRET },
       jwtSecret: JWT_SECRET,
-      jwtExpiry: 3600,
-      externalUrl: `http://127.0.0.1:${API_PORT}`,
       dbHost: "127.0.0.1",
       networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "9999:9999"],
       apiPort: API_PORT,

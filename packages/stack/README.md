@@ -41,7 +41,12 @@ import { createStack } from "@supabase/stack";
 import { createClient } from "@supabase/supabase-js";
 
 const stack = await createStack({
-  jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+  credentials: {
+    signing: {
+      _tag: "SymmetricJwtSecret",
+      secret: "super-secret-jwt-token-with-at-least-32-characters-long",
+    },
+  },
   postgres: { dataDir: "./supabase-data" },
 });
 
@@ -60,7 +65,12 @@ await stack.dispose();
 ```typescript
 {
   await using stack = await createStack({
-    jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+    credentials: {
+      signing: {
+        _tag: "SymmetricJwtSecret",
+        secret: "super-secret-jwt-token-with-at-least-32-characters-long",
+      },
+    },
     postgres: { dataDir: "./supabase-data" },
   });
   await stack.start();
@@ -81,7 +91,8 @@ await stack.dispose();
 | `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"`  | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
 | `startupMode`    | `"eager" \| "lazy"`              | No       | `"eager"` | In lazy mode, proxied HTTP services start on first use. Direct listeners and Realtime start with the stack.                                                     |
 | `readiness`      | finite or infinite policy        | No       | `120s`    | Stack-wide readiness deadline. Per-call readiness options take precedence.                                                                                      |
-| `jwtSecret`      | `string`                         | No       |           | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
+| `credentials`    | `LocalCredentials`               | No       | dev keys  | Signing material, opaque client keys, and legacy role keys. Signing can use a symmetric secret or asymmetric JWK keys.                                          |
+| `jwtSecret`      | `string`                         | No       |           | Deprecated symmetric-secret shortcut; prefer `credentials.signing`.                                                                                             |
 | `port`           | `number`                         | No       |           | API proxy port (auto-allocated if omitted)                                                                                                                      |
 | `publishableKey` | `string`                         | No       |           | Custom opaque publishable key                                                                                                                                   |
 | `secretKey`      | `string`                         | No       |           | Custom opaque secret key                                                                                                                                        |
@@ -113,19 +124,31 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 
 Optional. Omit to include with defaults, set to `false` to exclude.
 
-| Field         | Type     | Default                    | Description                        |
-| ------------- | -------- | -------------------------- | ---------------------------------- |
-| `port`        | `number` | auto                       | Auth service port                  |
-| `siteUrl`     | `string` | `http://localhost:3000`    | Auth redirect URL (your app's URL) |
-| `jwtExpiry`   | `number` | `3600`                     | JWT expiry in seconds              |
-| `externalUrl` | `string` | `http://127.0.0.1:${port}` | Auth external URL                  |
-| `version`     | `string` | current pinned version     | Auth version override              |
+Auth configuration includes service URLs, redirect allow-lists, token expiry and issuer, signup
+and password policy, email/custom SMTP settings, SMS and its selected provider, external OAuth
+providers, and Auth hooks. Secret-bearing values are passed directly to the runtime and are never
+included in configuration diagnostics. `externalUrl` defaults to the public API URL with
+`/auth/v1`; `jwtIssuer` defaults to that same value.
+
+When `credentials.signing` contains `AsymmetricJwtKeys`, Auth signs with the first RS256 or ES256
+private JWK and receives the complete key array through `GOTRUE_JWT_KEYS`. The stack publishes only
+the public fields through its internal JWKS representation. `legacySecret` remains required in
+that mode for services that still verify HS256 tokens.
+
+The resolved stack's JWKS string is internal verifier material, not a public API. Symmetric mode
+contains the shared `oct` secret and must never be exposed, persisted, or logged; asymmetric mode
+contains public fields only.
 
 ### Full config example
 
 ```typescript
 const stack = await createStack({
-  jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+  credentials: {
+    signing: {
+      _tag: "SymmetricJwtSecret",
+      secret: "super-secret-jwt-token-with-at-least-32-characters-long",
+    },
+  },
   port: 54321,
   postgres: { port: 54322, dataDir: "/tmp/data" },
   postgrest: { schemas: ["public", "custom"], maxRows: 500 },

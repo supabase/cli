@@ -6,7 +6,9 @@ import {
 } from "@supabase/config";
 import type { ReadinessPolicy, StackConfig, VersionManifest } from "@supabase/stack/effect";
 import { Effect, Schema } from "effect";
+import { dirname, join } from "node:path";
 import { legacyParseGoDuration } from "../../shared/config/go-duration.ts";
+import { translateAuthStackConfig } from "./auth-stack-config.ts";
 import {
   excludedStackServices,
   invalidLocalStackConfig,
@@ -336,12 +338,30 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
             paths: [],
           }),
   });
+  const translatedAuth = yield* translateAuthStackConfig({
+    projectConfig,
+    rawDocument: input.loadedProjectConfig?.document,
+    projectEnvironment: input.projectEnvironment,
+    configDir:
+      input.loadedProjectConfig === null
+        ? join(input.projectPaths.projectRoot, "supabase")
+        : dirname(input.loadedProjectConfig.path),
+    authEnabled: coreConfig.auth !== false,
+  });
 
   return {
     stackConfig: {
       ...coreConfig,
       projectDir: input.projectPaths.projectRoot,
       readiness,
+      credentials: translatedAuth.credentials,
+      auth:
+        translatedAuth.auth === false
+          ? false
+          : {
+              ...translatedAuth.auth,
+              version: versionedConfig.auth === false ? undefined : versionedConfig.auth?.version,
+            },
       postgres: {
         ...coreConfig.postgres,
         autoExposeNewTables,

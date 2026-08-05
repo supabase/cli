@@ -42,6 +42,11 @@ export class PortConflictError extends Data.TaggedError("PortConflictError")<{
   readonly service: string;
 }> {}
 
+export class LocalCredentialsError extends Data.TaggedError("LocalCredentialsError")<{
+  readonly path: string;
+  readonly detail: string;
+}> {}
+
 export class StackError extends Error {
   readonly code: string;
   constructor(opts: { code: string; message: string; cause?: unknown }) {
@@ -110,6 +115,12 @@ export function toStackError(err: unknown): StackError {
       case "PortAllocationError":
         return new StackError({
           code: "PORT_ALLOCATION",
+          message: taggedMessage,
+          cause: err,
+        });
+      case "LocalCredentialsError":
+        return new StackError({
+          code: "INVALID_LOCAL_CREDENTIALS",
           message: taggedMessage,
           cause: err,
         });

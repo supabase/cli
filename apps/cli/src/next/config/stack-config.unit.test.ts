@@ -291,15 +291,15 @@ describe("resolveLocalStackLaunch", () => {
       resolveLocalStackLaunch({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
-          auth: { jwt_secret: "do-not-leak" },
-          realtime: { ip_version: "IPv6" },
+          auth: { captcha: { secret: "do-not-leak" } },
+          api: { tls: { cert_path: "another-private-value" } },
         }),
       }).pipe(Effect.exit),
     );
 
     expect(exit._tag).toBe("Failure");
-    expect(JSON.stringify(exit)).toContain("auth.jwt_secret");
-    expect(JSON.stringify(exit)).toContain("realtime.ip_version");
+    expect(JSON.stringify(exit)).toContain("auth.captcha.secret");
+    expect(JSON.stringify(exit)).toContain("api.tls.cert_path");
     expect(JSON.stringify(exit)).not.toContain("do-not-leak");
     expect(JSON.stringify(exit)).not.toContain("another-private-value");
   });

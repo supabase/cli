@@ -5,6 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
+import { resolveLocalCredentials } from "./LocalCredentials.ts";
 import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
@@ -16,6 +17,9 @@ import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./Stac
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long";
+const testCredentials = resolveLocalCredentials({
+  signing: { _tag: "SymmetricJwtSecret", secret: testJwtSecret },
+});
 
 const defaultPorts: AllocatedPorts = {
   apiPort: 54321,
@@ -46,6 +50,7 @@ const defaultConfig: ResolvedStackConfig = {
   mode: "native",
   startupMode: "eager",
   readiness: DEFAULT_STACK_READINESS_POLICY,
+  credentials: testCredentials,
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
   apiPort: 54321,
@@ -73,8 +78,34 @@ const defaultConfig: ResolvedStackConfig = {
   auth: {
     port: 9999,
     siteUrl: "http://localhost:3000",
+    additionalRedirectUrls: ["http://localhost:3000/**"],
     jwtExpiry: 3600,
-    externalUrl: "http://127.0.0.1:54321",
+    jwtIssuer: "http://127.0.0.1:54321/auth/v1",
+    externalUrl: "http://127.0.0.1:54321/auth/v1",
+    enableSignup: true,
+    enableAnonymousSignIns: false,
+    enableRefreshTokenRotation: true,
+    refreshTokenReuseInterval: 10,
+    enableManualLinking: false,
+    minimumPasswordLength: 6,
+    passwordRequirements: "",
+    email: {
+      enableSignup: true,
+      doubleConfirmChanges: true,
+      enableConfirmations: false,
+      securePasswordChange: false,
+      maxFrequency: "1s",
+      otpLength: 6,
+      otpExpiry: 3600,
+    },
+    sms: {
+      enableSignup: false,
+      enableConfirmations: false,
+      template: "Your code is {{ .Code }}",
+      maxFrequency: "5s",
+    },
+    externalProviders: {},
+    hooks: {},
     version: DEFAULT_VERSIONS.auth,
   },
   edgeRuntime: false,

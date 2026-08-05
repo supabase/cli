@@ -1,5 +1,7 @@
 import { Schema } from "effect";
+import type { AuthRuntimeConfig, ResolvedAuthRuntimeConfig } from "./AuthConfig.ts";
 import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
+import type { LocalCredentials, ResolvedLocalCredentials } from "./LocalCredentials.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 
 type StackMode = "native" | "auto" | "docker";
@@ -70,13 +72,7 @@ export interface PostgrestConfig {
   readonly version?: string;
 }
 
-export interface AuthConfig {
-  readonly port?: number;
-  readonly siteUrl?: string;
-  readonly jwtExpiry?: number;
-  readonly externalUrl?: string;
-  readonly version?: string;
-}
+export type AuthConfig = AuthRuntimeConfig;
 
 export interface RealtimeConfig {
   readonly port?: number;
@@ -164,6 +160,8 @@ export interface StackConfig {
   readonly startupMode?: StackStartupMode;
   /** Stack-wide readiness policy. Per-call ReadyOptions take precedence. */
   readonly readiness?: ReadinessPolicy;
+  readonly credentials?: LocalCredentials;
+  /** @deprecated Prefer the explicit `credentials.signing` domain model. */
   readonly jwtSecret?: string;
   readonly port?: number;
   readonly publishableKey?: string;
@@ -201,13 +199,7 @@ export interface ResolvedPostgrestConfig {
   readonly version: string;
 }
 
-export interface ResolvedAuthConfig {
-  readonly port: number;
-  readonly siteUrl: string;
-  readonly jwtExpiry: number;
-  readonly externalUrl: string;
-  readonly version: string;
-}
+export type ResolvedAuthConfig = ResolvedAuthRuntimeConfig;
 
 export interface ResolvedRealtimeConfig {
   readonly port: number;
@@ -294,6 +286,7 @@ export interface ResolvedStackConfig {
   readonly mode: StackMode;
   readonly startupMode: StackStartupMode;
   readonly readiness: ReadinessPolicy;
+  readonly credentials: ResolvedLocalCredentials;
   readonly jwtSecret: string;
   readonly ports: AllocatedPorts;
   readonly apiPort: number;
