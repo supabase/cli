@@ -105,6 +105,42 @@ jobs:
           go-version-file: apps/cli-go/go.mod
           cache: true
       - run: go build main.go
+      # The bundled/release build excludes internal/start -- see
+      # apps/cli/docs/binary-distribution.md § Bundled build tag (CLI-1966).
+      # These steps verify that build alongside the untagged tree below,
+      # which remains the migration's parity oracle for Go's `start`.
+      - run: go build -tags bundled -o main-bundled .
+      - name: Verify bundled build excludes internal/start's dependency tree
+        run: |
+          set -euo pipefail
+          go list -tags bundled -deps . > /tmp/bundled-deps.txt
+          ! grep -Eq \
+            'docker/compose|docker/buildx|moby/buildkit|k8s\.io/client-go|aws-sdk-go-v2' \
+            /tmp/bundled-deps.txt
+      - name: Verify bundled build keeps start's command/flag/completion surface
+        run: |
+          set -euo pipefail
+          diff <(./main start --help) <(./main-bundled start --help)
+          diff <(./main __complete start --) <(./main-bundled __complete start --)
+      - name: Verify bundled build stubs start
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(./main-bundled start 2>&1)"
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -eq 0 ]; then
+            echo "expected the bundled build's \`start\` to exit non-zero, got 0:" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          if ! grep -q "not available in supabase-go" <<<"$output"; then
+            echo "expected the bundled build's \`start\` to fail with the CLI-1966 stub message; got:" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          echo "bundled build correctly stubs \`start\` (exit $exit_code)"
+          ./main-bundled --help >/dev/null
       - run: ./main init
       - run: sed -i '/\[db.pooler\]/{n;s/.*/enabled = true/}' supabase/config.toml
       - run: ./main start --workdir tests

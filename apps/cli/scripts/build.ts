@@ -179,12 +179,16 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
     );
   }
   const goLdflags = ldflagParts.join(" ");
-  await $`go build -trimpath -ldflags=${goLdflags} -o ${outfile} .`.cwd(goSource).env({
-    ...process.env,
-    GOOS: goos,
-    GOARCH: goarch,
-    CGO_ENABLED: "0",
-  });
+  // -tags bundled excludes internal/start from the shipped binary -- see
+  // docs/binary-distribution.md § Bundled build tag (CLI-1966).
+  await $`go build -tags bundled -trimpath -ldflags=${goLdflags} -o ${outfile} .`
+    .cwd(goSource)
+    .env({
+      ...process.env,
+      GOOS: goos,
+      GOARCH: goarch,
+      CGO_ENABLED: "0",
+    });
   console.log(`[${target.pkg}] Go binary done.`);
 }
 

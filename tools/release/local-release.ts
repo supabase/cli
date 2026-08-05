@@ -218,12 +218,17 @@ async function main() {
       // the go.mod there. Passing an absolute path as a positional arg
       // causes Go to resolve the module from CWD instead, which fails
       // because the repo root has no go.mod.
-      await $`go build -trimpath -ldflags="-s -w" -o ${goBinary} .`.cwd(goSource).env({
-        ...process.env,
-        GOOS: platform.goos,
-        GOARCH: platform.goarch,
-        CGO_ENABLED: "0",
-      });
+      //
+      // -tags bundled excludes internal/start from the shipped binary -- see
+      // apps/cli/docs/binary-distribution.md § Bundled build tag (CLI-1966).
+      await $`go build -tags bundled -trimpath -ldflags="-s -w" -o ${goBinary} .`
+        .cwd(goSource)
+        .env({
+          ...process.env,
+          GOOS: platform.goos,
+          GOARCH: platform.goarch,
+          CGO_ENABLED: "0",
+        });
     }
 
     // ── Build umbrella package shim ───────────────────────────────────────

@@ -1,42 +1,35 @@
 package cmd
 
+// The "start" command's registration, flags, and validation are tag-neutral
+// and shared by both the full and bundled builds so its command/flag surface
+// can never drift between them -- only runStart's implementation differs
+// (see cmd/start_full.go, cmd/start_bundled.go, and
+// apps/cli/docs/binary-distribution.md § Bundled build tag for the full
+// CLI-1966 rationale).
+
 import (
-	"fmt"
-	"os"
-	"slices"
-	"sort"
 	"strings"
 
-	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/start"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
-func validateExcludedContainers(excludedContainers []string) {
-	// Validate excluded containers
-	validContainers := start.ExcludableContainers()
-	var invalidContainers []string
-
-	for _, e := range excludedContainers {
-		if !slices.Contains(validContainers, e) {
-			invalidContainers = append(invalidContainers, e)
-		}
+// excludableContainers lists the container names valid for the --exclude
+// flag. Duplicated from internal/start.ExcludableContainers (rather than
+// calling it) because this file must stay importable without pulling in
+// internal/start's dependency tree in the bundled build. Keep in sync with
+// internal/start/start.go.
+func excludableContainers() []string {
+	names := []string{}
+	for _, image := range config.Images.Services() {
+		names = append(names, utils.ShortContainerImageName(image))
 	}
-
-	if len(invalidContainers) > 0 {
-		// Sort the names list so it's easier to visually spot the one you looking for
-		sort.Strings(validContainers)
-		warning := fmt.Sprintf("%s The following container names are not valid to exclude: %s\nValid containers to exclude are: %s\n",
-			utils.Yellow("WARNING:"),
-			utils.Aqua(strings.Join(invalidContainers, ", ")),
-			utils.Aqua(strings.Join(validContainers, ", ")))
-		fmt.Fprint(os.Stderr, warning)
-	}
+	return names
 }
 
 var (
-	allowedContainers  = start.ExcludableContainers()
+	allowedContainers  = excludableContainers()
 	excludedContainers []string
 	ignoreHealthCheck  bool
 	preview            bool
@@ -46,8 +39,7 @@ var (
 		Use:     "start",
 		Short:   "Start containers for Supabase local development",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			validateExcludedContainers(excludedContainers)
-			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck)
+			return runStart(cmd, excludedContainers, ignoreHealthCheck)
 		},
 	}
 )

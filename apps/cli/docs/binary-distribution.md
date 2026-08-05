@@ -22,7 +22,7 @@ The legacy shell is a gradual TypeScript port of the Go CLI. Commands are ported
 - **Phase 0** — The command is defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
 - **Phase 1+** — The command is implemented natively in TypeScript.
 
-During Phase 0, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once all commands are ported to TypeScript, the Go binary will no longer be needed.
+During Phase 0, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once all commands are ported to TypeScript, the Go binary will no longer be needed. Not every Go command ships in `supabase-go`, though — see "Bundled build tag" under Release Workflow below.
 
 ## Package Layout
 
@@ -94,10 +94,14 @@ bun scripts/build.ts --shell legacy --version X.Y.Z
 This:
 
 1. Compiles the TS CLI to a Bun SFE for each platform → `packages/cli-{platform}/bin/supabase`
-2. Cross-compiles the Go CLI (`CGO_ENABLED=0`) for each platform → `packages/cli-{platform}/bin/supabase-go`
+2. Cross-compiles the Go CLI (`CGO_ENABLED=0`, `-tags bundled`) for each platform → `packages/cli-{platform}/bin/supabase-go`
 3. Signs the macOS binaries (both `supabase` and `supabase-go`) before archiving, so every channel ships the signed bytes — see [release-process.md § Code signing (macOS)](./release-process.md#code-signing-macos) and [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md)
 4. Bundles both binaries into the platform archives (`.tar.gz` / `.zip`)
 5. Includes both binaries in the Linux package manager packages (deb/rpm/apk)
+
+### Bundled build tag
+
+`supabase-go` is built with `-tags bundled`, which excludes `internal/start` (Go's `supabase start` implementation) from the shipped binary. Native TS `start` talks to Docker directly and never proxies to Go for it — the only Go delegation `start`-adjacent commands still use is `db __db-bootstrap` → `internal/db/start`, a separate, small package. `internal/start` alone previously accounted for roughly half the shipped Go binary's size via its exclusive dependency tree (docker-compose/v2, buildx, buildkit, k8s client-go, aws-sdk-go-v2). The source is unaffected — `apps/cli-go/internal/start/` still builds and tests normally without the tag via plain `go build ./...`, and remains the migration's parity oracle for Go's `start` behavior. The tagged build keeps `start`'s cobra registration and flag surface (needed by the `__complete` passthrough) but stubs its implementation with a "not available in supabase-go" error; `.github/workflows/cli-go-ci.yml`'s `start` job builds and asserts both the untagged and bundled variants on every change (CLI-1966).
 
 ## See Also
 

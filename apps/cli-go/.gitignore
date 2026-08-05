@@ -9,6 +9,8 @@
 *.so
 *.dylib
 /cli
+/main
+/main-bundled
 /supabase-go
 
 # Test binary, built with `go test -c`
