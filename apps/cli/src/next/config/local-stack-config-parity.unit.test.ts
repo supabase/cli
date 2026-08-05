@@ -7,7 +7,7 @@ describe("localStackConfigParity", () => {
   it("classifies every fixed project-config leaf exactly once", () => {
     const paths = entries.map(({ path }) => path);
 
-    expect(paths).toHaveLength(373);
+    expect(paths).toHaveLength(378);
     expect(new Set(paths).size).toBe(paths.length);
     expect(
       Object.fromEntries(
@@ -18,8 +18,8 @@ describe("localStackConfigParity", () => {
       ),
     ).toEqual({
       mapped: 11,
-      "not-applicable": 12,
-      "unsupported-blocking": 344,
+      "not-applicable": 13,
+      "unsupported-blocking": 348,
       "unsupported-warning": 6,
     });
   });
@@ -77,6 +77,15 @@ describe("localStackConfigParity", () => {
     expect(byPath.get("storage.analytics.max_tables")?.presence).toBe("enabled-subtree");
     expect(byPath.get("edge_runtime.deno_version")?.presence).toBe("non-default-value");
     expect(byPath.get("auth.jwt_expiry")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.enabled")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.enable_signup")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.email.enable_signup")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.email.enable_confirmations")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.web3.solana.enabled")?.presence).toBe("non-default-value");
+    expect(byPath.get("db.major_version")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.external_url")?.presence).toBe("raw-document");
+    expect(byPath.get("auth.passkey.enabled")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.webauthn.rp_id")?.presence).toBe("raw-document");
     expect(byPath.get("db.port")?.presence).toBe("non-default-value");
     expect(byPath.get("storage.s3_protocol.enabled")?.presence).toBe("non-default-value");
     expect(byPath.get("studio.enabled")?.presence).toBe("non-default-value");
@@ -99,6 +108,7 @@ describe("localStackConfigParity", () => {
         .map(({ path }) => path)
         .sort(),
     ).toEqual([
+      "auth.rate_limit.email_sent",
       "db.network_restrictions.allowed_cidrs",
       "db.network_restrictions.allowed_cidrs_v6",
       "db.network_restrictions.enabled",

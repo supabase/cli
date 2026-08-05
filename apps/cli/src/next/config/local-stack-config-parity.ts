@@ -150,6 +150,13 @@ const hostedConfigurationField: LocalStackConfigParityDecision = {
     "This hosted-service limit is used by configuration management but does not change the local stack runtime.",
 };
 
+const legacyIgnoredLocalRuntimeField: LocalStackConfigParityDecision = {
+  _tag: "not-applicable",
+  presence: "raw-document",
+  rationale:
+    "The legacy local start runtime ignores this field, so it cannot change local stack behavior.",
+};
+
 const projectMetadataField: LocalStackConfigParityDecision = {
   _tag: "not-applicable",
   presence: "raw-document",
@@ -195,7 +202,7 @@ const authHookParity = {
 } satisfies Record<keyof ProjectConfig["auth"]["hook"]["send_email"], Node>;
 
 const authRateLimitParity = {
-  email_sent: unsupportedRuntimeField,
+  email_sent: legacyIgnoredLocalRuntimeField,
   sms_sent: unsupportedRuntimeField,
   anonymous_users: unsupportedRuntimeField,
   token_refresh: unsupportedRuntimeField,
@@ -280,7 +287,16 @@ const authSmsParity = {
 } satisfies Record<keyof ProjectConfig["auth"]["sms"], Node>;
 
 const authParity = {
-  enabled: unsupportedRuntimeField,
+  enabled: unsupportedNonDefaultRuntimeField,
+  external_url: unsupportedRuntimeField,
+  passkey: {
+    enabled: unsupportedEnabledProviderField,
+  },
+  webauthn: {
+    rp_display_name: unsupportedRuntimeField,
+    rp_id: unsupportedRuntimeField,
+    rp_origins: unsupportedRuntimeField,
+  },
   site_url: unsupportedRuntimeField,
   additional_redirect_urls: unsupportedRuntimeField,
   jwt_expiry: unsupportedNonDefaultRuntimeField,
@@ -289,7 +305,7 @@ const authParity = {
   enable_refresh_token_rotation: unsupportedRuntimeField,
   refresh_token_reuse_interval: unsupportedRuntimeField,
   enable_manual_linking: unsupportedRuntimeField,
-  enable_signup: unsupportedRuntimeField,
+  enable_signup: unsupportedNonDefaultRuntimeField,
   enable_anonymous_sign_ins: unsupportedRuntimeField,
   minimum_password_length: unsupportedRuntimeField,
   password_requirements: unsupportedRuntimeField,
@@ -328,13 +344,13 @@ const authParity = {
     inactivity_timeout: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof NonNullable<ProjectConfig["auth"]["sessions"]>, Node>,
   email: {
-    enable_signup: unsupportedRuntimeField,
-    double_confirm_changes: unsupportedRuntimeField,
-    enable_confirmations: unsupportedRuntimeField,
-    secure_password_change: unsupportedRuntimeField,
-    max_frequency: unsupportedRuntimeField,
-    otp_length: unsupportedRuntimeField,
-    otp_expiry: unsupportedRuntimeField,
+    enable_signup: unsupportedNonDefaultRuntimeField,
+    double_confirm_changes: unsupportedNonDefaultRuntimeField,
+    enable_confirmations: unsupportedNonDefaultRuntimeField,
+    secure_password_change: unsupportedNonDefaultRuntimeField,
+    max_frequency: unsupportedNonDefaultRuntimeField,
+    otp_length: unsupportedNonDefaultRuntimeField,
+    otp_expiry: unsupportedNonDefaultRuntimeField,
     smtp: {
       enabled: unsupportedRuntimeField,
       host: unsupportedOptionalRuntimeField,
@@ -368,10 +384,10 @@ const authParity = {
   external: authExternalWithCustomParity,
   web3: {
     solana: {
-      enabled: unsupportedRuntimeField,
+      enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["solana"], Node>,
     ethereum: {
-      enabled: unsupportedRuntimeField,
+      enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["ethereum"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["web3"], Node>,
   oauth_server: {
@@ -403,7 +419,7 @@ const authParity = {
       issuer_url: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["workos"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["third_party"], Node>,
-} satisfies Record<keyof ProjectConfig["auth"], Node>;
+} satisfies Record<keyof ProjectConfig["auth"], Node> & LocalStackConfigParitySection;
 
 const dbSettingsParity = {
   effective_cache_size: unsupportedOptionalRuntimeField,
@@ -471,7 +487,7 @@ const localStackConfigParity = {
     port: unsupportedNonDefaultRuntimeField,
     shadow_port: commandOnlyDatabaseField,
     health_timeout: unsupportedRuntimeField,
-    major_version: unsupportedRuntimeField,
+    major_version: unsupportedNonDefaultRuntimeField,
     pooler: {
       enabled: unsupportedRuntimeField,
       port: unsupportedRuntimeField,
