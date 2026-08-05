@@ -34,9 +34,21 @@ const NS_PER_MS_BIG = 1_000_000n;
 const NS_PER_US_BIG = 1_000n;
 
 // Go's `time.Duration` ceiling (`math.MaxInt64` nanoseconds, ~292.47 years) — `time.ParseDuration`
-// rejects any value whose accumulated nanosecond count would exceed this. Go's real max parseable
-// duration is `2562047h47m16.854775807s`.
+// rejects any POSITIVE value whose accumulated nanosecond count would exceed this. Go's real max
+// parseable duration is `2562047h47m16.854775807s`.
 const MAX_INT64_NS = 9223372036854775807n;
+
+// Go's `time.ParseDuration` (`src/time/format.go`) accumulates into a `uint64`, checking
+// `d > 1<<63` (NOT `1<<63-1`, i.e. `MAX_INT64_NS`) both per-term and on the running total, and
+// only applies the STRICTER `d > 1<<63-1` check afterwards, and only when the parsed value is NOT
+// negated. A magnitude of exactly `1<<63` therefore survives parsing when the input is negative —
+// `-Duration(d)` on `d == 1<<63` wraps via `int64` two's-complement into exactly `math.MinInt64`,
+// Go's own minimum representable duration (`-2562047h47m16.854775808s`) — but is rejected when the
+// input has no sign, since a positive `time.Duration` can never reach `1<<63` itself. Verified
+// against the real `time` package (CLI-1961 Codex review finding): `time.ParseDuration(
+// "-9223372036854775808ns")` succeeds and returns `math.MinInt64`, while the unsigned form
+// `"9223372036854775808ns"` (identical magnitude, no leading `-`) is rejected as an overflow.
+const UINT64_ACCUMULATOR_BOUND_NS = 1n << 63n;
 
 /**
  * Port of Go `time.ParseDuration`. Returns nanoseconds as a number. Accepts
@@ -143,9 +155,15 @@ export function legacyParseGoDuration(value: string): number {
     // `0`, not `1`. `BigInt` division truncates toward zero unconditionally, so
     // `(frac * unitNs) / post` matches that exactly, without any intermediate float64 rounding.
     total += n * unitNs + (frac * unitNs) / post;
-    if (total > MAX_INT64_NS) {
+    if (total > UINT64_ACCUMULATOR_BOUND_NS) {
       throw new Error(`time: invalid duration "${orig}"`);
     }
+  }
+  // Only a positive result gets the stricter post-loop bound — see
+  // `UINT64_ACCUMULATOR_BOUND_NS`'s doc comment for why a negative result is allowed to reach
+  // one nanosecond further (down to exactly `math.MinInt64`).
+  if (!neg && total > MAX_INT64_NS) {
+    throw new Error(`time: invalid duration "${orig}"`);
   }
 
   return Number(neg ? -total : total);

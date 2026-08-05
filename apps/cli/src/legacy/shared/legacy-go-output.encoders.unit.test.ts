@@ -118,6 +118,19 @@ describe("encodeGoJson", () => {
 `,
     );
   });
+
+  it("sorts keys by Go's byte/code-point order, not JS's UTF-16 code-unit order (CLI-1961 Codex review finding)", () => {
+    // U+E000 is a single UTF-16 code unit (0xE000); U+10000 is a surrogate PAIR whose
+    // leading unit (0xD800) is numerically SMALLER than 0xE000 — so plain JS `.sort()`
+    // (which compares UTF-16 code units) puts the astral key FIRST, while Go's real
+    // `encoding/json` (byte/code-point order) puts the high-BMP key first instead.
+    // Verified against the real binary: `json.Marshal` of a Go map keyed by these two
+    // strings emits the U+E000 key first.
+    const highBmp = String.fromCodePoint(0xe000);
+    const astral = String.fromCodePoint(0x10000);
+    const out = encodeGoJson({ [astral]: 2, [highBmp]: 1 });
+    expect(out).toBe(`{\n  "${highBmp}": 1,\n  "${astral}": 2\n}\n`);
+  });
 });
 
 describe("encodeYaml", () => {

@@ -87,8 +87,18 @@ function walk(value: unknown, depth: number, pretty: boolean): string {
     case "number":
       // Finite numbers from JSON parsing render identically to Go for the
       // integer and ordinary-float cases relevant here; defer to JSON.stringify
-      // for the canonical shortest representation.
-      return Number.isFinite(value) ? JSON.stringify(value) : "null";
+      // for the canonical shortest representation — EXCEPT negative zero, which
+      // `JSON.stringify(-0)` collapses to `"0"` (ECMA-262's `Number::toString`
+      // prints no sign for negative zero) while Go's `encoding/json` marshals a
+      // `float64` negative zero as `-0`. Reachable via `gen bearer-jwt`'s
+      // `--payload '{"extra":-0}'` (or an underflowing literal like `-1e-10000`):
+      // `json.Unmarshal` into `jwt.MapClaims` (a real `map[string]any`) decodes
+      // the number as `float64(-0)`, and the signed payload segment carries that
+      // sign through to `-0` — verified against the real binary (CLI-1961 Codex
+      // review finding): the compiled Go CLI's signed token payload literally
+      // contains `"extra":-0`. Special-case it so the signed bytes match.
+      if (!Number.isFinite(value)) return "null";
+      return Object.is(value, -0) ? "-0" : JSON.stringify(value);
     case "boolean":
       return value ? "true" : "false";
   }

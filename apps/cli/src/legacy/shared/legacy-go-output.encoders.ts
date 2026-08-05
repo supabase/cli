@@ -2,6 +2,7 @@ import { stringify as stringifyToml } from "smol-toml";
 import { stringify as stringifyYaml } from "yaml";
 
 import { encodeGoJsonCompact, encodeGoJsonIndented } from "./legacy-go-json.ts";
+import { goStringCompare } from "./legacy-go-struct-output.encoders.ts";
 
 /**
  * Reproduces Go's `json.Encoder` output (`utils.EncodeOutput` with `-o json`):
@@ -55,7 +56,18 @@ function sortKeysDeep(value: unknown): unknown {
   // for every key shape (CLI-1961 Codex review finding: `{"10":"a","2":"b"}` must stay "10"
   // before "2" all the way through to the final encoded output).
   const sorted = new Map<string, unknown>();
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+  // `.sort()` with no comparator uses JS default string comparison, which orders by
+  // UTF-16 code unit — NOT the same as Go's byte/code-point order once an astral
+  // character (U+10000+, a surrogate PAIR in UTF-16) meets a high-BMP one (U+E000-
+  // U+FFFF, a single code unit numerically ABOVE the astral character's leading
+  // surrogate). `goStringCompare` (hoisted from `legacy-go-struct-output.encoders.ts`,
+  // which already needed it for TOML/struct-map key sorting) reproduces Go's real
+  // `encoding/json` map-key order instead (CLI-1961 Codex review finding: verified
+  // against the real binary that `json.Marshal` of a map keyed by U+E000 and U+10000
+  // emits the U+E000 key first — the reverse of plain JS `.sort()` on those two keys —
+  // which matters here because `gen bearer-jwt`'s `--payload` custom claims flow
+  // through this same `sortKeysDeep` via `encodeGoStructJsonBody` before signing).
+  for (const key of Object.keys(value as Record<string, unknown>).sort(goStringCompare)) {
     const child = (value as Record<string, unknown>)[key];
     // JSON.stringify used to drop undefined properties; the Go-faithful walker
     // renders them as null, so drop them here to keep the old key surface.

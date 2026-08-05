@@ -127,11 +127,21 @@ export function readOptionalString(
 /**
  * Reads the optional `key_ops` STRING ARRAY field, throwing Go's exact struct-field
  * type-mismatch text (see {@link jwkStructFieldTypeMismatch}) when the field is
- * PRESENT but is not an array (`goType: "[]string"`) or contains a non-string element
- * (`goType: "string"`, Go decodes each element individually into the slice's element
- * type) — same "never silently treat malformed as absent" rule as
+ * PRESENT but is not an array (`goType: "[]string"`) or contains a non-string,
+ * non-null element (`goType: "string"`, Go decodes each element individually into
+ * the slice's element type) — same "never silently treat malformed as absent" rule as
  * {@link readOptionalString}. See that function's doc comment for why this is exported
  * from the family root rather than kept local to `bearer-jwt.signing-key.ts`.
+ *
+ * A `null` ELEMENT (e.g. `"key_ops":["sign",null]`) is its own separate zero-value
+ * case, one level deeper than {@link isAbsentJwkField}'s "the whole field is absent":
+ * Go's `encoding/json` decodes a `null` slice element into `[]string` as that
+ * element's zero value (`""`), not a type mismatch. Verified against the real binary
+ * (CLI-1961 Codex review finding): `json.Unmarshal(["sign", null], &[]string{})`
+ * yields `["sign", ""]` with no error — and `key_ops` is never even READ by
+ * `GenerateAsymmetricJWT` (it only inspects `kty`/`Algorithm`/the key-material
+ * fields), so a JWK with a `null` `key_ops` element still signs successfully in Go,
+ * where this function previously rejected it outright.
  */
 export function readOptionalStringArray(
   record: Record<string, unknown>,
@@ -144,12 +154,15 @@ export function readOptionalStringArray(
   if (!Array.isArray(value)) {
     throw new Error(jwkStructFieldTypeMismatch(field, value, "[]string"));
   }
-  for (const entry of value) {
+  return value.map((entry) => {
+    if (entry === null) {
+      return "";
+    }
     if (typeof entry !== "string") {
       throw new Error(jwkStructFieldTypeMismatch(field, entry, "string"));
     }
-  }
-  return value as ReadonlyArray<string>;
+    return entry;
+  });
 }
 
 /**
@@ -534,7 +547,18 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     .readFileString(actualPath)
     .pipe(Effect.mapError((cause) => onReadError(`failed to read signing keys: ${String(cause)}`)));
   const decoded = yield* Effect.try({
-    try: () => JSON.parse(raw),
+    // Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) is a single
+    // `json.Decoder.Decode` call, which reads exactly ONE JSON value and never checks
+    // for trailing bytes — content after that first value (even further
+    // syntactically-valid JSON, e.g. a `signing_keys_path` file containing
+    // `"[validKey] []"`) is silently ignored, not an error. Plain `JSON.parse`
+    // requires the ENTIRE string to be exactly one value and throws on anything left
+    // over, so parse only the first value's own source span — reusing the same
+    // {@link skipJsonValue} span-scanner {@link splitJsonArrayElementTexts} already
+    // uses below — to match Go's decode-once-ignore-the-rest behavior. Verified
+    // against the real binary (CLI-1961 Codex review finding): Go still signs with
+    // `validKey` from a `signing_keys_path` file containing `[validKey] []`.
+    try: () => JSON.parse(raw.slice(0, skipJsonValue(raw, 0))),
     catch: (cause) => onDecodeError(`failed to decode signing keys: ${String(cause)}`),
   });
   if (!Array.isArray(decoded)) {
@@ -542,18 +566,38 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
       onDecodeError("failed to decode signing keys: expected a JSON array"),
     );
   }
+  // A bare `null` ARRAY ELEMENT (as opposed to `isAbsentJwkField`'s "a FIELD is
+  // absent") is Go's own `encoding/json` zero-value case, not a type mismatch: a
+  // `null` decoded into `config.JWK` (a struct, not a pointer) leaves every field at
+  // its zero value, same as `bearer-jwt.signing-key.ts`'s `resolveSigningKeyFromStdinJwk`
+  // already documents for a pasted `null` JWK. So `null` must normalize to `{}`
+  // (an empty record — {@link readOptionalString}/etc. treat every field as absent)
+  // rather than fail this shape check outright, regardless of WHERE in the array it
+  // appears. Verified against the real binary (CLI-1961 Codex review finding): with
+  // `signing_keys_path` decoding to `[validKey, null]`, `Config.Validate` succeeds
+  // (`generateAPIKeys` signs with `SigningKeys[0]`, which is `validKey`), and a
+  // non-TTY `gen bearer-jwt` can still select `validKey` by kid or blank-input
+  // fallback — a `[null, validKey]` ordering is different (already adjudicated on
+  // this PR): `SigningKeys[0]` there is the null-decoded zero-value JWK, so
+  // `generateAPIKeys` itself fails signing before selection is ever reached — but
+  // that later, ALREADY-REJECTED failure is Go's own downstream signing behavior, not
+  // a reason for this decode step to reject either ordering up front.
   for (const item of decoded) {
-    if (!isRecord(item)) {
+    if (item !== null && !isRecord(item)) {
       return yield* Effect.fail(
         onDecodeError("failed to decode signing keys: expected a JSON array of objects"),
       );
     }
   }
   const elementTexts = splitJsonArrayElementTexts(raw);
-  for (const [index, item] of (decoded as ReadonlyArray<Record<string, unknown>>).entries()) {
+  const normalized: Array<Record<string, unknown>> = [];
+  for (const [index, item] of (
+    decoded as ReadonlyArray<Record<string, unknown> | null>
+  ).entries()) {
+    const record = item === null ? {} : item;
     const elementText = elementTexts[index];
     try {
-      const alg = item["alg"];
+      const alg = record["alg"];
       legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
       if (elementText !== undefined) {
         assertNoMalformedDuplicateJwkField(elementText);
@@ -565,6 +609,7 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
         ),
       );
     }
+    normalized.push(record);
   }
-  return decoded as ReadonlyArray<LegacyStoredSigningKeyJwk>;
+  return normalized as ReadonlyArray<LegacyStoredSigningKeyJwk>;
 });

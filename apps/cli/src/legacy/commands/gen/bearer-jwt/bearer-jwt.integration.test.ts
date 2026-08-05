@@ -909,6 +909,101 @@ describe("legacy gen bearer-jwt integration", () => {
   );
 
   it.live(
+    "Branch B: accepts a null entry AFTER a valid key in signing_keys_path, signing with an exact kid match (CLI-1961 Codex review finding)",
+    () => {
+      // Distinct from the earlier-rejected null-BEFORE-valid-key finding on this PR:
+      // there, `SigningKeys[0]` is the null-decoded zero-value JWK, so Go's own
+      // `generateAPIKeys` fails signing before kid selection is ever reached. Here
+      // the valid key is FIRST, so `generateAPIKeys` succeeds — but a BLANK kid
+      // answer still fails, because Go's own exact-KeyID-match loop runs BEFORE the
+      // blank-input fallback and the null-decoded second entry's OWN kid is `""`,
+      // an exact match for a blank answer (same quirk this file's "an exact kid
+      // match on a key with an empty kid wins ahead of the blank-input
+      // fallback-to-first" test already covers) — verified against the real binary:
+      // a blank answer against `[validKey, null]` fails identically to this port
+      // with `"failed to convert JWK to private key: unsupported key type: "`. An
+      // EXPLICIT exact-kid answer for the valid key still signs successfully in
+      // both, which is what the finding's "a non-TTY user can still select
+      // validKey" actually depends on. Verified against the real binary:
+      // `json.Unmarshal` accepts `[validKey, null]`, decoding the trailing `null`
+      // into a zero-value `config.JWK` rather than failing the whole array.
+      const validKey = generateEcJwk("valid-kid");
+      const { layer, out } = setup({ pipedAnswer: "valid-kid" });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([validKey, null])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "valid-kid",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: ignores trailing bytes after the first JSON value in signing_keys_path, matching Go's single Decode (CLI-1961 Codex review finding)",
+    () => {
+      // Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) is a single
+      // `json.Decoder.Decode` call, which reads exactly one JSON value and never
+      // checks for trailing bytes. Verified against the real binary: a
+      // `signing_keys_path` file containing a valid array followed by a second,
+      // syntactically-valid JSON value still lets Go sign with the first array's key.
+      const validKey = generateEcJwk("valid-kid");
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(`${JSON.stringify([validKey])} []`));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "valid-kid",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: accepts a stored signing key with a null key_ops element, matching Go's zero-value decode (CLI-1961 Codex review finding)",
+    () => {
+      // `key_ops` is never read by Go's `GenerateAsymmetricJWT` (it only inspects
+      // `kty`/`Algorithm`/the key-material fields), and `json.Unmarshal` decodes a
+      // `null` element of a `[]string` as that element's zero value (`""`), not a
+      // type mismatch — verified against the real binary (CLI-1961 Codex review
+      // finding).
+      const jwk = { ...generateEcJwk("null-key-ops-kid"), key_ops: ["sign", null] };
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "null-key-ops-kid",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "Branch C: TTY with zero configured signing keys fails with Go's exact 'user aborted' text",
     () => {
       // Go's bubbletea `PromptChoice` (`internal/utils/prompt.go:110-140`), given a

@@ -111,6 +111,27 @@ describe("legacyParseGoDuration", () => {
   it("accepts a duration exactly at Go's true math.MaxInt64 ceiling in nanoseconds", () => {
     expect(() => legacyParseGoDuration("9223372036854775807ns")).not.toThrow();
   });
+
+  // Go's `time.ParseDuration` accumulates into a `uint64` and only rejects `d > 1<<63`
+  // (NOT `1<<63-1`) during parsing — a magnitude of exactly `1<<63` (one MORE than
+  // `math.MaxInt64`) survives the loop and, once negated, lands exactly on
+  // `math.MinInt64`. Verified against the real `time` package (CLI-1961 Codex review
+  // finding): `time.ParseDuration("-9223372036854775808ns")` succeeds.
+  it("accepts Go's exact minimum representable negative duration (math.MinInt64 ns)", () => {
+    expect(legacyParseGoDuration("-9223372036854775808ns")).toBe(-9223372036854775808);
+  });
+
+  it("accepts the equivalent hours/minutes/seconds form of math.MinInt64 ns", () => {
+    expect(legacyParseGoDuration("-2562047h47m16.854775808s")).toBe(-9223372036854775808);
+  });
+
+  // One nanosecond further negative than `math.MinInt64` has no valid `int64`
+  // representation at all — Go rejects this too, not just the positive overflow.
+  it("rejects a duration 1ns past math.MinInt64", () => {
+    expect(() => legacyParseGoDuration("-9223372036854775809ns")).toThrow(
+      'time: invalid duration "-9223372036854775809ns"',
+    );
+  });
 });
 
 describe("legacyFormatGoDuration", () => {
