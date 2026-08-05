@@ -36,7 +36,11 @@ import {
   versionsForConfig,
   type ResolvedStackConfig,
 } from "./StackBuilder.ts";
-import { changedProjectedStates, projectStackStates } from "./StackStateProjection.ts";
+import {
+  changedProjectedStates,
+  projectStackStates,
+  type StackServiceProjectionCatalog,
+} from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
 import { SERVICE_NAMES, type ServiceName } from "./versions.ts";
@@ -53,6 +57,7 @@ type LifecyclePhase =
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
   readonly graph: ResolvedGraph;
+  readonly serviceProjection: StackServiceProjectionCatalog;
   readonly cleanupTargets: CleanupTargets;
 }
 
@@ -429,6 +434,7 @@ export class StackLifecycleCoordinator extends Context.Service<
             return {
               orchestrator,
               graph,
+              serviceProjection,
               cleanupTargets,
             } satisfies RuntimeState;
           }).pipe(
@@ -528,6 +534,15 @@ export class StackLifecycleCoordinator extends Context.Service<
             ),
           );
         const withLifecycleLock = lifecycleLock.withPermit;
+        const syncProjectedStates = (runtime: RuntimeState) =>
+          Effect.gen(function* () {
+            const rawStates = yield* runtime.orchestrator.getAllStates();
+            yield* Effect.forEach(
+              projectStackStates(rawStates, runtime.serviceProjection),
+              updateState,
+              { discard: true },
+            );
+          });
         const serviceStartOptions = {
           beforeStart: (name: string) => portLease.reserve(portFieldsForService(name)),
           beforeSpawn: (name: string) => portLease.release(portFieldsForService(name)),
@@ -590,18 +605,21 @@ export class StackLifecycleCoordinator extends Context.Service<
           readonly runtime: RuntimeState;
           readonly targets: ReadonlyArray<ServiceName>;
         }) =>
-          Effect.forEach(
-            targets,
-            (target) =>
-              runtime.orchestrator
-                .waitReady(target)
-                .pipe(
-                  Effect.catchTag("ServiceNotFoundError", (cause) =>
-                    Effect.fail(knownServiceError(target, cause)),
+          Effect.gen(function* () {
+            yield* Effect.forEach(
+              targets,
+              (target) =>
+                runtime.orchestrator
+                  .waitReady(target)
+                  .pipe(
+                    Effect.catchTag("ServiceNotFoundError", (cause) =>
+                      Effect.fail(knownServiceError(target, cause)),
+                    ),
                   ),
-                ),
-            { concurrency: "unbounded", discard: true },
-          );
+              { concurrency: "unbounded", discard: true },
+            );
+            yield* syncProjectedStates(runtime);
+          });
         const inspectStartedTargets = (root: ServiceName) =>
           Effect.gen(function* () {
             const runtime = yield* ensureRuntime;
@@ -698,6 +716,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               } else {
                 yield* runtime.orchestrator.start(serviceStartOptions);
                 yield* runtime.orchestrator.waitAllReady();
+                yield* syncProjectedStates(runtime);
               }
               yield* Ref.set(phaseRef, "running");
             }).pipe(
@@ -851,6 +870,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* requireKnownServiceName(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.waitReady(name);
+              yield* syncProjectedStates(runtime);
             }),
           waitAllReady: () =>
             Effect.gen(function* () {
@@ -864,6 +884,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               }
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.waitAllReady();
+              yield* syncProjectedStates(runtime);
             }),
           subscribeLogs: (name) => logBuffer.subscribe(name),
           subscribeAllLogs: (services) =>
