@@ -10,7 +10,7 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 import { Output } from "../output/output.service.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  explicitStringFlag,
+  explicitNonEmptyStringFlag,
   hasExplicitLongFlag,
   hasGlobalLongFlag,
 } from "../cli/cobra-flag-groups.ts";
@@ -927,9 +927,14 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
 
   // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
   // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-  // registered on `functions download` itself.
+  // registered on `functions download` itself. Go only treats the override as
+  // set when `len(networkId) > 0`, so an explicit-but-empty `--network-id=`
+  // must fall through to the generated network name too, not just an omitted
+  // flag — `explicitNonEmptyStringFlag` (unlike the unexported
+  // `explicitStringFlag`) treats that case as unset for exactly this reason.
   const networkMode =
-    explicitStringFlag(dependencies.rawArgs, "network-id") ?? localDockerId("network", projectId);
+    explicitNonEmptyStringFlag(dependencies.rawArgs, "network-id") ??
+    localDockerId("network", projectId);
 
   const extract = Effect.gen(function* () {
     yield* ensureDockerNetwork(networkMode, projectId).pipe(

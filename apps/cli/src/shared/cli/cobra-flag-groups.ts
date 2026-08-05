@@ -30,9 +30,12 @@ export function hasExplicitLongFlag(
 
 /**
  * Raw value of `--<flagName>`/`--<flagName>=value` anywhere in argv
- * (unscoped — no command-path anchoring), or `undefined` if absent.
+ * (unscoped — no command-path anchoring), or `undefined` if absent. Not
+ * exported — every current call site needs Go's `len(value) > 0` gate too
+ * (see {@link explicitNonEmptyStringFlag}); re-export this directly if a
+ * future caller genuinely needs presence-only semantics.
  */
-export function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
   for (let index = 0; index < rawArgs.length; index += 1) {
     const token = rawArgs[index];
     if (token === `--${flagName}`) {
@@ -43,6 +46,21 @@ export function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: str
     }
   }
   return undefined;
+}
+
+/**
+ * Same as {@link explicitStringFlag}, but treats an explicit empty value
+ * (`--<flagName>=`) as unset — matching Go call sites that gate on
+ * `len(viper.GetString(flagName)) > 0` rather than mere presence (e.g.
+ * `--network-id`, `apps/cli-go/internal/utils/docker.go:379-382`). pflag
+ * still marks the flag `Changed` for `--network-id=`, but Go's own
+ * `if networkId := viper.GetString("network-id"); len(networkId) > 0`
+ * falls through to the generated network name for that value just like an
+ * omitted flag would (review round on CLI-1963's `functions download` port).
+ */
+export function explicitNonEmptyStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+  const value = explicitStringFlag(rawArgs, flagName);
+  return value !== undefined && value.length > 0 ? value : undefined;
 }
 
 /**

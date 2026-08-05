@@ -641,8 +641,8 @@ describe("legacy functions download", () => {
 
     return Effect.gen(function* () {
       // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-      // registered on `functions download` itself — `explicitStringFlag`
-      // scans the whole argv unscoped.
+      // registered on `functions download` itself —
+      // `explicitNonEmptyStringFlag` scans the whole argv unscoped.
       yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
 
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
@@ -654,6 +654,52 @@ describe("legacy functions download", () => {
       expect(runCommand?.args).not.toContain(`supabase_network_${PROJECT_ID}`);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "falls back to the generated network name when --network-id is passed with an empty value",
+    () => {
+      // Go only overrides the network when `len(viper.GetString("network-id")) > 0`
+      // (`internal/utils/docker.go:379-382`) — an explicit-but-empty
+      // `--network-id=` must fall through to the generated network name just
+      // like an omitted flag (review round on CLI-1963's `functions download`
+      // port).
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const proxy = mockProxy();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+            "--network-id=",
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+        expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
+          command: "docker",
+          args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+        });
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("keeps the temporary eszip file when --debug is passed", () => {
     const out = mockOutput({ format: "text" });

@@ -18,7 +18,7 @@ import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-reg
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  explicitStringFlag,
+  explicitNonEmptyStringFlag,
   hasExplicitLongFlag,
   hasGlobalLongFlag,
 } from "../cli/cobra-flag-groups.ts";
@@ -2201,7 +2201,13 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
             configs,
             dependencies.api,
-            explicitStringFlag(dependencies.rawArgs, "network-id"),
+            // Go only treats `--network-id` as an override when
+            // `len(viper.GetString("network-id")) > 0`
+            // (`internal/utils/docker.go:379-382`) — an explicit-but-empty
+            // `--network-id=` must fall through to the generated network
+            // name (`dockerNetworkId?: string` → `undefined`) just like an
+            // omitted flag.
+            explicitNonEmptyStringFlag(dependencies.rawArgs, "network-id"),
             debugEnabled,
             styleEmphasis,
           );
