@@ -14,7 +14,14 @@ export const dockerServiceCleanup = (containerName: string): Effect.Effect<void>
 
 export const dockerServiceOrphanCleanup = (
   containerName: string,
-): ReadonlyArray<ExternalCleanupAction> => [{ _tag: "DockerRemove", containerName }];
+): ReadonlyArray<ExternalCleanupAction> => [
+  {
+    _tag: "RunCommand",
+    executable: "docker",
+    args: ["rm", "-f", containerName],
+    timeoutMs: 5_000,
+  },
+];
 
 export const removePathOnOrphanCleanup = (
   path: string,

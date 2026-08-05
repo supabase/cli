@@ -200,7 +200,14 @@ describe("makePostgresServiceDocker", () => {
     expect(def.dependencies).toBeUndefined();
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-postgres-${API_PORT}` }],
+      orphanCleanup: [
+        {
+          _tag: "RunCommand",
+          executable: "docker",
+          args: ["rm", "-f", `supabase-postgres-${API_PORT}`],
+          timeoutMs: 5_000,
+        },
+      ],
     });
   });
 
@@ -313,7 +320,14 @@ describe("makeAuthServiceDocker", () => {
     expect(def.args).toContain("9999:9999");
     expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
+      orphanCleanup: [
+        {
+          _tag: "RunCommand",
+          executable: "docker",
+          args: ["rm", "-f", `supabase-auth-${API_PORT}`],
+          timeoutMs: 5_000,
+        },
+      ],
     });
   });
 });
