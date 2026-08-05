@@ -18,11 +18,6 @@ import { buildGraph, type ResolvedGraph } from "./DependencyGraph.ts";
 import { type HealthProbeCallbacks, runHealthProbe } from "./HealthProbe.ts";
 import { LogBuffer } from "./LogBuffer.ts";
 import { restartClosureFor } from "./RestartClosure.ts";
-import {
-  decideRestart,
-  type LifecycleCause,
-  UNHEALTHY_RESTART_EXHAUSTED_ERROR,
-} from "./RestartDecision.ts";
 import type {
   HookTrigger,
   OrchestratorConfig,
