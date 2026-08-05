@@ -674,6 +674,34 @@ describe("legacyReadDbToml", () => {
     },
   );
 
+  it.effect(
+    "ignores a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when [experimental.webhooks] is absent",
+    () => {
+      // Verified empirically against apps/cli-go/pkg/config (config.Load with an in-memory fs,
+      // no [experimental.webhooks] section, env override set to a non-boolean string): Go's
+      // Load() succeeds and Experimental.Webhooks stays nil — the env override is never applied
+      // because the key is only "known" to viper (and thus AutomaticEnv-bindable) when the
+      // section is declared, unlike experimental.pgdelta.enabled (always known via the Eject
+      // template merged into defaults). Before the presence gate, this reader parsed the env
+      // override unconditionally and failed the whole config load on the bogus value.
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "bogus";
+      const dir = withConfig("");
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
     // even with no TOML project_id (here it lifts major_version 15 over the base default).

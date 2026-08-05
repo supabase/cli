@@ -1259,26 +1259,40 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     typeof denoVersionResolved === "number" ? denoVersionResolved : DEFAULT_DENO_VERSION;
 
   // `[experimental.webhooks]`. Go's `*webhooks` is a nil-unless-declared pointer sibling of
-  // `*PgDeltaConfig` below (`config.go:335`) — presence-gated the same way, and checked FIRST
-  // within `Experimental.validate()` (`config.go:1846-1848`, immediately before the pgdelta
-  // check right below). The section only exists to be turned ON: Go rejects ANY present
-  // `[experimental.webhooks]` whose `enabled` isn't explicitly `true`, including when the key
-  // is simply omitted (bool zero-value `false`). `webhooksPresent`/`webhooksEnabled` feed
-  // `legacyValidateResolvedConfig`'s existing `experimental.webhooks` check
-  // (`legacy-config-validate.ts:676-680`) — this D pipeline never populated that input pair,
-  // so the check never ran for any of D's ~15 db/migration-command callers (`db start`, `db
-  // reset`, `db push`, `start`, migrate-and-seed), unlike L's `legacyResolveLocalConfigValues`,
-  // which already computes the identical pair from its own decoded config + raw document
-  // (review: PRRT_kwDOErm0O86WE42i). Go's viper `AutomaticEnv` binds
-  // `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED` the same generic way as
-  // `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` below, so an env override can flip a TOML
-  // `enabled = false` to `true` (or a bogus value can abort the load) before validation runs.
+  // `*PgDeltaConfig` below (`config.go:335`) — checked FIRST within `Experimental.validate()`
+  // (`config.go:1846-1848`, immediately before the pgdelta check right below). The section only
+  // exists to be turned ON: Go rejects ANY present `[experimental.webhooks]` whose `enabled`
+  // isn't explicitly `true`, including when the key is simply omitted (bool zero-value `false`).
+  // `webhooksPresent`/`webhooksEnabled` feed `legacyValidateResolvedConfig`'s existing
+  // `experimental.webhooks` check (`legacy-config-validate.ts:676-680`) — this D pipeline never
+  // populated that input pair, so the check never ran for any of D's ~15 db/migration-command
+  // callers (`db start`, `db reset`, `db push`, `start`, migrate-and-seed), unlike L's
+  // `legacyResolveLocalConfigValues`, which already computes the identical pair from its own
+  // decoded config + raw document (review: PRRT_kwDOErm0O86WE42i).
+  //
+  // UNLIKE `experimental.pgdelta.enabled` below, the `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED`
+  // env override is NOT presence-independent — verified empirically against
+  // `apps/cli-go/pkg/config` (`config.Load` with an in-memory fs, no `[experimental.webhooks]`
+  // section, and a malformed env value): Go's `Load()` succeeds and `Experimental.Webhooks`
+  // stays `nil`, silently ignoring the override, where the equivalent pgdelta probe fails to
+  // load. The difference is `mergeDefaultValues` (`config.go:690-699`): it merges the `Eject()`
+  // template BEFORE the user's file, and that template declares `[experimental.pgdelta]`
+  // (`pkg/config/templates/config.toml:409`) but has no `[experimental.webhooks]` entry at all
+  // — so `pgdelta.enabled` is always a "known" viper key (env-bindable via `AutomaticEnv`
+  // regardless of the user's own file), while `webhooks.enabled` is only known, and therefore
+  // only env-overridable, when the section itself is declared (by the user's file or a matching
+  // `[remotes.*]` block — both already folded into `experimentalRaw` above). Gate the env read
+  // itself on `webhooksPresent`, not just the later validation check, so a bogus/irrelevant
+  // `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED` in the shell or project `.env` doesn't abort a load
+  // that has no `[experimental.webhooks]` section to apply it to (review: this thread).
   const webhooksRaw = asRecord(experimentalRaw?.["webhooks"]);
   const webhooksPresent = webhooksRaw !== undefined;
   const webhooksEnabledRaw = webhooksRaw?.["enabled"];
-  const webhooksEnabledEnv = remoteOverrideKeys.has("experimental.webhooks.enabled")
-    ? undefined
-    : envOverride("SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED");
+  const webhooksEnabledEnv = webhooksPresent
+    ? remoteOverrideKeys.has("experimental.webhooks.enabled")
+      ? undefined
+      : envOverride("SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED")
+    : undefined;
   let webhooksEnabled: boolean;
   if (webhooksEnabledEnv !== undefined) {
     const expandedWebhooksEnabledEnv = legacyExpandEnv(webhooksEnabledEnv, lookup);
