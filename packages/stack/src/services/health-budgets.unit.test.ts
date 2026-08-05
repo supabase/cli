@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { stackHealthBudgets } from "./health-budgets.ts";
+import {
+  dependencyTimeoutSecondsForService,
+  healthStartupBudgetSeconds,
+  stackHealthBudgets,
+  stackServiceStartupBudgetSeconds,
+} from "./health-budgets.ts";
 
 describe("stack health budgets", () => {
   it("records startup and liveness policy for every health-checked service", () => {
@@ -10,8 +15,7 @@ describe("stack health budgets", () => {
           initialDelay: budget.initialDelaySeconds,
           period: budget.periodSeconds,
           startupThreshold: budget.startupFailureThreshold,
-          startupBudget:
-            budget.initialDelaySeconds + budget.periodSeconds * budget.startupFailureThreshold,
+          startupBudget: healthStartupBudgetSeconds(budget),
           livenessThreshold: budget.failureThreshold,
         },
       ]),
@@ -119,5 +123,11 @@ describe("stack health budgets", () => {
         },
       }
     `);
+  });
+
+  it("keeps dependency timeouts beyond the dependency startup budget", () => {
+    expect(dependencyTimeoutSecondsForService("analytics")).toBeGreaterThan(
+      stackServiceStartupBudgetSeconds.analytics,
+    );
   });
 });
