@@ -337,15 +337,11 @@ export const RemoteStack = {
           reloadFunctions: (opts) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(
-                  socketPath,
-                  `/functions/reload${encodeSearchParams({
-                    envFile: opts?.envFile,
-                    noVerifyJwt:
-                      opts?.noVerifyJwt === undefined ? undefined : String(opts.noVerifyJwt),
-                  })}`,
-                  { method: "POST" },
-                );
+                const response = yield* unixResponse(socketPath, "/functions/reload", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(opts ?? {}),
+                });
                 yield* expectDaemonOk(response, "edge-runtime");
               }),
             ),

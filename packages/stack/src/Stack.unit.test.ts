@@ -2,11 +2,16 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { resolveLocalCredentials } from "./LocalCredentials.ts";
+import { functionsRuntimeConfigPath, type ResolvedFunctionsBundle } from "./functions.ts";
 import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
@@ -135,6 +140,20 @@ const edgeRuntimeConfig: ResolvedStackConfig = {
   },
 };
 
+const functionsBundle = (root: string, value: string): ResolvedFunctionsBundle => ({
+  env: { SHARED: value },
+  functions: [
+    {
+      name: "hello",
+      verifyJWT: false,
+      entrypointPath: join(root, "hello", "index.ts"),
+      importMapPath: null,
+      staticFiles: [],
+      env: { FUNCTION_VALUE: value },
+    },
+  ],
+});
+
 const noopPortLease = (ports: AllocatedPorts): PortLease => ({
   ports,
   reserve: () => Effect.void,
@@ -185,6 +204,75 @@ describe("Stack", () => {
       expect(info.serviceEndpoints.functions).toBe("http://127.0.0.1:54321/functions/v1");
       expect(info.serviceEndpoints.edge_runtime).toBe("http://127.0.0.1:54321/functions/v1");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves the current functions bundle across repeated runtime reloads", () => {
+    const runtimeRoot = mkdtempSync(join(tmpdir(), "supabase-functions-reload-"));
+    const initialBundle = functionsBundle(runtimeRoot, "initial-secret");
+    const replacementBundle = functionsBundle(runtimeRoot, "replacement-secret");
+    const config = {
+      ...edgeRuntimeConfig,
+      runtimeRoot,
+      functions: initialBundle,
+    } satisfies ResolvedStackConfig;
+    const graph = Effect.runSync(
+      buildGraph([
+        {
+          name: "edge-runtime",
+          command: process.execPath,
+          restart: "unless-stopped",
+        },
+      ]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.succeed({
+          graph,
+          cleanupTargets: { dockerContainerNames: [] },
+          serviceProjection: new Map([["edge-runtime", { visibility: "public" as const }]]),
+        }),
+    });
+    const resolver = mockBinaryResolver();
+    const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(mockChildProcessSpawner().layer),
+      Layer.provide(BunServices.layer),
+    );
+    const readRuntimeConfig = Effect.promise(() =>
+      readFile(functionsRuntimeConfigPath(runtimeRoot), "utf8").then((contents) =>
+        JSON.parse(contents),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+
+      yield* stack.reloadFunctions({ functions: replacementBundle });
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
+      yield* stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } });
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
+      yield* stack.reloadFunctions();
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
+      yield* stack.dispose();
+      expect(
+        yield* Effect.promise(() =>
+          readFile(functionsRuntimeConfigPath(runtimeRoot), "utf8").then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ).toBe(false);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
+      Effect.timeout("5 seconds"),
+    );
   });
 
   it.effect("getInfo returns valid JWT tokens", () => {
@@ -804,7 +892,7 @@ describe("Stack", () => {
       const config = {
         ...defaultConfig,
         startupMode: "lazy",
-        readiness: { mode: "finite", timeoutMs: 250 },
+        readiness: { mode: "finite", timeoutMs: 1_000 },
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),
@@ -824,7 +912,7 @@ describe("Stack", () => {
         expect(error._tag).toBe("StackReadinessError");
         if (error._tag === "StackReadinessError") {
           expect(error.target).toBe("auth");
-          expect(error.timeoutMs).toBe(250);
+          expect(error.timeoutMs).toBe(1_000);
         }
         expect(releasedAll).toBe(true);
         const spawnCountAfterDisposal = spawner.spawned.length;

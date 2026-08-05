@@ -5,6 +5,7 @@ import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
 import { StackReadinessError } from "./errors.ts";
+import type { FunctionsReloadConfig, ResolvedFunctionsBundle } from "./functions.ts";
 import { Stack, type StackInfo } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 
@@ -57,6 +58,7 @@ const MOCK_LOGS: ReadonlyArray<LogEntry> = [
 function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
   let stopped = false;
   const serviceCalls: string[] = [];
+  const functionReloads: FunctionsReloadConfig[] = [];
 
   const layer = Layer.succeed(Stack, {
     getInfo: () => Effect.succeed(MOCK_INFO),
@@ -96,8 +98,9 @@ function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
-    reloadFunctions: () =>
+    reloadFunctions: (config) =>
       Effect.sync(() => {
+        functionReloads.push(config ?? {});
         serviceCalls.push("reload-functions");
       }),
     reloadEdgeRuntime: () =>
@@ -142,8 +145,23 @@ function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
       return stopped;
     },
     serviceCalls,
+    functionReloads,
   };
 }
+
+const functionsBundle: ResolvedFunctionsBundle = {
+  env: { SHARED_SECRET: "shared-secret-value" },
+  functions: [
+    {
+      name: "hello",
+      verifyJWT: false,
+      entrypointPath: "/project/supabase/functions/hello/index.ts",
+      importMapPath: null,
+      staticFiles: [],
+      env: { FUNCTION_SECRET: "function-secret-value" },
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Layer builder
@@ -364,6 +382,42 @@ describe("DaemonServer", () => {
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(mock.serviceCalls).toContain("reload-edge-runtime");
+  });
+
+  test("POST /functions/reload validates and forwards its JSON body", async () => {
+    const res = await fetch(`${url}/functions/reload`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ functions: functionsBundle }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mock.functionReloads).toContainEqual({ functions: functionsBundle });
+  });
+
+  test("reload validation never renders resolved environment values", async () => {
+    const secret = "must-not-appear-in-errors";
+    const res = await fetch(`${url}/functions/reload`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        functions: {
+          env: { SECRET: secret },
+          functions: [
+            {
+              ...functionsBundle.functions[0],
+              entrypointPath: "relative/index.ts",
+            },
+          ],
+        },
+      }),
+    });
+    const responseText = await res.text();
+
+    expect(res.status).toBe(400);
+    expect(responseText).toContain("Invalid Edge Functions reload payload");
+    expect(responseText).not.toContain(secret);
+    expect(responseText).not.toContain("relative/index.ts");
   });
 
   // -------------------------------------------------------------------------

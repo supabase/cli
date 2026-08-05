@@ -156,6 +156,35 @@ const stack = await createStack({
 });
 ```
 
+### Edge Functions
+
+The stack accepts an explicit, fully resolved Functions bundle. Paths must be absolute and the
+caller owns project-file discovery, environment-file parsing, and manifest interpretation:
+
+```typescript
+const stack = await createStack({
+  functions: {
+    env: { SHARED_VALUE: "available to every function" },
+    functions: [
+      {
+        name: "hello",
+        verifyJWT: true,
+        entrypointPath: "/absolute/project/supabase/functions/hello/index.ts",
+        importMapPath: null,
+        staticFiles: [],
+        env: { FUNCTION_VALUE: "available only to hello" },
+      },
+    ],
+  },
+});
+```
+
+Per-function environment values override shared values. Stack-owned runtime URLs and credentials
+take final precedence. To update the active bundle, call
+`reloadFunctions({ functions: nextBundle })`; `reloadFunctions()` preserves and reapplies the most
+recent bundle. `reloadEdgeRuntime()` follows the same preservation rule when its optional
+`functions` field is omitted.
+
 ## Docker Mode
 
 Set `mode: "docker"` to force all services to run in Docker containers, bypassing native binary resolution:

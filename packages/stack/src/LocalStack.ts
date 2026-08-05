@@ -19,7 +19,11 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
-import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
+import {
+  clearFunctionsRuntimeConfig,
+  configureFunctionsRuntime,
+  type ResolvedFunctionsBundle,
+} from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
@@ -172,6 +176,9 @@ export const localStackLayer = (
       const enabledServices = enabledServicesForConfig(config);
       const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
       const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
+      const functionsBundleRef = yield* Ref.make<ResolvedFunctionsBundle | undefined>(
+        config.functions === false ? undefined : config.functions,
+      );
       const lifecycleLock = Semaphore.makeUnsafe(1);
 
       const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
@@ -429,7 +436,8 @@ export const localStackLayer = (
         nextConfig: ResolvedStackConfig,
       ): Effect.Effect<void, StackBuildError> =>
         Effect.gen(function* () {
-          yield* providePlatform(configureFunctionsRuntime(nextConfig, yield* runtimeHost));
+          const bundle = yield* Ref.get(functionsBundleRef);
+          yield* providePlatform(configureFunctionsRuntime(nextConfig, yield* runtimeHost, bundle));
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -439,19 +447,6 @@ export const localStackLayer = (
               }),
           ),
         );
-      const configWithFunctionOptions = (opts?: FunctionsConfig): ResolvedStackConfig => {
-        if (opts === undefined) {
-          return config;
-        }
-        const base = config.functions === false ? { noVerifyJwt: false } : config.functions;
-        return {
-          ...config,
-          functions: {
-            envFile: opts.envFile ?? base.envFile,
-            noVerifyJwt: opts.noVerifyJwt ?? base.noVerifyJwt,
-          },
-        };
-      };
       const configWithEdgeRuntimeOptions = (
         opts: EdgeRuntimeReloadConfig,
       ): Effect.Effect<ResolvedStackConfig, ServiceNotFoundError> =>
@@ -460,9 +455,8 @@ export const localStackLayer = (
             return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
           }
 
-          const base = configWithFunctionOptions(opts.functions);
           return {
-            ...base,
+            ...config,
             edgeRuntime: {
               ...config.edgeRuntime,
               enabled: opts.edgeRuntime.enabled ?? config.edgeRuntime.enabled,
@@ -625,6 +619,7 @@ export const localStackLayer = (
             cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
             config,
           }).pipe(
+            Effect.ensuring(providePlatform(clearFunctionsRuntimeConfig(config.runtimeRoot))),
             Effect.ensuring(portLease.releaseAll),
             Effect.ensuring(Ref.set(phaseRef, "disposed")),
           );
@@ -778,7 +773,10 @@ export const localStackLayer = (
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload functions");
               yield* requireKnownService("edge-runtime");
-              yield* configureFunctions(configWithFunctionOptions(opts));
+              if (opts?.functions !== undefined) {
+                yield* Ref.set(functionsBundleRef, opts.functions);
+              }
+              yield* configureFunctions(config);
               const runtime = yield* ensureRuntime;
               const state = yield* runtime.orchestrator.getState("edge-runtime");
               if (state.desired !== "running") {
@@ -798,6 +796,9 @@ export const localStackLayer = (
               yield* requireMutable("reload Edge Runtime");
               yield* requireKnownService("edge-runtime");
               const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
+              if (opts.functions !== undefined) {
+                yield* Ref.set(functionsBundleRef, opts.functions);
+              }
               const prepared = yield* ensurePrepared;
               const runtime = yield* ensureRuntime;
               const buildResult = yield* builder.build(nextConfig, prepared);

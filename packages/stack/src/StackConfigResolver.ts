@@ -321,11 +321,7 @@ function resolveEdgeRuntimeConfig(
 }
 
 function resolveFunctionsConfig(config: StackConfig) {
-  if (config.functions === false) return false;
-  return {
-    envFile: config.functions?.envFile,
-    noVerifyJwt: config.functions?.noVerifyJwt ?? false,
-  };
+  return config.functions ?? false;
 }
 
 function resolveStorageConfig(
@@ -594,7 +590,7 @@ export async function resolveConfig(
   };
 }
 
-export type DaemonConfigInput = StackConfig & {
+export type DaemonConfigInput = Omit<StackConfig, "functions"> & {
   readonly cwd: string;
   readonly name?: string;
   readonly projectDir?: string;

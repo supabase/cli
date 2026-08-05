@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import type { AuthRuntimeConfig, ResolvedAuthRuntimeConfig } from "./AuthConfig.ts";
-import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
+import type { ResolvedFunctionsBundle } from "./functions.ts";
 import type { LocalCredentials, ResolvedLocalCredentials } from "./LocalCredentials.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 
@@ -202,7 +202,7 @@ export interface StackConfig {
   readonly publishableKey?: string;
   readonly secretKey?: string;
   readonly databaseBootstrap?: DatabaseBootstrapConfig;
-  readonly functions?: FunctionsConfig | false;
+  readonly functions?: ResolvedFunctionsBundle | false;
   readonly postgres?: PostgresConfig;
   readonly postgrest?: PostgrestConfig | false;
   readonly auth?: AuthConfig | false;
@@ -333,7 +333,7 @@ export interface ResolvedStackConfig {
   readonly dbPort: number;
   readonly publishableKey: string;
   readonly secretKey: string;
-  readonly functions: ResolvedFunctionsConfig | false;
+  readonly functions: ResolvedFunctionsBundle | false;
   readonly autoManagedPaths: ReadonlyArray<string>;
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
