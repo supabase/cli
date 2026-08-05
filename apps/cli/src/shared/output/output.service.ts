@@ -24,6 +24,16 @@ interface OutputSelectBehavior {
   readonly autocompleteThreshold?: number;
   readonly placeholder?: string;
   readonly maxItems?: number;
+  /**
+   * Which stream the interactive picker itself renders to. Defaults to `"stdout"`
+   * (clack's own default, matching every existing caller). Pass `"stderr"` for a
+   * command whose own stdout is a machine-readable payload even in text mode (e.g.
+   * `gen bearer-jwt`'s signed token) — matching Go's own convention of always
+   * rendering interactive prompts to stderr (`internal/utils/prompt.go`'s
+   * `PromptChoice`: `tea.WithOutput(os.Stderr)`, "Interactive prompts should always
+   * be written to stderr").
+   */
+  readonly stream?: "stdout" | "stderr";
 }
 
 /**

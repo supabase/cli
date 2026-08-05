@@ -160,6 +160,18 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
  * Go's bubbletea `PromptChoice` — the rendered ANSI never byte-matches Go's TUI
  * either way, so this codebase's established precedent is to match only the
  * observable stderr line Go itself prints after a choice, "Selected key ID: <kid>").
+ *
+ * Both the picker AND that line are routed to stderr explicitly (`{ stream: "stderr"
+ * }` / `output.raw(..., "stderr")` below) rather than the shared `promptSelect`/`info`
+ * defaults: Go's own `PromptChoice` comments "Interactive prompts should always be
+ * written to stderr" and passes `tea.WithOutput(os.Stderr)`
+ * (`internal/utils/prompt.go:127-128`) — but clack's `select()`/`log.info()` default to
+ * `process.stdout` (verified directly against the installed `@clack/prompts` source),
+ * and this command's own stdout IS the signed-token payload even in text mode (see
+ * `bearer-jwt.handler.ts`'s doc comment) — so the unmodified defaults would corrupt a
+ * piped/captured token with picker UI and the "Selected key ID: ..." line for any
+ * interactive user with a configured `signing_keys_path` (Codex review finding,
+ * CLI-1961).
  */
 const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
   availableKeys: ReadonlyArray<LegacyJwk>,
@@ -204,10 +216,12 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     label: key.kid ?? "",
     hint: `${key.alg ?? ""} (${(key.key_ops ?? []).join(",")})`,
   }));
-  const chosen = yield* output.promptSelect("Select a signing key:", options);
+  const chosen = yield* output.promptSelect("Select a signing key:", options, { stream: "stderr" });
   const chosenKey = availableKeys[Number(chosen)]!;
   // Go: `fmt.Fprintln(os.Stderr, "Selected key ID:", choice.Summary)` (`bearerjwt.go:82`).
-  yield* output.info(`Selected key ID: ${chosenKey.kid ?? ""}`);
+  // `output.raw(..., "stderr")`, NOT `output.info` — `info` is clack's `log.info`, which
+  // defaults to stdout (see this function's doc comment above).
+  yield* output.raw(`Selected key ID: ${chosenKey.kid ?? ""}\n`, "stderr");
   return chosenKey;
 });
 
