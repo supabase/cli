@@ -2,10 +2,38 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, test } from "vitest";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { describe, expect, test } from "vitest";
+import { makeSupervisorRuntimeEnv, withoutSupervisorRuntimeEnv } from "./supervisor-protocol.ts";
 
 const supervisorRuntimePath = fileURLToPath(new URL("./supervisor-runtime.ts", import.meta.url));
+const supervisorProtocolPath = fileURLToPath(new URL("./supervisor-protocol.ts", import.meta.url));
+
+type SupervisorEntry = "source path" | "compiled self-dispatch";
+
+const spawnSupervisor = (entry: SupervisorEntry, encodedConfig: string) => {
+  if (entry === "source path") {
+    return spawn(process.execPath, [supervisorRuntimePath, encodedConfig], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+  }
+
+  const runtimeUrl = pathToFileURL(supervisorRuntimePath).href;
+  const protocolUrl = pathToFileURL(supervisorProtocolPath).href;
+  const dispatch = [
+    `import { runSupervisorRuntimeFromEnv } from ${JSON.stringify(runtimeUrl)};`,
+    `import { isSupervisorRuntimeRequested } from ${JSON.stringify(protocolUrl)};`,
+    `if (!isSupervisorRuntimeRequested()) throw new Error("supervisor dispatch not requested");`,
+    `runSupervisorRuntimeFromEnv();`,
+  ].join("\n");
+  return spawn(process.execPath, ["--eval", dispatch], {
+    env: makeSupervisorRuntimeEnv(encodedConfig, {
+      ...process.env,
+      PROCESS_COMPOSE_SUPERVISOR_SELF_DISPATCH: "1",
+    }),
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+};
 
 const waitFor = async (
   predicate: () => boolean,
@@ -39,12 +67,13 @@ const isPidAlive = (pid: number): boolean => {
 };
 
 describe("supervisor-runtime", () => {
-  test(
-    "kills the child tree and runs orphan cleanup when parent stdin closes",
+  test.each<SupervisorEntry>(["source path", "compiled self-dispatch"])(
+    "%s kills the child tree and runs validated orphan cleanup when parent stdin closes",
     { timeout: 15_000 },
-    async () => {
+    async (entry) => {
       const tempDir = mkdtempSync(path.join(tmpdir(), "process-compose-supervisor-"));
       const cleanupDir = path.join(tempDir, "cleanup-dir");
+      const cleanupMarker = path.join(tempDir, "cleanup-command-ran");
       const childPidFile = path.join(tempDir, "child.pid");
       const grandchildPidFile = path.join(tempDir, "grandchild.pid");
       const readyFile = path.join(tempDir, "ready");
@@ -72,13 +101,23 @@ describe("supervisor-runtime", () => {
           args: [childScriptPath],
           shutdownSignal: "SIGTERM",
           shutdownTimeoutMs: 100,
-          cleanup: [{ _tag: "RemovePath", path: cleanupDir, recursive: true }],
+          cleanup: [
+            { _tag: "RemovePath", path: cleanupDir, recursive: true },
+            {
+              _tag: "RunCommand",
+              executable: process.execPath,
+              args: [
+                "-e",
+                `require("node:fs").writeFileSync(process.argv[1], process.argv[2])`,
+                cleanupMarker,
+                "literal; $(not-run) & value",
+              ],
+            },
+          ],
         }),
       ).toString("base64url");
 
-      const supervisor = spawn(process.execPath, [supervisorRuntimePath, encodedConfig], {
-        stdio: ["pipe", "ignore", "ignore"],
-      });
+      const supervisor = spawnSupervisor(entry, encodedConfig);
 
       try {
         await waitFor(() => existsSync(readyFile));
@@ -90,6 +129,8 @@ describe("supervisor-runtime", () => {
 
         await waitFor(() => supervisor.exitCode != null, { timeoutMs: 10_000 });
         await waitFor(() => !existsSync(cleanupDir), { timeoutMs: 10_000 });
+        await waitFor(() => existsSync(cleanupMarker), { timeoutMs: 10_000 });
+        expect(readFileSync(cleanupMarker, "utf8")).toBe("literal; $(not-run) & value");
         await waitFor(() => !isPidAlive(childPid), { timeoutMs: 10_000 });
         await waitFor(() => !isPidAlive(grandchildPid), { timeoutMs: 10_000 });
       } finally {
@@ -98,6 +139,83 @@ describe("supervisor-runtime", () => {
       }
     },
   );
+
+  test.each([
+    [
+      "non-string command argument",
+      { _tag: "RunCommand", executable: process.execPath, args: [42] },
+    ],
+    ["empty executable", { _tag: "RunCommand", executable: "", args: [] }],
+    [
+      "non-positive timeout",
+      { _tag: "RunCommand", executable: process.execPath, args: [], timeoutMs: 0 },
+    ],
+    ["invalid path option", { _tag: "RemovePath", path: "/tmp/example", recursive: "yes" }],
+  ])("rejects a malformed cleanup contract with %s before spawning", async (_name, cleanup) => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "process-compose-supervisor-invalid-"));
+    const childMarker = path.join(tempDir, "child-started");
+    const encodedConfig = Buffer.from(
+      JSON.stringify({
+        command: process.execPath,
+        args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(childMarker)}, "started")`],
+        cleanup: [cleanup],
+      }),
+    ).toString("base64url");
+    const supervisor = spawnSupervisor("source path", encodedConfig);
+
+    try {
+      await waitFor(() => supervisor.exitCode != null);
+      expect(supervisor.exitCode).not.toBe(0);
+      expect(existsSync(childMarker)).toBe(false);
+    } finally {
+      supervisor.kill("SIGKILL");
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("removes supervisor protocol variables from the managed child environment", () => {
+    const childEnv = withoutSupervisorRuntimeEnv({
+      KEEP_ME: "value",
+      PROCESS_COMPOSE_SUPERVISOR_SELF_DISPATCH: "1",
+      PROCESS_COMPOSE_RUN_SUPERVISOR: "1",
+      PROCESS_COMPOSE_SUPERVISOR_CONFIG: "encoded",
+    });
+
+    expect(childEnv).toEqual({ KEEP_ME: "value" });
+  });
+
+  test("bounds a cleanup command by its timeout and continues remaining cleanup", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "process-compose-supervisor-timeout-"));
+    const cleanupDir = path.join(tempDir, "cleanup-dir");
+    const childScriptPath = path.join(tempDir, "child.mjs");
+    mkdirSync(cleanupDir);
+    writeFileSync(childScriptPath, "process.exit(0);\n");
+    const encodedConfig = Buffer.from(
+      JSON.stringify({
+        command: process.execPath,
+        args: [childScriptPath],
+        cleanup: [
+          {
+            _tag: "RunCommand",
+            executable: process.execPath,
+            args: ["-e", "setInterval(() => {}, 1000)"],
+            timeoutMs: 100,
+          },
+          { _tag: "RemovePath", path: cleanupDir, recursive: true },
+        ],
+      }),
+    ).toString("base64url");
+    const supervisor = spawnSupervisor("source path", encodedConfig);
+
+    try {
+      await waitFor(() => supervisor.exitCode != null);
+      expect(supervisor.exitCode).toBe(0);
+      expect(existsSync(cleanupDir)).toBe(false);
+    } finally {
+      supervisor.kill("SIGKILL");
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 
   test(
     "runs orphan cleanup when the configured owner pid is already gone",
