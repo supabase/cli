@@ -4,6 +4,7 @@ import {
   Duration,
   Effect,
   Exit,
+  Fiber,
   FiberMap,
   Layer,
   Context,
@@ -119,6 +120,7 @@ export class Orchestrator extends Context.Service<
 
         // FiberMap to track running service fibers — auto-interrupted on scope close
         const fibers = yield* FiberMap.make<string>();
+        const forceStops = new Map<string, Effect.Effect<void>>();
 
         // Helper: send a validated FSM event — only does the state transition
         const sendEvent = (
@@ -254,6 +256,8 @@ export class Orchestrator extends Context.Service<
                       .kill({ killSignal: signal })
                       .pipe(Effect.asVoid, Effect.ignore, Effect.andThen(waitForHandleExit));
 
+                  forceStops.set(def.name, sendSignal("SIGKILL"));
+
                   const runCleanup = () =>
                     def.cleanup == null
                       ? Effect.void
@@ -289,6 +293,7 @@ export class Orchestrator extends Context.Service<
                       ),
                       Effect.catch(() => Effect.void),
                       Effect.andThen(runCleanup()),
+                      Effect.ensuring(Effect.sync(() => forceStops.delete(def.name))),
                     ),
                   );
 
@@ -653,21 +658,23 @@ export class Orchestrator extends Context.Service<
                 );
               });
 
-              yield* stopAll.pipe(
-                Effect.timeout(Duration.seconds(timeoutSecs)),
-                Effect.catch(() =>
-                  Effect.gen(function* () {
-                    for (const def of graph.startOrder) {
-                      yield* logBuffer.append(
-                        def.name,
-                        "stderr",
-                        `[shutdown-timeout] Global shutdown timed out after ${timeoutSecs}s, force-interrupting`,
-                      );
-                    }
-                    yield* FiberMap.clear(fibers);
-                  }),
-                ),
+              const stopFiber = yield* Effect.forkChild(stopAll);
+              const stoppedInTime = yield* Effect.race(
+                Fiber.await(stopFiber).pipe(Effect.as(true)),
+                Effect.sleep(Duration.seconds(timeoutSecs)).pipe(Effect.as(false)),
               );
+
+              if (!stoppedInTime) {
+                for (const def of graph.startOrder) {
+                  yield* logBuffer.append(
+                    def.name,
+                    "stderr",
+                    `[shutdown-timeout] Global shutdown timed out after ${timeoutSecs}s, force-interrupting`,
+                  );
+                }
+                yield* Effect.all(forceStops.values(), { concurrency: "unbounded" });
+                yield* Fiber.await(stopFiber);
+              }
             }),
 
           stopService: (name: string) =>

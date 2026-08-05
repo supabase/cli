@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Redacted, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
@@ -183,6 +183,7 @@ function setup(opts: SetupOpts = {}) {
       out,
       api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
       cliConfig,
+      runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current, homeDir: tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,
@@ -1528,6 +1529,8 @@ describe("legacy sso update integration", () => {
 
   const withProfileEnv = (value: string | undefined) => {
     const previous = process.env["SUPABASE_PROFILE"];
+    const previousNoKeyring = process.env["SUPABASE_NO_KEYRING"];
+    process.env["SUPABASE_NO_KEYRING"] = "1";
     if (value === undefined) {
       delete process.env["SUPABASE_PROFILE"];
     } else {
@@ -1538,6 +1541,11 @@ describe("legacy sso update integration", () => {
         delete process.env["SUPABASE_PROFILE"];
       } else {
         process.env["SUPABASE_PROFILE"] = previous;
+      }
+      if (previousNoKeyring === undefined) {
+        delete process.env["SUPABASE_NO_KEYRING"];
+      } else {
+        process.env["SUPABASE_NO_KEYRING"] = previousNoKeyring;
       }
     });
   };

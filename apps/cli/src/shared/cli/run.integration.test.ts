@@ -1,11 +1,17 @@
 import { describe, expect, test } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
 import { Console, Effect, Exit, Layer } from "effect";
 import { CliOutput, Command, Flag } from "effect/unstable/cli";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
+import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
+import { emptyEnv, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "./cli-args.service.ts";
+import { OutputFormatFlag } from "./global-flags.ts";
 import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
+
+const testBranchesCommand = legacyBranchesCommand.pipe(
+  Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
+);
 
 /**
  * A `Console.Console` test double that records `log`/`error` calls into
@@ -74,12 +80,13 @@ describe("legacy group command exit codes (CLI-1906)", () => {
     Layer.mergeAll(
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
-      BunServices.layer,
+      mockOutput({ format: "text" }).layer,
+      emptyEnv(),
     );
 
   const runBranches = (args: ReadonlyArray<string>) =>
     Effect.runPromiseExit(
-      Command.runWith(legacyBranchesCommand, { version: "0.0.0-test" })(args).pipe(
+      Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args).pipe(
         Effect.provide(layerFor(args)),
       ),
     );
@@ -152,13 +159,14 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
       Layer.succeed(Console.Console, console),
-      BunServices.layer,
+      mockOutput({ format: "text" }).layer,
+      emptyEnv(),
     );
 
   const runBranches = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
-      Command.runWith(legacyBranchesCommand, { version: "0.0.0-test" })(args),
-      { rootCommand: legacyBranchesCommand, args },
+      Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args),
+      { rootCommand: testBranchesCommand, args },
     ).pipe(Effect.provide(layerFor(args, console)));
 
   // `type`'s `-t` alias mirrors the real `sso add --type`/`-t` flag
