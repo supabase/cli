@@ -1,3 +1,5 @@
+import type { ServiceName } from "../ServiceName.ts";
+
 export interface HealthBudget {
   readonly initialDelaySeconds: number;
   readonly periodSeconds: number;
@@ -117,3 +119,31 @@ export const stackHealthBudgets = {
     failureThreshold: 60,
   },
 } as const satisfies Record<string, HealthBudget>;
+
+export const healthStartupBudgetSeconds = (budget: HealthBudget): number =>
+  budget.initialDelaySeconds + budget.periodSeconds * budget.startupFailureThreshold;
+
+/** Worst-case initial health budget for each public service. */
+export const stackServiceStartupBudgetSeconds = {
+  postgres: Math.max(
+    healthStartupBudgetSeconds(stackHealthBudgets.postgresNative),
+    healthStartupBudgetSeconds(stackHealthBudgets.postgresDocker),
+  ),
+  postgrest: healthStartupBudgetSeconds(stackHealthBudgets.postgrest),
+  auth: healthStartupBudgetSeconds(stackHealthBudgets.auth),
+  "edge-runtime": healthStartupBudgetSeconds(stackHealthBudgets.edgeRuntime),
+  realtime: healthStartupBudgetSeconds(stackHealthBudgets.realtime),
+  storage: healthStartupBudgetSeconds(stackHealthBudgets.storage),
+  imgproxy: healthStartupBudgetSeconds(stackHealthBudgets.imgproxy),
+  mailpit: healthStartupBudgetSeconds(stackHealthBudgets.mailpit),
+  pgmeta: healthStartupBudgetSeconds(stackHealthBudgets.pgmeta),
+  studio: healthStartupBudgetSeconds(stackHealthBudgets.studio),
+  analytics: healthStartupBudgetSeconds(stackHealthBudgets.analytics),
+  vector: healthStartupBudgetSeconds(stackHealthBudgets.vector),
+  pooler: healthStartupBudgetSeconds(stackHealthBudgets.pooler),
+} as const satisfies Readonly<Record<ServiceName, number>>;
+
+const STARTUP_COORDINATION_MARGIN_SECONDS = 5;
+
+export const dependencyTimeoutSecondsForService = (service: ServiceName): number =>
+  stackServiceStartupBudgetSeconds[service] + STARTUP_COORDINATION_MARGIN_SECONDS;
