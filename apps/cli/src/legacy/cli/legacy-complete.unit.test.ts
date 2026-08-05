@@ -343,6 +343,140 @@ describe("legacyRespondToComplete", () => {
     });
   });
 
+  describe("flag terminator (`--`) disables flag completion (CLI-1965 review)", () => {
+    it("does not offer a flag-name candidate for a positional operand after `--`", () => {
+      // Cobra's flagCompletion gate goes false once a `--` is already present
+      // in the args (completions.go:364-381), so a positional operand that
+      // happens to start with `-` after the terminator must not be treated as
+      // a flag-name completion (verified empirically against a real
+      // apps/cli-go build: `db dump -- --s` returns zero candidates with the
+      // Default directive, not `--schema`).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "dump", "--", "--s"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("still offers a required flag that appears (as a positional) after `--`", () => {
+      // completeRequireFlags is called unconditionally in cobra's noun-
+      // completion branch, even past the terminator — and a token past `--`
+      // is never parsed as a flag at all, so it must not be marked "changed"
+      // either (verified empirically against a real apps/cli-go build: `sso
+      // add -- --type --typ` still offers `--type` with the Default
+      // directive).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "sso",
+        "add",
+        "--",
+        "--type",
+        "--typ",
+      ]);
+      expect(result).toEqual({
+        candidates: [{ name: "--type", description: expect.any(String) }],
+        directive: LegacyCompletionDirective.Default,
+      });
+    });
+  });
+
+  describe("attached shorthand values resolve via pflag's real strict parser (CLI-1965 review)", () => {
+    it("parses a non-boolean shorthand's attached value instead of treating the token as unknown", () => {
+      // pflag's parseSingleShortArg resolves a shorthand cluster's value by
+      // its FIRST character, not its last — `-j4` is a fully valid,
+      // already-resolved `--jobs=4`, so it must not suppress completion of a
+      // later flag name (verified empirically against a real apps/cli-go
+      // build: `functions deploy -j4 --p` still offers
+      // --profile/--project-ref/--prune).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "functions",
+        "deploy",
+        "-j4",
+        "--p",
+      ]);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["--profile", "--project-ref", "--prune"]),
+      );
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+    });
+  });
+
+  describe("a trailing incomplete flag is a hard parse error only when toComplete is itself flag-shaped (CLI-1965 review)", () => {
+    it("rejects a dangling value-taking flag when toComplete is a bare flag-shaped token", () => {
+      // Cobra's checkIfFlagCompletion only rescues a trailing incomplete flag
+      // from ParseFlags() when toComplete is empty or not flag-shaped
+      // (completions.go:666-687); `-o --d` leaves `-o` dangling with no
+      // rescue, so the real ParseFlags() call fails outright (verified
+      // empirically against a real apps/cli-go build: zero candidates with
+      // the Default directive — Go's error is "flag needs an argument: 'o'
+      // in -o").
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "-o", "--d"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it.each([
+      { toComplete: "", label: "empty toComplete" },
+      { toComplete: "pre", label: "non-flag-shaped toComplete" },
+    ])(
+      "still falls through to flag-VALUE completion for the same dangling flag given $label",
+      ({ toComplete }) => {
+        const result = legacyRespondToComplete(legacyRoot, ["__complete", "-o", toComplete]);
+        expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+      },
+    );
+  });
+
+  describe("changed-flag tracking honors a long flag's real value consumption (CLI-1965 review)", () => {
+    it("does not mark a value token as its own changed flag, so a still-required flag stays offered", () => {
+      // pflag's parseLongArg consumes the immediately following token as a
+      // non-boolean flag's value regardless of its shape — `--domains` (a
+      // string flag) consumes `--type` here, so `--type` itself was never
+      // parsed as a flag and must still be offered as required (verified
+      // empirically against a real apps/cli-go build: `sso add --domains
+      // --type foo --typ` still offers `--type` with the NoFileComp
+      // directive).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "sso",
+        "add",
+        "--domains",
+        "--type",
+        "foo",
+        "--typ",
+      ]);
+      expect(result).toEqual({
+        candidates: [{ name: "--type", description: expect.any(String) }],
+        directive: LegacyCompletionDirective.NoFileComp,
+      });
+    });
+  });
+
+  describe("a boolean flag with an explicit `=` is still flag-VALUE completion (CLI-1965 review)", () => {
+    it("does not fall through to noun completion for `--boolFlag=value`", () => {
+      // Cobra's checkIfFlagCompletion only resets a boolean flag back to noun
+      // completion in the no-`=` two-token case (`!flagWithEqual` guard);
+      // `--debug=maybe` keeps `flag` set and goes to flag-VALUE completion,
+      // which resolves to zero candidates (verified empirically against a
+      // real apps/cli-go build: the Default directive, not the root command
+      // list).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "--debug=maybe"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+  });
+
+  describe("completion script leaves force NoFileComp (CLI-1965 review)", () => {
+    it.each(["bash", "zsh", "fish", "powershell"])(
+      "returns zero candidates with the NoFileComp directive for `completion %s`",
+      (shell) => {
+        // Cobra's InitDefaultCompletionCmd registers ValidArgsFunction:
+        // NoFileCompletions on the completion group and each of its shell
+        // leaves; getCompletions always calls a resolved command's own
+        // ValidArgsFunction, overwriting the directive outright (verified
+        // empirically against a real apps/cli-go build).
+        const result = legacyRespondToComplete(legacyRoot, ["__complete", "completion", shell, ""]);
+        expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
+      },
+    );
+  });
+
   it("returns undefined for zero completion args (mirrors cobra's MinimumNArgs(1) failure)", () => {
     expect(legacyRespondToComplete(legacyRoot, ["__complete"])).toBeUndefined();
   });
