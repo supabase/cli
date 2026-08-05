@@ -1,9 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
+import { makeDatabaseMigrationService, makeDatabaseSeedService } from "./database-bootstrap.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
@@ -60,6 +62,123 @@ const AUTH_CONFIG = {
   hooks: {},
   version: DEFAULT_VERSIONS.auth,
 };
+
+describe("database bootstrap services", () => {
+  it("keeps ordered migration inputs in a completed one-shot phase", () => {
+    const migration = "/project/supabase/migrations/20260805000000_init.sql";
+    const def = makeDatabaseMigrationService({
+      runtime: { _tag: "Native", postgresDir: POSTGRES_BIN_PATH },
+      dbPort: DB_PORT,
+      migrationFiles: [migration],
+      dependencies: [{ service: "postgres-init", condition: "completed" }],
+    });
+
+    expect(def).toMatchObject({
+      name: "postgres-migrations",
+      command: "bash",
+      restart: "no",
+      dependencies: [{ service: "postgres-init", condition: "completed" }],
+      env: {
+        PGPASSWORD: "postgres",
+        SUPABASE_BOOTSTRAP_DB_PORT: String(DB_PORT),
+      },
+    });
+    expect(def.args?.slice(-2)).toEqual(["1", migration]);
+    expect(def.args?.[1]).toContain("supabase_migrations.schema_migrations");
+  });
+
+  it("passes stable seed history keys and checksums to Docker PostgreSQL", () => {
+    const def = makeDatabaseSeedService({
+      runtime: { _tag: "Docker", containerName: "supabase-postgres-54321" },
+      dbPort: DB_PORT,
+      seedFiles: [
+        {
+          path: "/project/supabase/seed.sql",
+          historyPath: "supabase/seed.sql",
+          checksum: "a".repeat(64),
+        },
+      ],
+      dependencies: [{ service: "postgres-migrations", condition: "completed" }],
+    });
+
+    expect(def).toMatchObject({
+      name: "postgres-seed",
+      restart: "no",
+      dependencies: [{ service: "postgres-migrations", condition: "completed" }],
+    });
+    expect(def.args).toEqual(
+      expect.arrayContaining([
+        "docker",
+        "supabase-postgres-54321",
+        "/project/supabase/seed.sql",
+        "supabase/seed.sql",
+        "a".repeat(64),
+      ]),
+    );
+    const script = def.args?.[1] ?? "";
+    expect(script).toContain("docker exec -i");
+    expect(script).toContain('cat "$file"');
+    expect(script).toContain("--single-transaction");
+    expect(script).toContain("supabase_migrations.seed_files");
+    expect(script).not.toMatch(/docker exec[^\n]*-f/);
+  });
+
+  it.each([
+    { name: "new", appliedHash: "", appliesSql: true, updatesHashOnly: false },
+    { name: "unchanged", appliedHash: "a".repeat(64), appliesSql: false, updatesHashOnly: false },
+    { name: "dirty", appliedHash: "b".repeat(64), appliesSql: false, updatesHashOnly: true },
+  ])("handles a $name seed according to legacy seed history semantics", (scenario) => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-seed-service-"));
+    try {
+      const binDir = path.join(tempDir, "bin");
+      const logPath = path.join(tempDir, "psql.log");
+      mkdirSync(binDir);
+      writeFileSync(
+        path.join(binDir, "psql"),
+        `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$BOOTSTRAP_TEST_LOG"
+if [[ "$*" == *"SELECT hash FROM supabase_migrations.seed_files"* ]]; then
+  printf '%s' "$BOOTSTRAP_TEST_APPLIED_HASH"
+fi
+cat >/dev/null || true
+`,
+      );
+      chmodSync(path.join(binDir, "psql"), 0o755);
+      const seedPath = path.join(tempDir, "seed.sql");
+      writeFileSync(seedPath, "insert into examples values (1);");
+      const def = makeDatabaseSeedService({
+        runtime: { _tag: "Native", postgresDir: tempDir },
+        dbPort: DB_PORT,
+        seedFiles: [
+          {
+            path: seedPath,
+            historyPath: "supabase/seed.sql",
+            checksum: "a".repeat(64),
+          },
+        ],
+        dependencies: [],
+      });
+
+      const result = spawnSync("bash", def.args ?? [], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...def.env,
+          BOOTSTRAP_TEST_LOG: logPath,
+          BOOTSTRAP_TEST_APPLIED_HASH: scenario.appliedHash,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const log = readFileSync(logPath, "utf8");
+      expect(log.includes(`-f ${seedPath}`)).toBe(scenario.appliesSql);
+      expect(log.includes("UPDATE supabase_migrations.seed_files SET hash")).toBe(
+        scenario.updatesHashOnly,
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
@@ -343,6 +462,7 @@ describe("makePostgrestService", () => {
       extraSearchPath: ["public", "extensions"],
       maxRows: 1000,
       jwtSecret: JWT_SECRET,
+      dependencies: [{ service: "postgres-init", condition: "completed" }],
     });
 
     expect(def.name).toBe("postgrest");

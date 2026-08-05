@@ -60,6 +60,10 @@ describe("local stack launch config", () => {
           code: "unsupported",
           paths: ["experimental.webhooks.enabled"],
         }),
+        expect.objectContaining({
+          code: "unmatched-seed-pattern",
+          paths: ["db.seed.sql_paths"],
+        }),
       ]);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
@@ -151,7 +155,69 @@ describe("local stack launch config", () => {
           custom_access_token: { enabled: true, secrets: "hook-secret" },
         },
       });
-      expect(result.warnings).toEqual([]);
+      expect(result.warnings).toEqual([
+        expect.objectContaining({
+          code: "unmatched-seed-pattern",
+          paths: ["db.seed.sql_paths"],
+        }),
+      ]);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves database bootstrap inputs before the stack launch is constructed", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "supabase-local-bootstrap-launch-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(join(supabaseDir, "migrations"), { recursive: true });
+      await mkdir(join(supabaseDir, "seeds"), { recursive: true });
+      const migration = join(supabaseDir, "migrations", "20260805000000_create_widgets.sql");
+      const seedSecond = join(supabaseDir, "seeds", "02_widgets.sql");
+      const seedFirst = join(supabaseDir, "seeds", "01_accounts.sql");
+      await writeFile(migration, "create table widgets(id bigint primary key);");
+      await writeFile(seedFirst, "insert into widgets values (1);");
+      await writeFile(seedSecond, "insert into widgets values (2);");
+      await writeFile(
+        join(supabaseDir, "config.toml"),
+        [
+          "[db.migrations]",
+          "enabled = true",
+          "",
+          "[db.seed]",
+          "enabled = true",
+          'sql_paths = ["./seeds/02_widgets.sql", "./seeds/01_accounts.sql"]',
+          "",
+        ].join("\n"),
+      );
+
+      const projectEnvironment = await loadProjectEnvironmentFor({ cwd: projectRoot, baseEnv: {} });
+      expect(projectEnvironment).not.toBeNull();
+      if (projectEnvironment === null) return;
+      const loadedProjectConfig = await loadProjectConfig(projectRoot, {
+        projectEnv: projectEnvironment,
+      });
+      const result = await Effect.runPromise(
+        resolveLocalStackLaunch({
+          loadedProjectConfig,
+          projectEnvironment,
+          projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
+          mode: "auto",
+          exclude: [],
+          runtimeVersions: {},
+        }),
+      );
+
+      expect(result.stackConfig.databaseBootstrap).toMatchObject({
+        migrationFiles: [migration],
+      });
+      expect(result.stackConfig.databaseBootstrap?.seedFiles?.map(({ path }) => path)).toEqual([
+        seedSecond,
+        seedFirst,
+      ]);
+      expect(
+        result.stackConfig.databaseBootstrap?.seedFiles?.map(({ historyPath }) => historyPath),
+      ).toEqual(["supabase/seeds/02_widgets.sql", "supabase/seeds/01_accounts.sql"]);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }

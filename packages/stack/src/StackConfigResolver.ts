@@ -550,6 +550,10 @@ export async function resolveConfig(
     autoManagedPaths: roots.autoManagedPaths,
     anonJwt: credentials.anonKey,
     serviceRoleJwt: credentials.serviceRoleKey,
+    databaseBootstrap: {
+      migrationFiles: config.databaseBootstrap?.migrationFiles ?? [],
+      seedFiles: config.databaseBootstrap?.seedFiles ?? [],
+    },
     postgres: {
       port: ports.dbPort,
       dataDir: postgresDataDir,

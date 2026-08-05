@@ -59,6 +59,7 @@ const baseConfig: ResolvedStackConfig = {
   autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
+  databaseBootstrap: { migrationFiles: [], seedFiles: [] },
   postgres: {
     port: 5432,
     dataDir: "/tmp/pg-data",
@@ -242,6 +243,92 @@ describe("StackBuilder", () => {
         owner: "postgres",
         ownerStatusWhileActive: "Initializing",
       });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("gates native database consumers on ordered bootstrap phases", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph, serviceProjection } = yield* prepareAndBuild(builder, preparation, {
+        ...baseConfig,
+        databaseBootstrap: {
+          migrationFiles: ["/project/supabase/migrations/20260805000000_init.sql"],
+          seedFiles: [
+            {
+              path: "/project/supabase/seed.sql",
+              historyPath: "supabase/seed.sql",
+              checksum: "a".repeat(64),
+            },
+          ],
+        },
+      });
+
+      const names = graph.startOrder.map(({ name }) => name);
+      const service = (name: string) =>
+        graph.startOrder.find((definition) => definition.name === name);
+      expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("postgres-migrations"));
+      expect(names.indexOf("postgres-migrations")).toBeLessThan(names.indexOf("postgres-seed"));
+      expect(names.indexOf("postgres-seed")).toBeLessThan(names.indexOf("postgrest"));
+      expect(service("postgres-migrations")?.dependencies).toEqual([
+        { service: "postgres-init", condition: "completed" },
+      ]);
+      expect(service("postgres-seed")?.dependencies).toEqual([
+        { service: "postgres-migrations", condition: "completed" },
+      ]);
+      expect(service("auth")?.dependencies).toEqual([
+        { service: "postgres-seed", condition: "completed" },
+      ]);
+      expect(service("postgrest")?.dependencies).toEqual([
+        { service: "postgres-seed", condition: "completed" },
+      ]);
+      expect(serviceProjection.get("postgres-migrations")).toEqual({
+        visibility: "internal",
+        owner: "postgres",
+        ownerStatusWhileActive: "Initializing",
+      });
+      expect(serviceProjection.get("postgres-seed")).toEqual({
+        visibility: "internal",
+        owner: "postgres",
+        ownerStatusWhileActive: "Initializing",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("runs Docker bootstrap after PostgreSQL health without host file discovery", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, {
+        ...dockerConfig,
+        databaseBootstrap: {
+          migrationFiles: ["/project/supabase/migrations/20260805000000_app.sql"],
+          seedFiles: [],
+        },
+      });
+
+      const migrations = graph.startOrder.find(({ name }) => name === "postgres-migrations");
+      expect(migrations?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(migrations?.args).toEqual(
+        expect.arrayContaining([
+          "docker",
+          "supabase-postgres-3000",
+          "/project/supabase/migrations/20260805000000_app.sql",
+        ]),
+      );
+      expect(migrations?.args?.[1]).toContain('cat "$file"');
+      expect(migrations?.args?.[1]).toContain("--single-transaction");
+      expect(migrations?.args?.[1]).not.toMatch(/docker exec[^\n]*-f/);
+      expect(graph.startOrder.find(({ name }) => name === "auth")?.dependencies).toEqual([
+        { service: "postgres-migrations", condition: "completed" },
+      ]);
+      expect(graph.startOrder.map(({ name }) => name)).not.toContain("postgres-init");
     }).pipe(Effect.provide(layer));
   });
 

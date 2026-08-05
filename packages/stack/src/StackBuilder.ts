@@ -12,6 +12,11 @@ import {
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
+  makeDatabaseMigrationService,
+  makeDatabaseSeedService,
+  type DatabaseBootstrapRuntime,
+} from "./services/database-bootstrap.ts";
+import {
   makeEdgeRuntimeServiceDocker,
   makeEdgeRuntimeServiceNative,
 } from "./services/edge-runtime.ts";
@@ -55,7 +60,6 @@ const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDepen
 
 const publicServiceProjection = (
   defs: ReadonlyArray<ServiceDef>,
-  hasPostgresInit: boolean,
 ): StackServiceProjectionCatalog => {
   const serviceProjection: Map<
     string,
@@ -66,12 +70,14 @@ const publicServiceProjection = (
     }
   > = new Map(defs.map((def) => [def.name, { visibility: "public" as const }] as const));
 
-  if (hasPostgresInit) {
-    serviceProjection.set("postgres-init", {
-      visibility: "internal",
-      owner: "postgres",
-      ownerStatusWhileActive: "Initializing",
-    });
+  for (const name of ["postgres-init", "postgres-migrations", "postgres-seed"]) {
+    if (serviceProjection.has(name)) {
+      serviceProjection.set(name, {
+        visibility: "internal",
+        owner: "postgres",
+        ownerStatusWhileActive: "Initializing",
+      });
+    }
   }
 
   return serviceProjection;
@@ -235,7 +241,21 @@ export class StackBuilder extends Context.Service<
           dockerServicesEnabled,
         );
         const hasPostgresInit = postgresResolution.type === "binary";
-        const postgresDeps = dependsOnPostgres(hasPostgresInit);
+        const initialPostgresDeps = dependsOnPostgres(hasPostgresInit);
+        const bootstrapRuntime: DatabaseBootstrapRuntime =
+          postgresResolution.type === "binary"
+            ? { _tag: "Native", postgresDir: postgresResolution.path }
+            : {
+                _tag: "Docker",
+                containerName: dockerContainerName("postgres", config.apiPort),
+              };
+        const hasMigrationPhase = config.databaseBootstrap.migrationFiles.length > 0;
+        const hasSeedPhase = config.databaseBootstrap.seedFiles.length > 0;
+        const postgresDeps: ReadonlyArray<ServiceDependency> = hasSeedPhase
+          ? [{ service: "postgres-seed", condition: "completed" }]
+          : hasMigrationPhase
+            ? [{ service: "postgres-migrations", condition: "completed" }]
+            : initialPostgresDeps;
         const jwtJwks = config.credentials.jwks;
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
@@ -275,6 +295,32 @@ export class StackBuilder extends Context.Service<
           });
         }
 
+        if (hasMigrationPhase) {
+          defs.push({
+            ...makeDatabaseMigrationService({
+              runtime: bootstrapRuntime,
+              dbPort: config.dbPort,
+              migrationFiles: config.databaseBootstrap.migrationFiles,
+              dependencies: initialPostgresDeps,
+            }),
+            enabled: true,
+          });
+        }
+
+        if (hasSeedPhase) {
+          defs.push({
+            ...makeDatabaseSeedService({
+              runtime: bootstrapRuntime,
+              dbPort: config.dbPort,
+              seedFiles: config.databaseBootstrap.seedFiles,
+              dependencies: hasMigrationPhase
+                ? [{ service: "postgres-migrations", condition: "completed" }]
+                : initialPostgresDeps,
+            }),
+            enabled: true,
+          });
+        }
+
         if (config.postgrest !== false && postgrestResolution !== false) {
           defs.push({
             ...(postgrestResolution.type === "binary"
@@ -286,6 +332,7 @@ export class StackBuilder extends Context.Service<
                   extraSearchPath: config.postgrest.extraSearchPath,
                   maxRows: config.postgrest.maxRows,
                   jwtSecret: config.jwtSecret,
+                  dependencies: postgresDeps,
                 })
               : makePostgrestServiceDocker({
                   image: postgrestResolution.image,
@@ -302,12 +349,8 @@ export class StackBuilder extends Context.Service<
                     config.postgrest.adminPort,
                   ]),
                   apiPort: config.apiPort,
+                  dependencies: postgresDeps,
                 })),
-            ...(hasPostgresInit
-              ? {}
-              : {
-                  dependencies: [{ service: "postgres", condition: "healthy" as const }],
-                }),
             enabled: true,
           });
         }
@@ -636,7 +679,7 @@ export class StackBuilder extends Context.Service<
           cleanupTargets: {
             dockerContainerNames,
           },
-          serviceProjection: publicServiceProjection(defs, hasPostgresInit),
+          serviceProjection: publicServiceProjection(defs),
         };
       }),
   });

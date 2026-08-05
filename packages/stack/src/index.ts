@@ -6,6 +6,8 @@ export type { StackServiceStatus } from "./StackServiceState.ts";
 export type {
   AnalyticsConfig,
   AuthConfig,
+  DatabaseBootstrapConfig,
+  DatabaseSeedFile,
   EdgeRuntimeConfig,
   ImgproxyConfig,
   MailpitConfig,

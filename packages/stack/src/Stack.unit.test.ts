@@ -61,6 +61,7 @@ const defaultConfig: ResolvedStackConfig = {
   autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
+  databaseBootstrap: { migrationFiles: [], seedFiles: [] },
   postgres: {
     port: 54322,
     dataDir: "/tmp/supabase/data",

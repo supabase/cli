@@ -16,6 +16,7 @@ import {
   resolveCoreStackConfig,
   type ExcludedStackService,
 } from "./core-stack-config.ts";
+import { translateDatabaseBootstrapConfig } from "./database-bootstrap-config.ts";
 import {
   flattenLocalStackConfigParity,
   type LocalStackConfigParityDecision,
@@ -48,7 +49,7 @@ export interface LocalStackLaunchInput {
 }
 
 export interface LocalStackWarning {
-  readonly code: "unsupported" | "deprecated";
+  readonly code: "unsupported" | "deprecated" | "unmatched-seed-pattern";
   readonly paths: ReadonlyArray<string>;
   readonly message: string;
 }
@@ -348,6 +349,24 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
         : dirname(input.loadedProjectConfig.path),
     authEnabled: coreConfig.auth !== false,
   });
+  const translatedDatabaseBootstrap = yield* translateDatabaseBootstrapConfig({
+    loadedProjectConfig: input.loadedProjectConfig,
+    projectEnvironment: input.projectEnvironment,
+    projectRoot: input.projectPaths.projectRoot,
+  });
+  const databaseWarnings = translatedDatabaseBootstrap.warnings.map(
+    (warning): LocalStackWarning => ({ code: "unmatched-seed-pattern", ...warning }),
+  );
+  const deprecationWarnings: ReadonlyArray<LocalStackWarning> =
+    deprecationWarning === undefined
+      ? []
+      : [
+          {
+            code: "deprecated",
+            paths: ["api.auto_expose_new_tables"],
+            message: deprecationWarning,
+          },
+        ];
 
   return {
     stackConfig: {
@@ -355,6 +374,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
       projectDir: input.projectPaths.projectRoot,
       readiness,
       credentials: translatedAuth.credentials,
+      databaseBootstrap: translatedDatabaseBootstrap.config,
       auth:
         translatedAuth.auth === false
           ? false
@@ -369,17 +389,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
       },
     },
     projectPaths: input.projectPaths,
-    warnings:
-      deprecationWarning === undefined
-        ? diagnostics.warnings
-        : [
-            ...diagnostics.warnings,
-            {
-              code: "deprecated",
-              paths: ["api.auto_expose_new_tables"],
-              message: deprecationWarning,
-            },
-          ],
+    warnings: [...diagnostics.warnings, ...databaseWarnings, ...deprecationWarnings],
   } satisfies ResolvedLocalStackLaunch;
 });
 

@@ -83,6 +83,8 @@ export { ApiProxy } from "./ApiProxy.ts";
 export type {
   AnalyticsConfig,
   AuthConfig,
+  DatabaseBootstrapConfig,
+  DatabaseSeedFile,
   EdgeRuntimeConfig,
   ImgproxyConfig,
   MailpitConfig,
@@ -93,6 +95,7 @@ export type {
   RealtimeConfig,
   ResolvedAnalyticsConfig,
   ResolvedAuthConfig,
+  ResolvedDatabaseBootstrapConfig,
   ResolvedEdgeRuntimeConfig,
   ResolvedImgproxyConfig,
   ResolvedMailpitConfig,

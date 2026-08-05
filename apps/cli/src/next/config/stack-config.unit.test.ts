@@ -240,7 +240,11 @@ describe("resolveLocalStackLaunch", () => {
     expect(result.projectPaths.projectStateRoot).toBe("/project/.supabase");
     expect(result.stackConfig.postgres?.startupHealthTimeoutMs).toBe(120_000);
     expect(result.stackConfig.readiness).toEqual({ mode: "finite", timeoutMs: 150_000 });
-    expect(result.warnings.map(({ code }) => code)).toEqual(["unsupported", "deprecated"]);
+    expect(result.warnings.map(({ code }) => code)).toEqual([
+      "unsupported",
+      "unmatched-seed-pattern",
+      "deprecated",
+    ]);
   });
 
   it("uses the resolved project environment for the database health timeout", async () => {
@@ -316,6 +320,10 @@ describe("resolveLocalStackLaunch", () => {
 
     expect(result.warnings).toEqual([
       expect.objectContaining({ code: "unsupported", paths: ["experimental.s3_secret_key"] }),
+      expect.objectContaining({
+        code: "unmatched-seed-pattern",
+        paths: ["db.seed.sql_paths"],
+      }),
     ]);
     expect(JSON.stringify(result.warnings)).not.toContain("do-not-leak");
   });

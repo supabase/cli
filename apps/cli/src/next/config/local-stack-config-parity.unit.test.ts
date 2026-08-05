@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 247,
+      mapped: 250,
       "not-applicable": 10,
-      "unsupported-blocking": 98,
+      "unsupported-blocking": 95,
       "unsupported-warning": 6,
     });
   });
@@ -40,12 +40,15 @@ describe("localStackConfigParity", () => {
       "api.port",
       "api.schemas",
       "db.health_timeout",
+      "db.migrations.enabled",
       "db.pooler.default_pool_size",
       "db.pooler.enabled",
       "db.pooler.max_client_conn",
       "db.pooler.pool_mode",
       "db.pooler.port",
       "db.port",
+      "db.seed.enabled",
+      "db.seed.sql_paths",
       "edge_runtime.enabled",
       "edge_runtime.inspector_port",
       "edge_runtime.policy",

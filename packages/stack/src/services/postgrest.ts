@@ -1,6 +1,7 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
+import type { ServiceDependency } from "./service-utils.ts";
 
 interface PostgrestServiceOptions {
   readonly dbPort: number;
@@ -9,6 +10,7 @@ interface PostgrestServiceOptions {
   readonly extraSearchPath: ReadonlyArray<string>;
   readonly maxRows: number;
   readonly jwtSecret: string;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
 interface NativePostgrestOptions extends PostgrestServiceOptions {
@@ -47,13 +49,11 @@ const postgrestHealthCheck = (port: number) => ({
   ...stackHealthBudgets.postgrest,
 });
 
-const postgrestDependencies = [{ service: "postgres-init", condition: "completed" as const }];
-
 export const makePostgrestService = (opts: NativePostgrestOptions): ServiceDef => ({
   name: "postgrest",
   command: `${opts.binPath}/postgrest`,
   env: postgrestEnv(opts),
-  dependencies: postgrestDependencies,
+  dependencies: opts.dependencies,
   healthCheck: postgrestHealthCheck(opts.port),
   supervision: {},
   restart: "unless-stopped",
@@ -71,7 +71,7 @@ export const makePostgrestServiceDocker = (opts: DockerPostgrestOptions): Servic
     name: "postgrest",
     command: "docker",
     args: ["run", "--rm", "--name", containerName, ...opts.networkArgs, ...envArgs, opts.image],
-    dependencies: postgrestDependencies,
+    dependencies: opts.dependencies,
     healthCheck: postgrestHealthCheck(opts.port),
     cleanup: dockerServiceCleanup(containerName),
     supervision: { orphanCleanup: dockerServiceOrphanCleanup(containerName) },

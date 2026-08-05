@@ -6,7 +6,8 @@ import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
 import type { StackServiceStatus } from "@supabase/stack";
 import { DEFAULT_VERSIONS, stackMetadata, type StackInfo } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
+import { resolveLocalStackLaunch } from "../../config/stack-config.ts";
 import { start } from "./start.handler.ts";
 import { StartVersionState } from "./start.command.ts";
 import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
@@ -639,6 +640,55 @@ project_id = "not-a-ref"
       expect(result?.config.project_id).toBe("baseref");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("hands resolved database bootstrap inputs to the stack launch", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "supabase-next-start-bootstrap-"));
+    try {
+      await mkdir(join(projectRoot, "supabase", "migrations"), { recursive: true });
+      const migration = join(projectRoot, "supabase", "migrations", "20260805000000_start.sql");
+      const seed = join(projectRoot, "supabase", "seed.sql");
+      await writeFile(migration, "create table start_bootstrap(id bigint);");
+      await writeFile(seed, "insert into start_bootstrap values (1);");
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        [
+          "[db.migrations]",
+          "enabled = true",
+          "",
+          "[db.seed]",
+          "enabled = true",
+          'sql_paths = ["./seed.sql"]',
+        ].join("\n"),
+      );
+
+      const launch = await Effect.runPromise(
+        Effect.gen(function* () {
+          const projectEnvironment = yield* loadProjectEnvironment({ cwd: projectRoot });
+          if (projectEnvironment === null) {
+            return yield* Effect.die("expected a project environment");
+          }
+          const loadedProjectConfig = yield* loadProjectConfig(projectRoot, {
+            projectEnv: projectEnvironment,
+          });
+          return yield* resolveLocalStackLaunch({
+            loadedProjectConfig,
+            projectEnvironment,
+            projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
+            mode: "auto",
+            exclude: [],
+            runtimeVersions: {},
+          });
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(launch.stackConfig.databaseBootstrap?.migrationFiles).toEqual([migration]);
+      expect(launch.stackConfig.databaseBootstrap?.seedFiles?.map(({ path }) => path)).toEqual([
+        seed,
+      ]);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
     }
   });
 });

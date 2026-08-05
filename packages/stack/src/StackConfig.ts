@@ -65,6 +65,27 @@ export interface PostgresConfig {
   readonly autoExposeNewTables?: boolean;
 }
 
+export interface DatabaseSeedFile {
+  /** Absolute path resolved by the caller; the stack never discovers project files. */
+  readonly path: string;
+  /** Stable project-relative key used by the Supabase seed history table. */
+  readonly historyPath: string;
+  /** SHA-256 of the resolved file contents. */
+  readonly checksum: string;
+}
+
+export interface DatabaseBootstrapConfig {
+  /** Conventional timestamped migrations, already ordered by the caller. */
+  readonly migrationFiles?: ReadonlyArray<string>;
+  /** Seed SQL, already expanded, ordered, and fingerprinted by the caller. */
+  readonly seedFiles?: ReadonlyArray<DatabaseSeedFile>;
+}
+
+export interface ResolvedDatabaseBootstrapConfig {
+  readonly migrationFiles: ReadonlyArray<string>;
+  readonly seedFiles: ReadonlyArray<DatabaseSeedFile>;
+}
+
 export interface PostgrestConfig {
   readonly schemas?: ReadonlyArray<string>;
   readonly extraSearchPath?: ReadonlyArray<string>;
@@ -166,6 +187,7 @@ export interface StackConfig {
   readonly port?: number;
   readonly publishableKey?: string;
   readonly secretKey?: string;
+  readonly databaseBootstrap?: DatabaseBootstrapConfig;
   readonly functions?: FunctionsConfig | false;
   readonly postgres?: PostgresConfig;
   readonly postgrest?: PostgrestConfig | false;
@@ -297,6 +319,7 @@ export interface ResolvedStackConfig {
   readonly autoManagedPaths: ReadonlyArray<string>;
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
+  readonly databaseBootstrap: ResolvedDatabaseBootstrapConfig;
   readonly postgres: ResolvedPostgresConfig;
   readonly postgrest: ResolvedPostgrestConfig | false;
   readonly auth: ResolvedAuthConfig | false;
