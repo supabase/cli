@@ -163,6 +163,33 @@ describe("legacySqlFilesGlob", () => {
     },
   );
 
+  it.effect(
+    "normalizes a doubled slash when the matched directory itself has a trailing slash (Go path.Join parity)",
+    () => {
+      // Go's `fs.WalkDir` builds each child path via `path.Join(dirname, name)`
+      // (`io/fs/walk.go`), and `path.Join` runs `path.Clean` on the result, collapsing a
+      // doubled `/`. A literal (no-metacharacter) `schema_paths`/`sql_paths` entry like
+      // `"schemas/"` resolves via `fs.Glob`'s fast path to the pattern VERBATIM, trailing
+      // slash and all — so the walk over its children must not produce `schemas//a.sql`.
+      // Verified empirically against `apps/cli-go`: a scratch probe calling
+      // `config.Glob{"<dir>/"}.SQLFiles(...)` on a real trailing-slash directory returns
+      // the single-slash path, not a doubled one.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-trailing-slash-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      return run(["schemas/"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/a.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("still expands a real (non-symlinked) nested directory recursively", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-nested-"));
     const schemasDir = join(dir, "schemas");
