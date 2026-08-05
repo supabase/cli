@@ -209,7 +209,7 @@ describe("supervisor-runtime", () => {
           {
             _tag: "RunCommand",
             executable: process.execPath,
-            args: ["-e", "setInterval(() => {}, 1000)"],
+            args: ["-e", 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'],
             timeoutMs: 100,
           },
           { _tag: "RemovePath", path: cleanupDir, recursive: true },
