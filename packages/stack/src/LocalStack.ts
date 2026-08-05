@@ -44,7 +44,11 @@ import {
 } from "./StackBuilder.ts";
 import { resolveReadinessPolicy } from "./StackConfig.ts";
 import type { ReadinessPolicy, ReadyOptions, ResolvedStackConfig } from "./StackConfig.ts";
-import { changedProjectedStates, projectStackStates } from "./StackStateProjection.ts";
+import {
+  changedProjectedStates,
+  projectStackStates,
+  type StackServiceProjectionCatalog,
+} from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
@@ -65,6 +69,7 @@ type StackService = typeof Stack.Service;
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
   readonly graph: ResolvedGraph;
+  readonly serviceProjection: StackServiceProjectionCatalog;
 }
 
 const initialPublicStates = (config: ResolvedStackConfig): ReadonlyArray<StackServiceState> =>
@@ -395,6 +400,7 @@ export const localStackLayer = (
           return {
             orchestrator,
             graph,
+            serviceProjection,
           } satisfies RuntimeState;
         }).pipe(
           Effect.tap((value) =>
@@ -479,6 +485,15 @@ export const localStackLayer = (
           ),
         );
       const withLifecycleLock = lifecycleLock.withPermit;
+      const syncProjectedStates = (runtime: RuntimeState) =>
+        Effect.gen(function* () {
+          const rawStates = yield* runtime.orchestrator.getAllStates();
+          yield* Effect.forEach(
+            projectStackStates(rawStates, runtime.serviceProjection),
+            updateState,
+            { discard: true },
+          );
+        });
       const serviceStartOptions = {
         beforeStart: (name: string) => portLease.reserve(portFieldsForService(name)),
         beforeSpawn: (name: string) => portLease.release(portFieldsForService(name)),
@@ -554,18 +569,21 @@ export const localStackLayer = (
         readonly runtime: RuntimeState;
         readonly targets: ReadonlyArray<string>;
       }) =>
-        Effect.forEach(
-          targets,
-          (target) =>
-            runtime.orchestrator
-              .waitReady(target)
-              .pipe(
-                Effect.catchTag("ServiceNotFoundError", (cause) =>
-                  Effect.fail(knownServiceError(target, cause)),
+        Effect.gen(function* () {
+          yield* Effect.forEach(
+            targets,
+            (target) =>
+              runtime.orchestrator
+                .waitReady(target)
+                .pipe(
+                  Effect.catchTag("ServiceNotFoundError", (cause) =>
+                    Effect.fail(knownServiceError(target, cause)),
+                  ),
                 ),
-              ),
-          { concurrency: "unbounded", discard: true },
-        );
+            { concurrency: "unbounded", discard: true },
+          );
+          yield* syncProjectedStates(runtime);
+        });
       const inspectStartedTargets = (root: ServiceName) =>
         Effect.gen(function* () {
           const runtime = yield* ensureRuntime;
@@ -719,6 +737,7 @@ export const localStackLayer = (
               yield* runtime.orchestrator
                 .waitAllReady()
                 .pipe((effect) => withReadinessPolicy(effect, "stack"));
+              yield* syncProjectedStates(runtime);
             }
             yield* Ref.set(phaseRef, "running");
           }).pipe(
@@ -879,6 +898,7 @@ export const localStackLayer = (
             yield* runtime.orchestrator
               .waitReady(name)
               .pipe((effect) => withReadinessPolicy(effect, name, opts));
+            yield* syncProjectedStates(runtime);
           }).pipe(cleanupOnReadinessFailure),
         waitAllReady: (opts) =>
           Effect.gen(function* () {
@@ -894,6 +914,7 @@ export const localStackLayer = (
             yield* runtime.orchestrator
               .waitAllReady()
               .pipe((effect) => withReadinessPolicy(effect, "stack", opts));
+            yield* syncProjectedStates(runtime);
           }).pipe(cleanupOnReadinessFailure),
         subscribeLogs: (name) => logBuffer.subscribe(name),
         subscribeAllLogs: (services) =>
