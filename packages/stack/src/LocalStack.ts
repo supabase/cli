@@ -768,6 +768,15 @@ export const localStackLayer = (
             }).pipe(withLifecycleLock);
             yield* waitForTargets(started);
           }).pipe((effect) => withReadinessPolicy(effect, name), cleanupOnReadinessFailure),
+        configureFunctions: (opts) =>
+          Effect.gen(function* () {
+            yield* requireMutable("configure functions");
+            yield* requireKnownService("edge-runtime");
+            if (opts.functions !== undefined) {
+              yield* Ref.set(functionsBundleRef, opts.functions);
+            }
+            yield* configureFunctions(config);
+          }).pipe(withLifecycleLock),
         reloadFunctions: (opts) =>
           Effect.gen(function* () {
             const started = yield* Effect.gen(function* () {

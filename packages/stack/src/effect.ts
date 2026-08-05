@@ -113,6 +113,7 @@ export { DEFAULT_STACK_READINESS_POLICY, resolveReadinessPolicy } from "./StackC
 export type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
 export { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 export type {
+  FunctionsConfigureConfig,
   FunctionsReloadConfig,
   FunctionsRuntimeConfig,
   ResolvedFunction,
@@ -121,6 +122,7 @@ export type {
 export {
   clearFunctionsRuntimeConfig,
   configureFunctionsRuntime,
+  FunctionsConfigureConfigSchema,
   FunctionsReloadConfigSchema,
   functionsRuntimeConfigFileName,
   functionsRuntimeConfigPath,

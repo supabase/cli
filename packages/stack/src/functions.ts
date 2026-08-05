@@ -54,13 +54,19 @@ export interface ResolvedFunctionsBundle extends Schema.Schema.Type<
   typeof ResolvedFunctionsBundleSchema
 > {}
 
+export const FunctionsConfigureConfigSchema = Schema.Struct({
+  functions: Schema.optionalKey(ResolvedFunctionsBundleSchema),
+});
+
+export interface FunctionsConfigureConfig extends Schema.Schema.Type<
+  typeof FunctionsConfigureConfigSchema
+> {}
+
 export const FunctionsReloadConfigSchema = Schema.Struct({
   functions: Schema.optionalKey(ResolvedFunctionsBundleSchema),
 });
 
-export interface FunctionsReloadConfig extends Schema.Schema.Type<
-  typeof FunctionsReloadConfigSchema
-> {}
+export interface FunctionsReloadConfig extends FunctionsConfigureConfig {}
 
 export interface FunctionsRuntimeConfig {
   readonly functionsUrl: string;
@@ -68,7 +74,8 @@ export interface FunctionsRuntimeConfig {
   readonly dbUrl: string;
   readonly publishableKey: string;
   readonly secretKey: string;
-  readonly jwtSecret: string;
+  /** Internal verifier set. It may contain symmetric secret material and is never public output. */
+  readonly verificationJwks: string;
   readonly env: Readonly<Record<string, string>>;
   readonly functions: Readonly<
     Record<
@@ -113,7 +120,7 @@ export function resolveFunctionsRuntimeConfig(
     dbUrl: `postgresql://postgres:postgres@${runtimeHost.hostname}:${stackConfig.dbPort}/postgres`,
     publishableKey: stackConfig.publishableKey,
     secretKey: stackConfig.secretKey,
-    jwtSecret: stackConfig.jwtSecret,
+    verificationJwks: stackConfig.credentials.jwks,
     env: bundle.env,
     functions: Object.fromEntries(
       bundle.functions.map((fn) => [

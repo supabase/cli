@@ -263,19 +263,21 @@ describe("translateAuthStackConfig", () => {
     });
   });
 
-  it("does not read signing keys when Auth is excluded", async () => {
-    const result = await Effect.runPromise(
-      translateAuthStackConfig({
-        configDir: "/missing",
-        authEnabled: false,
-        projectEnvironment: null,
-        projectConfig: decodeProjectConfig({
-          auth: { signing_keys_path: "missing.json" },
+  it("validates signing keys even when Auth is excluded", async () => {
+    await expect(
+      Effect.runPromise(
+        translateAuthStackConfig({
+          configDir: "/missing",
+          authEnabled: false,
+          projectEnvironment: null,
+          projectConfig: decodeProjectConfig({
+            auth: { signing_keys_path: "missing.json" },
+          }),
         }),
-      }),
-    );
-
-    expect(result.auth).toBe(false);
-    expect(result.credentials.signing?._tag).toBe("SymmetricJwtSecret");
+      ),
+    ).rejects.toMatchObject({
+      _tag: "AuthStackConfigError",
+      path: "auth.signing_keys_path",
+    });
   });
 });

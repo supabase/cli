@@ -454,7 +454,7 @@ export const translateAuthStackConfig = Effect.fnUntraced(function* (input: {
   const jwtSecret = flatString("jwt_secret", auth.jwt_secret) ?? defaultJwtSecret;
   const signingKeysPath = flatString("signing_keys_path", auth.signing_keys_path);
   let signing: LocalJwtSigningMaterial;
-  if (authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0) {
+  if (signingKeysPath !== undefined && signingKeysPath.length > 0) {
     signing = {
       _tag: "AsymmetricJwtKeys",
       keys: yield* readSigningKeys(input.configDir, signingKeysPath),

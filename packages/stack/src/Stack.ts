@@ -4,6 +4,7 @@ import { Context, Effect, Schema, Stream } from "effect";
 import { StackBuildError, StackReadinessError } from "./errors.ts";
 import {
   ResolvedFunctionsBundleSchema,
+  type FunctionsConfigureConfig,
   type FunctionsReloadConfig,
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
@@ -72,6 +73,10 @@ export class Stack extends Context.Service<
       void,
       ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
     >;
+    /** Store Functions inputs without changing Edge Runtime lifecycle state. */
+    readonly configureFunctions: (
+      opts: FunctionsConfigureConfig,
+    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
     readonly reloadFunctions: (
       opts?: FunctionsReloadConfig,
     ) => Effect.Effect<

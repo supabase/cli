@@ -206,6 +206,72 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("stores Functions config without activating a lazy Edge Runtime", () => {
+    const runtimeRoot = mkdtempSync(join(tmpdir(), "supabase-functions-configure-"));
+    const bundle = functionsBundle(runtimeRoot, "configured-before-start");
+    const config = {
+      ...edgeRuntimeConfig,
+      runtimeRoot,
+      startupMode: "lazy",
+      functions: false,
+      auth: false,
+      postgrest: false,
+    } satisfies ResolvedStackConfig;
+    const graph = Effect.runSync(
+      buildGraph([
+        { name: "postgres", command: process.execPath, restart: "unless-stopped" },
+        {
+          name: "edge-runtime",
+          command: process.execPath,
+          dependencies: [{ service: "postgres", condition: "healthy" }],
+          restart: "unless-stopped",
+        },
+      ]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.succeed({
+          graph,
+          cleanupTargets: { dockerContainerNames: [] },
+          serviceProjection: new Map([
+            ["postgres", { visibility: "public" as const }],
+            ["edge-runtime", { visibility: "public" as const }],
+          ]),
+        }),
+    });
+    const resolver = mockBinaryResolver();
+    const spawner = mockChildProcessSpawner();
+    const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.configureFunctions({ functions: bundle });
+      const configureSpawnCount = spawner.spawned.length;
+      expect(spawner.spawned.some((record) => record.command === process.execPath)).toBe(false);
+
+      yield* stack.start();
+      expect(spawner.spawned).toHaveLength(configureSpawnCount + 1);
+      expect(
+        JSON.parse(
+          yield* Effect.promise(() => readFile(functionsRuntimeConfigPath(runtimeRoot), "utf8")),
+        ).env.SHARED,
+      ).toBe("configured-before-start");
+
+      yield* stack.startService("edge-runtime");
+      expect(spawner.spawned).toHaveLength(configureSpawnCount + 2);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
+      Effect.timeout("5 seconds"),
+    );
+  });
+
   it.live("preserves the current functions bundle across repeated runtime reloads", () => {
     const runtimeRoot = mkdtempSync(join(tmpdir(), "supabase-functions-reload-"));
     const initialBundle = functionsBundle(runtimeRoot, "initial-secret");

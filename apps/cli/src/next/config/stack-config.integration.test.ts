@@ -170,6 +170,63 @@ describe("local stack launch config", () => {
     }
   });
 
+  it("resolves asymmetric credentials even when Auth is excluded", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "supabase-excluded-auth-credentials-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(supabaseDir, { recursive: true });
+      await writeFile(
+        join(supabaseDir, "signing-keys.json"),
+        JSON.stringify([
+          {
+            kty: "EC",
+            kid: "excluded-auth-key",
+            use: "sig",
+            alg: "ES256",
+            crv: "P-256",
+            x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+            y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+            d: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+          },
+        ]),
+      );
+      await writeFile(
+        join(supabaseDir, "config.toml"),
+        [
+          "[auth]",
+          'jwt_secret = "legacy-shared-secret-with-at-least-32-characters"',
+          'signing_keys_path = "./signing-keys.json"',
+          "",
+        ].join("\n"),
+      );
+
+      const projectEnvironment = await loadProjectEnvironmentFor({ cwd: projectRoot, baseEnv: {} });
+      expect(projectEnvironment).not.toBeNull();
+      if (projectEnvironment === null) return;
+      const loadedProjectConfig = await loadProjectConfig(projectRoot, {
+        projectEnv: projectEnvironment,
+      });
+      const result = await Effect.runPromise(
+        resolveLocalStackLaunchWithBun({
+          loadedProjectConfig,
+          projectEnvironment,
+          projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
+          mode: "auto",
+          exclude: ["auth"],
+          runtimeVersions: {},
+        }),
+      );
+
+      expect(result.stackConfig.auth).toBe(false);
+      expect(result.stackConfig.credentials?.signing).toMatchObject({
+        _tag: "AsymmetricJwtKeys",
+        keys: [expect.objectContaining({ kid: "excluded-auth-key", alg: "ES256" })],
+      });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("resolves seed inputs before the stack launch is constructed", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "supabase-local-bootstrap-launch-"));
     const supabaseDir = join(projectRoot, "supabase");

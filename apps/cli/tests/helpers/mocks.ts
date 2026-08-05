@@ -615,6 +615,7 @@ export function mockStack(
 ) {
   let started = false;
   let stopped = false;
+  const functionsConfigurations: FunctionsReloadConfig[] = [];
   const functionsReloads: FunctionsReloadConfig[] = [];
   const operations: string[] = [];
   const startDeferred = Deferred.makeUnsafe<void>();
@@ -681,6 +682,11 @@ export function mockStack(
       startService: () => Effect.void,
       stopService: () => Effect.void,
       restartService: () => Effect.void,
+      configureFunctions: (config) =>
+        Effect.sync(() => {
+          functionsConfigurations.push(config);
+          operations.push("configure-functions");
+        }),
       reloadFunctions: (config) =>
         Effect.sync(() => {
           functionsReloads.push(config ?? {});
@@ -754,6 +760,7 @@ export function mockStack(
     get stopped() {
       return stopped;
     },
+    functionsConfigurations,
     functionsReloads,
     operations,
     emitStateChange(change: { name: string; status: StackServiceState["status"] }) {

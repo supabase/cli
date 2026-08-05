@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,8 @@ import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
+import type { LocalJwtSigningKey, LocalJwtSigningMaterial } from "./LocalCredentials.ts";
+import { resolveLocalCredentials } from "./LocalCredentials.ts";
 import {
   clearFunctionsRuntimeConfig,
   configureFunctionsRuntime,
@@ -41,6 +44,59 @@ function jwtWithInvalidSignature(algorithm?: string): string {
   const header = Buffer.from(JSON.stringify({ alg: algorithm, typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({ sub: "test-user" })).toString("base64url");
   return `${header}.${payload}.invalid`;
+}
+
+const localEs256Key: LocalJwtSigningKey = {
+  kty: "EC",
+  kid: "local-ec-test",
+  use: "sig",
+  alg: "ES256",
+  crv: "P-256",
+  x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+  y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+  d: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+};
+
+function requiredJwkField(value: string | undefined, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Generated JWK is missing ${field}`);
+  }
+  return value;
+}
+
+function localRs256Key(): LocalJwtSigningKey {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const key = privateKey.export({ format: "jwk" });
+  return {
+    kty: "RSA",
+    kid: "local-rsa-test",
+    use: "sig",
+    alg: "RS256",
+    n: requiredJwkField(key.n, "n"),
+    e: requiredJwkField(key.e, "e"),
+    d: requiredJwkField(key.d, "d"),
+    p: requiredJwkField(key.p, "p"),
+    q: requiredJwkField(key.q, "q"),
+    dp: requiredJwkField(key.dp, "dp"),
+    dq: requiredJwkField(key.dq, "dq"),
+    qi: requiredJwkField(key.qi, "qi"),
+  };
+}
+
+async function functionsAuthFixture(signing?: LocalJwtSigningMaterial) {
+  const root = makeTempProject();
+  const bundle = makeBundle(root);
+  const stackConfig = await resolveConfig({
+    functions: bundle,
+    ...(signing === undefined ? {} : { credentials: { signing } }),
+  });
+  const runtimeConfig = resolveFunctionsRuntimeConfig(
+    stackConfig,
+    { hostname: "127.0.0.1" },
+    bundle,
+  );
+  if (runtimeConfig === undefined) throw new Error("Functions runtime config was not resolved");
+  return { root, runtimeConfig, token: stackConfig.anonJwt };
 }
 
 const authFailureCases = [
@@ -196,13 +252,14 @@ describe("stack Functions runtime config", () => {
 });
 
 describe("stack Functions runtime auth", () => {
+  const defaultVerificationJwks = resolveLocalCredentials(undefined).jwks;
   for (const { name, authorization, code, message } of authFailureCases) {
     it(name, async () => {
       const response = await verifyRequest(
         new Request("http://127.0.0.1/functions/v1/test", {
           headers: authorization === undefined ? undefined : { authorization },
         }),
-        { jwtSecret: defaultJwtSecret },
+        { verificationJwks: defaultVerificationJwks },
         { verifyJWT: true },
       );
 
@@ -223,7 +280,7 @@ describe("stack Functions runtime auth", () => {
       new Request("http://127.0.0.1/functions/v1/test", {
         headers: { authorization: `Bearer ${token}` },
       }),
-      { jwtSecret: defaultJwtSecret },
+      { verificationJwks: defaultVerificationJwks },
       { verifyJWT: true },
     );
 
@@ -236,10 +293,70 @@ describe("stack Functions runtime auth", () => {
       new Request("http://127.0.0.1/functions/v1/test", {
         headers: { authorization: `bearer ${token}` },
       }),
-      { jwtSecret: defaultJwtSecret },
+      { verificationJwks: defaultVerificationJwks },
       { verifyJWT: true },
     );
 
     expect(response).toBeNull();
+  });
+
+  it("verifies symmetric LocalCredentials through the secure runtime config", async () => {
+    const fixture = await functionsAuthFixture();
+    try {
+      const response = await verifyRequest(
+        new Request("http://127.0.0.1/functions/v1/test", {
+          headers: { authorization: `Bearer ${fixture.token}` },
+        }),
+        fixture.runtimeConfig,
+        { verifyJWT: true },
+      );
+
+      expect(response).toBeNull();
+      expect(fixture.runtimeConfig).not.toHaveProperty("jwtSecret");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("selects and verifies the matching RS256 LocalCredentials key", async () => {
+    const fixture = await functionsAuthFixture({
+      _tag: "AsymmetricJwtKeys",
+      legacySecret: defaultJwtSecret,
+      keys: [localRs256Key()],
+    });
+    try {
+      const response = await verifyRequest(
+        new Request("http://127.0.0.1/functions/v1/test", {
+          headers: { authorization: `Bearer ${fixture.token}` },
+        }),
+        fixture.runtimeConfig,
+        { verifyJWT: true },
+      );
+
+      expect(response).toBeNull();
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("selects and verifies the matching ES256 LocalCredentials key", async () => {
+    const fixture = await functionsAuthFixture({
+      _tag: "AsymmetricJwtKeys",
+      legacySecret: defaultJwtSecret,
+      keys: [localEs256Key],
+    });
+    try {
+      const response = await verifyRequest(
+        new Request("http://127.0.0.1/functions/v1/test", {
+          headers: { authorization: `Bearer ${fixture.token}` },
+        }),
+        fixture.runtimeConfig,
+        { verifyJWT: true },
+      );
+
+      expect(response).toBeNull();
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
   });
 });

@@ -83,6 +83,7 @@ function mockStack(
 ) {
   let stopped = false;
   const serviceCalls: string[] = [];
+  const functionConfigurations: FunctionsReloadConfig[] = [];
   const functionReloads: FunctionsReloadConfig[] = [];
   const edgeRuntimeReloads: EdgeRuntimeReloadConfig[] = [];
   const readinessCalls: Array<{ readonly target: string; readonly options?: ReadyOptions }> = [];
@@ -132,6 +133,11 @@ function mockStack(
           : Effect.sync(() => {
               serviceCalls.push(`restart:${name}`);
             }),
+    configureFunctions: (config) =>
+      Effect.sync(() => {
+        functionConfigurations.push(config);
+        serviceCalls.push("configure-functions");
+      }),
     reloadFunctions: (config) =>
       Effect.sync(() => {
         functionReloads.push(config ?? {});
@@ -205,6 +211,7 @@ function mockStack(
     },
     serviceCalls,
     readinessCalls,
+    functionConfigurations,
     functionReloads,
     edgeRuntimeReloads,
   };
@@ -494,6 +501,16 @@ describe("RemoteStack integration", () => {
     );
 
     expect(mock.functionReloads).toEqual([{ functions: functionsBundle }]);
+  });
+
+  test("configureFunctions transports the bundle without using reload", async () => {
+    const reloadCount = mock.functionReloads.length;
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.configureFunctions({ functions: functionsBundle })),
+    );
+
+    expect(mock.functionConfigurations).toEqual([{ functions: functionsBundle }]);
+    expect(mock.functionReloads).toHaveLength(reloadCount);
   });
 
   test("reloadEdgeRuntime records the call", async () => {

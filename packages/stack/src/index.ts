@@ -29,6 +29,7 @@ export type { ServiceResolution } from "./StackPreparation.ts";
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export type { StackHandle } from "./createStack.ts";
 export type {
+  FunctionsConfigureConfig,
   FunctionsReloadConfig,
   FunctionsRuntimeConfig,
   ResolvedFunction,

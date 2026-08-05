@@ -4,7 +4,7 @@ import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
-import type { FunctionsReloadConfig } from "./functions.ts";
+import type { FunctionsConfigureConfig, FunctionsReloadConfig } from "./functions.ts";
 import { foregroundLayer } from "./layers.ts";
 import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
 import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
@@ -40,6 +40,7 @@ export interface StackHandle extends AsyncDisposable {
   startService(name: string): Promise<void>;
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
+  configureFunctions(opts: FunctionsConfigureConfig): Promise<void>;
   reloadFunctions(opts?: FunctionsReloadConfig): Promise<void>;
   reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Promise<void>;
   ready(opts?: ReadyOptions): Promise<void>;
@@ -118,6 +119,7 @@ export async function createStack(
         startService: (name) => run(localStack.startService(name)),
         stopService: (name) => run(localStack.stopService(name)),
         restartService: (name) => run(localStack.restartService(name)),
+        configureFunctions: (opts) => run(localStack.configureFunctions(opts)),
         reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
         reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
         ready: (opts) => run(localStack.waitAllReady(opts)),

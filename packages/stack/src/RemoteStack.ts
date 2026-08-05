@@ -334,6 +334,21 @@ export const RemoteStack = {
               }),
             ),
 
+          configureFunctions: (opts) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, "/functions/configure", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(opts),
+                });
+                yield* expectDaemonOk(response, "edge-runtime").pipe(
+                  Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
+                  Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
+                );
+              }),
+            ),
+
           reloadFunctions: (opts) =>
             withUnixHttpClient(
               Effect.gen(function* () {

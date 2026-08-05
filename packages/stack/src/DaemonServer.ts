@@ -8,7 +8,7 @@ import {
 } from "effect/unstable/http";
 import * as Sse from "effect/unstable/encoding/Sse";
 import type { DaemonErrorResponse } from "./DaemonProtocol.ts";
-import { FunctionsReloadConfigSchema } from "./functions.ts";
+import { FunctionsConfigureConfigSchema, FunctionsReloadConfigSchema } from "./functions.ts";
 import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
 
@@ -52,9 +52,14 @@ export class DaemonServer extends Context.Service<
           );
         const buildErrorResponse = (detail: string) =>
           errorResponse({ code: "STACK_BUILD_ERROR", error: detail }, 500);
-        const invalidReloadPayloadResponse = () =>
+        const invalidFunctionsPayloadResponse = (operation: "configure" | "reload") =>
           HttpServerResponse.jsonUnsafe(
-            { error: "Invalid Edge Functions reload payload" },
+            { error: `Invalid Edge Functions ${operation} payload` },
+            { status: 400 },
+          );
+        const invalidEdgeRuntimeReloadPayloadResponse = () =>
+          HttpServerResponse.jsonUnsafe(
+            { error: "Invalid Edge Runtime reload payload" },
             { status: 400 },
           );
         const readinessTimeoutResponse = (target: string, timeoutMs: number, detail: string) =>
@@ -319,6 +324,27 @@ export class DaemonServer extends Context.Service<
 
           HttpRouter.route(
             "POST",
+            "/functions/configure",
+            Effect.gen(function* () {
+              const body = yield* HttpServerRequest.schemaBodyJson(FunctionsConfigureConfigSchema);
+              yield* stack.configureFunctions(body);
+              return HttpServerResponse.jsonUnsafe({ ok: true });
+            }).pipe(
+              Effect.catchTags({
+                SchemaError: () => Effect.succeed(invalidFunctionsPayloadResponse("configure")),
+                HttpServerError: () => Effect.succeed(invalidFunctionsPayloadResponse("configure")),
+              }),
+              Effect.catchTag("ServiceNotFoundError", (e) =>
+                Effect.succeed(notFoundResponse(e.name)),
+              ),
+              Effect.catchTag("StackBuildError", (e) =>
+                Effect.succeed(buildErrorResponse(e.detail)),
+              ),
+            ),
+          ),
+
+          HttpRouter.route(
+            "POST",
             "/functions/reload",
             Effect.gen(function* () {
               const body = yield* HttpServerRequest.schemaBodyJson(FunctionsReloadConfigSchema);
@@ -326,8 +352,8 @@ export class DaemonServer extends Context.Service<
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
               Effect.catchTags({
-                SchemaError: () => Effect.succeed(invalidReloadPayloadResponse()),
-                HttpServerError: () => Effect.succeed(invalidReloadPayloadResponse()),
+                SchemaError: () => Effect.succeed(invalidFunctionsPayloadResponse("reload")),
+                HttpServerError: () => Effect.succeed(invalidFunctionsPayloadResponse("reload")),
               }),
               Effect.catchTag("ServiceNotFoundError", (e) =>
                 Effect.succeed(notFoundResponse(e.name)),
@@ -353,8 +379,8 @@ export class DaemonServer extends Context.Service<
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
               Effect.catchTags({
-                SchemaError: () => Effect.succeed(invalidReloadPayloadResponse()),
-                HttpServerError: () => Effect.succeed(invalidReloadPayloadResponse()),
+                SchemaError: () => Effect.succeed(invalidEdgeRuntimeReloadPayloadResponse()),
+                HttpServerError: () => Effect.succeed(invalidEdgeRuntimeReloadPayloadResponse()),
               }),
               Effect.catchTag("ServiceNotFoundError", (e) =>
                 Effect.succeed(notFoundResponse(e.name)),

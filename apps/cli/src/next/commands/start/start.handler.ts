@@ -58,7 +58,7 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
       }
 
       if (functionsState.bundle !== undefined) {
-        yield* stack.reloadFunctions({ functions: functionsState.bundle });
+        yield* stack.configureFunctions({ functions: functionsState.bundle });
       }
 
       let result: void;

@@ -223,6 +223,18 @@ const waitFor = Effect.fnUntraced(function* (
 });
 
 describe("start", () => {
+  it.live("starts an empty project without activating Functions reload behavior", () => {
+    const { layer, stack } = setupNonInteractive();
+
+    return Effect.gen(function* () {
+      yield* start(backgroundFlags);
+
+      expect(stack.started).toBe(true);
+      expect(stack.functionsConfigurations).toEqual([]);
+      expect(stack.functionsReloads).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("configures the resolved Functions bundle before detached startup", () => {
     const bundle: ResolvedFunctionsBundle = {
       env: { SHARED_SECRET: "private-shared-value" },
@@ -242,8 +254,9 @@ describe("start", () => {
     return Effect.gen(function* () {
       yield* start(backgroundFlags);
 
-      expect(stack.functionsReloads).toEqual([{ functions: bundle }]);
-      expect(stack.operations.slice(0, 2)).toEqual(["reload-functions", "start"]);
+      expect(stack.functionsConfigurations).toEqual([{ functions: bundle }]);
+      expect(stack.functionsReloads).toEqual([]);
+      expect(stack.operations.slice(0, 2)).toEqual(["configure-functions", "start"]);
       expect(
         JSON.stringify({ messages: out.messages, analytics: analytics.captured }),
       ).not.toContain("private-shared-value");

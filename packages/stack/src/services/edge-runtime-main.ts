@@ -49,6 +49,23 @@ function bytesEqual(left: Uint8Array, right: Uint8Array) {
   return result === 0;
 }
 
+interface VerificationJwk {
+  readonly kty: string;
+  readonly kid?: string;
+  readonly alg?: string;
+  readonly k?: string;
+  readonly n?: string;
+  readonly e?: string;
+  readonly crv?: string;
+  readonly x?: string;
+  readonly y?: string;
+}
+
+interface JwtHeader {
+  readonly alg: string;
+  readonly kid?: string;
+}
+
 function getAuthErrorResponse({ code, message = "Invalid JWT" }: AuthFailure) {
   return Response.json(
     {
@@ -67,37 +84,107 @@ function getAuthErrorResponse({ code, message = "Invalid JWT" }: AuthFailure) {
   );
 }
 
-function decodeJwtAlgorithm(jwt: string): string | undefined {
+function decodeJwtHeader(jwt: string): JwtHeader | undefined {
   const parts = jwt.split(".");
   if (parts.length !== 3) {
     throw new Error("Invalid JWT format");
   }
-  const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(parts[0]!)));
-  return typeof decodedHeader.alg === "string" ? decodedHeader.alg : undefined;
+  const decoded: unknown = JSON.parse(new TextDecoder().decode(base64UrlToBytes(parts[0]!)));
+  if (typeof decoded !== "object" || decoded === null || !("alg" in decoded)) return undefined;
+  const alg = decoded.alg;
+  if (typeof alg !== "string") return undefined;
+  const kid = "kid" in decoded ? decoded.kid : undefined;
+  return typeof kid === "string" ? { alg, kid } : { alg };
 }
 
-async function isValidLocalJwt(secret: string, jwt: string) {
+function verificationKeys(config: { readonly verificationJwks?: unknown }): VerificationJwk[] {
+  if (typeof config.verificationJwks !== "string") return [];
+  const decoded: unknown = JSON.parse(config.verificationJwks);
+  if (typeof decoded !== "object" || decoded === null || !("keys" in decoded)) return [];
+  const keys = decoded.keys;
+  if (!Array.isArray(keys)) return [];
+  return keys.filter(
+    (key): key is VerificationJwk =>
+      typeof key === "object" && key !== null && "kty" in key && typeof key.kty === "string",
+  );
+}
+
+function supportsAlgorithm(key: VerificationJwk, algorithm: string): boolean {
+  if (key.alg !== undefined && key.alg !== algorithm) return false;
+  switch (algorithm) {
+    case "HS256":
+      return key.kty === "oct" && typeof key.k === "string";
+    case "RS256":
+      return key.kty === "RSA" && typeof key.n === "string" && typeof key.e === "string";
+    case "ES256":
+      return (
+        key.kty === "EC" &&
+        key.crv === "P-256" &&
+        typeof key.x === "string" &&
+        typeof key.y === "string"
+      );
+    default:
+      return false;
+  }
+}
+
+function selectVerificationKey(
+  keys: ReadonlyArray<VerificationJwk>,
+  header: JwtHeader,
+): VerificationJwk | undefined {
+  return keys.find(
+    (key) =>
+      supportsAlgorithm(key, header.alg) && (header.kid === undefined || key.kid === header.kid),
+  );
+}
+
+async function isValidLocalJwt(key: VerificationJwk, algorithm: string, jwt: string) {
   const parts = jwt.split(".");
   if (parts.length !== 3) return false;
   const [header, payload, signature] = parts;
-  const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(header!)));
+  const data = new TextEncoder().encode(`${header}.${payload}`);
+  const signatureBytes = base64UrlToBytes(signature!);
 
-  // WARN:(kallebysantos) Go version supports Asymmetric JWTs (ES256 | RS256) via SUPABASE_JWKS env
-  // It must be ported to TS as well
-  if (decodedHeader.alg !== "HS256") return false;
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signed = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`${header}.${payload}`),
-  );
-  return bytesEqual(new Uint8Array(signed), base64UrlToBytes(signature!));
+  if (algorithm === "HS256" && key.k !== undefined) {
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      base64UrlToBytes(key.k),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const signed = await crypto.subtle.sign("HMAC", cryptoKey, data);
+    return bytesEqual(new Uint8Array(signed), signatureBytes);
+  }
+
+  if (algorithm === "RS256" && key.n !== undefined && key.e !== undefined) {
+    const cryptoKey = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "RSA", n: key.n, e: key.e, alg: "RS256", ext: true },
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    return crypto.subtle.verify("RSASSA-PKCS1-v1_5", cryptoKey, signatureBytes, data);
+  }
+
+  if (algorithm === "ES256" && key.crv === "P-256" && key.x !== undefined && key.y !== undefined) {
+    const cryptoKey = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "EC", crv: "P-256", x: key.x, y: key.y, alg: "ES256", ext: true },
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    return crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      cryptoKey,
+      signatureBytes,
+      data,
+    );
+  }
+
+  return false;
 }
 
 export async function verifyRequest(req: Request, config: any, functionConfig: any) {
@@ -125,40 +212,41 @@ export async function verifyRequest(req: Request, config: any, functionConfig: a
     });
   }
 
-  let algorithm: string | undefined;
+  let header: JwtHeader | undefined;
   try {
-    algorithm = decodeJwtAlgorithm(token);
-  } catch (error) {
-    console.error("JWT format error", error);
+    header = decodeJwtHeader(token);
+  } catch {
     return getAuthErrorResponse({
       code: RequestErrors.InvalidTokenFormat,
       message: "Invalid JWT format",
     });
   }
 
-  if (!algorithm) {
+  if (!header) {
     return getAuthErrorResponse({
       code: RequestErrors.InvalidTokenFormat,
       message: "Invalid JWT format",
     });
   }
 
-  if (algorithm === "HS256") {
+  if (header.alg === "HS256" || header.alg === "ES256" || header.alg === "RS256") {
     try {
-      if (await isValidLocalJwt(config.jwtSecret, token)) return null;
-    } catch (error) {
-      console.error("JWT verification failed", error);
+      const key = selectVerificationKey(verificationKeys(config), header);
+      if (key !== undefined && (await isValidLocalJwt(key, header.alg, token))) return null;
+    } catch {
+      // Verification failures are intentionally opaque and must never log verifier material.
     }
-    return getAuthErrorResponse({ code: RequestErrors.InvalidLegacyJWT });
-  }
-
-  if (algorithm === "ES256" || algorithm === "RS256") {
-    return getAuthErrorResponse({ code: RequestErrors.InvalidAsymmetricJWT });
+    return getAuthErrorResponse({
+      code:
+        header.alg === "HS256"
+          ? RequestErrors.InvalidLegacyJWT
+          : RequestErrors.InvalidAsymmetricJWT,
+    });
   }
 
   return getAuthErrorResponse({
     code: RequestErrors.UnsupportedTokenAlgorithm,
-    message: `Unsupported JWT algorithm ${algorithm}`,
+    message: `Unsupported JWT algorithm ${header.alg}`,
   });
 }
 

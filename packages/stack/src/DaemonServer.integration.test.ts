@@ -58,6 +58,7 @@ const MOCK_LOGS: ReadonlyArray<LogEntry> = [
 function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
   let stopped = false;
   const serviceCalls: string[] = [];
+  const functionConfigurations: FunctionsReloadConfig[] = [];
   const functionReloads: FunctionsReloadConfig[] = [];
 
   const layer = Layer.succeed(Stack, {
@@ -98,6 +99,11 @@ function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
+    configureFunctions: (config) =>
+      Effect.sync(() => {
+        functionConfigurations.push(config);
+        serviceCalls.push("configure-functions");
+      }),
     reloadFunctions: (config) =>
       Effect.sync(() => {
         functionReloads.push(config ?? {});
@@ -145,6 +151,7 @@ function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
       return stopped;
     },
     serviceCalls,
+    functionConfigurations,
     functionReloads,
   };
 }
@@ -393,6 +400,30 @@ describe("DaemonServer", () => {
 
     expect(res.status).toBe(200);
     expect(mock.functionReloads).toContainEqual({ functions: functionsBundle });
+  });
+
+  test("POST /functions/configure forwards without reloading Edge Runtime", async () => {
+    const reloadCount = mock.functionReloads.length;
+    const res = await fetch(`${url}/functions/configure`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ functions: functionsBundle }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mock.functionConfigurations).toContainEqual({ functions: functionsBundle });
+    expect(mock.functionReloads).toHaveLength(reloadCount);
+  });
+
+  test("configure validation identifies the configure operation", async () => {
+    const res = await fetch(`${url}/functions/configure`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ functions: { functions: [] } }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("Invalid Edge Functions configure payload");
   });
 
   test("reload validation never renders resolved environment values", async () => {
