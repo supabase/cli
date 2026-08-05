@@ -1573,6 +1573,22 @@ describe("legacyResolveLocalConfigValues", () => {
       );
     });
 
+    // `db.settings.*` uint fields decode through the same `strconv.ParseUint(str, 0, 64)`
+    // base-0 grammar as `legacyEnvOverrideUint`'s callers, not a plain-decimal parse.
+    it("resolves a 0x-prefixed uint override as hex", () => {
+      process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "0x10";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ max_connections: 100 }, undefined).max_connections,
+      ).toBe(16);
+    });
+
+    it("rejects a uint override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+      process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "18446744073709551616";
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        "Failed reading config: Invalid db.settings.max_connections: 18446744073709551616.",
+      );
+    });
+
     it("overrides the boolean field via the env var", () => {
       process.env["SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP"] = "true";
       expect(

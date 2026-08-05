@@ -1219,7 +1219,10 @@ export function legacyEnvOverrideDenoVersion(
  * `edge_runtime.deno_version`, which always have a real default. `configured`
  * (and the return value) stay `number | undefined` to preserve that
  * "not configured" state through an override miss, matching Go's nil pointer
- * staying nil when no `SUPABASE_DB_SETTINGS_*` override is set either.
+ * staying nil when no `SUPABASE_DB_SETTINGS_*` override is set either. Parses
+ * with {@link parseGoBaseZeroUint}/{@link LEGACY_UINT_MAX}, same as
+ * {@link legacyEnvOverrideUint}, since these fields decode through the same
+ * `strconv.ParseUint(str, 0, 64)` call on the Go side.
  */
 function envOverrideOptionalUint(
   name: string,
@@ -1229,10 +1232,11 @@ function envOverrideOptionalUint(
 ): number | undefined {
   const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  if (!/^\d+$/.test(value)) {
+  const parsed = parseGoBaseZeroUint(value);
+  if (parsed === undefined || parsed > LEGACY_UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
-  return Number(value);
+  return Number(parsed);
 }
 
 /**
