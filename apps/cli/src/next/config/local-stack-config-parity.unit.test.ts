@@ -76,6 +76,11 @@ describe("localStackConfigParity", () => {
     expect(byPath.get("api.tls.cert_path")?.presence).toBe("enabled-subtree");
     expect(byPath.get("storage.analytics.max_tables")?.presence).toBe("enabled-subtree");
     expect(byPath.get("edge_runtime.deno_version")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.jwt_expiry")?.presence).toBe("non-default-value");
+    expect(byPath.get("db.port")?.presence).toBe("non-default-value");
+    expect(byPath.get("storage.s3_protocol.enabled")?.presence).toBe("non-default-value");
+    expect(byPath.get("studio.enabled")?.presence).toBe("non-default-value");
+    expect(byPath.get("studio.port")?.presence).toBe("non-default-value");
     expect(byPath.get("auth.jwt_secret")?.presence).toBe("effective-global-secret");
     expect(byPath.get("auth.external.*")?.presence).toBe("enabled-subtree");
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");

@@ -283,7 +283,7 @@ const authParity = {
   enabled: unsupportedRuntimeField,
   site_url: unsupportedRuntimeField,
   additional_redirect_urls: unsupportedRuntimeField,
-  jwt_expiry: unsupportedRuntimeField,
+  jwt_expiry: unsupportedNonDefaultRuntimeField,
   jwt_issuer: unsupportedOptionalRuntimeField,
   signing_keys_path: unsupportedOptionalRuntimeField,
   enable_refresh_token_rotation: unsupportedRuntimeField,
@@ -468,7 +468,7 @@ const localStackConfigParity = {
   } satisfies Record<keyof ProjectConfig["api"], Node>,
   auth: authParity,
   db: {
-    port: unsupportedRuntimeField,
+    port: unsupportedNonDefaultRuntimeField,
     shadow_port: commandOnlyDatabaseField,
     health_timeout: unsupportedRuntimeField,
     major_version: unsupportedRuntimeField,
@@ -542,7 +542,7 @@ const localStackConfigParity = {
       },
     },
     s3_protocol: {
-      enabled: unsupportedRuntimeField,
+      enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["storage"]["s3_protocol"], Node>,
     analytics: {
       enabled: unsupportedEnabledProviderField,
@@ -575,8 +575,8 @@ const localStackConfigParity = {
     } satisfies Record<keyof ProjectConfig["storage"]["vector"], Node>,
   } satisfies Record<keyof ProjectConfig["storage"], Node>,
   studio: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
+    enabled: unsupportedNonDefaultRuntimeField,
+    port: unsupportedNonDefaultRuntimeField,
     api_url: unsupportedRuntimeField,
     openai_api_key: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["studio"], Node>,
