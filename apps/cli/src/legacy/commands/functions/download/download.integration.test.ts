@@ -806,6 +806,124 @@ describe("legacy functions download", () => {
     },
   );
 
+  it.live(
+    "does not climb to an ancestor project's config.toml for the Docker download path",
+    () => {
+      // Go's `flags.LoadConfig` only ever resolves `supabase/config.toml` from
+      // the already-resolved workdir, with no ancestor climb
+      // (`NewPathBuilder`, `pkg/config/utils.go:43-48`) — mirrored here by
+      // `resolveEdgeRuntimeImage`'s `search: false` (review round on
+      // CLI-1963's `functions download` port). A nested workdir with no
+      // `supabase/config.toml` of its own must fall back to `--project-ref`
+      // for network/volume naming, not an ancestor project's configured
+      // `project_id`, even though `cliConfig.workdir` sits right inside one.
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const proxy = mockProxy();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const nestedWorkdir = join(tempRoot.current, "nested");
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: nestedWorkdir }),
+        }),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(nestedWorkdir, { recursive: true }));
+        yield* Effect.tryPromise(() =>
+          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            join(tempRoot.current, "supabase", "config.toml"),
+            ['project_id = "ancestor-project"', ""].join("\n"),
+          ),
+        );
+
+        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+        expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
+          command: "docker",
+          args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+        });
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("prefers config.toml over a stray config.json for the Docker download path", () => {
+    // Go's `NewPathBuilder`/`Config.Load` (`pkg/config/utils.go:43-48`) has
+    // no concept of a JSON project config file — it always resolves
+    // `supabase/config.toml`, mirrored here by `resolveEdgeRuntimeImage`'s
+    // `tomlOnly: true` (review round on CLI-1963's `functions download`
+    // port). A workdir with both files must resolve `project_id` from
+    // `config.toml`, not prefer the JSON file as the package loader
+    // otherwise would.
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(tempRoot.current, "supabase", "config.toml"),
+          ['project_id = "toml-project"', ""].join("\n"),
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(tempRoot.current, "supabase", "config.json"),
+          JSON.stringify({ project_id: "json-project" }),
+        ),
+      );
+
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      expect(runCommand?.args).toContain("supabase_network_toml-project");
+      expect(runCommand?.args).not.toContain("supabase_network_json-project");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("skips network creation for a container: network mode", () => {
     // Go's `container.NetworkMode.IsUserDefined()`
     // (`docker/api/types/container/hostconfig_unix.go:23-25`) explicitly

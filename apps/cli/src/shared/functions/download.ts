@@ -859,6 +859,17 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot, {
     projectRef,
     goViperCompat: dependencies.goViperCompat,
+    // `search: false`/`tomlOnly: true` only under `goViperCompat` (the legacy caller, whose
+    // `dependencies.projectRoot` is `cliConfig.workdir` — already Go's fully-resolved chdir
+    // target, same reasoning as `legacy-local-project-context.ts`/`start.handler.ts`). Go's
+    // `flags.LoadConfig` (`pkg/config/utils.go:43-48`) only ever resolves `supabase/config.toml`
+    // from that exact workdir, with no ancestor climb and no concept of a JSON project config —
+    // leaving these unset here would let an unrelated ancestor project's config win, or a stray
+    // `supabase/config.json` be preferred over `config.toml`, for the legacy shell's Docker
+    // download path specifically. The `next` shell keeps the package defaults (ancestor search,
+    // JSON preferred), matching its other non-Go-parity `loadProjectConfig` callers.
+    search: dependencies.goViperCompat ? false : undefined,
+    tomlOnly: dependencies.goViperCompat,
   });
   const denoVersion = loadedConfig?.config?.edge_runtime.deno_version;
   const projectId = loadedConfig?.config?.project_id ?? projectRef;
@@ -872,6 +883,21 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
     // `edgeRuntimeImageTag` (not a bare `v${edgeRuntimeVersion}` prepend) —
     // `dependencies.edgeRuntimeVersion` comes from a `.temp/edge-runtime-version`
     // pin that may already carry its own `v` prefix (see the helper's doc).
+    //
+    // Single `legacyGetRegistryImageUrl` value, not the ECR→GHCR→Docker-Hub
+    // retry `legacyGetRegistryImageUrlCandidates` gives `start` (review round
+    // on CLI-1963's `functions download` port). Go's `DockerStart` resolves
+    // `config.Image` through `DockerResolveImageIfNotCached`
+    // (`internal/utils/docker.go:326-348,363-365`), which tries every
+    // registry candidate — including for this exact edge-runtime unbundle
+    // container — so an ECR outage/throttle that the previous Go-delegated
+    // default path would have survived can now fail this native path outright.
+    // Pre-existing, not introduced by this PR: `deploy.ts`'s and `serve.ts`'s
+    // own already-shipped native Docker paths resolve this identically
+    // (single-URL, no retry) — `legacyGetRegistryImageUrlCandidates` has only
+    // ever been wired up for `start` (see its own doc comment). Extending the
+    // retry to all three `functions` Docker paths is a shared, cross-cutting
+    // follow-up, not something to fix piecemeal for `download` alone.
     image: legacyGetRegistryImageUrl(
       `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
     ),
