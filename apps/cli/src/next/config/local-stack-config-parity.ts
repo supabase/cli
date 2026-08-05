@@ -11,8 +11,10 @@ import type { ProjectConfig } from "@supabase/config";
  */
 type LocalStackConfigParityPresence =
   | "decoded-value"
+  | "effective-global-secret"
   | "effective-secret"
   | "enabled-subtree"
+  | "non-default-value"
   | "raw-document";
 
 type LocalStackConfigParityDecision =
@@ -71,6 +73,20 @@ const unsupportedSecretRuntimeField: LocalStackConfigParityDecision = {
   presence: "effective-secret",
   rationale:
     "A concrete resolved secret in an enabled runtime subtree changes local credentials but the next stack launch Adapter does not translate it yet; unresolved generated env placeholders do not count.",
+};
+
+const unsupportedGlobalSecretRuntimeField: LocalStackConfigParityDecision = {
+  _tag: "unsupported-blocking",
+  presence: "effective-global-secret",
+  rationale:
+    "A concrete resolved global credential changes local runtime behavior even when the Auth service is disabled; unresolved generated env placeholders do not count.",
+};
+
+const unsupportedNonDefaultRuntimeField: LocalStackConfigParityDecision = {
+  _tag: "unsupported-blocking",
+  presence: "non-default-value",
+  rationale:
+    "Only a value that differs from the generated project-config default changes local runtime behavior.",
 };
 
 const unsupportedEnabledProviderField: LocalStackConfigParityDecision = {
@@ -203,6 +219,14 @@ const authExternalParity = {
   zoom: authExternalProviderParity,
 } satisfies AuthExternalParity;
 
+const authExternalWithCustomParity = {
+  ...authExternalParity,
+  "*": {
+    decision: unsupportedEnabledProviderField,
+    children: authExternalProviderParity,
+  },
+} satisfies LocalStackConfigParitySection;
+
 const authHooksParity = {
   mfa_verification_attempt: authHookParity,
   password_verification_attempt: authHookParity,
@@ -218,31 +242,31 @@ const authSmsParity = {
   template: unsupportedRuntimeField,
   max_frequency: unsupportedRuntimeField,
   twilio: {
-    enabled: unsupportedRuntimeField,
-    account_sid: unsupportedRuntimeField,
-    message_service_sid: unsupportedRuntimeField,
+    enabled: unsupportedEnabledProviderField,
+    account_sid: unsupportedEnabledProviderField,
+    message_service_sid: unsupportedEnabledProviderField,
     auth_token: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio"], Node>,
   twilio_verify: {
-    enabled: unsupportedRuntimeField,
-    account_sid: unsupportedOptionalRuntimeField,
-    message_service_sid: unsupportedOptionalRuntimeField,
+    enabled: unsupportedEnabledProviderField,
+    account_sid: unsupportedEnabledProviderField,
+    message_service_sid: unsupportedEnabledProviderField,
     auth_token: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio_verify"], Node>,
   messagebird: {
-    enabled: unsupportedRuntimeField,
-    originator: unsupportedOptionalRuntimeField,
+    enabled: unsupportedEnabledProviderField,
+    originator: unsupportedEnabledProviderField,
     access_key: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["messagebird"], Node>,
   textlocal: {
-    enabled: unsupportedRuntimeField,
-    sender: unsupportedOptionalRuntimeField,
+    enabled: unsupportedEnabledProviderField,
+    sender: unsupportedEnabledProviderField,
     api_key: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["textlocal"], Node>,
   vonage: {
-    enabled: unsupportedRuntimeField,
-    from: unsupportedOptionalRuntimeField,
-    api_key: unsupportedOptionalRuntimeField,
+    enabled: unsupportedEnabledProviderField,
+    from: unsupportedEnabledProviderField,
+    api_key: unsupportedEnabledProviderField,
     api_secret: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["vonage"], Node>,
   test_otp: unsupportedOptionalRuntimeField,
@@ -262,11 +286,11 @@ const authParity = {
   enable_anonymous_sign_ins: unsupportedRuntimeField,
   minimum_password_length: unsupportedRuntimeField,
   password_requirements: unsupportedRuntimeField,
-  publishable_key: unsupportedSecretRuntimeField,
-  secret_key: unsupportedSecretRuntimeField,
-  jwt_secret: unsupportedSecretRuntimeField,
-  anon_key: unsupportedSecretRuntimeField,
-  service_role_key: unsupportedSecretRuntimeField,
+  publishable_key: unsupportedGlobalSecretRuntimeField,
+  secret_key: unsupportedGlobalSecretRuntimeField,
+  jwt_secret: unsupportedGlobalSecretRuntimeField,
+  anon_key: unsupportedGlobalSecretRuntimeField,
+  service_role_key: unsupportedGlobalSecretRuntimeField,
   rate_limit: authRateLimitParity,
   captcha: {
     enabled: unsupportedRuntimeField,
@@ -334,7 +358,7 @@ const authParity = {
     },
   } satisfies Record<keyof ProjectConfig["auth"]["email"], Node>,
   sms: authSmsParity,
-  external: authExternalParity,
+  external: authExternalWithCustomParity,
   web3: {
     solana: {
       enabled: unsupportedRuntimeField,
@@ -344,32 +368,32 @@ const authParity = {
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["ethereum"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["web3"], Node>,
   oauth_server: {
-    enabled: unsupportedRuntimeField,
-    authorization_url_path: unsupportedRuntimeField,
-    allow_dynamic_registration: unsupportedRuntimeField,
+    enabled: unsupportedEnabledProviderField,
+    authorization_url_path: unsupportedEnabledProviderField,
+    allow_dynamic_registration: unsupportedEnabledProviderField,
   } satisfies Record<keyof ProjectConfig["auth"]["oauth_server"], Node>,
   third_party: {
     firebase: {
-      enabled: unsupportedRuntimeField,
-      project_id: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      project_id: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["firebase"], Node>,
     auth0: {
-      enabled: unsupportedRuntimeField,
-      tenant: unsupportedOptionalRuntimeField,
-      tenant_region: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      tenant: unsupportedEnabledProviderField,
+      tenant_region: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["auth0"], Node>,
     aws_cognito: {
-      enabled: unsupportedRuntimeField,
-      user_pool_id: unsupportedOptionalRuntimeField,
-      user_pool_region: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      user_pool_id: unsupportedEnabledProviderField,
+      user_pool_region: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["aws_cognito"], Node>,
     clerk: {
-      enabled: unsupportedRuntimeField,
-      domain: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      domain: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["clerk"], Node>,
     workos: {
-      enabled: unsupportedRuntimeField,
-      issuer_url: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      issuer_url: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["workos"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["third_party"], Node>,
 } satisfies Record<keyof ProjectConfig["auth"], Node>;
@@ -429,9 +453,9 @@ const localStackConfigParity = {
     max_rows: unsupportedRuntimeField,
     auto_expose_new_tables: mappedAutoExposeNewTables,
     tls: {
-      enabled: unsupportedRuntimeField,
-      cert_path: unsupportedOptionalRuntimeField,
-      key_path: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      cert_path: unsupportedEnabledProviderField,
+      key_path: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["api"]["tls"], Node>,
     external_url: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof ProjectConfig["api"], Node>,
@@ -471,7 +495,7 @@ const localStackConfigParity = {
     enabled: mappedFunctionsDevEdgeRuntime,
     policy: mappedFunctionsDevEdgeRuntime,
     inspector_port: mappedFunctionsDevEdgeRuntime,
-    deno_version: unsupportedRuntimeField,
+    deno_version: unsupportedNonDefaultRuntimeField,
     secrets: mappedFunctionsDevEdgeRuntime,
   } satisfies Record<keyof ProjectConfig["edge_runtime"], Node>,
   functions: {
@@ -514,13 +538,13 @@ const localStackConfigParity = {
       enabled: unsupportedRuntimeField,
     } satisfies Record<keyof ProjectConfig["storage"]["s3_protocol"], Node>,
     analytics: {
-      enabled: unsupportedRuntimeField,
-      max_namespaces: unsupportedRuntimeField,
-      max_tables: unsupportedRuntimeField,
-      max_catalogs: unsupportedRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      max_namespaces: unsupportedEnabledProviderField,
+      max_tables: unsupportedEnabledProviderField,
+      max_catalogs: unsupportedEnabledProviderField,
       buckets: {
         "*": {
-          decision: unsupportedRuntimeField,
+          decision: unsupportedEnabledProviderField,
           children: {} satisfies Record<
             keyof ProjectConfig["storage"]["analytics"]["buckets"][string],
             Node
@@ -529,12 +553,12 @@ const localStackConfigParity = {
       },
     } satisfies Record<keyof ProjectConfig["storage"]["analytics"], Node>,
     vector: {
-      enabled: unsupportedRuntimeField,
-      max_buckets: unsupportedRuntimeField,
-      max_indexes: unsupportedRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      max_buckets: unsupportedEnabledProviderField,
+      max_indexes: unsupportedEnabledProviderField,
       buckets: {
         "*": {
-          decision: unsupportedRuntimeField,
+          decision: unsupportedEnabledProviderField,
           children: {} satisfies Record<
             keyof ProjectConfig["storage"]["vector"]["buckets"][string],
             Node
