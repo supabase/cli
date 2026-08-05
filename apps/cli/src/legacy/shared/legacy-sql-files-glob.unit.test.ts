@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -101,4 +101,70 @@ describe("legacySqlFilesGlob", () => {
       ),
     );
   });
+
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+  it.effect.skipIf(isRoot)(
+    "surfaces a directory-read failure during walk as a warning instead of an empty match (Go WalkDir parity)",
+    () => {
+      // Go's `fs.WalkDir` returns the `ReadDir` error from its walkFn unchanged, which
+      // stops the walk immediately; `walkMatchedDir` then wraps it as `failed to walk
+      // matched directory: ...` and discards every file already found — never an empty
+      // (successful) match. Verified empirically against `apps/cli-go`: an unreadable
+      // matched directory makes `Glob.SQLFiles` return that error with zero files.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-fail-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      chmodSync(schemasDir, 0o000);
+      return run(["schemas"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual([]);
+            expect(result.warnings).toHaveLength(1);
+            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            chmodSync(schemasDir, 0o755);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.skipIf(isRoot)(
+    "keeps files from a sibling pattern when only one matched directory fails to walk",
+    () => {
+      // Go: `if err != nil { allErrors = append(allErrors, err); continue }` — a walk
+      // failure on one match doesn't stop the loop over the REST of the matches/patterns;
+      // whether it's ultimately fatal is the caller's decision (`legacyApplySchemaFiles`'s
+      // `len(declared) == 0` gate), not this function's.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-fail-partial-"));
+      const goodDir = join(dir, "good");
+      const badDir = join(dir, "bad");
+      mkdirSync(goodDir);
+      mkdirSync(badDir);
+      writeFileSync(join(goodDir, "a.sql"), "select 1;");
+      writeFileSync(join(badDir, "b.sql"), "select 2;");
+      chmodSync(badDir, 0o000);
+      return run(["good", "bad"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["good/a.sql"]);
+            expect(result.warnings).toHaveLength(1);
+            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            chmodSync(badDir, 0o755);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -1161,6 +1161,74 @@ describe("legacy db reset", () => {
           expect(cause).toContain("supabase/schemas/01_users.sql");
         }
       });
+    },
+  );
+
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+  it.live.skipIf(isRoot)(
+    "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
+    () => {
+      // Go's `NewMigrationFromFile` (the file-read/parse step, `apply.go:57-59`) returns
+      // BEFORE `CmdSuggestion` is ever set — only a later `ExecBatch` (statement
+      // execution) failure attaches it (`apply.go:61-63`). A file that glob-matches but
+      // can't be read (permissions changed after the glob) must fail WITHOUT the
+      // suggestion, unlike the exec-failure case above.
+      const schemaFile = join(tmp.current, "supabase", "schemas", "01_users.sql");
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+        files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
+        experimental: true,
+        confirm: [true],
+      });
+      chmodSync(schemaFile, 0o000);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const cause = JSON.stringify(exit.cause);
+          expect(cause).not.toContain("See schema file");
+        }
+        // The statement was never reached, so it was never executed.
+        expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+      }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemaFile, 0o644))));
+    },
+  );
+
+  it.live.skipIf(isRoot)(
+    "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
+    () => {
+      // Go's `fs.WalkDir` stops on the first `ReadDir` failure and `applySchemaFiles`
+      // only silently drops that error when at least one OTHER file was still found
+      // (`apply.go:53-55`); with a single pattern matching only the unreadable
+      // directory, `declared` stays empty and Go aborts the command — it must not
+      // report success having applied nothing. Verified empirically against `apps/cli-go`.
+      const schemasDir = join(tmp.current, "supabase", "schemas");
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
+        files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
+        experimental: true,
+        confirm: [true],
+      });
+      chmodSync(schemasDir, 0o000);
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const cause = JSON.stringify(exit.cause);
+          expect(cause).toContain("failed to walk matched directory");
+          expect(cause).not.toContain("See schema file");
+        }
+        // Schemas were already dropped before the failed apply step (Go's ResetAll order).
+        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+        expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+      }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemasDir, 0o755))));
     },
   );
 

@@ -4,6 +4,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { legacyErrorMessage } from "./legacy-error-message.ts";
 import {
   INSERT_MIGRATION_VERSION,
   MIGRATE_FILE_PATTERN,
@@ -99,11 +100,6 @@ type LegacyBatchItem =
   | { readonly kind: "exec"; readonly sql: string }
   | { readonly kind: "version" };
 
-const errMessage = (e: unknown): string =>
-  typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
-    ? e.message
-    : String(e);
-
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
 /**
@@ -160,95 +156,110 @@ const execMigrationBatch = <E>(
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationPath: string,
-  mapError: (message: string) => E,
+  mapError: (message: string, phase: "read" | "exec") => E,
   forceNoVersion: boolean,
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
-    const content = yield* fs.readFileString(migrationPath);
-    const statements = legacySplitAndTrim(content);
-    const filename = path.basename(migrationPath);
-    const matches = MIGRATE_FILE_PATTERN.exec(filename);
-    const version = forceNoVersion ? "" : (matches?.[1] ?? "");
-    const name = matches?.[2] ?? "";
+    // Go's `MigrationFile.ExecBatch` receives an already-read/parsed file (the read
+    // happens earlier, in `NewMigrationFromFile`) — so a read failure here is a
+    // DIFFERENT error class than a statement-execution failure below. Tagged "read" so
+    // callers that attach a suggestion only around execution failures (`apply.go:61-63`)
+    // can tell the two apart.
+    const content = yield* fs
+      .readFileString(migrationPath)
+      .pipe(Effect.mapError((error) => mapError(legacyErrorMessage(error), "read")));
 
-    // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
-    // on a failed statement, render the `^` caret under the server-reported error
-    // position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
-    // then `At statement: <index>` and the (caret-marked) statement text. The
-    // structured `detail`/`position` fields are only set by the driver for server
-    // ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
-    const atStatement = (e: LegacyDbExecError, index: number, stat: string) => {
-      const marked = legacyMarkError(stat, e.position ?? 0);
-      const msg: Array<string> = [];
-      if (e.detail !== undefined && e.detail.length > 0) {
-        msg.push(e.detail);
-      }
-      // Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
-      const typeName = TYPE_NAME_PATTERN.exec(e.message)?.[1];
-      if (typeName !== undefined && e.code === "42704" && !typeName.includes(".")) {
-        msg.push("");
-        msg.push("Hint: This type may be defined in a schema that's not in your search_path.");
-        msg.push("      Use schema-qualified type references to avoid this error:");
-        msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
-        msg.push("      Learn more: supabase migration new --help");
-      }
-      msg.push(`At statement: ${index}`, marked);
-      return new Error(`${errMessage(e)}\n${msg.join("\n")}`);
-    };
+    // Everything below mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
+    // which runs against an already-read file — so every failure from here on is an
+    // execution failure, tagged "exec" (as opposed to the "read" failure above, which
+    // mirrors `NewMigrationFromFile`). Only execution failures get `CmdSuggestion`
+    // (`apply.go:61-63`); callers rely on this tag to replicate that split.
+    yield* Effect.gen(function* () {
+      const statements = legacySplitAndTrim(content);
+      const filename = path.basename(migrationPath);
+      const matches = MIGRATE_FILE_PATTERN.exec(filename);
+      const version = forceNoVersion ? "" : (matches?.[1] ?? "");
+      const name = matches?.[2] ?? "";
 
-    // `executed` is the global statement index of the next statement to run, so the
-    // error context stays accurate across flushed batches and standalone statements
-    // (Go threads the same counter through `ExecBatch`).
-    let pending: ReadonlyArray<LegacyBatchItem> = [];
-    let executed = 0;
-
-    const flushBatch = Effect.gen(function* () {
-      if (pending.length === 0) return;
-      const items = pending;
-      pending = [];
-      const base = executed;
-      const body = Effect.gen(function* () {
-        for (const [offset, item] of items.entries()) {
-          const index = base + offset;
-          if (item.kind === "version") {
-            // Go defaults to the version-insert statement when all listed statements succeed.
-            yield* session
-              .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-              .pipe(
-                Effect.mapError((cause) => atStatement(cause, index, INSERT_MIGRATION_VERSION)),
-              );
-          } else {
-            yield* session
-              .exec(item.sql)
-              .pipe(Effect.mapError((cause) => atStatement(cause, index, item.sql)));
-          }
+      // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
+      // on a failed statement, render the `^` caret under the server-reported error
+      // position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
+      // then `At statement: <index>` and the (caret-marked) statement text. The
+      // structured `detail`/`position` fields are only set by the driver for server
+      // ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
+      const atStatement = (e: LegacyDbExecError, index: number, stat: string) => {
+        const marked = legacyMarkError(stat, e.position ?? 0);
+        const msg: Array<string> = [];
+        if (e.detail !== undefined && e.detail.length > 0) {
+          msg.push(e.detail);
         }
-        yield* session.exec("COMMIT");
-      });
-      yield* session.exec("BEGIN");
-      yield* body.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
-      executed += items.length;
-    });
+        // Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
+        const typeName = TYPE_NAME_PATTERN.exec(e.message)?.[1];
+        if (typeName !== undefined && e.code === "42704" && !typeName.includes(".")) {
+          msg.push("");
+          msg.push("Hint: This type may be defined in a schema that's not in your search_path.");
+          msg.push("      Use schema-qualified type references to avoid this error:");
+          msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
+          msg.push("      Learn more: supabase migration new --help");
+        }
+        msg.push(`At statement: ${index}`, marked);
+        return new Error(`${legacyErrorMessage(e)}\n${msg.join("\n")}`);
+      };
 
-    for (const statement of statements) {
-      if (legacyIsPipelineIncompatible(statement)) {
-        // Flush the open batch, then run the incompatible statement on its own (no
-        // surrounding transaction) so PostgreSQL accepts it.
-        yield* flushBatch;
-        const index = executed;
-        yield* session
-          .exec(statement)
-          .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
-        executed += 1;
-      } else {
-        pending = [...pending, { kind: "exec", sql: statement }];
+      // `executed` is the global statement index of the next statement to run, so the
+      // error context stays accurate across flushed batches and standalone statements
+      // (Go threads the same counter through `ExecBatch`).
+      let pending: ReadonlyArray<LegacyBatchItem> = [];
+      let executed = 0;
+
+      const flushBatch = Effect.gen(function* () {
+        if (pending.length === 0) return;
+        const items = pending;
+        pending = [];
+        const base = executed;
+        const body = Effect.gen(function* () {
+          for (const [offset, item] of items.entries()) {
+            const index = base + offset;
+            if (item.kind === "version") {
+              // Go defaults to the version-insert statement when all listed statements succeed.
+              yield* session
+                .query(INSERT_MIGRATION_VERSION, [version, name, statements])
+                .pipe(
+                  Effect.mapError((cause) => atStatement(cause, index, INSERT_MIGRATION_VERSION)),
+                );
+            } else {
+              yield* session
+                .exec(item.sql)
+                .pipe(Effect.mapError((cause) => atStatement(cause, index, item.sql)));
+            }
+          }
+          yield* session.exec("COMMIT");
+        });
+        yield* session.exec("BEGIN");
+        yield* body.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
+        executed += items.length;
+      });
+
+      for (const statement of statements) {
+        if (legacyIsPipelineIncompatible(statement)) {
+          // Flush the open batch, then run the incompatible statement on its own (no
+          // surrounding transaction) so PostgreSQL accepts it.
+          yield* flushBatch;
+          const index = executed;
+          yield* session
+            .exec(statement)
+            .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
+          executed += 1;
+        } else {
+          pending = [...pending, { kind: "exec", sql: statement }];
+        }
       }
-    }
-    if (version.length > 0) {
-      pending = [...pending, { kind: "version" }];
-    }
-    yield* flushBatch;
-  }).pipe(Effect.mapError((error) => mapError(errMessage(error))));
+      if (version.length > 0) {
+        pending = [...pending, { kind: "version" }];
+      }
+      yield* flushBatch;
+    }).pipe(Effect.mapError((error) => mapError(legacyErrorMessage(error), "exec")));
+  });
 
 /**
  * Go's per-migration connection reset (`apply.go:65-69`): `RESET ALL` clears any
@@ -261,7 +272,7 @@ const resetConnectionState = <E>(
   session: LegacyDbSession,
   mapError: (message: string) => E,
 ): Effect.Effect<void, E> =>
-  session.exec("RESET ALL").pipe(Effect.mapError((e) => mapError(errMessage(e))));
+  session.exec("RESET ALL").pipe(Effect.mapError((e) => mapError(legacyErrorMessage(e))));
 
 /**
  * Applies a single migration file to the connected database and records it in
@@ -283,7 +294,7 @@ export const legacyApplyMigrationFile = <E>(
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
     yield* legacyCreateMigrationTable(session).pipe(
-      Effect.mapError((e) => mapError(errMessage(e))),
+      Effect.mapError((e) => mapError(legacyErrorMessage(e))),
     );
     yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
   });
@@ -305,7 +316,7 @@ export const legacyApplyMigrations = <E>(
     const output = yield* Output;
     if (pending.length === 0) return;
     yield* legacyCreateMigrationTable(session).pipe(
-      Effect.mapError((e) => mapError(errMessage(e))),
+      Effect.mapError((e) => mapError(legacyErrorMessage(e))),
     );
     for (const migrationPath of pending) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
@@ -355,7 +366,7 @@ export const legacyExecSqlFile = <E>(
   fs: FileSystem.FileSystem,
   path: Path.Path,
   filePath: string,
-  mapError: (message: string) => E,
+  mapError: (message: string, phase: "read" | "exec") => E,
 ): Effect.Effect<void, E> => execMigrationBatch(session, fs, path, filePath, mapError, true);
 
 /**
@@ -385,8 +396,11 @@ export const legacyExecSqlFile = <E>(
  *    (`declared` empty, `apply.go:53-55`); once at least one file is found, every other
  *    pattern's warning is discarded — unlike the seed path's `WARN:` line.
  *
- * On a per-file exec failure, attaches Go's `CmdSuggestion = "See schema file: <Bold(fp)>"`
- * (`apply.go:63`) via the optional second argument of `mapError`.
+ * On a per-file EXECUTION failure only, attaches Go's `CmdSuggestion = "See schema file:
+ * <Bold(fp)>"` (`apply.go:63`) via the optional second argument of `mapError`. A file-READ
+ * failure (Go's `NewMigrationFromFile`, `apply.go:57-59`) returns before `CmdSuggestion` is
+ * ever set, so it must NOT carry the suggestion — {@link legacyExecSqlFile}'s `mapError`
+ * receives the `"read"`/`"exec"` phase precisely so this call site can tell them apart.
  */
 export const legacyApplySchemaFiles = <E>(
   session: LegacyDbSession,
@@ -408,8 +422,10 @@ export const legacyApplySchemaFiles = <E>(
     }
     for (const file of files) {
       const absolutePath = path.isAbsolute(file) ? file : path.join(workdir, file);
-      yield* legacyExecSqlFile(session, fs, path, absolutePath, (message) =>
-        mapError(message, `See schema file: ${legacyBold(file)}`),
+      yield* legacyExecSqlFile(session, fs, path, absolutePath, (message, phase) =>
+        phase === "exec"
+          ? mapError(message, `See schema file: ${legacyBold(file)}`)
+          : mapError(message),
       );
     }
   });

@@ -1,5 +1,6 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, type FileSystem, type Path, Result } from "effect";
 
+import { legacyErrorMessage } from "./legacy-error-message.ts";
 import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "./legacy-path-match.ts";
 
 const META_CHARS = /[*?[\\]/u;
@@ -72,21 +73,33 @@ const globOne = (
  * filepath.Ext(path) == ".sql"`, `apps/cli-go/pkg/config/config.go:126-131,194-211`).
  * Paths are workdir-relative (matching the glob output), forward-slashed, and sorted
  * for deterministic application.
+ *
+ * A `ReadDir` failure anywhere in the tree (e.g. a permissions error on a nested
+ * directory) fails the WHOLE walk with `failed to walk matched directory: <cause>`,
+ * discarding every file collected so far — Go's `fs.WalkDir` callback returns that
+ * `err` unchanged, which stops the traversal immediately and makes `walkMatchedDir`
+ * return `(nil, err)` rather than the partial list (`config.go:196-208`; verified
+ * empirically: an unreadable matched directory makes `Glob.SQLFiles` return a
+ * `failed to walk matched directory: ...` error with zero files, not an empty match).
  */
 const legacyWalkSqlFiles = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   dir: string,
-): Effect.Effect<ReadonlyArray<string>, never> =>
+): Effect.Effect<ReadonlyArray<string>, string> =>
   Effect.gen(function* () {
     const collected: Array<string> = [];
-    const walk = (rel: string): Effect.Effect<void, never> =>
+    const walk = (rel: string): Effect.Effect<void, string> =>
       Effect.gen(function* () {
         const absDir = path.isAbsolute(rel) ? rel : path.join(workdir, rel);
         const names = yield* fs
           .readDirectory(absDir)
-          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+          .pipe(
+            Effect.mapError(
+              (error) => `failed to walk matched directory: ${legacyErrorMessage(error)}`,
+            ),
+          );
         for (const name of names) {
           const childRel = `${rel}/${name}`;
           const childAbs = path.isAbsolute(childRel) ? childRel : path.join(workdir, childRel);
@@ -125,8 +138,9 @@ interface LegacySqlFilesGlobResult {
   /** Workdir-relative, forward-slashed matches, deduplicated in first-seen order across patterns. */
   readonly files: ReadonlyArray<string>;
   /**
-   * Per-pattern problems (`no files matched pattern: …` / `failed to glob files: …`),
-   * in pattern order. Never fatal by itself — callers decide when a warning matters
+   * Per-pattern/per-match problems (`no files matched pattern: …` / `failed to glob
+   * files: …` / `failed to walk matched directory: …`), in pattern order. Never fatal
+   * by itself — callers decide when a warning matters
    * (e.g. the seed path always surfaces it; the schema-files apply path only surfaces
    * it when NO pattern matched anything at all, mirroring Go's `apply.go:53-55`).
    */
@@ -225,7 +239,16 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
         Effect.orElseSucceed(() => "File" as const),
       );
       if (matchType === "Directory") {
-        for (const file of yield* legacyWalkSqlFiles(fs, path, workdir, fp)) {
+        // Go: `if err != nil { allErrors = append(allErrors, err); continue }` — a walk
+        // failure on this match becomes a warning (never a hard Effect failure, like
+        // every other per-match/per-pattern problem here) and the loop moves on to the
+        // next match, exactly like a malformed pattern or a "no files matched" miss.
+        const walked = yield* legacyWalkSqlFiles(fs, path, workdir, fp).pipe(Effect.result);
+        if (Result.isFailure(walked)) {
+          warnings.push(walked.failure);
+          continue;
+        }
+        for (const file of walked.success) {
           if (!seen.has(file)) {
             seen.add(file);
             files.push(file);
