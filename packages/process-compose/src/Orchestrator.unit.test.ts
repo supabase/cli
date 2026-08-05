@@ -1170,6 +1170,39 @@ describe("Orchestrator", () => {
         expect(state.error).toContain("Timed out");
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
+
+    it.live("completed dependency fails immediately when health restarts are exhausted", () => {
+      const { layer } = setupOrchestrator(
+        [
+          svc("setup", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              failureThreshold: 1,
+            },
+          }),
+          svc("app", {
+            restart: "no",
+            dependencies: [{ service: "setup", condition: "completed" }],
+            dependencyTimeoutSeconds: 5,
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        const state = yield* waitForFailed(orc, "app");
+        expect(state.error).toContain("Dependency setup failed");
+        expect(state.error).not.toContain("Timed out");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
   });
 
   describe("failure diagnostics", () => {
@@ -1266,6 +1299,50 @@ describe("Orchestrator", () => {
         yield* orc.start();
         yield* waitForHealthy(orc, "a");
         expect(hookRan).toBe(true);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("runs on:healthy hook when an unhealthy service recovers", () => {
+      let checkCalls = 0;
+      let healthyHookRuns = 0;
+      const { layer } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "no",
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              successThreshold: 1,
+              failureThreshold: 1,
+            },
+            hooks: [
+              {
+                on: "healthy",
+                run: () =>
+                  Effect.sync(() => {
+                    healthyHookRuns++;
+                  }),
+              },
+            ],
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: {
+            check: {
+              exitDelay: "1 millis",
+              getExitCode: () => (++checkCalls === 1 ? 1 : 0),
+            },
+          },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
+        yield* waitForHealthy(orc, "a");
+        expect(healthyHookRuns).toBe(1);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
@@ -1656,6 +1733,10 @@ describe("Orchestrator", () => {
         yield* orc.stop();
         const elapsed = Date.now() - before;
         expect(elapsed).toBeLessThan(3000);
+        const state = yield* orc.getState("stuck");
+        expect(state.status).toBe("Stopped");
+        expect(state.pid).toBeNull();
+        expect(state.exitCode).toBe(143);
         expect(proc.killed).toEqual(["SIGTERM", "SIGKILL"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
