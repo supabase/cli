@@ -8,7 +8,6 @@ import {
   type ResolvedFunctionsBundle,
   type StackMetadata,
 } from "@supabase/stack/effect";
-import { daemonEntryPoint } from "@supabase/stack";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
@@ -183,16 +182,13 @@ export const startCommand = Command.make("start", flags).pipe(
       yield* output.intro("Start local Supabase stack");
       yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
-      const stackLayer = yield* daemonLayer(
-        {
-          cacheRoot: cliConfig.supabaseHome,
-          cwd: runtimeInfo.cwd,
-          projectStateRoot: projectHome.projectHomeDir,
-          name: flags.stack,
-          ...launch.stackConfig,
-        },
-        daemonEntryPoint,
-      );
+      const stackLayer = yield* daemonLayer({
+        cacheRoot: cliConfig.supabaseHome,
+        cwd: runtimeInfo.cwd,
+        projectStateRoot: projectHome.projectHomeDir,
+        name: flags.stack,
+        ...launch.stackConfig,
+      });
       const daemonState = yield* stateManager.read(flags.stack);
 
       const metadata = stackMetadata({

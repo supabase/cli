@@ -11,12 +11,14 @@ The package exposes two levels of Interface:
 
 - `@supabase/stack` selects `bun.ts` or `node.ts` through export conditions and exposes the
   Promise-oriented `createStack()` / `StackHandle` Interface plus prefetch helpers.
-- `@supabase/stack/effect` exposes Effect Interfaces and layer factories used by the CLI and
-  advanced callers.
+- `@supabase/stack/effect` selects a runtime Adapter through the same export conditions and exposes
+  Effect Interfaces plus platform-bound layer factories used by the CLI and advanced callers.
+- `@supabase/stack/testing` exposes only the service tags needed to replace daemon transport in
+  consumer tests. Runtime implementation tags do not leak through the root or Effect barrels.
 
-The root runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
-socket HTTP implementations. `createStack.ts` remains platform-agnostic and receives a
-`PlatformFactory`.
+Internal runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
+socket HTTP implementations. `createStack.ts` and the layer factories remain platform-agnostic;
+the conditional root and Effect entries bind them to their selected runtime.
 
 ```mermaid
 flowchart LR
@@ -316,12 +318,15 @@ Callers may explicitly supply `projectStateRoot`, in which case durable stacks l
 ## Runtime entrypoints and exports
 
 - `bun.ts` and `node.ts` are root export-condition targets.
+- `effect-bun.ts` and `effect-node.ts` are Effect export-condition targets. They bind foreground,
+  daemon, and Unix-socket layers without exposing raw platform factories or bootstrap paths.
 - `daemon-bun.ts` is exported as `@supabase/stack/daemon-bun` so the compiled CLI can dispatch to
   it in-process.
-- `daemon-node.ts` is intentionally not a package export. `node.ts` resolves it by file URL and
-  passes that filesystem path to `daemonLayer`; the package `knip.entry` list preserves this live
-  file-URL-only entrypoint.
-- `effect.ts` is the low-level Effect export used by the CLI. There is no `internals.ts` entrypoint.
+- `daemon-node.ts` is intentionally not a package export. The internal Node platform Adapter
+  resolves it by file URL and passes that filesystem path to `daemonLayer`; the package
+  `knip.entry` list preserves this live file-URL-only entrypoint.
+- `effect.ts` is the platform-agnostic consumer contract re-exported by the conditional Effect
+  entries. There is no general-purpose `internals.ts` entrypoint.
 
 ## Testing
 

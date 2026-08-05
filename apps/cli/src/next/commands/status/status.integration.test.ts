@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { StackServiceState } from "@supabase/stack/effect";
 import { Effect, Layer } from "effect";
 import { status } from "./status.handler.ts";

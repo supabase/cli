@@ -1,12 +1,11 @@
 import type { LogEntry } from "@supabase/process-compose";
-import { Effect, type Layer, ManagedRuntime, Stream } from "effect";
-import { FileSystem, Path } from "effect";
+import { Effect, FileSystem, type Layer, ManagedRuntime, Path, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
 import type { FunctionsReloadConfig } from "./functions.ts";
-import { daemonLayer, foregroundLayer, type DaemonStartError } from "./layers.ts";
+import { foregroundLayer } from "./layers.ts";
 import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
 import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { Stack } from "./Stack.ts";
@@ -14,18 +13,16 @@ import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
-import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
-import { UnixHttpClient } from "./UnixHttpClient.ts";
 
-export type PlatformServices =
+type PlatformServices =
   | FileSystem.FileSystem
   | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | HttpServer.HttpServer;
 
-export type PlatformLayer = Layer.Layer<PlatformServices>;
+type PlatformLayer = Layer.Layer<PlatformServices>;
 /** Supplies the platform HTTP server used by the stack and HTTP proxy. */
-export interface PlatformFactoryOptions {
+interface PlatformFactoryOptions {
   readonly apiPort: number;
   readonly releaseApiPort: Effect.Effect<void>;
 }
@@ -54,31 +51,6 @@ export interface StackHandle extends AsyncDisposable {
   serviceLogs(name: string): AsyncIterable<LogEntry>;
   logHistory(name: string, limit?: number): Promise<ReadonlyArray<LogEntry>>;
 }
-
-export const projectDaemonLayer = (opts: {
-  readonly cacheRoot: string;
-  readonly cwd: string;
-  readonly projectDir?: string;
-  readonly projectStateRoot?: string;
-  readonly name?: string;
-  readonly daemonEntryPoint: string;
-  readonly stackConfig?: Omit<StackConfig, "cacheRoot" | "stackRoot" | "runtimeRoot" | "functions">;
-}): Effect.Effect<
-  Layer.Layer<Stack>,
-  DaemonStartError | InvalidStackStateError | StackAlreadyRunningError,
-  FileSystem.FileSystem | Path.Path | UnixHttpClient
-> =>
-  daemonLayer(
-    {
-      cacheRoot: opts.cacheRoot,
-      cwd: opts.cwd,
-      projectDir: opts.projectDir,
-      projectStateRoot: opts.projectStateRoot,
-      name: opts.name,
-      ...opts.stackConfig,
-    },
-    opts.daemonEntryPoint,
-  );
 
 export async function createStack(
   config: StackConfig | undefined,
