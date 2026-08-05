@@ -706,6 +706,59 @@ describe("legacyStartSetupLocalDatabase", () => {
     );
 
     it.effect(
+      "applies PGDELTA_NPM_REGISTRY from the project .env for the catalog export, then reverts it",
+      () => {
+        // Go's `Config.Load` already `os.Setenv`'d the project `.env` into the process
+        // (`loadNestedEnv`, config.go:788) long before `SetupLocalDatabase` runs, so a
+        // PGDELTA_NPM_REGISTRY set only in supabase/.env (not the shell) reaches
+        // `PgDeltaNpmRegistryOption` there. This module threads config overrides via
+        // `projectEnvValues` rather than mutating `process.env` globally, so the
+        // cache-warmup step must scope-apply it around just `legacyExportCatalogPgDelta`'s
+        // call (`legacyPgDeltaNpmRegistryOption` reads bare `process.env`) and revert
+        // afterwards — mirroring `db push`/`db pull`/`db dump`/`bootstrap`'s own use of
+        // `legacyApplyProjectEnv` for the same shared pg-delta code.
+        const previous = process.env["PGDELTA_NPM_REGISTRY"];
+        delete process.env["PGDELTA_NPM_REGISTRY"];
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        mkdirSync(join(workdir, "supabase"), { recursive: true });
+        writeFileSync(
+          join(workdir, "supabase", ".env"),
+          "PGDELTA_NPM_REGISTRY=https://registry.example.com/supabase\n",
+        );
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, {
+            majorVersion: 14,
+            projectEnvValues: { PGDELTA_NPM_REGISTRY: "https://registry.example.com/supabase" },
+          }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(1);
+            expect(edgeRuntime.calls[0]?.extraEnv?.["PGDELTA_NPM_REGISTRY"]).toBe(
+              "https://registry.example.com/supabase",
+            );
+            expect(edgeRuntime.calls[0]?.extraEnv?.["NPM_CONFIG_REGISTRY"]).toBe(
+              "https://registry.example.com/supabase",
+            );
+            // Reverted: the scope closes once the cache-warmup call completes, so it
+            // never leaks into subsequent steps or other tests.
+            expect(process.env["PGDELTA_NPM_REGISTRY"]).toBeUndefined();
+            if (previous === undefined) delete process.env["PGDELTA_NPM_REGISTRY"];
+            else process.env["PGDELTA_NPM_REGISTRY"] = previous;
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
       "warns without failing legacyStartSetupLocalDatabase when the catalog export fails",
       () => {
         const workdir = makeWorkdir();
