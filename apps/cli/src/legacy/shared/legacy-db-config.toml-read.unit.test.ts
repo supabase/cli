@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
@@ -11,6 +11,7 @@ import {
   legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
+  legacyResolveSeedSqlPath,
 } from "./legacy-db-config.toml-read.ts";
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
@@ -343,6 +344,41 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
             rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "on Windows, resolves a leading-slash schema/seed path pattern under supabase/ instead of treating it as absolute (Go filepath.IsAbs parity)",
+    () => {
+      // Go's `resolve()` gates the `supabase/`-join on `!filepath.IsAbs(pattern)`
+      // (`config.go:976-980`), and `filepath.IsAbs` on Windows requires a volume name —
+      // a drive letter (`C:\`) or UNC prefix (`\\server\share`) — before a path counts as
+      // absolute (`internal/filepathlite/path_windows.go`'s `IsAbs`/`volumeNameLen`). A
+      // bare leading `/` has no volume name, so Go treats `/schemas/*.sql` as RELATIVE and
+      // joins it to `supabase/schemas/*.sql`. Node's `path.win32.isAbsolute`, backing the
+      // injected `Path.Path` service on an actual Windows host, instead treats a leading
+      // separator as rooted at the current drive — i.e. absolute — which would otherwise
+      // skip Go's `supabase/`-join entirely. Exercises `legacyResolveSeedSqlPath` (the
+      // single function `[db.migrations].schema_paths` and `[db.seed].sql_paths` both
+      // resolve through) directly with `BunPath.layerWin32`, rather than through the full
+      // `legacyReadDbToml` pipeline: that pipeline's OWN config-file lookup also runs
+      // through the same injected `Path.Path` service to open the real (POSIX-pathed,
+      // since this test host isn't Windows) temp config file on disk, so forcing win32
+      // path semantics there breaks the read itself rather than exercising the fix.
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const resolved = legacyResolveSeedSqlPath(path, "/schemas/*.sql");
+        expect(resolved).toBe("supabase/schemas/*.sql");
+      }).pipe(
+        Effect.provide(BunPath.layerWin32),
+        Effect.ensuring(
+          Effect.sync(() => {
+            Object.defineProperty(process, "platform", { value: originalPlatform });
           }),
         ),
       );

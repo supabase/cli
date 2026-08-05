@@ -525,6 +525,38 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
 }
 
 /**
+ * Go's `filepath.IsAbs` on Windows (`internal/filepathlite/path_windows.go`'s
+ * `IsAbs`/`volumeNameLen`) requires a volume name — a drive letter (`C:\`) or a UNC
+ * prefix (`\\server\share`) — before a path counts as absolute; a bare leading
+ * separator (`/schemas`, `\schemas`) has no volume name, so Go treats it as RELATIVE
+ * and joins it under `supabase/`. `pathSvc.isAbsolute` is backed by `node:path`, which
+ * selects `path.win32` on an actual Windows host, and Node's win32 `isAbsolute` treats
+ * a bare leading separator as rooted at the *current drive* — i.e. absolute — so it
+ * disagrees with Go on exactly this shape. Verified empirically: Node's
+ * `path.win32.isAbsolute("/schemas/*.sql")` is `true`, while Go's `filepath.IsAbs` on
+ * the same input is `false` (`volumeNameLen` returns `0` — none of its drive-letter,
+ * UNC, or device-path cases match a path with no volume component). Only the resolve
+ * step below (`config.go:970-980`'s literal `!filepath.IsAbs(pattern)` gate for
+ * `[db.seed].sql_paths`/`[db.migrations].schema_paths`) needs this Go-exact rule —
+ * real filesystem calls elsewhere in this shell still need the platform's own
+ * `isAbsolute` to resolve an actual path on disk.
+ */
+const legacyGoIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
+  if (process.platform !== "win32") {
+    return pathSvc.isAbsolute(pattern);
+  }
+  const isSeparator = (c: string | undefined): boolean => c === "/" || c === "\\";
+  // Drive-letter volume (`C:\`, `c:/`): Go's `volumeNameLen` accepts any byte before
+  // `:` (case 2, `path[1] === ':'`), then `IsAbs` requires a separator right after.
+  if (pattern.length >= 3 && pattern[1] === ":" && isSeparator(pattern[2])) {
+    return true;
+  }
+  // UNC volume (`\\server\share`, `//server/share`): Go's `IsAbs` treats a
+  // double-separator-prefixed volume as absolute unconditionally.
+  return pattern.length >= 2 && isSeparator(pattern[0]) && isSeparator(pattern[1]);
+};
+
+/**
  * Resolves a single seed `sql_paths` entry to Go's config-load form: a relative
  * pattern is joined under `supabase/` (Go's `path.Join`, `config.go:918-921`); an
  * absolute (or empty) pattern is returned verbatim. Used by the reader for
@@ -532,7 +564,7 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
  * `resolveSeedSqlPaths`, `cmd/db.go`) so both feed the glob the same resolved paths.
  */
 export const legacyResolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
-  pattern.length === 0 || pathSvc.isAbsolute(pattern)
+  pattern.length === 0 || legacyGoIsAbs(pathSvc, pattern)
     ? pattern
     : legacyJoinSupabaseSeedPath(pattern);
 
