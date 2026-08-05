@@ -26,7 +26,7 @@ import { legacyBranchesCreate } from "./create.handler.ts";
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
 const CREATED: CreatedBranch = {
-  id: "11111111-2222-3333-4444-555555555555",
+  id: "11111111-2222-4333-8444-555555555555",
   name: "feat-x",
   project_ref: "aaaaaaaaaaaaaaaaaaaa",
   parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",

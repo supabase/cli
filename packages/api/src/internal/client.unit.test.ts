@@ -642,7 +642,7 @@ describe("makeSupabaseApiClient", () => {
           client.execute<"v1ExchangeOauthToken">(operationDefinitions.v1ExchangeOauthToken, {
             body: {
               grant_type: "authorization_code",
-              client_id: "11111111-1111-1111-1111-111111111111",
+              client_id: "11111111-1111-4111-8111-111111111111",
               client_secret: "client-secret",
               code: "auth-code",
               code_verifier: "code-verifier",
@@ -670,7 +670,7 @@ describe("makeSupabaseApiClient", () => {
 
     const body = new URLSearchParams(requestBodyText(seenRequest!));
     expect(body.get("grant_type")).toBe("authorization_code");
-    expect(body.get("client_id")).toBe("11111111-1111-1111-1111-111111111111");
+    expect(body.get("client_id")).toBe("11111111-1111-4111-8111-111111111111");
     expect(body.get("client_secret")).toBe("client-secret");
     expect(body.get("code")).toBe("auth-code");
     expect(body.get("code_verifier")).toBe("code-verifier");

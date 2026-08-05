@@ -3,7 +3,11 @@ import * as JsonSchema from "effect/JsonSchema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { describe, expect, test } from "vitest";
 
-import { normalizeNullableJsonSchema, sanitizeOpenApiSchema } from "./generate.ts";
+import {
+  normalizeNullableJsonSchema,
+  normalizeQueryParameterSchema,
+  sanitizeOpenApiSchema,
+} from "./generate.ts";
 
 function renderOpenApiSchema(schema: Parameters<typeof JsonSchema.fromSchemaOpenApi3_0>[0]) {
   const normalized = normalizeNullableJsonSchema(
@@ -27,6 +31,54 @@ describe("generate", () => {
     expect(renderOpenApiSchema({ type: "string", format: "date-time", nullable: true })).toBe(
       'Schema.Union([Schema.String.annotate({ "format": "date-time" }), Schema.Null])',
     );
+  });
+
+  test("accepts booleans for string-encoded boolean query parameters", () => {
+    expect(
+      normalizeQueryParameterSchema(
+        {
+          name: "verify_jwt",
+          in: "query",
+          schema: { type: "string", example: true },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ anyOf: [{ type: "string" }, { type: "boolean" }] });
+
+    expect(
+      normalizeQueryParameterSchema(
+        {
+          name: "reveal",
+          in: "query",
+          description: "Boolean string, true or false",
+          schema: { type: "string", example: "true" },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ anyOf: [{ type: "string" }, { type: "boolean" }] });
+
+    expect(
+      normalizeQueryParameterSchema(
+        {
+          name: "remove_addon",
+          in: "query",
+          description: "If true, also removes the custom domain add-on.",
+          schema: { type: "string" },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ anyOf: [{ type: "string" }, { type: "boolean" }] });
+
+    expect(
+      normalizeQueryParameterSchema(
+        {
+          name: "slug",
+          in: "query",
+          schema: { type: "string", example: "hello-world" },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ type: "string" });
   });
 
   test("preserves arbitrary JSON in SSO attribute mapping defaults", () => {

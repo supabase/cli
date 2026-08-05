@@ -13,7 +13,7 @@ describe("renderBranchesListTable", () => {
   it("renders all 8 columns in declared order", () => {
     const out = renderBranchesListTable([
       {
-        id: "11111111-2222-3333-4444-555555555555",
+        id: "11111111-2222-4333-8444-555555555555",
         name: "feat-1",
         project_ref: "abcdefghijklmnopqrst",
         parent_project_ref: "parent-ref-aaaaaaaaa",
