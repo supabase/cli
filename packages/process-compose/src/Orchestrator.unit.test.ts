@@ -1359,6 +1359,44 @@ describe("Orchestrator", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
+    it.live("publishes a failed recovery hook as a terminal failure", () => {
+      let checkCalls = 0;
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "no",
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              successThreshold: 1,
+              failureThreshold: 1,
+            },
+            hooks: [{ on: "healthy", run: () => Effect.fail(new Error("recovery failed")) }],
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: {
+            check: {
+              exitDelay: "1 millis",
+              getExitCode: () => (++checkCalls === 1 ? 1 : 0),
+            },
+          },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
+        const state = yield* waitForFailed(orc, "a");
+        expect(proc.killed.some((record) => record.command === "a")).toBe(true);
+        expect(state.pid).toBeNull();
+        expect(state.error).toContain("on:healthy");
+        expect(state.error).toContain("recovery failed");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
     it.live("dependent waits for on:started hook to complete before starting", () => {
       const order: string[] = [];
       const { layer } = setupOrchestrator(
