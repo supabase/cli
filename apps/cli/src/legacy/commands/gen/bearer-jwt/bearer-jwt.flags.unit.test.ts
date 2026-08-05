@@ -67,6 +67,38 @@ describe("legacyParseBearerJwtExp", () => {
       'invalid argument "notatime" for "--exp" flag: invalid time format `notatime` must be one of: `2006-01-02T15:04:05Z07:00`',
     );
   });
+
+  it("rejects an out-of-range zone offset instead of silently signing a null exp/iat (CLI-1961 Codex review finding)", () => {
+    // Before this fix: the calendar check never looked at the offset at all, so
+    // `+99:99` passed validation, `Date.parse` returned `NaN`, and the caller signed
+    // a token whose `exp`/`iat` claims serialized as JSON `null`
+    // (`JSON.stringify(NaN) === "null"`) instead of failing the command — verified
+    // against the real binary, which rejects this exact input during flag parsing.
+    expect(() => legacyParseBearerJwtExp("2030-01-01T00:00:00+99:99")).toThrow(
+      'invalid argument "2030-01-01T00:00:00+99:99" for "--exp" flag: invalid time format `2030-01-01T00:00:00+99:99` must be one of: `2006-01-02T15:04:05Z07:00`',
+    );
+  });
+
+  it("tolerates a 24-hour/60-minute offset the same way Go's time.Parse does (`>` not `>=`)", () => {
+    // Go's own comment (`time/format.go:1267-1269`): "The range test use > rather
+    // than >=, as some people do write offsets of 24 hours or 60 minutes" — verified
+    // directly against the Go standard library.
+    expect(legacyParseBearerJwtExp("2030-01-01T00:00:00+24:00")).toBe(
+      legacyParseBearerJwtExp("2030-01-01T00:00:00Z") - 24 * 60 * 60,
+    );
+    expect(legacyParseBearerJwtExp("2030-01-01T00:00:00+00:60")).toBe(
+      legacyParseBearerJwtExp("2030-01-01T00:00:00Z") - 60 * 60,
+    );
+  });
+
+  it("rejects an offset that overflows even Go's 24-hour/60-minute tolerance", () => {
+    expect(() => legacyParseBearerJwtExp("2030-01-01T00:00:00+25:00")).toThrow(
+      '"--exp" flag: invalid time format',
+    );
+    expect(() => legacyParseBearerJwtExp("2030-01-01T00:00:00+00:61")).toThrow(
+      '"--exp" flag: invalid time format',
+    );
+  });
 });
 
 describe("legacyParseBearerJwtValidFor", () => {
