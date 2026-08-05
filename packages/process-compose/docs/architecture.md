@@ -58,7 +58,9 @@ one of three conditions:
 
 `startService(name)` starts the requested definition and its transitive dependencies.
 `stopService(name)` and `restartService(name)` also include active dependents so a caller cannot
-leave an already-running dependent attached to a restarted dependency.
+leave an already-running dependent attached to a restarted dependency. The pure restart-closure
+calculation preserves inactive connector services on a dependency path to an active descendant;
+otherwise restarting the descendant without its connector would violate graph order.
 
 `updateServiceDefinition(name, replacement)` validates a graph with the replacement and then swaps
 the graph used for subsequent starts and restarts. It does not mutate a process generation that is
@@ -110,7 +112,8 @@ redundant publications must compare before writing.
 `ServiceTransition` is the only normal path for observed-status changes. `applyEvent()` rejects
 illegal `(status, event)` pairs by returning `null`; `transition()` applies a legal event atomically
 through `SubscriptionRef.modifyEffect`. Races such as a late health callback during shutdown are
-therefore ignored without corrupting state.
+therefore ignored without corrupting state. The transition classification is keyed by every event
+tag, so adding an event fails type checking until its legal source statuses are defined.
 
 ## Lifecycle of one process generation
 
@@ -121,9 +124,9 @@ For each requested definition, `Orchestrator` runs this sequence:
    backoff, allowing a caller to reserve external resources.
 3. Wait for dependencies, bounded by `dependencyTimeoutSeconds` (default: 120 seconds).
 4. Transition to `Starting`.
-5. Call `beforeSpawn` immediately before every spawn. The stack uses it to release a reserved port
-   as late as possible. For a supervised Docker command there is still a spawn-to-container-bind
-   window because no supervisor/container bind handshake exists.
+5. Call `beforeSpawn` immediately before every spawn. A caller can use it to release a reserved port
+   as late as possible. For a supervised child there is still a spawn-to-bind window because no
+   supervisor/child bind handshake exists.
 6. Spawn either the configured process or its optional supervisor.
 7. Register a scoped finalizer before exposing `Running`.
 8. Run `started` hooks sequentially. Only successful hooks allow `ProcessSpawned` to publish
@@ -136,6 +139,10 @@ For each requested definition, `Orchestrator` runs this sequence:
 
 The service keeps the same state stream across restart generations. Restart backoff is
 `min(30 seconds, 2^(restartCount - 1))`.
+
+A no-health-check, `restart: "no"` process is treated as one-shot work. A small isolated poll of
+`ChildProcessHandle.isRunning` compensates for adapters that can report process completion before
+their `exitCode` Effect becomes observable; it is not part of the general lifecycle loop.
 
 ### Lifecycle hooks
 
@@ -202,8 +209,7 @@ interrupts its lifecycle fiber. The generation finalizer:
 Whole-graph stop sets desired state first and then stops dependents before dependencies. The global
 shutdown budget defaults to 60 seconds. If that budget expires, the orchestrator logs the timeout
 and force-terminates active children before waiting for teardown to finish. Services that were
-running reach terminal `Stopped` state with `pid: null` and exit code `143`; stop does not fail with
-`ShutdownTimeoutError`.
+running reach terminal `Stopped` state with `pid: null` and exit code `143`.
 
 In-process cleanup and orphan supervision solve different failure modes:
 
@@ -212,9 +218,12 @@ In-process cleanup and orphan supervision solve different failure modes:
   owner's stdin closes, its PID disappears, the supervisor receives a termination signal, or the
   managed child exits while cleanup is configured.
 
-`ExternalCleanupAction` currently supports removing a Docker container or a filesystem path. The
-supervisor validates the decoded configuration and ignores individual cleanup failures so cleanup
-remains best-effort and idempotent.
+`ExternalCleanupAction` supports a shell-free `RunCommand` with an executable, argument array, and
+optional timeout (default 5 seconds), plus `RemovePath` for filesystem cleanup. Cleanup commands
+receive the managed child's sanitized environment, without the supervisor self-dispatch protocol
+variables. The supervisor rejects a malformed decoded cleanup contract before spawning the child,
+while individual execution failures remain best-effort. Callers must choose idempotent commands
+because owner-loss signals can race.
 
 ## Supervisor runtime
 
@@ -247,7 +256,8 @@ virtual filesystem. The package therefore uses three internal environment variab
 The CLI entrypoint calls `enableSupervisorSelfDispatchForCompiledBun()` before normal command
 dispatch, checks `isSupervisorRuntimeRequested()`, and invokes `runSupervisorRuntimeFromEnv()`.
 The supervisor removes all three variables before starting the managed command, preventing the
-protocol from leaking recursively into a service.
+protocol from leaking recursively into a service. Contract tests run the same encoded supervisor
+configuration through both the source-file argument path and environment-based self-dispatch path.
 
 The stack daemon has a separate Supabase-owned marker, `SUPABASE_STACK_RUN_DAEMON`; it is documented
 in [the stack detach-mode guide](../../stack/docs/detach-mode.md#compiled-executable-re-entry).
@@ -264,15 +274,13 @@ plus live per-service and merged `PubSub` streams. `historyAll` can filter by se
 Streams contain new entries only; callers explicitly request history when they need replay.
 
 When a process exits unexpectedly or becomes unhealthy, the orchestrator appends recent buffered
-output to its diagnostics. `truncate` currently clears both a service's history and its entries in
-the merged history; it has no production caller.
+output to its diagnostics.
 
 ## Error model
 
 Graph construction can fail with `MissingDependencyError` or `CyclicDependencyError`. Lifecycle
 lookup uses `ServiceNotFoundError`; spawn preparation uses `SpawnError`; readiness uses
-`ServiceReadyError`. Global shutdown timeout is logged and force-cleared, so the exported
-`ShutdownTimeoutError` does not represent a current failure path.
+`ServiceReadyError`. Global shutdown timeout is logged and force-cleared.
 
 ## Testing through Interfaces
 

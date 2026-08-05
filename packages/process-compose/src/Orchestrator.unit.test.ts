@@ -48,7 +48,6 @@ function mockLogBuffer() {
             line: entry.line,
           }));
         }),
-      truncate: () => Effect.void,
     }),
     get entries() {
       return entries;
@@ -455,11 +454,17 @@ describe("Orchestrator", () => {
 
   it.live("supervised services spawn the supervisor runtime", () => {
     const { layer, proc } = setupOrchestrator([
-      svc("postgres", {
-        command: "docker",
-        args: ["run", "--rm", "postgres"],
+      svc("database", {
+        command: "container-runtime",
+        args: ["run", "database"],
         supervision: {
-          orphanCleanup: [{ _tag: "DockerRemove", containerName: "supabase-postgres-test" }],
+          orphanCleanup: [
+            {
+              _tag: "RunCommand",
+              executable: "container-runtime",
+              args: ["remove", "database-test"],
+            },
+          ],
         },
       }),
     ]);
@@ -476,11 +481,17 @@ describe("Orchestrator", () => {
   it.live("stopping a supervisor during its spawn handshake cleans it up", () => {
     const { layer, proc } = setupOrchestrator(
       [
-        svc("postgres", {
-          command: "docker",
-          args: ["run", "--rm", "postgres"],
+        svc("database", {
+          command: "container-runtime",
+          args: ["run", "database"],
           supervision: {
-            orphanCleanup: [{ _tag: "DockerRemove", containerName: "supabase-postgres-test" }],
+            orphanCleanup: [
+              {
+                _tag: "RunCommand",
+                executable: "container-runtime",
+                args: ["remove", "database-test"],
+              },
+            ],
           },
         }),
       ],
@@ -488,10 +499,10 @@ describe("Orchestrator", () => {
     );
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
-      yield* orc.startService("postgres", { beforeSpawn: () => Effect.void });
+      yield* orc.startService("database", { beforeSpawn: () => Effect.void });
       yield* proc.waitForSpawnCount(1);
 
-      yield* orc.stopService("postgres");
+      yield* orc.stopService("database");
       yield* proc.waitForKillCount(1);
 
       expect(proc.killed[0]?.command).toBe(process.execPath);
@@ -1345,6 +1356,44 @@ describe("Orchestrator", () => {
         yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
         yield* waitForHealthy(orc, "a");
         expect(healthyHookRuns).toBe(1);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("publishes a failed recovery hook as a terminal failure", () => {
+      let checkCalls = 0;
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "no",
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              successThreshold: 1,
+              failureThreshold: 1,
+            },
+            hooks: [{ on: "healthy", run: () => Effect.fail(new Error("recovery failed")) }],
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: {
+            check: {
+              exitDelay: "1 millis",
+              getExitCode: () => (++checkCalls === 1 ? 1 : 0),
+            },
+          },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
+        const state = yield* waitForFailed(orc, "a");
+        expect(proc.killed.some((record) => record.command === "a")).toBe(true);
+        expect(state.pid).toBeNull();
+        expect(state.error).toContain("on:healthy");
+        expect(state.error).toContain("recovery failed");
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 

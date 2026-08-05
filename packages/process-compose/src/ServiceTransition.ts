@@ -28,51 +28,43 @@ export type ServiceEvent =
   | { readonly _tag: "HookFailed"; readonly error: string };
 
 // ---------------------------------------------------------------------------
-// Transition table — set of (fromStatus, eventTag) pairs that are legal
+// Transition table — every event must classify its legal source statuses
 // ---------------------------------------------------------------------------
 
-const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
-  "Pending:DependenciesSatisfied",
-  "Pending:DependencyFailed",
-  "Pending:SpawnFailed",
-  "Pending:StopRequested",
-  "Starting:ProcessSpawned",
-  "Starting:SpawnFailed",
-  "Starting:StopRequested",
-  "Starting:HookFailed",
-  "Running:HealthCheckPassed",
-  "Running:HealthCheckFailed",
-  "Running:ProcessExited",
-  "Running:StopRequested",
-  "Healthy:HealthCheckPassed",
-  "Healthy:HealthCheckFailed",
-  "Healthy:ProcessExited",
-  "Healthy:StopRequested",
-  "Unhealthy:HealthCheckPassed",
-  "Unhealthy:ProcessExited",
-  "Unhealthy:ProcessTerminated",
-  "Unhealthy:StopRequested",
-  "Stopping:ProcessExited",
-  "Stopped:RestartTriggered",
-  "Failed:RestartTriggered",
-  "Failed:ProcessExited",
-  "Failed:StopRequested",
-  "Unhealthy:RestartTriggered",
-  "Unhealthy:UnhealthyRestartExhausted",
-  "Restarting:StopRequested",
-  "Restarting:SpawnFailed",
-  "Restarting:BackoffElapsed",
-  "Running:HookFailed",
-  "Healthy:HookFailed",
-]);
+type TransitionTable = {
+  readonly [Tag in ServiceEvent["_tag"]]: ReadonlySet<ServiceStatus>;
+};
+
+const transitions: TransitionTable = {
+  DependenciesSatisfied: new Set(["Pending"]),
+  DependencyFailed: new Set(["Pending"]),
+  SpawnFailed: new Set(["Pending", "Starting", "Restarting"]),
+  ProcessSpawned: new Set(["Starting"]),
+  HealthCheckPassed: new Set(["Running", "Healthy", "Unhealthy"]),
+  HealthCheckFailed: new Set(["Running", "Healthy"]),
+  ProcessTerminated: new Set(["Unhealthy"]),
+  UnhealthyRestartExhausted: new Set(["Unhealthy"]),
+  ProcessExited: new Set(["Running", "Healthy", "Unhealthy", "Stopping", "Failed"]),
+  StopRequested: new Set([
+    "Pending",
+    "Starting",
+    "Running",
+    "Healthy",
+    "Unhealthy",
+    "Restarting",
+    "Failed",
+  ]),
+  RestartTriggered: new Set(["Stopped", "Failed", "Unhealthy"]),
+  BackoffElapsed: new Set(["Restarting"]),
+  HookFailed: new Set(["Starting", "Running", "Healthy", "Unhealthy"]),
+};
 
 // ---------------------------------------------------------------------------
 // applyEvent — pure function, returns new ServiceState or null if invalid
 // ---------------------------------------------------------------------------
 
 export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceState | null => {
-  const key = `${state.status}:${event._tag}` as const;
-  if (!allowed.has(key)) return null;
+  if (!transitions[event._tag].has(state.status)) return null;
 
   switch (event._tag) {
     case "DependenciesSatisfied":

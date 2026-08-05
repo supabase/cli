@@ -55,8 +55,10 @@ export interface LifecycleHook {
 
 export type ExternalCleanupAction =
   | {
-      readonly _tag: "DockerRemove";
-      readonly containerName: string;
+      readonly _tag: "RunCommand";
+      readonly executable: string;
+      readonly args: ReadonlyArray<string>;
+      readonly timeoutMs?: number;
     }
   | {
       readonly _tag: "RemovePath";

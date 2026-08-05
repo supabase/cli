@@ -24,6 +24,8 @@ interface ChildExit {
   readonly signal: NodeJS.Signals | null;
 }
 
+const DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS = 5_000;
+
 const isMain = (() => {
   if (process.argv[1] == null) {
     return false;
@@ -104,16 +106,35 @@ const cleanupActionFrom = (value: unknown): ExternalCleanupAction | undefined =>
   }
 
   const tag = getField(value, "_tag");
-  if (tag === "DockerRemove") {
-    const containerName = getField(value, "containerName");
-    return typeof containerName === "string" ? { _tag: tag, containerName } : undefined;
+  if (tag === "RunCommand") {
+    const executable = getField(value, "executable");
+    const args = stringArrayFrom(getField(value, "args"));
+    const timeoutMs = getField(value, "timeoutMs");
+    if (
+      typeof executable !== "string" ||
+      executable.length === 0 ||
+      args === undefined ||
+      (timeoutMs !== undefined &&
+        (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0))
+    ) {
+      return undefined;
+    }
+    return {
+      _tag: tag,
+      executable,
+      args,
+      timeoutMs: typeof timeoutMs === "number" ? timeoutMs : undefined,
+    };
   }
 
   if (tag === "RemovePath") {
     const path = getField(value, "path");
     const recursive = getField(value, "recursive");
     const force = getField(value, "force");
-    return typeof path === "string"
+    return typeof path === "string" &&
+      path.length > 0 &&
+      (recursive === undefined || typeof recursive === "boolean") &&
+      (force === undefined || typeof force === "boolean")
       ? {
           _tag: tag,
           path,
@@ -148,6 +169,11 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
 
   const ownerPid = getField(value, "ownerPid");
   const shutdownTimeoutMs = getField(value, "shutdownTimeoutMs");
+  const cleanupValue = getField(value, "cleanup");
+  const cleanup = cleanupValue === undefined ? undefined : cleanupActionsFrom(cleanupValue);
+  if (cleanupValue !== undefined && cleanup === undefined) {
+    throw new Error("Invalid supervisor cleanup");
+  }
 
   return {
     command,
@@ -155,7 +181,7 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
     ownerPid: typeof ownerPid === "number" ? ownerPid : undefined,
     shutdownSignal: signalFrom(getField(value, "shutdownSignal")),
     shutdownTimeoutMs: typeof shutdownTimeoutMs === "number" ? shutdownTimeoutMs : undefined,
-    cleanup: cleanupActionsFrom(getField(value, "cleanup")),
+    cleanup,
   };
 };
 
@@ -252,10 +278,11 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
     return Promise.all(
       (config.cleanup ?? []).map(async (action) => {
         try {
-          if (action._tag === "DockerRemove") {
-            execFileSync("docker", ["rm", "-f", action.containerName], {
+          if (action._tag === "RunCommand") {
+            execFileSync(action.executable, action.args, {
+              env: childEnv,
               stdio: "ignore",
-              timeout: 5_000,
+              timeout: action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS,
             });
           } else if (action._tag === "RemovePath") {
             await removePathWithRetry(action);

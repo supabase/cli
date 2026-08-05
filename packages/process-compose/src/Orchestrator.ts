@@ -17,6 +17,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { buildGraph, type ResolvedGraph } from "./DependencyGraph.ts";
 import { type HealthProbeCallbacks, runHealthProbe } from "./HealthProbe.ts";
 import { LogBuffer } from "./LogBuffer.ts";
+import { restartClosureFor } from "./RestartClosure.ts";
 import {
   decideRestart,
   type LifecycleCause,
@@ -42,6 +43,8 @@ import { type ServiceEvent, transition } from "./ServiceTransition.ts";
 
 const DIAGNOSTIC_LOG_LINES = 20;
 
+// Some one-shot adapters report `isRunning: false` before their exit-code Effect is observable.
+// Keep the compensating poll isolated here so the ordinary process-exit path remains event-driven.
 const waitForProcessToStop = (handle: {
   readonly isRunning: Effect.Effect<boolean, unknown, never>;
 }): Effect.Effect<void> =>
@@ -284,10 +287,10 @@ export class Orchestrator extends Context.Service<
 
                   // Release external resources such as port reservations only
                   // once dependencies are satisfied and spawning is imminent.
-                  // For supervised Docker services, this still leaves a wider
-                  // spawn-to-bind window because the supervisor starts before
-                  // the container binds its published ports. Closing that gap
-                  // would require an explicit supervisor/container handshake.
+                  // For supervised external processes, this can still leave a wider
+                  // spawn-to-bind window because the supervisor starts before its
+                  // child binds published ports. Closing that gap would require an
+                  // explicit supervisor/child handshake.
                   yield* options?.beforeSpawn?.(def.name) ?? Effect.void;
 
                   // Spawn the process
@@ -594,29 +597,30 @@ export class Orchestrator extends Context.Service<
             yield* sendEvent(name, { _tag: "ProcessExited", exitCode: 143 });
           });
 
-        const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
-          const names = new Set<string>([name]);
-          const visited = new Set<string>();
-          const collectDependents = (current: string): boolean => {
-            if (visited.has(current)) return names.has(current);
-            visited.add(current);
-            let hasActiveDependent = false;
-            for (const dependent of graph.dependentsOf(current)) {
-              const dependentService = services.get(dependent.name);
-              const dependentIsActive =
-                FiberMap.hasUnsafe(fibers, dependent.name) ||
-                (dependentService !== undefined &&
-                  SubscriptionRef.getUnsafe(dependentService.state).desired === "running");
-              const descendantIsActive = collectDependents(dependent.name);
-              if (dependentIsActive || descendantIsActive) {
-                names.add(dependent.name);
-                hasActiveDependent = true;
-              }
-            }
-            return hasActiveDependent;
-          };
-          collectDependents(name);
-          return graph.startOrder.filter((def) => names.has(def.name));
+        const restartClosure = (name: string): ReadonlyArray<ServiceDef> => {
+          const activeServices = new Set(
+            graph.startOrder
+              .filter((def) => {
+                const service = services.get(def.name);
+                return (
+                  FiberMap.hasUnsafe(fibers, def.name) ||
+                  (service !== undefined &&
+                    SubscriptionRef.getUnsafe(service.state).desired === "running")
+                );
+              })
+              .map((def) => def.name),
+          );
+          const closure = new Set(
+            restartClosureFor(
+              {
+                order: graph.startOrder.map((def) => def.name),
+                dependentsOf: (service) => graph.dependentsOf(service).map((def) => def.name),
+              },
+              name,
+              activeServices,
+            ),
+          );
+          return graph.startOrder.filter((def) => closure.has(def.name));
         };
 
         const waitReadySingle = (def: ServiceDef): Effect.Effect<void, ServiceReadyError> =>
@@ -831,7 +835,7 @@ export class Orchestrator extends Context.Service<
               if (lookupDef(name) === undefined) {
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
-              const affected = restartClosureFor(name);
+              const affected = restartClosure(name);
               for (const affectedDef of [...affected].reverse()) {
                 yield* setDesired(affectedDef.name, "stopped");
                 yield* sendEvent(affectedDef.name, { _tag: "StopRequested" });
@@ -846,7 +850,7 @@ export class Orchestrator extends Context.Service<
               if (def === undefined) {
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
-              const affected = restartClosureFor(name);
+              const affected = restartClosure(name);
 
               for (const affectedDef of [...affected].reverse()) {
                 yield* stopForRestart(affectedDef.name);
