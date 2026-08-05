@@ -161,13 +161,19 @@ const execMigrationBatch = <E>(
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
     // Go's `MigrationFile.ExecBatch` receives an already-read/parsed file (the read
-    // happens earlier, in `NewMigrationFromFile`) — so a read failure here is a
-    // DIFFERENT error class than a statement-execution failure below. Tagged "read" so
-    // callers that attach a suggestion only around execution failures (`apply.go:61-63`)
-    // can tell the two apart.
+    // happens earlier, in `NewMigrationFromFile`/`parseFile`, which wraps the open
+    // failure as `"failed to open migration file: %w"`, `pkg/migration/file.go:57-58`)
+    // — so a read failure here is a DIFFERENT error class than a statement-execution
+    // failure below, and needs the same Go prefix so stderr/JSON errors don't surface
+    // the bare platform error text. Tagged "read" so callers that attach a suggestion
+    // only around execution failures (`apply.go:61-63`) can tell the two apart.
     const content = yield* fs
       .readFileString(migrationPath)
-      .pipe(Effect.mapError((error) => mapError(legacyErrorMessage(error), "read")));
+      .pipe(
+        Effect.mapError((error) =>
+          mapError(`failed to open migration file: ${legacyErrorMessage(error)}`, "read"),
+        ),
+      );
 
     // Everything below mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
     // which runs against an already-read file — so every failure from here on is an

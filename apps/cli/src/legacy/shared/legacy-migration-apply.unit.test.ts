@@ -131,6 +131,33 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
+  it.effect(
+    "wraps a read failure with Go's parse-file error text (Go NewMigrationFromFile parity)",
+    () => {
+      // Go's `NewMigrationFromFile`/`parseFile` wraps the open failure as
+      // `"failed to open migration file: %w"` (`pkg/migration/file.go:57-58`) before
+      // `ApplyMigrations`/`applySchemaFiles` ever get a chance to attach a
+      // `CmdSuggestion` — a read failure here must carry the same prefix, not the bare
+      // platform error text.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-apply-read-fail-"));
+      const missingFile = join(dir, "20240101120000_missing.sql");
+      const { session } = fakeSession();
+      return run(session, missingFile).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const msg = JSON.stringify(exit.cause);
+              expect(msg).toContain("failed to open migration file: ");
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("runs a pipeline-incompatible statement outside the surrounding transaction", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_add_index.sql");
