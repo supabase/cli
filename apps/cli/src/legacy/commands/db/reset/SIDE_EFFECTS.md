@@ -82,13 +82,14 @@ races a restarting gateway.
 
 ## Environment Variables
 
-| Variable                | Purpose                                         | Required?                                               |
-| ----------------------- | ----------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path     | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection       | no                                                      |
-| `SUPABASE_YES`          | auto-confirm the reset prompt                   | no (also `--yes`)                                       |
-| `SUPABASE_EXPERIMENTAL` | selects the remote schema-files apply branch    | no (also `--experimental`)                              |
-| `SUPABASE_PROJECT_ID`   | overrides the local container id (`utils.DbId`) | no                                                      |
+| Variable                              | Purpose                                                                                                                        | Required?                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`               | auth token for the `--linked` resolver path                                                                                    | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`                | password for the linked/remote connection                                                                                      | no                                                      |
+| `SUPABASE_YES`                        | auto-confirm the reset prompt                                                                                                  | no (also `--yes`)                                       |
+| `SUPABASE_EXPERIMENTAL`               | selects the remote schema-files apply branch                                                                                   | no (also `--experimental`)                              |
+| `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` | overrides `[db.migrations].schema_paths` (viper `AutomaticEnv`, beats the config-file value) for the schema-files apply branch | no (no dedicated flag — config-file-only otherwise)     |
+| `SUPABASE_PROJECT_ID`                 | overrides the local container id (`utils.DbId`)                                                                                | no                                                      |
 
 ## Exit Codes
 
