@@ -34,12 +34,20 @@ describe("legacyParseGoDuration", () => {
   // digits, skip the "missing unit" guard (since `s` was still non-empty),
   // and silently match the unit anyway — returning 0 instead of erroring like
   // Go's real `time.ParseDuration`.
-  it.each(["s", "m", "h", "ms", "us", "µs", "ns"])(
+  it.each(["s", "m", "h", "ms", "us", "µs", "μs", "ns"])(
     'rejects a bare unit with no preceding digit ("%s")',
     (input) => {
       expect(() => legacyParseGoDuration(input)).toThrow(`time: invalid duration "${input}"`);
     },
   );
+
+  // Go's `unitMap` (`time/format.go:1615-1622`) has THREE microsecond spellings:
+  // "us", "µs" (U+00B5 MICRO SIGN), and "μs" (U+03BC GREEK SMALL LETTER MU) — verified
+  // directly against the Go standard library. The Greek-mu spelling was previously
+  // missing here (CLI-1961 Codex review finding).
+  it.each(["us", "µs", "μs"])('accepts every microsecond unit spelling ("1%s")', (unit) => {
+    expect(legacyParseGoDuration(`1${unit}`)).toBe(1_000);
+  });
 
   it('rejects a bare unit following a valid unit ("1hs")', () => {
     expect(() => legacyParseGoDuration("1hs")).toThrow('time: invalid duration "1hs"');

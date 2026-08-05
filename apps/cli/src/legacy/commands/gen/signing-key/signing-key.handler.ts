@@ -7,6 +7,7 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
@@ -142,13 +143,19 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   } satisfies SigningKeyJwk;
 });
 
-// `gen signing-key` reads its configured signing-keys file UNCONDITIONALLY once
-// `[auth].signing_keys_path` resolves to a non-empty path — unlike `gen bearer-jwt`,
-// it does NOT gate that read on `[auth].enabled` (Go's `signingkeys.go` has this same
-// unconditional-read shape; only `gen bearer-jwt`'s `getSigningKey` needs the
-// `authEnabled` gate, since it's the one call site that must reproduce Go's
-// `Config.Validate`-skips-the-file-when-auth-disabled quirk — see that command's
-// own `gen.signing-keys-config.ts` usage for the contrast).
+// `gen signing-key` goes through the exact same `flags.LoadConfig` -> `Config.Validate`
+// pipeline as `gen bearer-jwt` (`signingkeys.go:111` vs `bearerjwt.go:20`) — there is no
+// separate, ungated Go code path for this command. Go's `Config.Validate` only reads
+// `[auth].signing_keys_path`'s file INSIDE `if c.Auth.Enabled` (`config.go:1087-1116`), so
+// with auth disabled `utils.Config.Auth.SigningKeys` never advances past `NewConfig()`'s own
+// default single-key array — meaning `--append` appends to (and a subsequent overwrite
+// clobbers) that phantom default set, NOT the file's real content. Verified against the real
+// binary (CLI-1961 Codex review finding): with `auth.enabled = false` and a configured
+// `signing_keys_path` pointing at a file containing a real custom key, `gen signing-key
+// --append` overwrote the file with the default ES256 key plus the newly generated one,
+// discarding the original entry entirely — surprising, but this is what Go actually does, so
+// this must gate the read on `paths.authEnabled` exactly like `gen bearer-jwt`'s own
+// `legacyResolveBearerJwtSigningKey` already does.
 const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   const paths = yield* legacyResolveSigningKeysConfigPaths(
     cwd,
@@ -162,11 +169,13 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   }
 
   const { actualPath, displayPath } = paths.signingKeysPath.value;
-  const existingKeys = yield* legacyReadSigningKeysFile(
-    actualPath,
-    (message) => new LegacyGenSigningKeyReadError({ message }),
-    (message) => new LegacyGenSigningKeyDecodeError({ message }),
-  );
+  const existingKeys = paths.authEnabled
+    ? yield* legacyReadSigningKeysFile(
+        actualPath,
+        (message) => new LegacyGenSigningKeyReadError({ message }),
+        (message) => new LegacyGenSigningKeyDecodeError({ message }),
+      )
+    : [{ ...LEGACY_DEFAULT_SIGNING_KEY }];
   return {
     configDisplayPath: paths.configDisplayPath,
     configured: Option.some({ actualPath, displayPath, existingKeys }),

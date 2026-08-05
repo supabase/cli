@@ -41,7 +41,7 @@ const MAX_INT64_NS = 9223372036854775807n;
 /**
  * Port of Go `time.ParseDuration`. Returns nanoseconds as a number. Accepts
  * the same grammar Go does: a possibly-signed sequence of decimal numbers,
- * each with a unit suffix (`"ns"`, `"us"`/`"µs"`, `"ms"`, `"s"`, `"m"`, `"h"`),
+ * each with a unit suffix (`"ns"`, `"us"`/`"µs"`/`"μs"`, `"ms"`, `"s"`, `"m"`, `"h"`),
  * e.g. `"5s"`, `"1h30m"`, `"300ms"`. Throws on invalid input, matching Go's
  * own `errors.New("time: invalid duration ...")` failure mode — including
  * overflowing `math.MaxInt64` nanoseconds and a fractional remainder that
@@ -114,7 +114,12 @@ export function legacyParseGoDuration(value: string): number {
     if (s.startsWith("ns")) {
       unitNs = 1n;
       s = s.slice(2);
-    } else if (s.startsWith("us") || s.startsWith("µs")) {
+    } else if (s.startsWith("us") || s.startsWith("µs") || s.startsWith("μs")) {
+      // Go's `unitMap` (`time/format.go:1615-1622`) has THREE microsecond spellings:
+      // "us", "µs" (U+00B5 MICRO SIGN), and "μs" (U+03BC GREEK SMALL LETTER MU) — verified
+      // directly against the Go standard library: `time.ParseDuration("1μs")` succeeds
+      // identically to `"1µs"`. The Greek-mu spelling was previously missing here
+      // (CLI-1961 Codex review finding).
       unitNs = NS_PER_US_BIG;
       s = s.slice(2);
     } else if (s.startsWith("ms")) {

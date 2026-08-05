@@ -399,9 +399,11 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
  * disabled and a path IS configured, the kid-prompt branch still runs, but the actual
  * available keys stay the built-in default (the file is never read) — a real user
  * hitting this combination sees a misleading kid prompt they can never satisfy with
- * their own file's kids. `gen signing-key`'s OWN sibling resolver deliberately does
- * NOT replicate this gate (see `gen.signing-keys-config.ts`'s doc comment) — it reads
- * unconditionally, matching that command's own existing, unrelated Go source.
+ * their own file's kids. `gen signing-key`'s OWN sibling resolver
+ * ({@link legacyGenSigningKey}'s `loadSigningKeysConfig`) needs and replicates this exact
+ * same gate — it goes through the identical `flags.LoadConfig` -> `Config.Validate` Go
+ * pipeline as this command, so it is subject to the same auth-disabled quirk (CLI-1961
+ * Codex review finding; see `gen.signing-keys-config.ts`'s `authEnabled` doc comment).
  */
 export const legacyResolveBearerJwtSigningKey = Effect.fnUntraced(function* (workdir: string) {
   const paths = yield* legacyResolveSigningKeysConfigPaths(

@@ -201,6 +201,33 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
       "failed to convert JWK to private key: unsupported curve: ",
     );
   });
+
+  it("rejects a padded EC coordinate instead of signing a token Go would refuse to produce (CLI-1961 Codex review finding)", () => {
+    // Go's `jwkToECDSAPrivateKey` decodes x/y/d with `base64.RawURLEncoding.DecodeString`,
+    // which genuinely rejects `=` padding — verified directly against the real binary:
+    // the exact same padded x coordinate produces
+    // "failed to convert JWK to private key: failed to decode x coordinate: illegal base64
+    // data at input byte 43". Node's own `createPrivateKey({format:"jwk"})` accepts the
+    // padding and would otherwise sign successfully, minting a token Go could never produce.
+    const jwk = generateEcJwk("ec-kid");
+    const padded = { ...jwk, x: `${jwk.x}=` };
+    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon")).toThrow(
+      /^failed to convert JWK to private key: failed to decode x coordinate: illegal base64 data at input byte \d+$/,
+    );
+  });
+
+  it("rejects a padded RSA modulus the same way", () => {
+    const jwk = generateRsaJwk("rsa-kid");
+    const padded = { ...jwk, n: `${jwk.n}=` };
+    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon")).toThrow(
+      /^failed to convert JWK to private key: failed to decode modulus: illegal base64 data at input byte \d+$/,
+    );
+  });
+
+  it("still signs successfully for unpadded (correctly-encoded) coordinates", () => {
+    const jwk = generateEcJwk("ec-kid");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).not.toThrow();
+  });
 });
 
 describe("legacySignJwtWithJwk", () => {
@@ -217,6 +244,20 @@ describe("legacySignJwtWithJwk", () => {
     const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
     const { payload: verified } = await jwtVerify(token, publicKey);
     expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
+  });
+
+  it("HTML-escapes the kid in the header like Go's json.Marshal, unlike JSON.stringify (CLI-1961 Codex review finding)", () => {
+    // Go's `token.SignedString` marshals the protected header via `encoding/json`'s
+    // default `json.Marshal`, which HTML-escapes `<`/`>`/`&` — verified directly against
+    // the Go standard library. A plain `JSON.stringify` leaves those characters literal,
+    // which would sign different header bytes (and thus a different signature) than Go
+    // for an otherwise-identical kid.
+    const jwk = generateEcJwk("a<b>c&d");
+    const token = legacySignJwtWithJwk(jwk, '{"role":"anon"}');
+    const [header] = token.split(".");
+    expect(decodeSegment(header ?? "")).toBe(
+      '{"alg":"ES256","kid":"a\\u003cb\\u003ec\\u0026d","typ":"JWT"}',
+    );
   });
 });
 

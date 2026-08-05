@@ -30,6 +30,7 @@ import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.t
 import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import { legacyGenCommand } from "../gen.command.ts";
 import { legacyGenSigningKey } from "./signing-key.handler.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-gen-signing-key-int-");
 
@@ -347,6 +348,61 @@ describe("legacy gen signing-key integration", () => {
       expect(parsed[1]?.alg).toBe("ES256");
     }).pipe(Effect.provide(layer));
   });
+
+  // CLI-1961 Codex review finding: Go's `Config.Validate` only reads/decodes the configured
+  // `signing_keys_path` file INSIDE `if c.Auth.Enabled` — `gen signing-key` goes through the
+  // exact same `flags.LoadConfig` pipeline as `gen bearer-jwt` (both call it), so it is subject
+  // to the same gate. Verified against the real binary: with `auth.enabled = false`, a
+  // malformed signing-keys file is never read at all, so the command succeeds instead of
+  // failing on a decode error.
+  it.live("does not fail on a malformed signing keys file when [auth] enabled is false", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "not valid json {\n"),
+      );
+
+      const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: true }));
+      expect(Exit.isFailure(exit)).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Same finding, the more surprising half: Go's `Config.Auth.SigningKeys` never advances past
+  // `NewConfig()`'s own default single-key array when auth is disabled, so `--append` appends
+  // to (and the resulting write clobbers) that phantom default set, NOT the file's real
+  // content — verified against the real binary: appending under `auth.enabled = false` against
+  // a file containing a genuine custom key overwrote it with the default ES256 key plus the
+  // newly generated one, discarding the original entry entirely.
+  it.live(
+    "appends to (and overwrites with) the built-in default key, ignoring the real file content, when [auth] enabled is false",
+    () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            join(tempRoot.current, "supabase", "signing_keys.json"),
+            `${JSON.stringify([{ kty: "EC", kid: "existing-key", x: "existing-x" }])}\n`,
+          ),
+        );
+
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: true });
+
+        const saved = yield* Effect.tryPromise(() =>
+          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
+        );
+        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        expect(parsed).toHaveLength(2);
+        expect(parsed[0]?.kid).toBe(LEGACY_DEFAULT_SIGNING_KEY.kid);
+        expect(parsed.some((key) => key["kid"] === "existing-key")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("fails when the configured signing keys file is not a JSON array of objects", () => {
     const { layer } = setup();

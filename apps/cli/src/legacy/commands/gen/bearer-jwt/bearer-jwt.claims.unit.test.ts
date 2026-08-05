@@ -398,4 +398,15 @@ describe("legacyEncodeBearerJwtClaims", () => {
     const claims = { role: "anon", custom: { z: 1, a: 2 } };
     expect(legacyEncodeBearerJwtClaims(claims)).toBe('{"custom":{"a":2,"z":1},"role":"anon"}');
   });
+
+  it("keeps Go's true lexicographic order for numeric-looking custom claim keys (CLI-1961 Codex review finding)", () => {
+    // Go signs a real `jwt.MapClaims` map via `encoding/json`, which sorts string keys
+    // purely lexicographically ("10" before "2") — verified directly against the Go
+    // standard library. A plain JS object always reorders integer-like string keys into
+    // ascending NUMERIC order on enumeration regardless of insertion order, which would
+    // otherwise silently re-sort "10"/"2" back to "2" before "10" and change the signed
+    // bytes for these inputs.
+    const claims = { role: "anon", 10: "a", 2: "b" };
+    expect(legacyEncodeBearerJwtClaims(claims)).toBe('{"10":"a","2":"b","role":"anon"}');
+  });
 });

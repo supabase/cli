@@ -6,8 +6,17 @@
  * Unlike `legacy-go-output.encoders.ts`'s `encodeGoJson`, this encoder does NOT
  * sort object keys — Go serializes structs in field-declaration order, so the
  * caller builds plain objects whose key insertion order is the Go struct order
- * (JS preserves string-key insertion order). `omitempty` is likewise the
- * caller's responsibility: simply omit the key.
+ * (JS preserves string-key insertion order, EXCEPT for integer-like keys — see
+ * the `Map` handling below). `omitempty` is likewise the caller's responsibility:
+ * simply omit the key.
+ *
+ * A caller that needs Go's true lexicographic map-key order (e.g.
+ * `legacy-go-output.encoders.ts`'s `sortKeysDeep`, for a genuine Go map like
+ * `jwt.MapClaims`) must pass a `Map<string, unknown>` rather than a plain object at
+ * that level: a plain object silently reorders integer-like string keys ("2", "10")
+ * into ascending NUMERIC order on enumeration, regardless of insertion order, which
+ * would undo a lexicographic sort for any numeric-looking key. `Map` iteration order
+ * is true insertion order for every key shape, so this walker special-cases it.
  *
  * The two behaviours `JSON.stringify(x, null, 2)` gets wrong for Go parity are:
  *   1. HTML escaping — Go's default encoder escapes `<`, `>`, `&` as
@@ -93,7 +102,18 @@ function walk(value: unknown, depth: number, pretty: boolean): string {
     const items = value.map((item) => indent + walk(item, depth + 1, pretty));
     return `[${open}${items.join(separator)}${close}${closeIndent}]`;
   }
-  const entries = Object.entries(value as Record<string, unknown>);
+  // A plain object silently reorders integer-like string keys ("2", "10") into ascending
+  // NUMERIC order on any enumeration (`Object.keys`/`Object.entries`), regardless of insertion
+  // order (ECMA-262 `OrdinaryOwnPropertyKeys`) — Go's `encoding/json` has no such special case,
+  // so a real Go map's string keys sort purely lexicographically (`"10"` before `"2"`). Callers
+  // that need that exact order (e.g. `legacy-go-output.encoders.ts`'s `sortKeysDeep`) pass a
+  // `Map` instead of a plain object specifically to carry the sort through intact — `Map`
+  // iteration order is true insertion order for every key shape, unlike a plain object
+  // (CLI-1961 Codex review finding: `{"10":"a","2":"b"}` must stay "10" before "2").
+  const entries =
+    value instanceof Map
+      ? [...(value as Map<string, unknown>).entries()]
+      : Object.entries(value as Record<string, unknown>);
   if (entries.length === 0) return "{}";
   const colon = pretty ? ": " : ":";
   const lines = entries.map(

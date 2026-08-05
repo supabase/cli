@@ -24,9 +24,18 @@ interface LegacyGenSigningKeysConfigPaths {
   readonly configDisplayPath: string;
   /**
    * `[auth].enabled` from the resolved config (default `true`). Go's `Config.Validate`
-   * only reads `[auth].signing_keys_path`'s file INSIDE `if c.Auth.Enabled` — callers
-   * that must replicate that gate (`gen bearer-jwt`'s `getSigningKey`) branch on this;
-   * `gen signing-key` does not (see its own doc comment for why that's intentional).
+   * only reads `[auth].signing_keys_path`'s file INSIDE `if c.Auth.Enabled`
+   * (`config.go:1087-1116`) — EVERY caller that reaches this file's read through Go's
+   * `flags.LoadConfig` (both `gen bearer-jwt`'s `bearerjwt.Run` and `gen signing-key`'s
+   * `signingkeys.Run` call it, `bearerjwt.go:20` / `signingkeys.go:111`) is subject to the
+   * SAME gate — there is no separate, ungated Go code path for `gen signing-key`. Verified
+   * against the real binary (CLI-1961 Codex review finding): with `auth.enabled = false`
+   * and a configured `signing_keys_path` file, `gen signing-key --append` never reads that
+   * file's real content at all — it appends to (and a subsequent write clobbers) Go's own
+   * `NewConfig()` default single-key array instead, discarding whatever was actually on
+   * disk. Both `gen bearer-jwt`'s `getSigningKey` ({@link legacyResolveBearerJwtSigningKey})
+   * and `gen signing-key` ({@link legacyGenSigningKey}) branch on this field for exactly that
+   * reason.
    */
   readonly authEnabled: boolean;
   /** `Option.some` when `[auth].signing_keys_path` is configured (non-empty). */

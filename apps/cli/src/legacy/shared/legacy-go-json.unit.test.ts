@@ -75,6 +75,18 @@ describe("encodeGoJsonCompact", () => {
     expect(encodeGoJsonCompact([])).toBe("[]");
     expect(encodeGoJsonCompact(null)).toBe("null");
   });
+
+  it("iterates a Map in true insertion order, unlike a plain object with integer-like keys", () => {
+    // A plain object always reorders integer-like string keys ("2", "10") into ascending
+    // NUMERIC order on enumeration, regardless of insertion order — a `Map` does not, which
+    // is exactly why `legacy-go-output.encoders.ts`'s `sortKeysDeep` builds one to carry a
+    // lexicographic sort through to this walker intact (CLI-1961 Codex review finding).
+    const map = new Map<string, unknown>([
+      ["10", "a"],
+      ["2", "b"],
+    ]);
+    expect(encodeGoJsonCompact(map)).toBe('{"10":"a","2":"b"}');
+  });
 });
 
 describe("legacyGoJsonKindName", () => {

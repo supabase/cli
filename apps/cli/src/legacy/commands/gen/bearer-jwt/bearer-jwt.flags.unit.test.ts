@@ -224,6 +224,12 @@ describe("legacyParseBearerJwtValidFor", () => {
       'invalid argument " 30m " for "--valid-for" flag: time: invalid duration " 30m "',
     );
   });
+
+  it("accepts the Greek-mu microsecond spelling, matching Go's time.ParseDuration (CLI-1961 Codex review finding)", () => {
+    // Go's `unitMap` accepts "us", "µs" (U+00B5), and "μs" (U+03BC Greek mu) alike —
+    // verified directly against the Go standard library.
+    expect(legacyParseBearerJwtValidFor("1μs")).toBe(0.000_001);
+  });
 });
 
 describe("legacyAddSecondsAndFloor", () => {

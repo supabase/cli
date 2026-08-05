@@ -1,4 +1,5 @@
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
+import { encodeGoJsonCompact } from "./legacy-go-json.ts";
 
 /**
  * RFC 7517 JWK fields Go's `JWK` struct round-trips (`pkg/config/auth.go:88-108`,
@@ -202,6 +203,53 @@ function assertSupportedKty(jwk: LegacyJwk): void {
 }
 
 /**
+ * Go's `jwkToECDSAPrivateKey`/`jwkToRSAPrivateKey` (`apps/cli-go/pkg/config/apikeys.go:132-185`)
+ * decode every numeric field with `base64.RawURLEncoding.DecodeString` immediately after the
+ * kty/curve check above — and that decoder genuinely REJECTS `=`-padded input (`RawURLEncoding`
+ * has no pad character at all), unlike Node's own JWK importer
+ * (`createPrivateKey({format:"jwk"})`), which happily accepts a padded coordinate and signs a
+ * token Go would have refused to produce (verified empirically: Go's decoder raises
+ * `illegal base64 data at input byte 43` for a padded 32-byte P-256 coordinate; Node's importer
+ * raises nothing at all and returns a usable key) — CLI-1961 Codex review finding.
+ *
+ * Runs in Go's exact per-field order (EC: x, y, d; RSA: n, e, d, p, q) so the FIRST invalid field
+ * matches Go's own first-failure-wins decode order. Reproduces
+ * `encoding/base64`'s `CorruptInputError` text exactly: the reported byte offset is the index of
+ * the first character outside the `RawURLEncoding` alphabet (`A-Za-z0-9-_` — a padding `=` is
+ * such a character, since this encoding has no pad character to special-case), or
+ * `value.length - 1` for an otherwise-valid string whose length is impossible for base64
+ * (`length % 4 === 1`) — both verified directly against the Go standard library's
+ * `decodeQuantum`. An absent field is Go's own zero value (`""`), which decodes cleanly to zero
+ * bytes, so `undefined` is skipped here rather than treated as invalid.
+ */
+function assertDecodableJwkNumericFields(jwk: LegacyJwk): void {
+  const assertField = (label: string, value: string | undefined): void => {
+    if (value === undefined) return;
+    for (let i = 0; i < value.length; i++) {
+      if (!/^[A-Za-z0-9_-]$/.test(value[i]!)) {
+        throw new Error(`failed to decode ${label}: illegal base64 data at input byte ${i}`);
+      }
+    }
+    if (value.length % 4 === 1) {
+      throw new Error(
+        `failed to decode ${label}: illegal base64 data at input byte ${value.length - 1}`,
+      );
+    }
+  };
+  if (jwk.kty === "EC") {
+    assertField("x coordinate", jwk.x);
+    assertField("y coordinate", jwk.y);
+    assertField("private key", jwk.d);
+    return;
+  }
+  assertField("modulus", jwk.n);
+  assertField("exponent", jwk.e);
+  assertField("private exponent", jwk.d);
+  assertField("first prime factor", jwk.p);
+  assertField("second prime factor", jwk.q);
+}
+
+/**
  * Go has NO explicit cross-check between `jwk.Algorithm` and `jwk.KeyType` before
  * signing: `jwkToPrivateKey` only validates kty/curve (see {@link assertSupportedKty}),
  * and `GenerateAsymmetricJWT`'s algorithm switch only validates `jwk.Algorithm`
@@ -244,10 +292,19 @@ function assertKeyMatchesAlgorithm(jwk: LegacyJwk, algorithm: LegacySupportedJwt
  * `dsaEncoding: "ieee-p1363"` is required for ES256: Node's default ECDSA
  * signature output is DER-encoded, which is not the raw (r‖s) format JWS
  * requires — verified by round-tripping through `jose`'s `jwtVerify`.
+ *
+ * The header is serialized with {@link encodeGoJsonCompact}, NOT `JSON.stringify` — Go's
+ * `token.SignedString` marshals the header via `encoding/json`'s default `json.Marshal`
+ * (`golang-jwt/jwt/v5`'s `Token.SigningString`), which HTML-escapes `<`/`>`/`&` (verified
+ * directly against the Go standard library: `json.Marshal` of a `kid` containing those
+ * characters produces `<`/`>`/`&`, where `JSON.stringify` leaves them literal) —
+ * a `kid` with any of those characters would otherwise sign different header bytes (and thus a
+ * different signature) than Go for identical input (CLI-1961 Codex review finding).
  */
 export function legacySignJwtWithJwk(jwk: LegacyJwk, payloadJson: string): string {
   try {
     assertSupportedKty(jwk);
+    assertDecodableJwkNumericFields(jwk);
   } catch (cause) {
     throw new Error(
       `failed to convert JWK to private key: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -271,7 +328,7 @@ export function legacySignJwtWithJwk(jwk: LegacyJwk, payloadJson: string): strin
     jwk.kid !== undefined && jwk.kid.length > 0
       ? { alg: algorithm, kid: jwk.kid, typ: "JWT" }
       : { alg: algorithm, typ: "JWT" };
-  const headerEncoded = base64UrlEncode(JSON.stringify(header));
+  const headerEncoded = base64UrlEncode(encodeGoJsonCompact(header));
   const payloadEncoded = base64UrlEncode(payloadJson);
   const data = `${headerEncoded}.${payloadEncoded}`;
 
