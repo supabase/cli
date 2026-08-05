@@ -1,6 +1,6 @@
 import { Option } from "effect";
 import { GlobalFlag } from "effect/unstable/cli";
-import type { Command, Param } from "effect/unstable/cli";
+import type { Command, Param, Primitive } from "effect/unstable/cli";
 import process from "node:process";
 import { legacyUnwrapParam } from "../shared/legacy-param-introspection.ts";
 
@@ -72,6 +72,10 @@ export interface LegacyFlagDescriptor {
   readonly description: string | undefined;
   readonly isVariadic: boolean;
   readonly isBoolean: boolean;
+  /** `Param.Single`'s underlying `Primitive<A>._tag` (`"Boolean"`, `"Choice"`, `"Integer"`, ...). */
+  readonly primitiveTag: string;
+  /** The valid value set for a `primitiveTag === "Choice"` flag; `undefined` for every other tag. */
+  readonly choiceKeys: ReadonlyArray<string> | undefined;
 }
 
 export interface LegacyCommandPathResolution {
@@ -152,6 +156,32 @@ function legacyFlattenSubcommands(
 /* Flag descriptors                                                          */
 /* ========================================================================== */
 
+/**
+ * `Flag.choice`/`Flag.choiceWithValue`'s `choiceKeys` (the valid value set) is
+ * attached to the `Choice`-tagged `Primitive<A>` via `Object.assign` at
+ * runtime (`Primitive.choice`,
+ * `.repos/effect/packages/effect/src/unstable/cli/Primitive.ts`) but carries
+ * an `@internal` JSDoc tag and is absent from the public `Primitive<A>`
+ * interface — the identical gap `LegacyCommandInternal` above already works
+ * around for `Command`, so this reuses the same runtime type-guard idiom
+ * instead of an `as` cast.
+ */
+interface LegacyChoicePrimitive {
+  readonly choiceKeys: ReadonlyArray<string>;
+}
+
+function legacyHasChoiceKeys(
+  primitive: Primitive.Primitive<unknown>,
+): primitive is Primitive.Primitive<unknown> & LegacyChoicePrimitive {
+  return "choiceKeys" in primitive;
+}
+
+function legacyChoiceKeysOf(
+  primitive: Primitive.Primitive<unknown>,
+): ReadonlyArray<string> | undefined {
+  return legacyHasChoiceKeys(primitive) ? primitive.choiceKeys : undefined;
+}
+
 function legacyFlagDescriptorFromParam(param: Param.AnyFlag): LegacyFlagDescriptor | undefined {
   const unwrapped = legacyUnwrapParam(param);
   if (unwrapped === undefined) return undefined;
@@ -163,6 +193,8 @@ function legacyFlagDescriptorFromParam(param: Param.AnyFlag): LegacyFlagDescript
     description: Option.getOrUndefined(single.description),
     isVariadic,
     isBoolean: single.primitiveType._tag === "Boolean",
+    primitiveTag: single.primitiveType._tag,
+    choiceKeys: legacyChoiceKeysOf(single.primitiveType),
   };
 }
 
@@ -248,16 +280,38 @@ function legacyResolveFlagFromToken(
 /**
  * Descends from `root` through `trimmedArgs`, matching each non-flag token
  * against the current command's subcommand names/aliases (exact,
- * case-sensitive — no prefix or fuzzy matching). A flag-shaped token — and,
- * when it's a non-boolean flag with no embedded `=`, the single token
- * immediately following it as its value — is skipped without stopping the
- * descent, mirroring cobra's `Find()`, which strips flags before matching
- * positional command names (`completions.go:340`). Descent stops at the first
- * non-flag token that doesn't match a subcommand; that token and everything
- * after it becomes `leftoverArgs` — the *positional* leftover cobra's
- * `finalArgs` represents (`completions.go:397-399`), used to gate
- * subcommand-name completion (`len(finalArgs) == 0`). Flag tokens and their
- * consumed values are never part of `leftoverArgs`.
+ * case-sensitive — no prefix or fuzzy matching). Mirrors cobra's `Find()`,
+ * which strips flags before matching positional command names
+ * (`completions.go:340`) via its own heuristic `stripFlags`
+ * (`pflag@v1.0.9/flag.go`) — a cruder, command-tree-only pre-pass distinct
+ * from the real flag parser `legacyChangedFlagNames` mirrors:
+ *
+ * - A long flag (`--foo`) or a single-character short flag (`-f`) with no
+ *   embedded `=` consumes the following token as its value UNLESS it's
+ *   already known at this point in the descent to be boolean — this
+ *   includes flags not yet in scope, e.g. a subcommand's own local flag
+ *   typed before that subcommand is reached (`--db-url`, local to `db
+ *   dump`, typed before `db`): `stripFlags`'s `hasNoOptDefVal` returns
+ *   `false` for a name it can't find yet, so `!hasNoOptDefVal(...)` is
+ *   `true` and it optimistically consumes a value anyway (verified
+ *   empirically against a real `apps/cli-go` build: `__complete --db-url
+ *   postgres:// db dump --s` still offers `db dump`'s `--schema`, which
+ *   requires descending past `--db-url postgres://` to reach `db dump` at
+ *   all).
+ * - Anything else flag-shaped — a multi-character shorthand cluster
+ *   (`-rj`), a flag containing `=`, or a bare `--` — is skipped without
+ *   consuming a value. A bare `--` additionally stops the descent
+ *   entirely: it's pflag's end-of-flags sentinel, so no token at or after
+ *   it can ever match a subcommand (verified empirically: `__complete --
+ *   db ""` returns zero candidates with the Default directive, not `db`'s
+ *   subcommands).
+ *
+ * Descent stops at the first non-flag token that doesn't match a subcommand,
+ * or at a `--` sentinel; that token and everything after it becomes
+ * `leftoverArgs` — the *positional* leftover cobra's `finalArgs` represents
+ * (`completions.go:397-399`), used to gate subcommand-name completion
+ * (`len(finalArgs) == 0`). Flag tokens and their consumed values are never
+ * part of `leftoverArgs`.
  */
 export function legacyResolveCommandPath(
   root: Command.Command.Any,
@@ -276,14 +330,22 @@ export function legacyResolveCommandPath(
       continue;
     }
 
+    if (token === "--") break; // pflag's end-of-flags sentinel: nothing at or after this can match a subcommand.
+
     if (token.startsWith("-")) {
       consumedIndices.add(index);
-      if (!token.includes("=")) {
+      const isLong = token.startsWith("--");
+      const isSingleCharShort = !isLong && token.length === 2;
+      if (!token.includes("=") && (isLong || isSingleCharShort)) {
         // The flags visible at this point of the descent are enough to tell
         // whether this token consumes the next one as its value.
         const inScopeSoFar = legacyCollectInScopeFlags(root, commandChain);
         const resolved = legacyResolveFlagFromToken(token, inScopeSoFar);
-        if (resolved !== undefined && !resolved.isBoolean && index + 1 < trimmedArgs.length) {
+        // An unrecognized flag is optimistically assumed to take a value too
+        // (see the doc comment above) — only a flag already known here to be
+        // boolean is exempt.
+        const takesValue = resolved === undefined || !resolved.isBoolean;
+        if (takesValue && index + 1 < trimmedArgs.length) {
           consumedIndices.add(index + 1);
           index += 2;
           continue;
@@ -391,8 +453,20 @@ function legacyFlagNameCandidates(
 
 /**
  * A lightweight, string-only approximation of "which in-scope flags have
- * already been provided" (not a real flag parser) — correct for the
- * overwhelming majority of real completion inputs.
+ * already been provided" (not a real flag parser, but close enough to mirror
+ * pflag's actual `Set`-time behavior for the shapes real completion input
+ * takes) — correct for the overwhelming majority of real completion inputs.
+ *
+ * A short-flag token walks its shorthand cluster exactly like
+ * `pflag@v1.0.9`'s `parseSingleShortArg`: each character that resolves to a
+ * boolean (`NoOptDefVal != ""`) flag is marked changed and the walk continues
+ * to the next character in the SAME token; the first non-boolean character
+ * (or a `=value` suffix) is also marked changed but ends the walk there,
+ * since the rest of the token (or the next arg) is that flag's value, not
+ * another shorthand (verified empirically against a real `apps/cli-go`
+ * build: after `storage cp -rj 2`, both `-r`/`--recursive` and `-j`/`--jobs`
+ * are "changed" — `--r<TAB>` offers nothing further — whereas this function
+ * used to record only the cluster's last character).
  */
 function legacyChangedFlagNames(
   trimmedArgs: ReadonlyArray<string>,
@@ -408,41 +482,86 @@ function legacyChangedFlagNames(
       continue;
     }
     if (token.startsWith("-") && token !== "-") {
-      const equalsIndex = token.indexOf("=");
-      const shorthand =
-        equalsIndex === -1 ? token.charAt(token.length - 1) : token.charAt(equalsIndex - 1);
-      const owner = inScopeFlags.find((flag) => flag.aliases.includes(shorthand));
-      if (owner !== undefined) changed.add(owner.name);
+      legacyMarkChangedShorthandCluster(token, inScopeFlags, changed);
     }
   }
   return changed;
 }
 
 /**
- * Finds the first token in `trimmedArgs` that looks like a flag (starts with
- * `-`, excluding the bare `-` positional pflag itself treats as a non-flag
- * argument) but does not resolve to anything in `inScopeFlags`, consuming a
- * following token as a non-boolean flag's value the same way
+ * Walks a short-flag token's shorthand cluster (e.g. `-rj`, `-o=json`),
+ * marking every shorthand consumed before — and including — the
+ * value-consuming one as changed. See `legacyChangedFlagNames`'s doc comment
+ * for the pflag behavior this mirrors.
+ */
+function legacyMarkChangedShorthandCluster(
+  token: string,
+  inScopeFlags: ReadonlyArray<LegacyFlagDescriptor>,
+  changed: Set<string>,
+): void {
+  let shorthands = token.slice(1);
+  while (shorthands.length > 0) {
+    const owner = inScopeFlags.find((flag) => flag.aliases.includes(shorthands.charAt(0)));
+    if (owner === undefined) return; // unresolved shorthand — defensive stop, already filtered upstream.
+    changed.add(owner.name);
+    if (shorthands.length > 1 && shorthands.charAt(1) === "=") return; // "-f=value": cluster ends at the explicit value.
+    if (!owner.isBoolean) return; // non-boolean: the rest of the token (or the next arg) is its value.
+    shorthands = shorthands.slice(1); // boolean shorthand consumed no value — keep walking the cluster.
+  }
+}
+
+/**
+ * Validates a flag's value the way pflag's typed `Value.Set` does inside
+ * `finalCmd.ParseFlags()` — e.g. `-o not-a-format` (a `Choice`-typed
+ * `--output`) or `--debug=maybe` (a `Boolean`-typed `--debug`) fail to parse
+ * in real pflag, and cobra reports the parse error instead of generating any
+ * completions (verified empirically against a real `apps/cli-go` build: both
+ * return zero candidates with the Default directive, exactly like an
+ * unresolved flag name). Only the primitive shapes pflag can actually reject
+ * are checked; `String`/`Path`/`Date`/etc. flags accept any string in Go too,
+ * so every other tag is unconditionally valid here.
+ */
+function legacyIsValidFlagValue(flag: LegacyFlagDescriptor, value: string): boolean {
+  switch (flag.primitiveTag) {
+    case "Boolean":
+      return legacyParseGoBool(value) !== undefined;
+    case "Choice":
+      return flag.choiceKeys !== undefined && flag.choiceKeys.includes(value);
+    case "Integer":
+      return /^[+-]?\d+$/.test(value);
+    case "Float":
+      return value.trim().length > 0 && !Number.isNaN(Number(value));
+    default:
+      return true;
+  }
+}
+
+/**
+ * Finds the first token in `trimmedArgs` that either (a) looks like a flag
+ * (starts with `-`, excluding the bare `-` positional pflag itself treats as
+ * a non-flag argument) but does not resolve to anything in `inScopeFlags`, or
+ * (b) resolves to a real flag whose value `legacyIsValidFlagValue` rejects.
+ * Consumes a following token as a non-boolean flag's value the same way
  * `legacyResolveCommandPath` does. A bare `--` ends the scan entirely without
  * itself counting as unresolved — pflag's own end-of-flags sentinel, after
  * which everything is positional, not a flag to validate (`pflag@v1.0.9`'s
  * `parseArgs`: `if s[1] == '-' { if len(s) == 2 { ... terminates the flags`).
  * Returns the offending token, or `undefined` if every flag-shaped token
- * resolves.
+ * resolves to a real flag with a valid value.
  *
  * Mirrors cobra's real two-phase design: `Find()` tolerantly skips flags it
  * doesn't recognize while walking for a subcommand name (see
  * `legacyResolveCommandPath`, which only needs to know "does this consume a
  * value", not "is this real"), but the later `finalCmd.ParseFlags()` strictly
- * validates every remaining flag token against the fully-resolved command's
- * complete flag set and fails outright on the first one it can't recognize
- * (`completions.go:373-375`) — a failure so early it wins even over the
- * `--help`/`--version` short-circuit below (verified empirically against a
- * real `apps/cli-go` build: both `__complete --bogus --help ""` and
- * `__complete --help --bogus ""` report the unknown flag, not help; a bare
- * `__complete --bogus ""` returns zero candidates with the Default directive,
- * not the root subcommand list; `__complete -- ""` is unaffected and still
- * lists every root subcommand).
+ * validates every remaining flag token — both that it resolves AND that its
+ * value parses — against the fully-resolved command's complete flag set, and
+ * fails outright on the first one that doesn't (`completions.go:373-375`) — a
+ * failure so early it wins even over the `--help`/`--version` short-circuit
+ * below (verified empirically against a real `apps/cli-go` build: both
+ * `__complete --bogus --help ""` and `__complete --help --bogus ""` report
+ * the unknown flag, not help; a bare `__complete --bogus ""` returns zero
+ * candidates with the Default directive, not the root subcommand list;
+ * `__complete -- ""` is unaffected and still lists every root subcommand).
  */
 function legacyFindUnresolvedFlagToken(
   trimmedArgs: ReadonlyArray<string>,
@@ -460,8 +579,15 @@ function legacyFindUnresolvedFlagToken(
     const resolved = legacyResolveFlagFromToken(bareToken, inScopeFlags);
     if (resolved === undefined) return token;
 
-    if (equalsIndex === -1 && !resolved.isBoolean && index < trimmedArgs.length) {
+    if (equalsIndex !== -1) {
+      if (!legacyIsValidFlagValue(resolved, token.slice(equalsIndex + 1))) return token;
+      continue;
+    }
+
+    if (!resolved.isBoolean && index < trimmedArgs.length) {
+      const value = trimmedArgs[index];
       index++; // skip the consumed value token
+      if (value !== undefined && !legacyIsValidFlagValue(resolved, value)) return value;
     }
   }
   return undefined;

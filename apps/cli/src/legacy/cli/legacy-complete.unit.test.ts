@@ -419,6 +419,8 @@ describe("legacyCollectInScopeFlags", () => {
       description: "Output debug logs to stderr.",
       isVariadic: false,
       isBoolean: true,
+      primitiveTag: "Boolean",
+      choiceKeys: undefined,
     });
   });
 
