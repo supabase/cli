@@ -46,6 +46,7 @@ import {
   type FileWatchEvent,
 } from "../runtime/file-watcher.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
+import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import {
   buildDockerBinds,
   discoverFunctionSlugs,
@@ -95,7 +96,7 @@ const ignoredDirNames = new Set([
 ]);
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
-const legacyDefaultEdgeRuntimeVersion = "v1.74.2";
+const legacyDefaultEdgeRuntimeImage = dockerfileServiceImage("edgeruntime");
 const defaultSupabaseEnv = "development";
 const serveMainContainerPath = "/root/index.ts";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1748,14 +1749,15 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     ).pipe(
       Effect.map((value) => value.trim()),
       Effect.catch(() => Effect.succeed("")),
-      Effect.map((value) => value || legacyDefaultEdgeRuntimeVersion),
     );
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
       resolved.edgeRuntime.deno_version,
       edgeRuntimeVersionOverride,
     );
     const image = legacyGetRegistryImageUrl(
-      `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+      edgeRuntimeVersion.length === 0
+        ? legacyDefaultEdgeRuntimeImage
+        : `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
     );
 
     yield* assertLocalDbRunning(projectId);

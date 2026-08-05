@@ -116,7 +116,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 
 	resBuf := bytes.NewReader(resp.Body)
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
-	args := []string{"run", "-A", extractScriptPath, funcDir, *meta.EntrypointPath}
+	args := []string{"run", "-A", extractScriptPath, funcDir, *meta.EntrypointPath, utils.FunctionsDir}
 	cmd := exec.CommandContext(ctx, denoPath, args...)
 	var errBuf bytes.Buffer
 	cmd.Stdin = resBuf

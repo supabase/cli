@@ -19,7 +19,7 @@ function makeBranch(
   overrides: Partial<typeof BranchResponse.Type> = {},
 ): typeof BranchResponse.Type {
   return {
-    id: "00000000-0000-0000-0000-000000000001",
+    id: "00000000-0000-4000-8000-000000000001",
     name: "main",
     project_ref: "mainrefghijklmnopqrst",
     parent_project_ref: "parentrefabcdefghijk",
@@ -142,7 +142,7 @@ describe("branches list handler", () => {
     () =>
       Effect.gen(function* () {
         const devBranch = makeBranch({
-          id: "00000000-0000-0000-0000-000000000002",
+          id: "00000000-0000-4000-8000-000000000002",
           name: "dev",
           project_ref: "devrefghijklmnopqrst",
           is_default: false,
@@ -206,7 +206,7 @@ describe("branches list handler", () => {
   it.live("sets active:false for non-active branches in JSON mode", () =>
     Effect.gen(function* () {
       const devBranch = makeBranch({
-        id: "00000000-0000-0000-0000-000000000002",
+        id: "00000000-0000-4000-8000-000000000002",
         name: "dev",
         project_ref: "devrefghijklmnopqrst",
         is_default: false,
