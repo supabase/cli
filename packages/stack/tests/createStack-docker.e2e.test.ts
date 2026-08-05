@@ -120,9 +120,10 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     await stack.startService("analytics");
     await stack.serviceReady("analytics");
-    await expect
-      .poll(() => stack.getServiceStatus("analytics"), { timeout: 5_000 })
-      .toEqual(expect.objectContaining({ name: "analytics", status: "Healthy" }));
+
+    expect(await stack.getServiceStatus("analytics")).toEqual(
+      expect.objectContaining({ name: "analytics", status: "Healthy" }),
+    );
 
     const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
 
