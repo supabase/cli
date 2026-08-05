@@ -5,8 +5,9 @@ import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
 import { StackBuildError, StackReadinessError } from "./errors.ts";
+import type { FunctionsReloadConfig, ResolvedFunctionsBundle } from "./functions.ts";
 import { RemoteStack } from "./RemoteStack.ts";
-import { Stack, type StackInfo } from "./Stack.ts";
+import { Stack, type EdgeRuntimeReloadConfig, type StackInfo } from "./Stack.ts";
 import type { ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
@@ -82,6 +83,8 @@ function mockStack(
 ) {
   let stopped = false;
   const serviceCalls: string[] = [];
+  const functionReloads: FunctionsReloadConfig[] = [];
+  const edgeRuntimeReloads: EdgeRuntimeReloadConfig[] = [];
   const readinessCalls: Array<{ readonly target: string; readonly options?: ReadyOptions }> = [];
 
   const layer = Layer.succeed(Stack, {
@@ -129,12 +132,14 @@ function mockStack(
           : Effect.sync(() => {
               serviceCalls.push(`restart:${name}`);
             }),
-    reloadFunctions: () =>
+    reloadFunctions: (config) =>
       Effect.sync(() => {
+        functionReloads.push(config ?? {});
         serviceCalls.push("reload-functions");
       }),
-    reloadEdgeRuntime: () =>
+    reloadEdgeRuntime: (config) =>
       Effect.sync(() => {
+        edgeRuntimeReloads.push(config);
         serviceCalls.push("reload-edge-runtime");
       }),
     getState: (name: string) => {
@@ -200,8 +205,24 @@ function mockStack(
     },
     serviceCalls,
     readinessCalls,
+    functionReloads,
+    edgeRuntimeReloads,
   };
 }
+
+const functionsBundle: ResolvedFunctionsBundle = {
+  env: { SHARED_SECRET: "shared-secret-value" },
+  functions: [
+    {
+      name: "hello",
+      verifyJWT: false,
+      entrypointPath: "/project/supabase/functions/hello/index.ts",
+      importMapPath: null,
+      staticFiles: [],
+      env: { FUNCTION_SECRET: "function-secret-value" },
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Layer builder — DaemonServer backed by mock Stack on TCP port
@@ -467,13 +488,27 @@ describe("RemoteStack integration", () => {
     expect(mock.serviceCalls).toContain("restart:postgres");
   });
 
+  test("reloadFunctions transports the validated bundle in a JSON body", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.reloadFunctions({ functions: functionsBundle })),
+    );
+
+    expect(mock.functionReloads).toEqual([{ functions: functionsBundle }]);
+  });
+
   test("reloadEdgeRuntime records the call", async () => {
     await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) =>
-        stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } }),
+        stack.reloadEdgeRuntime({
+          edgeRuntime: { policy: "oneshot" },
+          functions: functionsBundle,
+        }),
       ),
     );
     expect(mock.serviceCalls).toContain("reload-edge-runtime");
+    expect(mock.edgeRuntimeReloads).toEqual([
+      { edgeRuntime: { policy: "oneshot" }, functions: functionsBundle },
+    ]);
   });
 
   test("logHistory returns entries", async () => {

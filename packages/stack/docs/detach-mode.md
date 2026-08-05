@@ -125,6 +125,12 @@ failures use validated JSON shapes. `RemoteStack` decodes that transport back in
 `Stack` Interface used in foreground mode, including `ServiceNotFoundError`, `ServiceReadyError`,
 `StackBuildError`, and `StackReadinessError`.
 
+Functions and Edge Runtime reload routes also use validated JSON bodies. Resolved Functions
+bundles may contain environment values, so they are deliberately excluded from daemon startup IPC,
+query parameters, durable metadata, live state, logs, and rendered validation errors. The daemon
+keeps only the active bundle in memory and writes the derived Edge Runtime file ephemerally with
+owner-only permissions.
+
 The management socket is not the public local API endpoint. `ApiProxy` still owns the configured
 HTTP API port inside the daemon process.
 

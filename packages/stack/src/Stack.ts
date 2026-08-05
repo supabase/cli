@@ -2,7 +2,11 @@ import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
 import { Context, Effect, Schema, Stream } from "effect";
 import { StackBuildError, StackReadinessError } from "./errors.ts";
-import type { FunctionsConfig } from "./functions.ts";
+import {
+  ResolvedFunctionsBundleSchema,
+  type FunctionsReloadConfig,
+  type ResolvedFunctionsBundle,
+} from "./functions.ts";
 import type { EdgeRuntimeConfig, ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 
@@ -33,19 +37,14 @@ const EdgeRuntimeConfigSchema = Schema.Struct({
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
-const FunctionsConfigSchema = Schema.Struct({
-  envFile: Schema.optionalKey(Schema.String),
-  noVerifyJwt: Schema.optionalKey(Schema.Boolean),
-});
-
 export const EdgeRuntimeReloadConfigSchema = Schema.Struct({
   edgeRuntime: EdgeRuntimeConfigSchema,
-  functions: Schema.optionalKey(FunctionsConfigSchema),
+  functions: Schema.optionalKey(ResolvedFunctionsBundleSchema),
 });
 
 export interface EdgeRuntimeReloadConfig {
   readonly edgeRuntime: EdgeRuntimeConfig;
-  readonly functions?: FunctionsConfig;
+  readonly functions?: ResolvedFunctionsBundle;
 }
 
 export class Stack extends Context.Service<
@@ -74,7 +73,7 @@ export class Stack extends Context.Service<
       ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
     >;
     readonly reloadFunctions: (
-      opts?: FunctionsConfig,
+      opts?: FunctionsReloadConfig,
     ) => Effect.Effect<
       void,
       ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError

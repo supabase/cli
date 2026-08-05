@@ -30,7 +30,7 @@ import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts"
 import { startStackWithProgress } from "../../../stack/stack.shared.ts";
 import {
   functionsDevWatchPaths,
-  toStackFunctionsConfig,
+  resolveFunctionsBundle,
   type FunctionsDevConfigOptions,
   type FunctionsDevWatchPath,
 } from "./functions-dev-config.ts";
@@ -76,7 +76,6 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
       projectStateRoot: projectHome.projectHomeDir,
       name: opts.stack,
       edgeRuntime: opts.edgeRuntime,
-      functions: toStackFunctionsConfig(opts),
       ...versionsFromContext(serviceVersionContext),
     },
     daemonEntryPoint,
@@ -180,9 +179,9 @@ function reloadEdgeRuntime(
   opts: FunctionsDevRuntimeOptions,
   edgeRuntime: EdgeRuntimeConfig,
 ) {
-  return stack.reloadEdgeRuntime({
-    edgeRuntime,
-    functions: toStackFunctionsConfig(opts),
+  return Effect.gen(function* () {
+    const functions = yield* resolveFunctionsBundle(opts);
+    yield* stack.reloadEdgeRuntime({ edgeRuntime, functions });
   });
 }
 
@@ -248,7 +247,7 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
         }
         edgeRuntimeState = result.state;
         yield* output.info("Function files changed. Restarting edge-runtime...");
-        yield* stack.reloadFunctions(toStackFunctionsConfig(opts));
+        yield* stack.reloadFunctions({ functions: yield* resolveFunctionsBundle(opts) });
       }).pipe(
         Effect.catch((error) =>
           output.error(error instanceof Error ? error.message : String(error)),
@@ -266,9 +265,13 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
         if (startedByCommand) {
           yield* stack.dispose().pipe(Effect.ignore);
         } else {
-          yield* stack.reloadFunctions({}).pipe(Effect.ignore);
+          const functions = yield* resolveFunctionsBundle({
+            envFile: Option.none(),
+            noVerifyJwt: false,
+          });
+          yield* stack.reloadFunctions({ functions }).pipe(Effect.ignore);
         }
-      }),
+      }).pipe(Effect.ignore),
     ),
   );
 });

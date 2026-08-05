@@ -22,7 +22,6 @@
   "dependencies": {
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
-    "@supabase/config": "workspace:*",
     "@supabase/process-compose": "workspace:*",
     "effect": "catalog:"
   },
