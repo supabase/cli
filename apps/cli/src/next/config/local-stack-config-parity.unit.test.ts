@@ -63,15 +63,18 @@ describe("localStackConfigParity", () => {
     ]);
   });
 
-  it("preserves raw-document requirements for presence-sensitive sections", () => {
+  it("preserves presence requirements for presence-sensitive sections", () => {
     const byPath = new Map(entries.map(({ path, decision }) => [path, decision]));
 
     expect(byPath.get("api.auto_expose_new_tables")?.presence).toBe("raw-document");
-    expect(byPath.get("auth.external.github.enabled")?.presence).toBe("raw-document");
+    expect(byPath.get("auth.external.github.enabled")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.external.github.client_id")?.presence).toBe("enabled-subtree");
     expect(byPath.get("auth.hook.send_email.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("auth.sms.twilio.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("storage.buckets.*")?.presence).toBe("raw-document");
+    expect(byPath.get("storage.analytics.buckets.*")?.presence).toBe("raw-document");
+    expect(byPath.get("storage.vector.buckets.*")?.presence).toBe("raw-document");
     expect(byPath.get("experimental.webhooks.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("auth.external.apple.secret")?.presence).toBe("effective-secret");
     expect(byPath.get("studio.openai_api_key")?.presence).toBe("effective-secret");

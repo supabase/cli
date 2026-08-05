@@ -5,11 +5,15 @@ import type { ProjectConfig } from "@supabase/config";
  *
  * `presence` tells the future launch resolver how to determine whether a field
  * affects the local runtime. Most schema defaults erase the distinction between
- * an omitted field and an explicitly configured default value. Secrets need an
- * additional check: generated `env(...)` placeholders that did not resolve and
- * secrets inside disabled subtrees do not affect the runtime.
+ * an omitted field and an explicitly configured default value. Generated
+ * disabled provider stubs and secrets inside disabled subtrees do not affect the
+ * runtime; unresolved `env(...)` placeholders do not provide concrete secrets.
  */
-type LocalStackConfigParityPresence = "decoded-value" | "effective-secret" | "raw-document";
+type LocalStackConfigParityPresence =
+  | "decoded-value"
+  | "effective-secret"
+  | "enabled-subtree"
+  | "raw-document";
 
 type LocalStackConfigParityDecision =
   | {
@@ -67,6 +71,13 @@ const unsupportedSecretRuntimeField: LocalStackConfigParityDecision = {
   presence: "effective-secret",
   rationale:
     "A concrete resolved secret in an enabled runtime subtree changes local credentials but the next stack launch Adapter does not translate it yet; unresolved generated env placeholders do not count.",
+};
+
+const unsupportedEnabledProviderField: LocalStackConfigParityDecision = {
+  _tag: "unsupported-blocking",
+  presence: "enabled-subtree",
+  rationale:
+    "This setting changes local authentication behavior only when its provider is effectively enabled; generated disabled provider stubs do not count.",
 };
 
 const mappedAutoExposeNewTables: LocalStackConfigParityDecision = {
@@ -138,13 +149,13 @@ const unsupportedFutureRuntimeField: LocalStackConfigParityDecision = {
 };
 
 const authExternalProviderParity = {
-  enabled: unsupportedRuntimeField,
-  client_id: unsupportedRuntimeField,
+  enabled: unsupportedEnabledProviderField,
+  client_id: unsupportedEnabledProviderField,
   secret: unsupportedSecretRuntimeField,
-  url: unsupportedRuntimeField,
-  redirect_uri: unsupportedRuntimeField,
-  skip_nonce_check: unsupportedRuntimeField,
-  email_optional: unsupportedRuntimeField,
+  url: unsupportedEnabledProviderField,
+  redirect_uri: unsupportedEnabledProviderField,
+  skip_nonce_check: unsupportedEnabledProviderField,
+  email_optional: unsupportedEnabledProviderField,
 } satisfies Record<keyof ProjectConfig["auth"]["external"]["apple"], Node>;
 
 type AuthExternalParity = {
@@ -507,13 +518,29 @@ const localStackConfigParity = {
       max_namespaces: unsupportedRuntimeField,
       max_tables: unsupportedRuntimeField,
       max_catalogs: unsupportedRuntimeField,
-      buckets: unsupportedRuntimeField,
+      buckets: {
+        "*": {
+          decision: unsupportedRuntimeField,
+          children: {} satisfies Record<
+            keyof ProjectConfig["storage"]["analytics"]["buckets"][string],
+            Node
+          >,
+        },
+      },
     } satisfies Record<keyof ProjectConfig["storage"]["analytics"], Node>,
     vector: {
       enabled: unsupportedRuntimeField,
       max_buckets: unsupportedRuntimeField,
       max_indexes: unsupportedRuntimeField,
-      buckets: unsupportedRuntimeField,
+      buckets: {
+        "*": {
+          decision: unsupportedRuntimeField,
+          children: {} satisfies Record<
+            keyof ProjectConfig["storage"]["vector"]["buckets"][string],
+            Node
+          >,
+        },
+      },
     } satisfies Record<keyof ProjectConfig["storage"]["vector"], Node>,
   } satisfies Record<keyof ProjectConfig["storage"], Node>,
   studio: {
