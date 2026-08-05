@@ -87,14 +87,21 @@ Restrictions applied successfully: true
 
 `applied successfully` is `true` iff `status === "applied"` in the response.
 
-### Go `--output {json,yaml,toml,env}`
+### `--output {json,yaml,toml,env}` (Go flag, TS-only behavior here)
 
-Byte-identical to the Go CLI's encoders. JSON is alphabetical with trailing newline; YAML,
-TOML, and env follow the standard Go encoder rules.
+Go's `restrictions/update` (`apps/cli-go/internal/restrictions/update/update.go:48-50`
+POST branch, `:86-88` PATCH branch) never reads `OutputFormat` — both branches always
+print the same `fmt.Printf` three-line template shown above, whatever `-o` says, so
+there is no Go output here to be byte-identical to (and therefore no Go casing
+convention to match either — TS uses the generic map-shaped `encodeYaml`/`encodeToml`
+helpers here, not the CLI-1975 struct-spec ones, since there is no real Go struct
+output for this command to mirror): JSON is alphabetical with trailing newline; env
+follows the standard Go flattening rules.
 
-### Go `--output pretty`
+### `--output pretty`
 
-Same as `text` mode (Go's default).
+`pretty` is Go's default `--output` value; TS renders it identically to
+`--output-format text` above — the only output Go's `restrictions update` ever produces.
 
 ### `--output-format json`
 
@@ -107,7 +114,8 @@ One `result` event whose `data` is the full response object.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- The Go `--output` flag wins over the TS `--output-format` flag when both are provided
+  (a TS-internal precedence rule between the port's two flags — see `--output` above).
 - `--append=true` switches the HTTP method (`POST /apply` → `PATCH`) and the request
   envelope (`{ dbAllowedCidrs, dbAllowedCidrsV6 }` → `{ add: { dbAllowedCidrs, dbAllowedCidrsV6 } }`).
 - `linked-project.json` writes after a successful project-ref resolution, regardless of
@@ -120,5 +128,3 @@ One `result` event whose `data` is the full response object.
   before the gate and the handler. This matches Go: pflag's `readAsCSV` error aborts
   cobra's `ParseFlags` before `PersistentPreRunE` ever creates the telemetry service
   (`root.go:131-142`), so `Execute()`'s post-run capture (`root.go:171-181`) never fires.
-- Go's `restrictions/update` itself does not honor `--output`. The legacy TS port honors
-  both `--output` and `--output-format` per the legacy CLAUDE.md output-parity rules.

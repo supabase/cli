@@ -1,8 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { Schema } from "effect";
-import { PROJECT_CONFIG_SCHEMA_URL, ProjectConfigSchema } from "@supabase/config";
+import { PROJECT_CONFIG_SCHEMA_URL, toProjectConfigJsonSchema } from "@supabase/config";
 import { nextRoot } from "../src/next/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/next/docs/command-docs.ts";
 import { formatHelpDocAsMarkdown } from "../src/next/docs/markdown-formatter.ts";
@@ -74,12 +73,12 @@ function generateCommandDocs() {
 }
 
 function generateConfigSchemaAsset() {
-  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema);
+  const schema = toProjectConfigJsonSchema();
   const schemaPathname = new URL(PROJECT_CONFIG_SCHEMA_URL).pathname.replace(/^\/docs/, "");
   const filePath = path.join(defaultDocsPublicDir, schemaPathname);
 
   mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify(document.schema, null, 2)}\n`);
+  writeFileSync(filePath, `${JSON.stringify(schema, null, 2)}\n`);
 
   console.log(`Generated: ${path.relative(path.resolve(import.meta.dir, "../../.."), filePath)}`);
 }
