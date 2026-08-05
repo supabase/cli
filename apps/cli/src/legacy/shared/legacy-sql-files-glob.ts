@@ -18,10 +18,28 @@ const GLOB_META_CHARS = /[*?[]/u;
 // that escape — see `legacyPathMatch`'s escape handling below.
 const toSlash = (p: string): string => (process.platform === "win32" ? p.replaceAll("\\", "/") : p);
 
-/** Splits a forward-slashed path into its directory prefix and final element. */
+/**
+ * Splits a forward-slashed path into its directory prefix and final element.
+ *
+ * A bare root prefix is kept as `"/"`, never chopped to `""`. This mirrors
+ * the real runtime glob path — `config.Glob.SQLFiles`'s `fs.Glob` call
+ * resolves to `afero.IOFS.Glob` (it implements `fs.GlobFS`), which delegates
+ * to `afero.Glob`/`match.go`'s `filepath.Split` followed by a switch on
+ * `dir` that leaves a bare `filepath.Separator` alone — every OTHER trailing
+ * separator is chopped, but the root one is deliberately preserved. Verified
+ * empirically against `apps/cli-go`: with cwd elsewhere, a pattern rooted at
+ * `/`, with a metacharacter in the FIRST component after the root slash
+ * (e.g. `tmp` + wildcard + `probe-dir` + wildcard + `.sql`), still resolves
+ * that first component against the filesystem ROOT, not cwd. Collapsing this
+ * to `dir: ""` would make `globOne` below treat such an absolute root-level
+ * pattern as relative to the workdir instead of the filesystem root.
+ */
 const splitPath = (p: string): { readonly dir: string; readonly file: string } => {
   const slash = p.lastIndexOf("/");
-  return slash === -1 ? { dir: "", file: p } : { dir: p.slice(0, slash), file: p.slice(slash + 1) };
+  if (slash === -1) return { dir: "", file: p };
+  return slash === 0
+    ? { dir: "/", file: p.slice(1) }
+    : { dir: p.slice(0, slash), file: p.slice(slash + 1) };
 };
 
 /** Faithful port of Go's `fs.Glob` for one pattern, rooted at `workdir`. */
@@ -60,7 +78,10 @@ const globOne = (
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
       for (const name of names) {
         if (legacyPathMatch(file, name).matched) {
-          result.push(d === "" ? name : `${d}/${name}`);
+          // `d === "/"` is the filesystem root (from `splitPath`'s preserved root
+          // prefix, above) — join without a doubled slash, matching Go's
+          // `filepath.Join("/", name)`.
+          result.push(d === "" ? name : d === "/" ? `/${name}` : `${d}/${name}`);
         }
       }
     }
@@ -234,10 +255,21 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
       const fp = toSlash(match);
       // A directory match is expanded to its regular `.sql` files recursively
       // (`walkMatchedDir`, sorted); a file match is kept verbatim (`config.go:157-183`).
-      const matchType = yield* fs.stat(path.isAbsolute(fp) ? fp : path.join(workdir, fp)).pipe(
-        Effect.map((info) => info.type),
-        Effect.orElseSucceed(() => "File" as const),
-      );
+      // Go: `if err != nil { allErrors = append(allErrors, errors.Errorf("failed to
+      // stat matched file: %w", err)); continue }` (`config.go:157-161`) — a match
+      // that disappears (or is a broken symlink) between the glob and this stat
+      // becomes a warning and is skipped, same as a walk failure below. Falling back
+      // to treating it as a regular file (the previous behaviour here) would instead
+      // hand a nonexistent path to the caller's later read, turning a warned-but-
+      // otherwise-successful reset into a hard apply error.
+      const statResult = yield* fs
+        .stat(path.isAbsolute(fp) ? fp : path.join(workdir, fp))
+        .pipe(Effect.result);
+      if (Result.isFailure(statResult)) {
+        warnings.push(`failed to stat matched file: ${legacyErrorMessage(statResult.failure)}`);
+        continue;
+      }
+      const matchType = statResult.success.type;
       if (matchType === "Directory") {
         // Go: `if err != nil { allErrors = append(allErrors, err); continue }` — a walk
         // failure on this match becomes a warning (never a hard Effect failure, like

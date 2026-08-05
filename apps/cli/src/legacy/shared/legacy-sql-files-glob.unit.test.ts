@@ -84,6 +84,85 @@ describe("legacySqlFilesGlob", () => {
     },
   );
 
+  it.effect(
+    "surfaces a stat failure on a matched file as a warning instead of treating it as a regular file (Go parity)",
+    () => {
+      // Go: `if info, err := fs.Stat(fsys, fp); err != nil { allErrors = append(allErrors,
+      // errors.Errorf("failed to stat matched file: %w", err)); continue }` (config.go:157-161)
+      // — a match that disappears (or is a broken symlink) between the glob and this stat
+      // becomes a warning and is skipped entirely, never silently treated as a regular file.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-stat-fail-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "good.sql"), "select 1;");
+      symlinkSync(join(schemasDir, "does-not-exist.sql"), join(schemasDir, "broken.sql"));
+      return run(["schemas/*.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/good.sql"]);
+            expect(result.warnings).toHaveLength(1);
+            expect(result.warnings[0]).toMatch(/^failed to stat matched file: /);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "keeps a bare root ('/') as the directory when a glob pattern's meta character is in the first path component (Go afero.Glob parity)",
+    () => {
+      // Go's real runtime glob path — `config.Glob.SQLFiles`'s `fs.Glob` call resolves to
+      // `afero.IOFS.Glob` (it implements `fs.GlobFS`), which delegates to `afero.Glob`
+      // (`match.go`): `filepath.Split` followed by a switch that leaves a bare
+      // `filepath.Separator` alone — every OTHER trailing separator is chopped, but the
+      // root one is deliberately preserved. Verified empirically against `apps/cli-go`:
+      // with cwd elsewhere, a pattern rooted at "/" with a metacharacter in the first
+      // component after the root slash still resolves against the filesystem ROOT, not
+      // cwd. A canary file placed in the WORKDIR (never the real "/") proves this native
+      // port does not fall back to treating the root component as workdir-relative.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-abs-root-"));
+      writeFileSync(join(dir, "__legacy_sql_glob_canary__.sql"), "select 1;");
+      return run(["/*__legacy_sql_glob_canary__*.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual([]);
+            expect(result.warnings).toEqual([
+              "no files matched pattern: /*__legacy_sql_glob_canary__*.sql",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "recurses through a root-anchored directory component without falling back to the workdir (Go afero.Glob parity)",
+    () => {
+      // Same bug as above, but for a two-level pattern (`/foo*/*.sql`) — the recursive
+      // call that resolves the "foo*" directory component must also treat "/" as the
+      // real filesystem root, not "" (which `globOne` maps to the workdir). The workdir
+      // here contains a subdirectory that WOULD match "foo*" if (and only if) the
+      // recursive call incorrectly fell back to reading the workdir instead of "/".
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-abs-root-nested-"));
+      const canaryDir = join(dir, "__legacy_sql_glob_root_canary_dir__");
+      mkdirSync(canaryDir);
+      writeFileSync(join(canaryDir, "a.sql"), "select 1;");
+      return run(["/__legacy_sql_glob_root_canary_dir__*/*.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual([]);
+            expect(result.warnings).toEqual([
+              "no files matched pattern: /__legacy_sql_glob_root_canary_dir__*/*.sql",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("still expands a real (non-symlinked) nested directory recursively", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-nested-"));
     const schemasDir = join(dir, "schemas");
