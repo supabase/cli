@@ -148,6 +148,8 @@ export interface StackConfig {
   readonly runtimeRoot?: string;
   readonly projectDir?: string;
   readonly mode?: "native" | "auto" | "docker";
+  /** Start all services immediately, or defer proxied services until first use. */
+  readonly startupMode?: "eager" | "lazy";
   readonly jwtSecret?: string;
   readonly port?: number;
   readonly publishableKey?: string;
@@ -272,6 +274,7 @@ export interface ResolvedStackConfig {
   readonly runtimeRoot: string;
   readonly projectDir: string;
   readonly mode: "native" | "auto" | "docker";
+  readonly startupMode: "eager" | "lazy";
   readonly jwtSecret: string;
   readonly ports: AllocatedPorts;
   readonly apiPort: number;
@@ -892,7 +895,13 @@ export class StackBuilder extends Context.Service<
                 config.analytics !== false ? `http://${serviceHost}:${config.analytics.port}` : "",
               analyticsApiKey: config.analytics !== false ? config.analytics.apiKey : "api-key",
               networkArgs: dockerNetworkArgs(platform.os, [config.studio.port]),
-              dependencies: [{ service: "pgmeta", condition: "healthy" }],
+              dependencies:
+                config.analytics === false
+                  ? [{ service: "pgmeta", condition: "healthy" }]
+                  : [
+                      { service: "pgmeta", condition: "healthy" },
+                      { service: "analytics", condition: "healthy" },
+                    ],
             }),
             enabled: true,
           });

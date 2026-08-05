@@ -201,8 +201,8 @@ wait healthy`, so detached mode exposes the same pre-runtime status behavior as 
 | `getState(name)`           | `GET /status` → `Effect` (filter by name)                      |
 | `allStateChanges()`        | `GET /status/stream` (SSE → `Stream`, including `Downloading`) |
 | `stateChanges(name)`       | `GET /status/stream` (SSE → `Stream`, filter by name)          |
-| `waitReady(name)`          | `GET /status/stream` (SSE → `Stream`, take until ready)        |
-| `waitAllReady()`           | `GET /status/stream` (SSE → `Stream`, take until all ready)    |
+| `waitReady(name)`          | `GET /services/:name/ready` → `Effect`                         |
+| `waitAllReady()`           | `GET /ready` → `Effect`                                        |
 | `subscribeAllLogs()`       | `GET /logs` (SSE → `Stream`)                                   |
 | `subscribeLogs(name)`      | `GET /logs/:name` (SSE → `Stream`)                             |
 | `logHistory(name, limit?)` | `GET /logs/:name/history?limit=N` → `Effect`                   |
@@ -233,9 +233,9 @@ Benefits of using Effect throughout:
 2. Build the foreground daemon layer (`StackPreparation` + `StackBuilder` + `StackLifecycleCoordinator` + `ApiProxy`)
 3. Call `stack.start()` which prepares assets first, then starts services
 4. Start management HTTP server on Unix socket
-5. Send IPC `{ type: "started", info: { url, dbUrl, ... } }` to parent
+5. Atomically claim `state.json`, then send IPC `{ type: "started", info: { url, dbUrl, ... } }` to parent
 6. Parent disconnects — daemon keeps running
-7. On SIGTERM/SIGINT or POST `/stop`: call `stack.dispose()`, clean up state files, exit
+7. On SIGTERM/SIGINT or POST `/stop`: call `stack.dispose()` and exit. The stopping client removes live state only after confirming process exit; later discovery removes crash-stale state.
 
 **IPC startup handshake:**
 
@@ -250,8 +250,9 @@ runtime-dispatch rationale.
 
 Parent and child send JSON messages via `process.send()` / `process.on("message")`.
 
-This channel is only used for the initial startup handshake — once the daemon confirms
-it's ready (or reports an error), the CLI disconnects the channel. All subsequent
+This channel is only used for the initial startup handshake. The parent validates the response and
+applies a bounded startup timeout. Once the daemon confirms it's ready (or reports an error), the
+CLI disconnects the channel. All subsequent
 communication (stop, status, logs) happens over the Unix socket HTTP API instead.
 
 ```
@@ -285,19 +286,25 @@ and the CLI displays the error and exits with a non-zero code.
 | Endpoint                 | Method | Description                                                                         |
 | ------------------------ | ------ | ----------------------------------------------------------------------------------- |
 | `/health`                | GET    | Liveness check (200 OK)                                                             |
+| `/ready`                 | GET    | Wait for all activated services using foreground lifecycle semantics                |
 | `/status`                | GET    | All service states + connection info (JSON)                                         |
 | `/status/stream`         | GET    | SSE stream of all service state changes, including `Downloading` during preparation |
 | `/stop`                  | POST   | Graceful shutdown → dispose + exit                                                  |
+| `/services/:name/ready`  | GET    | Wait for one activated service                                                      |
 | `/logs`                  | GET    | SSE stream of all logs                                                              |
 | `/logs/:service`         | GET    | SSE stream for one service                                                          |
 | `/logs/:service/history` | GET    | Recent log entries for one service (JSON, `?limit=N`)                               |
+
+Management errors include a stable discriminator. `RemoteStack` maps service-not-found,
+service-readiness, and stack-build responses back to the same typed failures exposed by a
+foreground stack.
 
 ### `supabase` — New/modified commands
 
 **Modified: `src/commands/start/`**
 
 - New flags: `--detach`, `--stack`
-- When `--detach`: fork daemon, wait for IPC "started", write state file, print connection info, exit
+- When `--detach`: fork daemon with unresolved port preferences, wait for IPC "started", print connection info, exit. The daemon allocates ports and atomically claims the live state file before acknowledging startup.
 - When foreground (default): unchanged behavior
 
 **New: `src/commands/stop/`**
@@ -370,7 +377,7 @@ within that project. This works from any nested directory inside the project.
 | Orphaned Docker containers              | `stack.dispose()` calls `dockerForceRemove()`. On crash, `stop` reads persisted cleanup metadata, then force-removes the exact known containers                                                                        |
 | Ctrl+C during `start --detach`          | If daemon hasn't started: kill child. If started: daemon keeps running                                                                                                                                                 |
 | Foreground start while detached running | `supabase start` (foreground) checks StateManager first. If a daemon is running for the same project, error with "Stack already running in detached mode. Use `supabase stop` first or `supabase logs` to see output." |
-| Detached start while foreground running | Port allocation will fail (ports already bound), daemon sends IPC error. No special detection needed — the existing port conflict handling covers this.                                                                |
+| Detached start while foreground running | The daemon owns port allocation and reports a conflict before acknowledging startup.                                                                                                                                   |
 
 ---
 

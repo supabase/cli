@@ -66,18 +66,24 @@ Restrictions applied successfully: true
 
 `applied successfully` is `true` iff `status === "applied"` in the response.
 
-### Go `--output {json,yaml,toml,env}`
+### `--output {json,yaml,toml,env}` (Go flag, TS-only behavior here)
 
-Byte-identical to the Go CLI's encoders (`apps/cli-go/internal/utils/output.go`).
+Go's `restrictions/get` (`apps/cli-go/internal/restrictions/get/get.go:21-23`) never
+reads `OutputFormat` — it always prints the three `fmt.Printf` lines above, whatever
+`-o` says, so there is no Go output here to be byte-identical to (and therefore no
+Go casing convention to match either — TS uses the generic map-shaped
+`encodeYaml`/`encodeToml` helpers here, not the CLI-1975 struct-spec ones, since
+there is no real Go struct output for this command to mirror):
 
 - `json` — alphabetical struct-field order with trailing newline.
 - `yaml` — `stringifyYaml(response)`.
 - `toml` — `stringifyToml(response)` with trailing newline.
 - `env` — Viper-flattened SCREAMING_SNAKE_CASE keys.
 
-### Go `--output pretty`
+### `--output pretty`
 
-Same as `text` mode (Go's default).
+`pretty` is Go's default `--output` value; TS renders it identically to
+`--output-format text` above — the only output Go's `restrictions get` ever produces.
 
 ### `--output-format json`
 
@@ -89,11 +95,10 @@ One `result` event whose `data` is the full response object.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- The Go `--output` flag wins over the TS `--output-format` flag when both are provided
+  (a TS-internal precedence rule between the port's two flags — see `--output` above).
 - `linked-project.json` is written **after** the project ref is resolved, regardless of
   whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
 - `telemetry.json` is written on every invocation past the `--experimental` gate, including
   failures. A closed gate writes nothing (Go's `PersistentPreRunE` fails before
   `PersistentPostRun` runs).
-- Go's `restrictions/get` itself does not honor `--output`. The legacy TS port honors both
-  `--output` and `--output-format` per the legacy CLAUDE.md output-parity rules.

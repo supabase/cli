@@ -34,6 +34,10 @@ function projectPublicState(
   rawByName: ReadonlyMap<string, RawServiceState>,
   catalog: StackServiceProjectionCatalog,
 ): StackServiceState {
+  if (raw.desired === "inactive" && (raw.status === "Pending" || raw.status === "Stopped")) {
+    return new StackServiceState({ ...fromRawServiceState(raw), status: "Dormant" });
+  }
+
   const ownerHelpers = [...rawByName.values()].filter((candidate) => {
     const spec = catalog.get(candidate.name);
     return spec?.visibility === "internal" && spec.owner === raw.name;
