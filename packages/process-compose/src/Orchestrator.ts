@@ -226,11 +226,24 @@ export class Orchestrator extends Context.Service<
                         (state.status === "Stopped" && state.exitCode === 0)),
                   );
                 } else if (condition === "healthy") {
+                  const willRestartAfterExit = (state: ServiceState): boolean => {
+                    if (state.exitCode === null) return false;
+                    return (
+                      decideRestart({
+                        cause: { _tag: "ProcessExit", exitCode: state.exitCode },
+                        policy: depDef.restart ?? defaults.restart,
+                        restartCount: state.restartCount,
+                        maxRestarts: depDef.maxRestarts ?? defaults.maxRestarts,
+                        desired: state.desired,
+                      })._tag === "Restart"
+                    );
+                  };
                   const ready = yield* waitForState(
                     dependency,
                     (state) =>
                       state.desired === "running" &&
-                      (state.status === "Healthy" || state.status === "Failed"),
+                      (state.status === "Healthy" ||
+                        (state.status === "Failed" && !willRestartAfterExit(state))),
                   );
                   if (ready.status === "Failed") {
                     yield* sendEvent(def.name, {
