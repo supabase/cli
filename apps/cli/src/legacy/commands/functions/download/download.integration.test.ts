@@ -821,6 +821,63 @@ describe("legacy functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "fails on an invalid project config before falling back when Docker is not running",
+    () => {
+      // Go's `Run` calls `flags.LoadConfig(fsys)` unconditionally at the very
+      // top, before checking whether Docker is running (`download.go:135-138`)
+      // — an invalid `supabase/config.toml` must fail up front instead of
+      // silently falling through to the server-side path's API/filesystem
+      // side effects (review round on CLI-1963's `functions download` port).
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const proxy = mockProxy();
+      // Every docker command (including the `docker info` probe) fails,
+      // modeling Docker not running.
+      const child = mockChildProcessSpawner({ exitCode: 1 });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--project-ref",
+            PROJECT_ID,
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            join(tempRoot.current, "supabase", "config.toml"),
+            ["[edge_runtime]", "deno_version = 3", ""].join("\n"),
+          ),
+        );
+
+        const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe(
+          "Failed reading config: Invalid edge_runtime.deno_version: 3.",
+        );
+        expect(api.requests).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   describe("docker unbundle container failures", () => {
     it.live("fails with the legacy-bundle suggestion when the container exits non-zero", () => {
       const out = mockOutput({ format: "text" });

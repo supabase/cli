@@ -1174,6 +1174,19 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
 
+    // Go: `flags.LoadConfig(fsys)` runs unconditionally at the very top of
+    // `Run`, before checking `useDocker`, before checking whether Docker
+    // itself is running, and before any API/filesystem side effect
+    // (`download.go:135-138`) — an invalid `supabase/config.toml` (e.g. a bad
+    // `edge_runtime.deno_version`) must fail up front regardless of
+    // `--use-api`/`--use-docker`/Docker's running state, not only on the
+    // Docker happy path. Resolving unconditionally here (rather than nested
+    // inside the `isDockerRunning()` branch below) keeps that ordering: a
+    // config error now surfaces even when `--use-api` was passed or Docker is
+    // down, matching Go instead of silently skipping validation and
+    // proceeding straight to `listRemoteFunctionSlugs`/`downloadSingle`.
+    const resolvedEdgeRuntimeImage = yield* resolveEdgeRuntimeImage(dependencies, projectRef);
+
     // Go: `Run` resolves ONE downloader for the entire invocation, before any
     // per-function work — including before listing when no slug is given
     // (`download.go:138-153`), so this warning can print even when the
@@ -1186,15 +1199,11 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     // Docker isn't running. Deliberately not a separate `useDocker: boolean`
     // alongside this — a boolean that could disagree with whether an image
     // was actually resolved would let the loop below silently downgrade to
-    // the server-side path while claiming to honor `--use-docker`. Resolved
-    // once per invocation, not once per slug — Go's `Config` is likewise
-    // loaded once, before `downloadAll`'s per-function loop, so a config
-    // error (e.g. an invalid `edge_runtime.deno_version`) surfaces before any
-    // network/filesystem side effect instead of mid-batch.
+    // the server-side path while claiming to honor `--use-docker`.
     const edgeRuntimeImage: EdgeRuntimeImage | undefined =
       !flags.useApi && flags.useDocker
         ? (yield* isDockerRunning())
-          ? yield* resolveEdgeRuntimeImage(dependencies, projectRef)
+          ? resolvedEdgeRuntimeImage
           : yield* output
               .raw("WARNING: Docker is not running\n", "stderr")
               .pipe(Effect.as(undefined))
