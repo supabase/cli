@@ -1,6 +1,6 @@
 import { Effect, type FileSystem, type Path, Result } from "effect";
 
-import { legacyErrorMessage } from "./legacy-error-message.ts";
+import { legacyErrorMessage, legacyRelativizeErrorMessage } from "./legacy-error-message.ts";
 import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "./legacy-path-match.ts";
 
 const META_CHARS = /[*?[\\]/u;
@@ -165,7 +165,19 @@ const globOne = (
           // isn't enough here (Go's `afero.Glob` cleans via `filepath.Join(dir, n)`, so
           // `d === "/"`, `d === ""`, and a `dir` containing `.`/`..`/doubled-slash
           // segments must all clean the same way as the walked-child case does).
-          result.push(toSlash(joinRelChild(path, d, name)));
+          //
+          // Deliberately NOT `toSlash`'d here, on Windows: Go's `config.Glob.SQLFiles`
+          // sorts the RAW backslash-joined matches from `fs.Glob`/`afero.Glob` (built via
+          // `filepath.Join`, `config.go:145-155`) and only converts each surviving match
+          // to forward slash AFTER that sort (`fp := filepath.ToSlash(item)`,
+          // `config.go:156`). This function's own caller (`legacySqlFilesGlob`) already
+          // sorts the array `globOne` returns and slashes each item only after — slashing
+          // here too would sort forward-slash-joined strings instead of the raw
+          // backslash-joined ones, which can disagree: comparing `a\x.sql` vs `a0\x.sql`
+          // byte-for-byte puts `a0\x.sql` first (`\` is `0x5C`, greater than `0`'s
+          // `0x30`), while `a/x.sql` vs `a0/x.sql` puts `a/x.sql` first (`/` is `0x2F`,
+          // less than `0x30`) — a different order for the same two matches.
+          result.push(joinRelChild(path, d, name));
         }
       }
     }
@@ -198,11 +210,19 @@ const legacyWalkSqlFiles = (
     const walk = (rel: string): Effect.Effect<void, string> =>
       Effect.gen(function* () {
         const absDir = path.isAbsolute(rel) ? rel : path.join(workdir, rel);
+        // Go's `fs.WalkDir` runs against `afero.OsFs` with the process cwd already the
+        // workdir (`ChangeWorkDir`, `cmd/root.go`), so a `ReadDir` failure — on the
+        // matched root `dir` itself, or on any nested directory the walk descends into —
+        // embeds the workdir-relative `rel` in its error text, never an absolute path.
+        // This module never `process.chdir`s, so the real read needs `absDir`, but the
+        // wrapped warning must still report `rel` (same substitution pattern as the
+        // matched-file stat failure below and `legacyApplySchemaFiles`'s read errors).
         const names = yield* fs
           .readDirectory(absDir)
           .pipe(
             Effect.mapError(
-              (error) => `failed to walk matched directory: ${legacyErrorMessage(error)}`,
+              (error) =>
+                `failed to walk matched directory: ${legacyRelativizeErrorMessage(legacyErrorMessage(error), absDir, rel)}`,
             ),
           );
         for (const name of names) {
@@ -264,9 +284,13 @@ const legacyWalkSqlFiles = (
             // same way an unreadable still-present directory does (the `readDirectory`
             // failure above) — matching Go's fail-loud design intent (never silently apply a
             // partial schema/seed set) rather than risk silently dropping an entire nested
-            // subtree of schema files.
+            // subtree of schema files. This `stat` stands in for the second `ReadDir` Go
+            // itself would issue on the vanished directory, so its display path needs the
+            // same absolute-to-relative substitution as the `readDirectory` failure above —
+            // `childAbs` is what the real (stand-in) syscall needed, `childRel` is what Go's
+            // own `ReadDir` error would embed.
             return yield* Effect.fail(
-              `failed to walk matched directory: ${legacyErrorMessage(statResult.failure)}`,
+              `failed to walk matched directory: ${legacyRelativizeErrorMessage(legacyErrorMessage(statResult.failure), childAbs, childRel)}`,
             );
           }
           const childType = statResult.success.type;
@@ -407,8 +431,11 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
       const absoluteFp = path.isAbsolute(fp) ? fp : path.join(workdir, fp);
       const statResult = yield* fs.stat(absoluteFp).pipe(Effect.result);
       if (Result.isFailure(statResult)) {
-        const rawMessage = legacyErrorMessage(statResult.failure);
-        const message = absoluteFp === fp ? rawMessage : rawMessage.split(absoluteFp).join(fp);
+        const message = legacyRelativizeErrorMessage(
+          legacyErrorMessage(statResult.failure),
+          absoluteFp,
+          fp,
+        );
         warnings.push(`failed to stat matched file: ${message}`);
         continue;
       }

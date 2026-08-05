@@ -4,7 +4,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
-import { legacyErrorMessage } from "./legacy-error-message.ts";
+import { legacyErrorMessage, legacyRelativizeErrorMessage } from "./legacy-error-message.ts";
 import {
   INSERT_MIGRATION_VERSION,
   MIGRATE_FILE_PATTERN,
@@ -180,11 +180,11 @@ const execMigrationBatch = <E>(
     // relative form Go would, not a leaked local temp/absolute path.
     const content = yield* fs.readFileString(migrationPath).pipe(
       Effect.mapError((error) => {
-        const rawMessage = legacyErrorMessage(error);
-        const message =
-          displayPath === migrationPath
-            ? rawMessage
-            : rawMessage.split(migrationPath).join(displayPath);
+        const message = legacyRelativizeErrorMessage(
+          legacyErrorMessage(error),
+          migrationPath,
+          displayPath,
+        );
         return mapError(`failed to open migration file: ${message}`, "read");
       }),
     );

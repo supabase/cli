@@ -261,6 +261,63 @@ describe("legacySqlFilesGlob", () => {
   );
 
   it.effect(
+    "sorts raw backslash-joined Windows matches BEFORE slashing, not after (Go afero.Glob/filepath.ToSlash ordering parity)",
+    () => {
+      // Go's `config.Glob.SQLFiles` (`config.go:145-156`) calls `fs.Glob`, which resolves
+      // to `afero.Glob`'s `glob()` helper — it builds each match with `filepath.Join(dir,
+      // n)` (OS-separator-joined, backslash on Windows) and NEVER slashes it. Only back in
+      // `SQLFiles`, AFTER `sort.Strings(matches)` sorts those raw backslash matches, does
+      // each surviving item get `filepath.ToSlash`'d. For a pattern like `a*/x.sql`
+      // matching both `a\x.sql` and `a0\x.sql`, sorting the RAW backslash strings byte-for
+      // -byte puts `a0\x.sql` first (`\` is `0x5C`, greater than `0`'s `0x30`) — but
+      // sorting the SLASHED strings instead would put `a/x.sql` first (`/` is `0x2F`, less
+      // than `0x30`), a different order for the same two matches. `globOne` must therefore
+      // push the raw joined match (slashing only happens in the caller's post-sort loop),
+      // matching Go's real order exactly. Fully faked filesystem (no real Windows host
+      // available): `readDirectory`/`stat` return canned results keyed by the exact
+      // backslash-joined paths `BunPath.layerWin32`'s `path.join` computes.
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      const scratchDir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-win-sort-"));
+      const canaryFile = join(scratchDir, "canary.sql");
+      writeFileSync(canaryFile, "select 1;");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fileInfo = yield* fs.stat(canaryFile);
+        const workdir = "/workdir";
+        const winFs: FileSystem.FileSystem = {
+          ...fs,
+          readDirectory: (p: string) => {
+            if (p === workdir) return Effect.succeed(["a", "a0"]);
+            if (p === "\\workdir\\a" || p === "\\workdir\\a0") return Effect.succeed(["x.sql"]);
+            return fs.readDirectory(p);
+          },
+          stat: (p: string) =>
+            p === "\\workdir\\a\\x.sql" || p === "\\workdir\\a0\\x.sql"
+              ? Effect.succeed(fileInfo)
+              : fs.stat(p),
+        };
+        return yield* legacySqlFilesGlob(winFs, path, ["a*/x.sql"], workdir);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layerWin32)),
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["a0/x.sql", "a/x.sql"]);
+            expect(result.warnings).toEqual([]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            Object.defineProperty(process, "platform", { value: originalPlatform });
+            rmSync(scratchDir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "normalizes a doubled slash when the matched directory itself has a trailing slash (Go path.Join parity)",
     () => {
       // Go's `fs.WalkDir` builds each child path via `path.Join(dirname, name)`
@@ -514,6 +571,12 @@ describe("legacySqlFilesGlob", () => {
             expect(result.files).toEqual([]);
             expect(result.warnings).toHaveLength(1);
             expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+            // This `stat` failure stands in for the second `ReadDir` Go's own `fs.WalkDir`
+            // would issue on the vanished directory — whose error, like every other Go
+            // filesystem error here, embeds the workdir-relative path, not this port's
+            // absolute stand-in syscall path.
+            expect(result.warnings[0]).toContain("schemas/nested");
+            expect(result.warnings[0]).not.toContain(dir);
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -549,6 +612,12 @@ describe("legacySqlFilesGlob", () => {
       // matched directory: ...` and discards every file already found — never an empty
       // (successful) match. Verified empirically against `apps/cli-go`: an unreadable
       // matched directory makes `Glob.SQLFiles` return that error with zero files.
+      //
+      // Go's `fsys` here is always `afero.OsFs` with the process cwd already the workdir
+      // (`ChangeWorkDir`, `cmd/root.go`), so the `ReadDir` error's embedded path is the
+      // workdir-relative matched directory (`schemas`), never an absolute one. This
+      // module never `process.chdir`s, so the real read needs an absolute path, but the
+      // warning must still report the relative form.
       const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-fail-"));
       const schemasDir = join(dir, "schemas");
       mkdirSync(schemasDir);
@@ -560,11 +629,50 @@ describe("legacySqlFilesGlob", () => {
             expect(result.files).toEqual([]);
             expect(result.warnings).toHaveLength(1);
             expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+            expect(result.warnings[0]).toContain("schemas");
+            expect(result.warnings[0]).not.toContain(dir);
           }),
         ),
         Effect.ensuring(
           Effect.sync(() => {
             chmodSync(schemasDir, 0o755);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.skipIf(isRoot)(
+    "surfaces a NESTED directory-read failure during walk with a workdir-relative path, not the matched root's (Go WalkDir parity)",
+    () => {
+      // Same leak as the matched-root-directory case above, but for a failure during the
+      // RECURSIVE walk of an already-descended subdirectory — a distinct code path inside
+      // Go's `fs.WalkDir` callback (it recurses via the SAME `ReadDir` call the matched
+      // root used, `io/fs/walk.go`), and this port's `walk()` closure recurses the same
+      // way. The matched root ("schemas") itself is readable; only "schemas/nested" is
+      // not, so the warning must report "schemas/nested", never the workdir's absolute
+      // temp-dir path.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-fail-nested-"));
+      const schemasDir = join(dir, "schemas");
+      const nestedDir = join(schemasDir, "nested");
+      mkdirSync(nestedDir, { recursive: true });
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      writeFileSync(join(nestedDir, "b.sql"), "select 2;");
+      chmodSync(nestedDir, 0o000);
+      return run(["schemas"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual([]);
+            expect(result.warnings).toHaveLength(1);
+            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+            expect(result.warnings[0]).toContain("schemas/nested");
+            expect(result.warnings[0]).not.toContain(dir);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            chmodSync(nestedDir, 0o755);
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
