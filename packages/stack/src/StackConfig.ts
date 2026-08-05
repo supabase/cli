@@ -29,10 +29,10 @@ export const ReadyOptionsSchema = Schema.Union([
 
 export const inheritReadyOptions: ReadyOptions = { mode: "inherit" };
 
-/** Standalone stacks wait at most two minutes unless a caller or launch Adapter chooses otherwise. */
+/** Standalone stacks wait at most three minutes unless a caller or launch Adapter chooses otherwise. */
 export const DEFAULT_STACK_READINESS_POLICY: ReadinessPolicy = {
   mode: "finite",
-  timeoutMs: 120_000,
+  timeoutMs: 180_000,
 };
 
 /** Resolve readiness with per-call policy taking precedence over stack policy and package default. */

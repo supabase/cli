@@ -677,7 +677,7 @@ export const localStackLayer = (
             return;
           }
           if (existing !== undefined) {
-            yield* waitForTargets(existing);
+            yield* waitForTargets(existing).pipe((effect) => withReadinessPolicy(effect, name));
             return;
           }
           const started = yield* Effect.gen(function* () {
@@ -686,8 +686,8 @@ export const localStackLayer = (
             if (concurrentlyStarted !== undefined) return concurrentlyStarted;
             return yield* beginStartTargets(service, new Set());
           }).pipe(withLifecycleLock);
-          yield* waitForTargets(started);
-        }).pipe((effect) => withReadinessPolicy(effect, name), cleanupOnReadinessFailure);
+          yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+        }).pipe(cleanupOnReadinessFailure);
 
       const stack = {
         getInfo: () => Effect.succeed(info),
@@ -707,16 +707,19 @@ export const localStackLayer = (
                 );
                 readiness.push(waitForTargets(started));
               }
-              yield* Effect.all(readiness, { concurrency: "unbounded", discard: true });
+              yield* Effect.all(readiness, { concurrency: "unbounded", discard: true }).pipe(
+                (effect) => withReadinessPolicy(effect, "stack"),
+              );
             } else {
               yield* runtime.orchestrator.start(serviceStartOptions);
-              yield* runtime.orchestrator.waitAllReady();
+              yield* runtime.orchestrator
+                .waitAllReady()
+                .pipe((effect) => withReadinessPolicy(effect, "stack"));
             }
             yield* Ref.set(phaseRef, "running");
           }).pipe(
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
             withLifecycleLock,
-            (effect) => withReadinessPolicy(effect, "stack"),
             cleanupOnStartupFailure,
           ),
         stop: () =>
@@ -743,8 +746,8 @@ export const localStackLayer = (
                 new Set(lifecycleTargetsForService(enabledServices, service)),
               );
             }).pipe(withLifecycleLock);
-            yield* waitForTargets(started);
-          }).pipe((effect) => withReadinessPolicy(effect, name), cleanupOnReadinessFailure),
+            yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+          }).pipe(cleanupOnReadinessFailure),
         stopService: (name) =>
           Effect.gen(function* () {
             yield* requireMutable(`stop service ${name}`);
@@ -766,8 +769,8 @@ export const localStackLayer = (
               yield* runtime.orchestrator.restartService(service, serviceStartOptions);
               return { runtime, targets: [service] };
             }).pipe(withLifecycleLock);
-            yield* waitForTargets(started);
-          }).pipe((effect) => withReadinessPolicy(effect, name), cleanupOnReadinessFailure),
+            yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+          }).pipe(cleanupOnReadinessFailure),
         configureFunctions: (opts) =>
           Effect.gen(function* () {
             yield* requireMutable("configure functions");
@@ -794,11 +797,10 @@ export const localStackLayer = (
               yield* runtime.orchestrator.restartService("edge-runtime", serviceStartOptions);
               return { runtime, targets: ["edge-runtime"] as const };
             }).pipe(withLifecycleLock);
-            yield* waitForTargets(started);
-          }).pipe(
-            (effect) => withReadinessPolicy(effect, "edge-runtime"),
-            cleanupOnReadinessFailure,
-          ),
+            yield* waitForTargets(started).pipe((effect) =>
+              withReadinessPolicy(effect, "edge-runtime"),
+            );
+          }).pipe(cleanupOnReadinessFailure),
         reloadEdgeRuntime: (opts) =>
           Effect.gen(function* () {
             const started = yield* Effect.gen(function* () {
@@ -838,11 +840,10 @@ export const localStackLayer = (
               yield* runtime.orchestrator.restartService("edge-runtime", serviceStartOptions);
               return { runtime, targets: ["edge-runtime"] as const };
             }).pipe(withLifecycleLock);
-            yield* waitForTargets(started);
-          }).pipe(
-            (effect) => withReadinessPolicy(effect, "edge-runtime"),
-            cleanupOnReadinessFailure,
-          ),
+            yield* waitForTargets(started).pipe((effect) =>
+              withReadinessPolicy(effect, "edge-runtime"),
+            );
+          }).pipe(cleanupOnReadinessFailure),
         getState: (name) =>
           Effect.gen(function* () {
             const currentStates = SubscriptionRef.getUnsafe(stateRef);
@@ -871,8 +872,10 @@ export const localStackLayer = (
             }
             yield* requireKnownServiceName(name);
             const runtime = yield* ensureRuntime;
-            yield* runtime.orchestrator.waitReady(name);
-          }).pipe((effect) => withReadinessPolicy(effect, name, opts), cleanupOnReadinessFailure),
+            yield* runtime.orchestrator
+              .waitReady(name)
+              .pipe((effect) => withReadinessPolicy(effect, name, opts));
+          }).pipe(cleanupOnReadinessFailure),
         waitAllReady: (opts) =>
           Effect.gen(function* () {
             const phase = yield* Ref.get(phaseRef);
@@ -884,11 +887,10 @@ export const localStackLayer = (
               );
             }
             const runtime = yield* ensureRuntime;
-            yield* runtime.orchestrator.waitAllReady();
-          }).pipe(
-            (effect) => withReadinessPolicy(effect, "stack", opts),
-            cleanupOnReadinessFailure,
-          ),
+            yield* runtime.orchestrator
+              .waitAllReady()
+              .pipe((effect) => withReadinessPolicy(effect, "stack", opts));
+          }).pipe(cleanupOnReadinessFailure),
         subscribeLogs: (name) => logBuffer.subscribe(name),
         subscribeAllLogs: (services) =>
           services === undefined || services.length === 0

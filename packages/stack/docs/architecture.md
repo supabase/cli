@@ -61,7 +61,7 @@ vector-bucket environment only when enabled, Analytics mounts BigQuery credentia
 receives its optional OpenAI key. Credential contents and configured path values are never included
 in validation diagnostics.
 
-Readiness policy is part of the resolved configuration. The package default is a finite two-minute
+Readiness policy is part of the resolved configuration. The package default is a finite three-minute
 deadline; callers can choose a different finite deadline or explicit infinite waiting. Per-call
 `ReadyOptions` take precedence over the stack policy, while `inherit` delegates to the stack
 policy. The local Implementation applies this resolver to startup, service activation, restart,
