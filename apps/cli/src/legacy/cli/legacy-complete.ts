@@ -765,32 +765,41 @@ function legacyIsValidGoDuration(value: string): boolean {
  * Mirrors Go's `time.Parse(time.RFC3339, s)` — `2006-01-02T15:04:05Z07:00`
  * — exact 4/2/2/2/2/2-digit date-time fields, a literal (case-sensitive) `T`
  * separator, an optional `.`-prefixed fractional-seconds run of any length,
- * and a `Z` or `±HH:MM` offset with NO numeric bound of its own (verified
- * against go1.26 `time.Parse`: `"2024-01-02T15:04:05+24:00"` parses
- * successfully — Go never range-checks the offset). Hour/minute/second are
- * bounded to `0-23`/`0-59`/`0-59` (Go rejects `":60"` — no leap-second
- * allowance — and `"25:"` — verified empirically). Month/day validity
- * (including leap years, and short months like April's 30 days) is checked
- * by round-tripping the parsed year/month/day through `Date#setUTCFullYear`
- * and comparing what comes back — that method (unlike the `Date` constructor
- * or `Date.UTC`) does NOT special-case a 0-99 year into 1900+year, so it
- * stays correct for Go's own accepted `"0000-01-02T15:04:05Z"`, and its
- * normal calendar-overflow behavior (Feb 29 rolling to Mar 1 in a
- * non-leap year, day 32 rolling into the next month, month 13 rolling into
- * the next year) exactly reproduces Go's own leap-year and day/month-bounds
- * rejections without hand-rolling the calendar math.
+ * and a `Z` or `±HH:MM` offset. Hour/minute/second are bounded to
+ * `0-23`/`0-59`/`0-59` (Go rejects `":60"` — no leap-second allowance — and
+ * `"25:"` — verified empirically). The offset's own hour/minute fields are
+ * ALSO bounded, but not to that same 0-23/0-59 range: Go's zone-offset
+ * parser independently caps the offset hour at 24 (not 23) and the offset
+ * minute at 60 (not 59), each checked in isolation rather than as a combined
+ * "total offset <= 24h" (re-verified against go1.26 `time.Parse` after this
+ * was disputed on review: `"+24:00"`, `"+23:59"`, `"+24:60"`, and `"+00:60"`
+ * all parse successfully; `"+25:00"` and `"+00:61"` both fail with "time
+ * zone offset hour/minute out of range" — CLI-1965 review finding; the
+ * earlier claim here that Go "never range-checks the offset" was wrong).
+ * Month/day validity (including leap years, and short months like April's
+ * 30 days) is checked by round-tripping the parsed year/month/day through
+ * `Date#setUTCFullYear` and comparing what comes back — that method (unlike
+ * the `Date` constructor or `Date.UTC`) does NOT special-case a 0-99 year
+ * into 1900+year, so it stays correct for Go's own accepted
+ * `"0000-01-02T15:04:05Z"`, and its normal calendar-overflow behavior (Feb
+ * 29 rolling to Mar 1 in a non-leap year, day 32 rolling into the next
+ * month, month 13 rolling into the next year) exactly reproduces Go's own
+ * leap-year and day/month-bounds rejections without hand-rolling the
+ * calendar math.
  */
 const GO_RFC3339_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
 function legacyIsValidGoRfc3339(value: string): boolean {
   const match = GO_RFC3339_PATTERN.exec(value);
   if (match === null) return false;
-  const [, year, month, day, hour, minute, second] = match;
+  const [, year, month, day, hour, minute, second, offsetHour, offsetMinute] = match;
   const y = Number(year);
   const mo = Number(month);
   const d = Number(day);
   if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return false;
+  if (offsetHour !== undefined && (Number(offsetHour) > 24 || Number(offsetMinute) > 60))
+    return false;
 
   const roundTrip = new Date(0);
   roundTrip.setUTCFullYear(y, mo - 1, d);

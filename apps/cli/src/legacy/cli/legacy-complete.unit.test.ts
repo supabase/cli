@@ -887,6 +887,55 @@ describe("legacyRespondToComplete", () => {
       expect(valid?.candidates.map((c) => c.name)).toContain("--profile");
     });
 
+    it("rejects an out-of-range RFC3339 zone offset for gen bearer-jwt --exp", () => {
+      // Go's time.Parse(time.RFC3339, s) independently caps the offset hour
+      // at 24 (not 23) and the offset minute at 60 (not 59) — verified
+      // empirically against go1.26 time.Parse: "+24:00" and "+00:60" parse
+      // successfully, while "+25:00" and "+00:61" both fail with "time zone
+      // offset hour/minute out of range" (CLI-1965 review finding).
+      const outOfRangeHour = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "bearer-jwt",
+        "--role",
+        "anon",
+        "--exp",
+        "2024-01-02T15:04:05+25:00",
+        "--p",
+      ]);
+      expect(outOfRangeHour).toEqual({
+        candidates: [],
+        directive: LegacyCompletionDirective.Default,
+      });
+
+      const outOfRangeMinute = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "bearer-jwt",
+        "--role",
+        "anon",
+        "--exp",
+        "2024-01-02T15:04:05+00:61",
+        "--p",
+      ]);
+      expect(outOfRangeMinute).toEqual({
+        candidates: [],
+        directive: LegacyCompletionDirective.Default,
+      });
+
+      const boundaryValid = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "bearer-jwt",
+        "--role",
+        "anon",
+        "--exp",
+        "2024-01-02T15:04:05+24:00",
+        "--p",
+      ]);
+      expect(boundaryValid?.candidates.map((c) => c.name)).toContain("--profile");
+    });
+
     it("rejects a negative value for storage cp --jobs even though it's a string-typed flag in TS", () => {
       // Go registers --jobs as a UintVarP (cmd/storage.go:107), the same as
       // functions deploy/migration down/db reset above — but storage cp
