@@ -31,6 +31,7 @@ import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "../shared/legacy-db-target-flags.ts";
+import { legacyUnwrapToSingleParam } from "../shared/legacy-param-introspection.ts";
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -216,40 +217,6 @@ function normalizeFlagValue(value: unknown): unknown | undefined {
   return normalizeFlagValue(value.value);
 }
 
-// A `Map`/`Transform`/`Optional`/`Variadic` param wraps an inner `param` of the
-// same shape (e.g. `.pipe(Flag.optional)`, `.pipe(Flag.withDefault(...))`, which
-// composes as `Map(Optional(Single))`). `effect/unstable/cli` already ships the
-// exact unwrap this needs — `Param.extractSingleParams`, the same function
-// `--help` rendering uses — but it (and `Primitive.getChoiceKeys`) are
-// `@internal`-tagged and confirmed absent from this package's published `.d.ts`
-// (present in the compiled `.js`, so calling them would only type-check via an
-// `as` cast, which this repo forbids). This predicate reimplements the
-// `isSingle`-or-has-a-`.param`-field check using only type-visible public
-// fields; every non-`Single` variant publicly declares `.param` per its own
-// interface, and the variant union is closed as of this effect version, so an
-// unrecognized future variant fails *closed* (silently not detected as a
-// choice flag, i.e. stays redacted) rather than open. Delete this in favor of
-// `Param.extractSingleParams` if effect ever publishes it.
-interface WrappedParam {
-  readonly param: Param.Any;
-}
-function isWrappedParam(param: Param.Any): param is Param.Any & WrappedParam {
-  return "param" in param;
-}
-
-// Unwraps down to the underlying `Single` param the same way `--help`
-// rendering does. Shared by `getChoiceFlagNames` and `GLOBAL_SHORT_ALIASES`
-// below — both need the leaf `Single` to read its type-visible `name`/
-// `aliases`/`primitiveType` fields. Returns `undefined` only if the variant
-// union gains an unrecognized future case (fails closed, see the
-// `isWrappedParam` doc above for why this hand-rolled unwrap exists instead of
-// the `@internal` `Param.extractSingleParams`).
-function unwrapToSingleParam(param: Param.Any): Param.Single<Param.ParamKind, unknown> | undefined {
-  if (Param.isSingle(param)) return param;
-  if (isWrappedParam(param)) return unwrapToSingleParam(param.param);
-  return undefined;
-}
-
 // Mirrors Go's `isEnumFlag` (`cmd/root_analytics.go:110-116`), which checks
 // `flag.Value.(*utils.EnumFlag)` unconditionally — every enum flag is
 // telemetry-safe, no per-flag annotation needed. Checks the unwrapped
@@ -261,7 +228,7 @@ function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): Read
   if (config === undefined) return names;
 
   for (const param of Object.values(config)) {
-    const single = unwrapToSingleParam(param);
+    const single = legacyUnwrapToSingleParam(param);
     if (
       single !== undefined &&
       single.kind === Param.flagKind &&
@@ -289,7 +256,7 @@ function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): Read
 const GLOBAL_SHORT_ALIASES: Readonly<Record<string, string>> = (() => {
   const aliases: Record<string, string> = {};
   for (const globalFlag of LEGACY_GLOBAL_FLAGS) {
-    const single = unwrapToSingleParam(globalFlag.flag);
+    const single = legacyUnwrapToSingleParam(globalFlag.flag);
     if (single === undefined) continue;
     for (const alias of single.aliases) {
       aliases[alias] = single.name;
