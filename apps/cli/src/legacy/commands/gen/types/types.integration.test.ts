@@ -562,8 +562,8 @@ const nonTypescriptProjectRefScenarios = [
 }>;
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyGenCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 describe("legacy gen types", () => {

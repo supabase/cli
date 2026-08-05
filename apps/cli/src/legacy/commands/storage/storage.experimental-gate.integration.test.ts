@@ -29,8 +29,8 @@ import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 // pipeline for all four leaves, not just the shared helper in isolation.
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyStorageCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup(args: ReadonlyArray<string>) {

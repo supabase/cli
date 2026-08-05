@@ -234,7 +234,24 @@ const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
 // attribute-mapping codegen (each key has `name?`, `names?`, `array?`, and
 // `default?: any` per OpenAPI spec; the `default?: any` field was silently
 // stripped because of this).
-function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): OpenApiSchema {
+function isArbitraryJsonDefault(schema: OpenApiSchema): boolean {
+  if (schema.oneOf?.length !== 4) {
+    return false;
+  }
+  const types = new Set(schema.oneOf.map((member) => member.type));
+  return (
+    types.size === 4 &&
+    types.has("object") &&
+    types.has("number") &&
+    types.has("string") &&
+    types.has("boolean")
+  );
+}
+
+export function sanitizeOpenApiSchema(
+  schema: OpenApiSchema,
+  inPropertiesMap = false,
+): OpenApiSchema {
   const sanitized: OpenApiSchema = {};
 
   for (const [key, rawValue] of Object.entries(schema)) {
@@ -250,6 +267,10 @@ function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): 
     }
 
     if (isRecord(rawValue)) {
+      if (inPropertiesMap && key === "default" && isArbitraryJsonDefault(rawValue)) {
+        sanitized[key] = {};
+        continue;
+      }
       // The immediate children of `properties: {...}` are property-name keys
       // mapping to schemas; recurse with `inPropertiesMap=true` so the
       // metadata-stripping logic skips that level.
@@ -627,7 +648,7 @@ function renderSchemaSource(
     return "";
   }
 
-  const multiDocument = SchemaRepresentation.fromJsonSchemaMultiDocument(
+  const importedSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(
     {
       dialect: "draft-2020-12",
       definitions,
@@ -644,7 +665,9 @@ function renderSchemaSource(
     },
   );
 
-  const codeDocument = SchemaRepresentation.toCodeDocument(multiDocument);
+  const codeDocument = SchemaRepresentation.toCodeDocument(
+    SchemaRepresentation.toRepresentations(Arr.map(importedSchemas, (schema) => schema.ast)),
+  );
   const hasBinaryInputs = operations.some((operation) =>
     containsBinarySchema(operation.inputSchema),
   );
