@@ -644,6 +644,225 @@ describe("legacyRespondToComplete", () => {
     });
   });
 
+  describe("flag values are validated the way real pflag parses them (CLI-1965 review)", () => {
+    it("accepts a base-0 hex value for a plain (non-uint) integer flag", () => {
+      // Go's plain int64 flags parse via strconv.ParseInt(s, 0, 64) — base 0,
+      // so a `0x`-prefixed value is valid, unlike a decimal-only regex
+      // (verified empirically against a real apps/cli-go build: `backups
+      // restore --timestamp 0x10 --p` still offers --profile/--project-ref).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "backups",
+        "restore",
+        "--timestamp",
+        "0x10",
+        "--p",
+      ]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["--profile", "--project-ref"]),
+      );
+    });
+
+    it("rejects a negative value for storage cp --jobs even though it's a string-typed flag in TS", () => {
+      // Go registers --jobs as a UintVarP (cmd/storage.go:107), the same as
+      // functions deploy/migration down/db reset above — but storage cp
+      // models it as Flag.string in TS, so the uint override must be
+      // consulted regardless of primitiveTag (verified empirically against
+      // a real apps/cli-go build: `storage cp --jobs -1 --r` returns zero
+      // candidates with the Default directive, not --recursive).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "storage",
+        "cp",
+        "--jobs",
+        "-1",
+        "--r",
+      ]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("rejects malformed CSV for a StringSliceVar-backed flag", () => {
+      // Go's --domains is a StringSliceVarP (cmd/sso.go:158), CSV-split via
+      // encoding/csv at parse time; an unterminated quote fails that parse
+      // (verified empirically against a real apps/cli-go build: `sso add
+      // --domains 'a,"b' --type` returns zero candidates with the Default
+      // directive, not --type).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "sso",
+        "add",
+        "--domains",
+        'a,"b',
+        "--type",
+      ]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("still accepts well-formed CSV (a quoted comma) for the same flag", () => {
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "sso",
+        "add",
+        "--domains",
+        '"example.com,example.org"',
+        "--type",
+      ]);
+      expect(result?.candidates.map((c) => c.name)).toContain("--type");
+    });
+
+    it("does not apply CSV validation to db reset --sql-paths (a plain StringArrayVar, not StringSliceVar)", () => {
+      // Go registers --sql-paths as a plain StringArrayVar (cmd/db.go:714) —
+      // no CSV parsing — unlike every other variadic string flag in this
+      // tree, so a value containing an unbalanced quote must still be
+      // accepted.
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "db",
+        "reset",
+        "--sql-paths",
+        'a"b',
+        "--d",
+      ]);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["--debug", "--dns-resolver"]),
+      );
+    });
+  });
+
+  describe("an attached-value shorthand cluster is validated even when the owning flag is boolean (CLI-1965 review)", () => {
+    it("rejects an invalid boolean value attached via `=` to a boolean shorthand", () => {
+      // pflag treats `-f=value` as an explicit value for a boolean shorthand
+      // too (pflag@v1.0.10/flag.go:1005-1033) — an owning flag being boolean
+      // does not, on its own, mean there is nothing to validate (verified
+      // empirically against a real apps/cli-go build: `storage cp -r=maybe
+      // --j` returns zero candidates with the Default directive, not
+      // --jobs).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "storage",
+        "cp",
+        "-r=maybe",
+        "--j",
+      ]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("still accepts a valid boolean value attached the same way", () => {
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "storage",
+        "cp",
+        "-r=true",
+        "--j",
+      ]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toContain("--jobs");
+    });
+  });
+
+  describe("the built-in help/version flags short-circuit on Changed, not on exact token spelling (CLI-1965 review)", () => {
+    it.each(["--help=false", "--help=true", "-h=false"])(
+      "treats %s the same as a bare --help",
+      (token) => {
+        // pflag's boolValue.Set marks the flag Changed on either spelling,
+        // and cobra's helpOrVersionFlagPresent checks .Changed, not the
+        // parsed value (completions.go:530-537) — verified empirically
+        // against a real apps/cli-go build: `--help=false --d` and
+        // `--help=true --d` both return zero candidates with the
+        // NoFileComp directive.
+        const result = legacyRespondToComplete(legacyRoot, ["__complete", token, "--d"]);
+        expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
+      },
+    );
+
+    it("treats --version=false the same as a bare --version, at the root", () => {
+      // verified empirically against a real apps/cli-go build: `--version=false
+      // br` returns zero candidates with the NoFileComp directive, not
+      // `branches`.
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "--version=false", "br"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
+    });
+
+    it("does not treat --help=maybe as Changed — an invalid boolean value is an unresolved-flag parse error instead", () => {
+      // An invalid value fails pflag's own Set() before Changed is ever
+      // examined, so this is Case 0 (Default), not the help short-circuit
+      // (NoFileComp).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "--help=maybe", "--d"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+  });
+
+  describe("a `--` consumed as a preceding flag's value is not a genuine terminator (CLI-1965 review)", () => {
+    it("still offers a flag name after `--` was consumed as a value-taking flag's own value", () => {
+      // pflag's parseLongArg consumes the very next token unconditionally as
+      // a non-boolean flag's value — including a literal `--` — so it never
+      // reaches pflag's own end-of-flags sentinel check (pflag@v1.0.10/
+      // flag.go:949-952) (verified empirically against a real apps/cli-go
+      // build: `db dump --file -- --s` still offers --schema, not zero
+      // candidates).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "db",
+        "dump",
+        "--file",
+        "--",
+        "--s",
+      ]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toContain("--schema");
+    });
+
+    it("still disables flag completion for a genuine, unconsumed `--` sentinel", () => {
+      // Regression guard: only a `--` that isn't claimed as a preceding
+      // flag's value is a real terminator (verified empirically against a
+      // real apps/cli-go build: `db dump -- --s` returns zero candidates
+      // with the Default directive).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "dump", "--", "--s"]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+  });
+
+  describe("a bare `-` is a positional argument, not a flag (CLI-1965 review)", () => {
+    it("keeps the subcommand-listing gate closed when a bare `-` survives as leftover", () => {
+      // pflag's isFlagArg requires at least 2 characters, so a bare `-` is
+      // never flag-shaped — but it also never removes itself from cobra's
+      // leftover finalArgs the way a matched command name does, so it keeps
+      // the `len(finalArgs) == 0` subcommand-listing gate closed (verified
+      // empirically against a real apps/cli-go build: `sso - --debug a`
+      // returns zero candidates with the Default directive, not `add`).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "sso",
+        "-",
+        "--debug",
+        "a",
+      ]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
+
+    it("still lets the descent continue past a bare `-` to a real subcommand match", () => {
+      // Regression guard: a bare `-` must not stop the descent the way an
+      // unmatched real token does (verified empirically against a real
+      // apps/cli-go build: `db - dump --da` still offers --data-only).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "-", "dump", "--da"]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toContain("--data-only");
+    });
+
+    it("still resolves help's own second command-path lookup past a bare `-`", () => {
+      // The Case-2 "preceding token is flag-shaped" check must also exclude
+      // a bare `-`, or it hard-stops before ever reaching help's dispatch
+      // (verified empirically against a real apps/cli-go build: `help db -
+      // d` still lists db's own subcommands diff/dump).
+      const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "db", "-", "d"]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toEqual(
+        expect.arrayContaining(["diff", "dump"]),
+      );
+    });
+  });
+
   it("returns undefined for zero completion args (mirrors cobra's MinimumNArgs(1) failure)", () => {
     expect(legacyRespondToComplete(legacyRoot, ["__complete"])).toBeUndefined();
   });
