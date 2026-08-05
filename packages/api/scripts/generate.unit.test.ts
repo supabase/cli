@@ -1,3 +1,4 @@
+import * as Arr from "effect/Array";
 import * as JsonSchema from "effect/JsonSchema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { describe, expect, test } from "vitest";
@@ -8,13 +9,13 @@ function renderOpenApiSchema(schema: Parameters<typeof JsonSchema.fromSchemaOpen
   const normalized = normalizeNullableJsonSchema(
     JsonSchema.fromSchemaOpenApi3_0(sanitizeOpenApiSchema(schema)).schema,
   );
-  const schemaMultiDocument = SchemaRepresentation.fromJsonSchemaMultiDocument({
+  const importedSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument({
     dialect: "draft-2020-12",
     definitions: {},
     schemas: [normalized],
   });
   return SchemaRepresentation.toCodeDocument(
-    SchemaRepresentation.fromSchemaMultiDocument(schemaMultiDocument),
+    SchemaRepresentation.toRepresentations(Arr.map(importedSchemas, (schema) => schema.ast)),
   ).codes[0]!.runtime;
 }
 

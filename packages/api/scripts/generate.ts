@@ -648,7 +648,7 @@ function renderSchemaSource(
     return "";
   }
 
-  const schemaMultiDocument = SchemaRepresentation.fromJsonSchemaMultiDocument(
+  const importedSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(
     {
       dialect: "draft-2020-12",
       definitions,
@@ -666,7 +666,7 @@ function renderSchemaSource(
   );
 
   const codeDocument = SchemaRepresentation.toCodeDocument(
-    SchemaRepresentation.fromSchemaMultiDocument(schemaMultiDocument),
+    SchemaRepresentation.toRepresentations(Arr.map(importedSchemas, (schema) => schema.ast)),
   );
   const hasBinaryInputs = operations.some((operation) =>
     containsBinarySchema(operation.inputSchema),
