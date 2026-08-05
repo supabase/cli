@@ -98,7 +98,7 @@ export interface LegacyCompleteDeps {
 }
 
 /* ========================================================================== */
-/* Internal command field access (`next/docs/command-docs.ts` precedent)     */
+/* Internal command field access (`legacy-param-introspection.ts` precedent) */
 /* ========================================================================== */
 
 /**
@@ -108,8 +108,18 @@ export interface LegacyCompleteDeps {
  * `Command`/`Command.Any` TypeScript interface — only `name`, `description`,
  * `shortDescription`, `alias`, `examples`, `subcommands`, `annotations`, and
  * `hidden` are public — but they exist at runtime (`internal/command.ts`'s
- * `makeCommand`, via `Object.assign`). Accessed the same way
- * `next/docs/command-docs.ts` already accesses `buildHelpDoc`.
+ * `makeCommand`, via `Object.assign`; that internal module is not importable
+ * — its package.json export map entry is `null` — so there is no type-safe
+ * import to reach for instead).
+ *
+ * A bare `as unknown as` here would silently paper over that gap (forbidden
+ * by this repo's typing rules — see `CLAUDE.md`), so this narrows through a
+ * runtime type guard instead, the same `"<field>" in value` shape
+ * `legacy-param-introspection.ts`'s `legacyIsWrappedParam` already
+ * establishes for the identical problem (an internal-only field the public
+ * `effect/unstable/cli` types don't declare). If a future `effect` version
+ * ever drops one of these fields, this throws instead of silently completing
+ * against `undefined`.
  */
 interface LegacyCommandInternal {
   readonly config: { readonly flags: ReadonlyArray<Param.AnyFlag> };
@@ -117,8 +127,19 @@ interface LegacyCommandInternal {
   readonly globalFlags: ReadonlyArray<GlobalFlag.GlobalFlag<any>>;
 }
 
+function legacyHasCommandInternals(
+  command: Command.Command.Any,
+): command is Command.Command.Any & LegacyCommandInternal {
+  return "config" in command && "contextConfig" in command && "globalFlags" in command;
+}
+
 function legacyInternalCommand(command: Command.Command.Any): LegacyCommandInternal {
-  return command as unknown as LegacyCommandInternal;
+  if (!legacyHasCommandInternals(command)) {
+    throw new Error(
+      `legacy-complete.ts: command "${command.name}" is missing the internal config/contextConfig/globalFlags fields shell completion relies on — effect's Command implementation shape may have changed.`,
+    );
+  }
+  return command;
 }
 
 function legacyFlattenSubcommands(
@@ -397,6 +418,55 @@ function legacyChangedFlagNames(
   return changed;
 }
 
+/**
+ * Finds the first token in `trimmedArgs` that looks like a flag (starts with
+ * `-`, excluding the bare `-` positional pflag itself treats as a non-flag
+ * argument) but does not resolve to anything in `inScopeFlags`, consuming a
+ * following token as a non-boolean flag's value the same way
+ * `legacyResolveCommandPath` does. A bare `--` ends the scan entirely without
+ * itself counting as unresolved — pflag's own end-of-flags sentinel, after
+ * which everything is positional, not a flag to validate (`pflag@v1.0.9`'s
+ * `parseArgs`: `if s[1] == '-' { if len(s) == 2 { ... terminates the flags`).
+ * Returns the offending token, or `undefined` if every flag-shaped token
+ * resolves.
+ *
+ * Mirrors cobra's real two-phase design: `Find()` tolerantly skips flags it
+ * doesn't recognize while walking for a subcommand name (see
+ * `legacyResolveCommandPath`, which only needs to know "does this consume a
+ * value", not "is this real"), but the later `finalCmd.ParseFlags()` strictly
+ * validates every remaining flag token against the fully-resolved command's
+ * complete flag set and fails outright on the first one it can't recognize
+ * (`completions.go:373-375`) — a failure so early it wins even over the
+ * `--help`/`--version` short-circuit below (verified empirically against a
+ * real `apps/cli-go` build: both `__complete --bogus --help ""` and
+ * `__complete --help --bogus ""` report the unknown flag, not help; a bare
+ * `__complete --bogus ""` returns zero candidates with the Default directive,
+ * not the root subcommand list; `__complete -- ""` is unaffected and still
+ * lists every root subcommand).
+ */
+function legacyFindUnresolvedFlagToken(
+  trimmedArgs: ReadonlyArray<string>,
+  inScopeFlags: ReadonlyArray<LegacyFlagDescriptor>,
+): string | undefined {
+  let index = 0;
+  while (index < trimmedArgs.length) {
+    const token = trimmedArgs[index];
+    index++;
+    if (token === undefined || token === "-" || !token.startsWith("-")) continue;
+    if (token === "--") break;
+
+    const equalsIndex = token.indexOf("=");
+    const bareToken = equalsIndex === -1 ? token : token.slice(0, equalsIndex);
+    const resolved = legacyResolveFlagFromToken(bareToken, inScopeFlags);
+    if (resolved === undefined) return token;
+
+    if (equalsIndex === -1 && !resolved.isBoolean && index < trimmedArgs.length) {
+      index++; // skip the consumed value token
+    }
+  }
+  return undefined;
+}
+
 function legacyFlagValueCompletion(
   matchedPath: ReadonlyArray<string>,
   flagName: string | undefined,
@@ -418,6 +488,10 @@ function legacyFlagValueCompletion(
  * mirroring cobra's `checkIfFlagCompletion` and the branch in
  * `getCompletions` that follows it:
  *
+ * 0. A flag-shaped token that doesn't resolve to any in-scope flag
+ *    short-circuits to no candidates with the Default directive — mirrors
+ *    `finalCmd.ParseFlags()` failing outright on an unrecognized flag, which
+ *    wins even over `--help`/`--version` below.
  * 1. `--help`/`-h` anywhere in `trimmedArgs` (or `--version`/`-v`, only when
  *    resolved to the root command) short-circuits to no candidates — these
  *    exit before any real completion runs.
@@ -431,6 +505,10 @@ export function legacyClassifyCompletion(
 ): LegacyCompletionResult {
   const { finalCommand, matchedPath, leftoverArgs, trimmedArgs, toComplete, inScopeFlags } = input;
   const isAtRoot = matchedPath.length === 0;
+
+  if (legacyFindUnresolvedFlagToken(trimmedArgs, inScopeFlags) !== undefined) {
+    return { candidates: [], directive: LegacyCompletionDirective.Default };
+  }
 
   if (
     trimmedArgs.some((token) => LEGACY_HELP_TOKENS.has(token)) ||
@@ -502,9 +580,29 @@ export function legacyClassifyCompletion(
     const visibleSubcommands = legacyFlattenSubcommands(finalCommand).filter((sub) => !sub.hidden);
     if (visibleSubcommands.length > 0) {
       directive = LegacyCompletionDirective.NoFileComp;
-      for (const sub of visibleSubcommands) {
-        if (sub.name.startsWith(toComplete)) {
-          candidates.push({ name: sub.name, description: sub.shortDescription ?? sub.description });
+      const subcommandCandidates: Array<LegacyCompletionCandidate> = visibleSubcommands.map(
+        (sub) => ({ name: sub.name, description: sub.shortDescription ?? sub.description }),
+      );
+      // Cobra's `InitDefaultHelpCmd` (`command.go:1100,1263-1266`) auto-registers a
+      // `help` subcommand on whichever command `ExecuteC()` is called against —
+      // here, always the root — but never recursively on descendants (verified
+      // empirically against a real `apps/cli-go` build: `__complete db ""` does
+      // NOT surface it, only `__complete ""` does). This TS tree has no explicit
+      // `help` command node to walk, so synthesize the one candidate cobra would
+      // otherwise contribute, matching its literal `Short` text.
+      if (isAtRoot) {
+        subcommandCandidates.push({ name: "help", description: "Help about any command" });
+      }
+      // Cobra's own `Commands()` — what its subcommand-name completion walks —
+      // sorts alphabetically by name whenever `EnableCommandSorting` (the
+      // default) is on. This tree's subcommand declarations already happen to
+      // be listed alphabetically, so this sort is a no-op everywhere except at
+      // the root, where it places the synthetic "help" entry above in its
+      // correct alphabetical position.
+      subcommandCandidates.sort((a, b) => a.name.localeCompare(b.name));
+      for (const candidate of subcommandCandidates) {
+        if (candidate.name.startsWith(toComplete)) {
+          candidates.push(candidate);
         }
       }
     }
