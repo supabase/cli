@@ -143,6 +143,13 @@ const commandOnlyDatabaseField: LocalStackConfigParityDecision = {
     "This field configures database tooling outside local stack startup and does not belong in StackConfig.",
 };
 
+const hostedConfigurationField: LocalStackConfigParityDecision = {
+  _tag: "not-applicable",
+  presence: "decoded-value",
+  rationale:
+    "This hosted-service limit is used by configuration management but does not change the local stack runtime.",
+};
+
 const projectMetadataField: LocalStackConfigParityDecision = {
   _tag: "not-applicable",
   presence: "raw-document",
@@ -237,10 +244,10 @@ const authHooksParity = {
 } satisfies Record<keyof ProjectConfig["auth"]["hook"], Node>;
 
 const authSmsParity = {
-  enable_signup: unsupportedRuntimeField,
-  enable_confirmations: unsupportedRuntimeField,
-  template: unsupportedRuntimeField,
-  max_frequency: unsupportedRuntimeField,
+  enable_signup: unsupportedEnabledProviderField,
+  enable_confirmations: unsupportedEnabledProviderField,
+  template: unsupportedEnabledProviderField,
+  max_frequency: unsupportedEnabledProviderField,
   twilio: {
     enabled: unsupportedEnabledProviderField,
     account_sid: unsupportedEnabledProviderField,
@@ -437,20 +444,20 @@ const dbSettingsParity = {
 const localStackConfigParity = {
   project_id: projectMetadataField,
   analytics: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
-    backend: unsupportedRuntimeField,
+    enabled: unsupportedNonDefaultRuntimeField,
+    port: unsupportedNonDefaultRuntimeField,
+    backend: unsupportedNonDefaultRuntimeField,
     vector_port: unsupportedOptionalRuntimeField,
     gcp_project_id: unsupportedOptionalRuntimeField,
     gcp_project_number: unsupportedOptionalRuntimeField,
     gcp_jwt_path: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof ProjectConfig["analytics"], Node>,
   api: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
-    schemas: unsupportedRuntimeField,
-    extra_search_path: unsupportedRuntimeField,
-    max_rows: unsupportedRuntimeField,
+    enabled: unsupportedNonDefaultRuntimeField,
+    port: unsupportedNonDefaultRuntimeField,
+    schemas: unsupportedNonDefaultRuntimeField,
+    extra_search_path: unsupportedNonDefaultRuntimeField,
+    max_rows: unsupportedNonDefaultRuntimeField,
     auto_expose_new_tables: mappedAutoExposeNewTables,
     tls: {
       enabled: unsupportedEnabledProviderField,
@@ -505,21 +512,21 @@ const localStackConfigParity = {
     },
   },
   local_smtp: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
+    enabled: unsupportedNonDefaultRuntimeField,
+    port: unsupportedNonDefaultRuntimeField,
     smtp_port: unsupportedOptionalRuntimeField,
     pop3_port: unsupportedOptionalRuntimeField,
     admin_email: unsupportedOptionalRuntimeField,
     sender_name: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof ProjectConfig["local_smtp"], Node>,
   realtime: {
-    enabled: unsupportedRuntimeField,
-    ip_version: unsupportedRuntimeField,
-    max_header_length: unsupportedRuntimeField,
+    enabled: unsupportedNonDefaultRuntimeField,
+    ip_version: unsupportedNonDefaultRuntimeField,
+    max_header_length: unsupportedNonDefaultRuntimeField,
   } satisfies Record<keyof ProjectConfig["realtime"], Node>,
   storage: {
-    enabled: unsupportedRuntimeField,
-    file_size_limit: unsupportedRuntimeField,
+    enabled: unsupportedNonDefaultRuntimeField,
+    file_size_limit: unsupportedNonDefaultRuntimeField,
     image_transformation: {
       enabled: unsupportedRuntimeField,
     } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["image_transformation"]>, Node>,
@@ -554,8 +561,8 @@ const localStackConfigParity = {
     } satisfies Record<keyof ProjectConfig["storage"]["analytics"], Node>,
     vector: {
       enabled: unsupportedEnabledProviderField,
-      max_buckets: unsupportedEnabledProviderField,
-      max_indexes: unsupportedEnabledProviderField,
+      max_buckets: hostedConfigurationField,
+      max_indexes: hostedConfigurationField,
       buckets: {
         "*": {
           decision: unsupportedEnabledProviderField,

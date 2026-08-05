@@ -18,8 +18,8 @@ describe("localStackConfigParity", () => {
       ),
     ).toEqual({
       mapped: 11,
-      "not-applicable": 10,
-      "unsupported-blocking": 346,
+      "not-applicable": 12,
+      "unsupported-blocking": 344,
       "unsupported-warning": 6,
     });
   });
@@ -104,6 +104,8 @@ describe("localStackConfigParity", () => {
       "experimental.pgdelta.format_options",
       "project_id",
       "remotes",
+      "storage.vector.max_buckets",
+      "storage.vector.max_indexes",
     ]);
   });
 });
