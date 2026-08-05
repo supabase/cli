@@ -524,6 +524,8 @@ export class Orchestrator extends Context.Service<
             while (shouldRestart(result) && (maxRestarts === 0 || restartCount < maxRestarts)) {
               restartCount++;
 
+              yield* sendEvent(def.name, { _tag: "RestartTriggered", restartCount });
+
               // The previous process scope has closed, so external resources can
               // be reserved safely for the duration of this restart's backoff.
               yield* prepareStart();
@@ -535,8 +537,6 @@ export class Orchestrator extends Context.Service<
                   `[restart] Service "${def.name}" is restarting after an unhealthy health check (no recent log output).`,
                 );
               }
-
-              yield* sendEvent(def.name, { _tag: "RestartTriggered", restartCount });
 
               // Exponential-ish backoff: min(30s, 2^(n-1) seconds)
               const backoffSeconds = Math.min(30, Math.pow(2, restartCount - 1));

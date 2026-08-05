@@ -69,6 +69,15 @@ describe("ServiceTransition", () => {
       expect(result?.error).toBe("pre-start failed");
     });
 
+    it("Restarting + SpawnFailed → Failed with error", () => {
+      const result = applyEvent(make("db", { status: "Restarting" }), {
+        _tag: "SpawnFailed",
+        error: "restart preparation failed",
+      });
+      expect(result?.status).toBe("Failed");
+      expect(result?.error).toBe("restart preparation failed");
+    });
+
     it("Running + HealthCheckPassed → Healthy", () => {
       const state = make("db", { status: "Running", pid: 1234 });
       const next = applyEvent(state, { _tag: "HealthCheckPassed" });

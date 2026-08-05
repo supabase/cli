@@ -52,6 +52,7 @@ const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
   "Failed:RestartTriggered",
   "Unhealthy:RestartTriggered",
   "Restarting:StopRequested",
+  "Restarting:SpawnFailed",
   "Restarting:BackoffElapsed",
   "Running:HookFailed",
   "Healthy:HookFailed",

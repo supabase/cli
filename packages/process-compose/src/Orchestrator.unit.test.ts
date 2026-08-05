@@ -1675,6 +1675,57 @@ describe("Orchestrator", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
+    it.live("fails readiness when unhealthy restart preparation fails", () => {
+      let checkCalls = 0;
+      let prepareCalls = 0;
+      const { layer } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.05,
+              successThreshold: 1,
+              failureThreshold: 2,
+            },
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: {
+            check: {
+              exitDelay: "1 millis",
+              getExitCode: () => {
+                checkCalls++;
+                return checkCalls <= 1 ? 0 : 1;
+              },
+            },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start({
+          beforeStart: () =>
+            Effect.suspend(() => {
+              prepareCalls++;
+              return prepareCalls === 1
+                ? Effect.void
+                : Effect.fail(new Error("port reservation failed"));
+            }),
+        });
+
+        yield* waitForState(orc, "a", (state) => state.status === "Failed", "Failed");
+        const error = yield* orc.waitReady("a").pipe(Effect.flip);
+        expect(error._tag).toBe("ServiceReadyError");
+        if (error._tag === "ServiceReadyError") {
+          expect(error.reason).toContain("port reservation failed");
+        }
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
     it.live("does not restart unhealthy service when restart policy is no", () => {
       let checkCalls = 0;
       const { layer, proc } = setupOrchestrator(
