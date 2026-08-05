@@ -30,22 +30,27 @@ export function hasExplicitLongFlag(
 
 /**
  * Raw value of `--<flagName>`/`--<flagName>=value` anywhere in argv
- * (unscoped — no command-path anchoring), or `undefined` if absent. Not
- * exported — every current call site needs Go's `len(value) > 0` gate too
- * (see {@link explicitNonEmptyStringFlag}); re-export this directly if a
- * future caller genuinely needs presence-only semantics.
+ * (unscoped — no command-path anchoring), or `undefined` if absent.
+ * pflag string flags are shared-variable, last-`Set()`-wins (same rule
+ * {@link explicitBooleanLongFlag} and `legacyPflagStringValue` already
+ * follow) — a repeated `--<flagName> old --<flagName> new` must resolve to
+ * `new`, so this keeps scanning after a match instead of returning early
+ * (review round on CLI-1963's `functions download` port). Not exported —
+ * every current call site needs Go's `len(value) > 0` gate too (see
+ * {@link explicitNonEmptyStringFlag}); re-export this directly if a future
+ * caller genuinely needs presence-only semantics.
  */
 function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+  let result: string | undefined;
   for (let index = 0; index < rawArgs.length; index += 1) {
     const token = rawArgs[index];
     if (token === `--${flagName}`) {
-      return rawArgs[index + 1];
-    }
-    if (token?.startsWith(`--${flagName}=`)) {
-      return token.slice(flagName.length + 3);
+      result = rawArgs[index + 1];
+    } else if (token?.startsWith(`--${flagName}=`)) {
+      result = token.slice(flagName.length + 3);
     }
   }
-  return undefined;
+  return result;
 }
 
 /**

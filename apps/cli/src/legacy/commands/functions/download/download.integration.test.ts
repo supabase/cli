@@ -806,6 +806,94 @@ describe("legacy functions download", () => {
     },
   );
 
+  it.live("honors the final occurrence of a repeated --network-id flag", () => {
+    // pflag/viper string flags are shared-variable, last-`Set()`-wins
+    // (confirmed empirically: `pflag.FlagSet.Parse` on
+    // `--network-id old --network-id custom-network` resolves to
+    // `custom-network`) — `explicitStringFlag` must keep scanning past the
+    // first match instead of returning early (review round on CLI-1963's
+    // `functions download` port).
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+          "--network-id",
+          "old-network",
+          "--network-id",
+          "custom-network",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      expect(runCommand?.args).toContain("custom-network");
+      expect(runCommand?.args).not.toContain("old-network");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "falls back to the generated network name when the final --network-id occurrence is empty",
+    () => {
+      // Same last-wins rule as above, applied to Go's `len(networkId) > 0`
+      // gate: a non-empty default followed by an explicit-but-empty override
+      // must fall through to the generated network name, not the earlier
+      // non-empty value.
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const proxy = mockProxy();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+            "--network-id",
+            "custom-network",
+            "--network-id=",
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).not.toContain("custom-network");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live(
     "does not climb to an ancestor project's config.toml for the Docker download path",
     () => {
@@ -1506,6 +1594,59 @@ describe("legacy functions download", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(proxy.calls).toEqual([]);
       expect(proxy.captureCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails loudly instead of silently dropping a malformed function-list entry", () => {
+    // Go: `FunctionResponse.Slug` (`pkg/api/types.gen.go:6465`) is a
+    // required, non-pointer `string` — a list entry with no "slug" key
+    // decodes to the zero value "" and then fails `ValidateFunctionSlug`
+    // in `downloadAll` (`download.go:182-188`), rather than being dropped
+    // from the list. A malicious/compromised API response returning
+    // `[{}]` must surface an error here too, never "No functions found."
+    // nor a silent partial download (review round on CLI-1963's
+    // `functions download` port).
+    const out = mockOutput({ format: "json" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        request.url.endsWith("/functions")
+          ? Effect.succeed(legacyJsonResponse(request, 200, [{}]))
+          : Effect.succeed(legacyJsonResponse(request, 200, {})),
+    });
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+          "--output-format",
+          "json",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyFunctionsDownload({
+        ...baseFlags,
+        functionName: Option.none(),
+        useDocker: true,
+      }).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(proxy.calls).toEqual([]);
+      expect(out.messages).not.toContainEqual(
+        expect.objectContaining({ type: "success", message: "No functions found." }),
+      );
     }).pipe(Effect.provide(layer));
   });
 
