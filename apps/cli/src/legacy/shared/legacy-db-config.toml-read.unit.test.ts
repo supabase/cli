@@ -294,6 +294,24 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect(
+    "weakly coerces non-string db.seed.sql_paths array elements (Go mapstructure parity)",
+    () => {
+      // Same `config.Glob` decode path as schema_paths below — a bool/number element
+      // is coerced to its Go string form ("1"/"0" for bool, decimal for a number),
+      // not dropped.
+      const dir = withConfig(["[db.seed]", 'sql_paths = [42, true, "seed.sql"]', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.sqlPaths).toEqual(["supabase/42", "supabase/1", "supabase/seed.sql"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
     () => {
       const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
@@ -331,19 +349,28 @@ describe("legacyReadDbToml", () => {
     },
   );
 
-  it.effect("filters non-string db.migrations.schema_paths array elements", () => {
-    const dir = withConfig(
-      ["[db.migrations]", 'schema_paths = [42, "schemas/*.sql"]', ""].join("\n"),
-    );
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.schemaPaths).toEqual(["supabase/schemas/*.sql"]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect(
+    "weakly coerces non-string db.migrations.schema_paths array elements (Go mapstructure parity)",
+    () => {
+      // Go's `v.UnmarshalExact` never sets `WeaklyTypedInput: false`, so viper's
+      // `defaultDecoderConfig` default of `true` stands — mapstructure's `decodeString`
+      // coerces a bool to "1"/"0" and a number to its decimal string rather than
+      // erroring or dropping the element. Verified empirically against `apps/cli-go`:
+      // `schema_paths = [42, true, "schemas/*.sql"]` resolves to
+      // `supabase/{42,1,schemas/*.sql}`, not a filtered two-element list.
+      const dir = withConfig(
+        ["[db.migrations]", 'schema_paths = [42, true, "schemas/*.sql"]', ""].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/42", "supabase/1", "supabase/schemas/*.sql"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect(
     "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",

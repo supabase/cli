@@ -1851,6 +1851,26 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const expanded = legacyExpandEnv(value, lookup);
     return expanded.length === 0 ? [] : expanded.split(",");
   };
+  // Go decodes both `[db.seed].sql_paths` and `[db.migrations].schema_paths` as
+  // `config.Glob` (`[]string`) through the SAME mapstructure `UnmarshalExact` call
+  // (`config.go:749-756`), whose decoder config never sets `WeaklyTypedInput: false`
+  // — viper's `defaultDecoderConfig` defaults it to `true` and nothing here overrides
+  // it. So a non-string array element isn't dropped: `decodeString`
+  // (`github.com/go-viper/mapstructure/v2@v2.5.0/mapstructure.go:729-780`) weakly
+  // converts a bool to `"1"`/`"0"` and a number to its decimal string, THEN the
+  // result flows through the same env-expand/resolve pipeline as a real string
+  // entry. Verified empirically against `apps/cli-go` (`schema_paths = [42]` resolves
+  // to `supabase/42`, `schema_paths = [true]` to `supabase/1`). A non-scalar element
+  // (nested array/table) is mapstructure's `UnconvertibleTypeError`, which aborts the
+  // ENTIRE config load with `failed to parse config: ...` rather than dropping just
+  // that element — out of scope for a path list nobody nests a table inside, so it is
+  // filtered out like before rather than replicating mapstructure's decode-error text.
+  const legacyWeakCoerceGlobEntry = (value: unknown): string | undefined => {
+    if (typeof value === "string") return value;
+    if (typeof value === "boolean") return value ? "1" : "0";
+    if (typeof value === "number") return String(value);
+    return undefined;
+  };
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathsOverride = remoteOverrideKeys.has("db.seed.sql_paths")
     ? undefined
@@ -1860,7 +1880,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       ? splitGoSeedPaths(sqlPathsOverride)
       : Array.isArray(rawSqlPaths)
         ? rawSqlPaths
-            .filter((pattern): pattern is string => typeof pattern === "string")
+            .map((pattern) => legacyWeakCoerceGlobEntry(pattern))
+            .filter((pattern): pattern is string => pattern !== undefined)
             .map((pattern) => legacyExpandEnv(pattern, lookup))
         : typeof rawSqlPaths === "string"
           ? splitGoSeedPaths(rawSqlPaths)
@@ -1883,7 +1904,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       ? splitGoSeedPaths(schemaPathsOverride)
       : Array.isArray(rawSchemaPaths)
         ? rawSchemaPaths
-            .filter((pattern): pattern is string => typeof pattern === "string")
+            .map((pattern) => legacyWeakCoerceGlobEntry(pattern))
+            .filter((pattern): pattern is string => pattern !== undefined)
             .map((pattern) => legacyExpandEnv(pattern, lookup))
         : typeof rawSchemaPaths === "string"
           ? splitGoSeedPaths(rawSchemaPaths)
