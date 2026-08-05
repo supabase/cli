@@ -33,7 +33,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
-import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
 import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyGetPendingSeeds, legacySeedData } from "../../../shared/legacy-seed-ops.ts";
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";

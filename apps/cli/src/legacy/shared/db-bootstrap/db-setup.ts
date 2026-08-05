@@ -90,9 +90,9 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { legacyTryCacheMigrationsCatalog } from "../../commands/db/shared/legacy-pgdelta.cache.ts";
-import type { LegacyPgDeltaContext } from "../../commands/db/shared/legacy-pgdelta.ts";
-import { legacyParseBoolEnv } from "../../commands/db/shared/legacy-diff-engine.ts";
+import { legacyTryCacheMigrationsCatalog } from "../legacy-pgdelta.cache.ts";
+import type { LegacyPgDeltaContext } from "../legacy-pgdelta.ts";
+import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
 import { redactLegacyConnectionString } from "../legacy-db-config.parse.ts";

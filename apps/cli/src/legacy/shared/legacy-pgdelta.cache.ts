@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
-import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "./legacy-pgdelta.ts";
 
 /**
