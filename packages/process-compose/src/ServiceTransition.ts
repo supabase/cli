@@ -56,7 +56,7 @@ const transitions: TransitionTable = {
   ]),
   RestartTriggered: new Set(["Stopped", "Failed", "Unhealthy"]),
   BackoffElapsed: new Set(["Restarting"]),
-  HookFailed: new Set(["Starting", "Running", "Healthy"]),
+  HookFailed: new Set(["Starting", "Running", "Healthy", "Unhealthy"]),
 };
 
 // ---------------------------------------------------------------------------
