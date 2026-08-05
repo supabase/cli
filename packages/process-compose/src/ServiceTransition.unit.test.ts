@@ -432,6 +432,15 @@ describe("ServiceTransition", () => {
       expect(next!.error).toBe("seed failed");
     });
 
+    it("Unhealthy + HookFailed → Failed with error", () => {
+      const state = make("db", { status: "Unhealthy", pid: 1234, startedAt: 1000 });
+      const next = applyEvent(state, { _tag: "HookFailed", error: "recovery failed" });
+      expect(next).not.toBeNull();
+      expect(next!.status).toBe("Failed");
+      expect(next!.error).toBe("recovery failed");
+      expect(next!.pid).toBeNull();
+    });
+
     it("Starting + HookFailed → Failed with error", () => {
       const state = make("db", { status: "Starting" });
       const next = applyEvent(state, { _tag: "HookFailed", error: "startup failed" });
