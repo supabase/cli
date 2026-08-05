@@ -67,13 +67,21 @@ export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
     }
     const role = flags.role.value;
 
-    const nowSeconds = Math.floor(Date.now() / 1000);
+    // Built directly from `Date.now()`'s integer milliseconds, NOT floored to whole
+    // seconds — see `LegacyBearerJwtClaimsInput.nowInstant`'s own doc comment for why
+    // pre-flooring here would shorten a sub-second `--valid-for`'s effective lifetime
+    // (CLI-1961 Codex review finding).
+    const nowMs = Date.now();
+    const nowInstant = {
+      wholeSeconds: Math.floor(nowMs / 1000),
+      nanos: (nowMs % 1000) * 1_000_000,
+    };
     const baseClaims = legacyBuildBearerJwtClaims({
       role,
       sub: flags.sub,
       expiresAt: flags.exp,
       validForSeconds: flags.validFor,
-      nowSeconds,
+      nowInstant,
     });
     const claims = yield* Effect.try({
       try: () => legacyMergeBearerJwtPayload(baseClaims, flags.payload),

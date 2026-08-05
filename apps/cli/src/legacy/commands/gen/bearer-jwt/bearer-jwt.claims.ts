@@ -1,6 +1,7 @@
 import { Option } from "effect";
 import { encodeGoStructJsonBody } from "../../../shared/legacy-go-output.encoders.ts";
 import { legacyGoJsonKindName } from "../../../shared/legacy-go-json.ts";
+import { legacyAddSecondsAndFloor, type LegacyBearerJwtInstant } from "./bearer-jwt.flags.ts";
 
 /**
  * Pure claims-building logic for `gen bearer-jwt`, ported from Go's `parseClaims`
@@ -21,20 +22,32 @@ export interface LegacyBearerJwtClaimsInput {
   readonly role: string;
   readonly sub: Option.Option<string>;
   /**
-   * Unix seconds from `--exp` (RFC3339), WITHOUT flooring — `Option.none()` when the
-   * flag was not given. May carry a sub-second fraction; see
-   * {@link legacyParseBearerJwtExp}'s own doc comment for why that fraction must
-   * survive until the final `exp`/`iat` computation below.
+   * The parsed `--exp` instant (RFC3339), WITHOUT flooring — `Option.none()` when the
+   * flag was not given. An exact {@link LegacyBearerJwtInstant}, not a single float —
+   * see that type's own doc comment for why a single `number` cannot carry an
+   * epoch-scale whole-second count and nanosecond precision together without silent
+   * rounding (CLI-1961 Codex review finding).
    */
-  readonly expiresAt: Option.Option<number>;
+  readonly expiresAt: Option.Option<LegacyBearerJwtInstant>;
   /**
    * `--valid-for`, parsed from Go-duration syntax into seconds WITHOUT flooring —
    * see {@link legacyParseBearerJwtValidFor}'s own doc comment for why sub-second
    * precision must survive until the final `exp`/`iat` computation below.
    */
   readonly validForSeconds: number;
-  /** `Date.now()`-derived Unix seconds, injected so callers (and tests) control "now". */
-  readonly nowSeconds: number;
+  /**
+   * `Date.now()`-derived instant, injected so callers (and tests) control "now" — an
+   * exact {@link LegacyBearerJwtInstant} built directly from `Date.now()`'s integer
+   * milliseconds (see `bearer-jwt.handler.ts`), NOT pre-floored to whole seconds.
+   * Flooring it before this module ever sees it would compute `exp = now + validFor`
+   * from an already-truncated `now`, shortening the token's lifetime by up to a second
+   * whenever `--valid-for` has a sub-second component (CLI-1961 Codex review finding:
+   * a run at `HH:MM:SS.900` with `--valid-for 200ms` must land in the NEXT second,
+   * matching Go's `now.Add(validFor)` on the raw fractional time followed by truncating
+   * `iat`/`exp` separately — verified against the real binary via `golang-jwt/jwt/v5`'s
+   * `NewNumericDate`/`time.Time.Add`).
+   */
+  readonly nowInstant: LegacyBearerJwtInstant;
 }
 
 /**
@@ -50,15 +63,16 @@ export interface LegacyBearerJwtClaimsInput {
  *     the real binary (CLI-1961): `--exp 2030-01-01T00:00:00Z --valid-for 1.5s` yields
  *     `iat=1893455998` — flooring the 1.5s duration to 1s first (as this port previously
  *     did) would wrongly yield `1893455999`.
- *   - `expiresAt` itself may ALSO carry a sub-second fraction (see
- *     {@link legacyParseBearerJwtExp}'s own doc comment for why `--exp`'s fraction
- *     survives parsing) — the same "floor only the final result" rule applies to it:
- *     `iat` is computed from the UNFLOORED `expiresAt` minus `validForSeconds`, and
- *     `exp` is floored separately from that same unfloored value, rather than flooring
- *     `expiresAt` up front and losing its fraction before either computation runs.
- *     Verified against the real binary (CLI-1961): `--exp 2030-01-01T00:00:00.9Z
- *     --valid-for 1.2s` yields `iat=1893455999`, not the `1893455998` that flooring
- *     `expiresAt` before the subtraction would produce.
+ *   - `expiresAt`/`nowInstant` are exact {@link LegacyBearerJwtInstant}s, not floats (see
+ *     that type's own doc comment) — `legacyAddSecondsAndFloor` combines an instant with
+ *     `validForSeconds` using exact integer nanosecond arithmetic and returns the
+ *     correctly-floored whole-second result in one step, so neither branch below ever
+ *     adds an epoch-scale whole-second count directly to a sub-second float (the CLI-1961
+ *     Codex review finding that plain float addition can do: `--exp
+ *     2030-01-01T00:00:00.999999999Z` must floor to `1893456000`, not round UP to
+ *     `1893456001`). Verified against the real binary (CLI-1961): `--exp
+ *     2030-01-01T00:00:00.9Z --valid-for 1.2s` yields `iat=1893455999`, not the
+ *     `1893455998` that flooring `expiresAt` before the subtraction would produce.
  *   - `role` is ALWAYS present (`json:"role"`, no `omitempty`), even `--role ""`.
  *   - `is_anonymous` is set only when `role` case-insensitively equals `"authenticated"`
  *     AND `--sub` was not given (`strings.EqualFold` + `len(claims.Subject) == 0`) — an
@@ -79,12 +93,12 @@ export function legacyBuildBearerJwtClaims(
   let exp: number;
   let iat: number;
   if (Option.isNone(input.expiresAt)) {
-    iat = input.nowSeconds;
-    exp = Math.floor(iat + input.validForSeconds);
+    iat = input.nowInstant.wholeSeconds;
+    exp = legacyAddSecondsAndFloor(input.nowInstant, input.validForSeconds);
   } else {
     const rawExp = input.expiresAt.value;
-    exp = Math.floor(rawExp);
-    iat = Math.floor(rawExp - input.validForSeconds);
+    exp = rawExp.wholeSeconds;
+    iat = legacyAddSecondsAndFloor(rawExp, -input.validForSeconds);
   }
 
   const claims: Record<string, unknown> = {

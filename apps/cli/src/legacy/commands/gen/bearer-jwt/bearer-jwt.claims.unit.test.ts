@@ -7,6 +7,7 @@ import {
 } from "./bearer-jwt.claims.ts";
 
 const NOW = 1_700_000_000;
+const NOW_INSTANT = { wholeSeconds: NOW, nanos: 0 };
 
 describe("legacyBuildBearerJwtClaims", () => {
   it("always includes role, even an empty string, with no omitempty", () => {
@@ -15,7 +16,7 @@ describe("legacyBuildBearerJwtClaims", () => {
       sub: Option.none(),
       expiresAt: Option.none(),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["role"]).toBe("");
   });
@@ -26,7 +27,7 @@ describe("legacyBuildBearerJwtClaims", () => {
       sub: Option.none(),
       expiresAt: Option.none(),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["iat"]).toBe(NOW);
     expect(claims["exp"]).toBe(NOW + 1800);
@@ -36,9 +37,9 @@ describe("legacyBuildBearerJwtClaims", () => {
     const claims = legacyBuildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
-      expiresAt: Option.some(2_000_000_000),
+      expiresAt: Option.some({ wholeSeconds: 2_000_000_000, nanos: 0 }),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["exp"]).toBe(2_000_000_000);
     expect(claims["iat"]).toBe(2_000_000_000 - 1800);
@@ -51,9 +52,9 @@ describe("legacyBuildBearerJwtClaims", () => {
     const claims = legacyBuildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
-      expiresAt: Option.some(1_893_456_000),
+      expiresAt: Option.some({ wholeSeconds: 1_893_456_000, nanos: 0 }),
       validForSeconds: 1.5,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["exp"]).toBe(1_893_456_000);
     expect(claims["iat"]).toBe(1_893_455_998);
@@ -66,12 +67,46 @@ describe("legacyBuildBearerJwtClaims", () => {
     const claims = legacyBuildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
-      expiresAt: Option.some(1_893_456_000.9),
+      expiresAt: Option.some({ wholeSeconds: 1_893_456_000, nanos: 900_000_000 }),
       validForSeconds: 1.2,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["exp"]).toBe(1_893_456_000);
     expect(claims["iat"]).toBe(1_893_455_999);
+  });
+
+  it("floors exp down (never rounds up) for a near-second nanosecond --exp fraction (CLI-1961 Codex review finding)", () => {
+    // Verified against the Go standard library + `golang-jwt/jwt/v5`'s
+    // `NewNumericDate`: `--exp 2030-01-01T00:00:00.999999999Z` yields Go `exp=1893456000`
+    // — a naive float addition of `wholeSeconds + 0.999999999` (this port's previous
+    // behavior) rounds UP to the exact integer `1893456001` in plain JS arithmetic.
+    const claims = legacyBuildBearerJwtClaims({
+      role: "anon",
+      sub: Option.none(),
+      expiresAt: Option.some({ wholeSeconds: 1_893_456_000, nanos: 999_999_999 }),
+      validForSeconds: 1800,
+      nowInstant: NOW_INSTANT,
+    });
+    expect(claims["exp"]).toBe(1_893_456_000);
+  });
+
+  it("adds a sub-second --valid-for to the unfloored current time when --exp is omitted (CLI-1961 Codex review finding)", () => {
+    // Verified against the real binary via `golang-jwt/jwt/v5`'s `NewNumericDate` +
+    // `time.Time.Add`: Go computes `exp = now.Add(validFor)` on the RAW fractional
+    // `now`, then truncates `iat`/`exp` separately — a run at `X.900` with
+    // `--valid-for 200ms` must land in the NEXT second (`exp = X + 1`), not stay in the
+    // current one. Computing `exp` from an already-floored `iat` (this port's previous
+    // behavior) would wrongly keep `exp = X`, shortening the token's lifetime to
+    // effectively zero.
+    const claims = legacyBuildBearerJwtClaims({
+      role: "anon",
+      sub: Option.none(),
+      expiresAt: Option.none(),
+      validForSeconds: 0.2,
+      nowInstant: { wholeSeconds: NOW, nanos: 900_000_000 },
+    });
+    expect(claims["iat"]).toBe(NOW);
+    expect(claims["exp"]).toBe(NOW + 1);
   });
 
   it("sets is_anonymous when --sub is explicitly passed as an empty string (CLI-1961)", () => {
@@ -82,7 +117,7 @@ describe("legacyBuildBearerJwtClaims", () => {
       sub: Option.some(""),
       expiresAt: Option.none(),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["is_anonymous"]).toBe(true);
     expect("sub" in claims).toBe(false);
@@ -94,7 +129,7 @@ describe("legacyBuildBearerJwtClaims", () => {
       sub: Option.none(),
       expiresAt: Option.none(),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["is_anonymous"]).toBe(true);
     // Role keeps its original casing.
@@ -107,7 +142,7 @@ describe("legacyBuildBearerJwtClaims", () => {
       sub: Option.some("user-1"),
       expiresAt: Option.none(),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["is_anonymous"]).toBeUndefined();
     expect(claims["sub"]).toBe("user-1");
@@ -119,7 +154,7 @@ describe("legacyBuildBearerJwtClaims", () => {
       sub: Option.none(),
       expiresAt: Option.none(),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect(claims["is_anonymous"]).toBeUndefined();
   });
@@ -130,7 +165,7 @@ describe("legacyBuildBearerJwtClaims", () => {
       sub: Option.none(),
       expiresAt: Option.none(),
       validForSeconds: 1800,
-      nowSeconds: NOW,
+      nowInstant: NOW_INSTANT,
     });
     expect("sub" in claims).toBe(false);
   });

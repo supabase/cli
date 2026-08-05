@@ -203,7 +203,10 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live("computes exp from an explicit --exp, with iat = exp - validFor", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyGenBearerJwt({ ...baseFlags, exp: Option.some(2_000_000_000) });
+      yield* legacyGenBearerJwt({
+        ...baseFlags,
+        exp: Option.some({ wholeSeconds: 2_000_000_000, nanos: 0 }),
+      });
       const [, payload] = tokenFrom(out).split(".");
       const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
       expect(claims["exp"]).toBe(2_000_000_000);
@@ -222,7 +225,7 @@ describe("legacy gen bearer-jwt integration", () => {
       return Effect.gen(function* () {
         yield* legacyGenBearerJwt({
           ...baseFlags,
-          exp: Option.some(1_893_456_000),
+          exp: Option.some({ wholeSeconds: 1_893_456_000, nanos: 0 }),
           validFor: 1.5,
         });
         const [, payload] = tokenFrom(out).split(".");
@@ -704,6 +707,36 @@ describe("legacy gen bearer-jwt integration", () => {
           expect(json).toContain(
             "failed to decode signing keys: failed to parse response body: must be one of [RS256 ES256]",
           );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: rejects a nested array entry in signing_keys_path instead of partially accepting a later valid key (CLI-1961 Codex review finding)",
+    () => {
+      // Go decodes `signing_keys_path` straight into `[]config.JWK`
+      // (`fetcher.ParseJSON[[]JWK]`) — an array-shaped element can never unmarshal into
+      // the `config.JWK` struct, so the WHOLE decode fails, verified directly against
+      // `encoding/json`: `json.Unmarshal([]byte('[[], {"kty":"EC","kid":"k2"}]'),
+      // &[]JWK{})` returns `"json: cannot unmarshal array into Go value of type
+      // config.JWK"`. Before this fix, `isRecord`'s `typeof value === "object"` check
+      // also matched arrays (arrays are `typeof "object"` in JS), so `[]` passed as a
+      // "record" and a later valid key (`k2`) could still be selected and signed.
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        const validKey = generateEcJwk("k2");
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([[], validKey])));
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtDecodeError");
+          expect(json).toContain("failed to decode signing keys: expected a JSON array of objects");
         }
       }).pipe(Effect.provide(layer));
     },

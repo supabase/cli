@@ -36,8 +36,18 @@ interface LegacyGenSigningKeysConfigPaths {
   }>;
 }
 
+/**
+ * `typeof value === "object"` is also `true` for a JSON array — without excluding
+ * `Array.isArray(value)`, a `signing_keys_path` entry shaped like `[]` (or any nested
+ * array) would pass this check and be accepted as a JWK-shaped record. Go's own decode
+ * (`fetcher.ParseJSON[[]JWK]`, straight into `[]config.JWK`) genuinely rejects an
+ * array-shaped element with `"json: cannot unmarshal array into Go value of type
+ * config.JWK"` — verified directly against `encoding/json` (CLI-1961 Codex review
+ * finding): `[[], {"kty":"EC","kid":"k2"}]` fails Go's decode outright, it does not
+ * partially accept `k2` the way this check would without the array exclusion.
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
