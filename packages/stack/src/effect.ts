@@ -27,8 +27,7 @@ export {
 export type { BinarySpec } from "./BinaryResolver.ts";
 export { BinaryResolver } from "./BinaryResolver.ts";
 
-export type { ServiceResolution } from "./resolve.ts";
-export { resolveService } from "./resolve.ts";
+export type { ServiceResolution } from "./StackPreparation.ts";
 
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export { prefetch } from "./prefetch.ts";
@@ -84,11 +83,14 @@ export type {
   ResolvedStorageConfig,
   ResolvedStudioConfig,
   ResolvedVectorConfig,
+  ReadinessPolicy,
+  ReadyOptions,
   StackConfig,
   StorageConfig,
   StudioConfig,
   VectorConfig,
-} from "./StackBuilder.ts";
+} from "./StackConfig.ts";
+export { DEFAULT_STACK_READINESS_POLICY, resolveReadinessPolicy } from "./StackConfig.ts";
 export { StackBuilder } from "./StackBuilder.ts";
 
 export type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
@@ -164,18 +166,16 @@ export type {
   PlatformFactoryOptions,
   PlatformLayer,
   PlatformServices,
-  ReadyOptions,
   StackHandle,
 } from "./createStack.ts";
+export { createStack, projectDaemonLayer } from "./createStack.ts";
+export type { ResolvedDaemonConfig } from "./StackConfig.ts";
 export {
-  createStack,
   defaultManagedStackName,
-  projectDaemonLayer,
   resolveConfig,
   resolveDaemonConfig,
-} from "./createStack.ts";
+} from "./StackConfigResolver.ts";
 
-export type { DaemonConfig } from "./layers.ts";
 export { connectLayer, DaemonStartError, daemonLayer, foregroundLayer } from "./layers.ts";
 export type { ManagedStack } from "./managed-stack.ts";
 export { resolveManagedStack } from "./managed-stack.ts";

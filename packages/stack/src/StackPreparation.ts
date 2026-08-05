@@ -3,8 +3,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ChecksumMismatchError } from "./errors.ts";
 import { DockerPullError } from "./errors.ts";
-import type { ServiceResolution } from "./resolve.ts";
-import { isDockerOnlyService } from "./ServiceArtifacts.ts";
+import { isDockerOnlyService } from "./ServiceCatalog.ts";
 import {
   DEFAULT_VERSIONS,
   SERVICE_NAMES,
@@ -16,6 +15,10 @@ import {
 export interface PreparedStackArtifacts {
   readonly resolutions: Partial<Record<ServiceName, ServiceResolution>>;
 }
+
+export type ServiceResolution =
+  | { readonly type: "binary"; readonly path: string }
+  | { readonly type: "docker"; readonly image: string };
 
 export interface StackPreparationInput {
   readonly versions?: Partial<VersionManifest>;
@@ -133,9 +136,11 @@ export const prepareAssetsWithDependencies = (
       concurrency: "unbounded",
     });
 
-    const artifacts = {
-      resolutions: Object.fromEntries(results) as PreparedStackArtifacts["resolutions"],
-    } satisfies PreparedStackArtifacts;
+    const resolutions: Partial<Record<ServiceName, ServiceResolution>> = {};
+    for (const [service, resolution] of results) {
+      resolutions[service] = resolution;
+    }
+    const artifacts = { resolutions } satisfies PreparedStackArtifacts;
     yield* publishEvent?.(new PreparationCompleted({ artifacts })) ?? Effect.void;
     return artifacts;
   });

@@ -34,8 +34,8 @@ import {
   StackBuilder,
   validateResolvedConfig,
   versionsForConfig,
-  type ResolvedStackConfig,
 } from "./StackBuilder.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
 import { changedProjectedStates, projectStackStates } from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";

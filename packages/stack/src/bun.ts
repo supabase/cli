@@ -16,7 +16,7 @@ import {
 } from "./prefetch.ts";
 import { defaultCacheRoot } from "./paths.ts";
 import { StackPreparation } from "./StackPreparation.ts";
-import type { StackConfig } from "./StackBuilder.ts";
+import type { StackConfig } from "./StackConfig.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
 interface BunUnixRequestInit extends RequestInit {

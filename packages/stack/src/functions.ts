@@ -8,7 +8,7 @@ import {
   type ResolvedFunctionConfig,
 } from "@supabase/config";
 import { Effect, FileSystem, Path, Redacted } from "effect";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
 
 export interface FunctionsConfig {
   readonly envFile?: string;

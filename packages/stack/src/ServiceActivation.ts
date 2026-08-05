@@ -2,40 +2,11 @@ import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { ServiceReadyError } from "@supabase/process-compose";
 import { Context, Effect, Layer } from "effect";
 import { StackBuildError, StackNotRunningError } from "./errors.ts";
-import type { ServiceName } from "./versions.ts";
-
-export interface ServiceActivationPolicy {
-  /** Whether the public service must already be running when lazy startup completes. */
-  readonly startup: "eager" | "lazy";
-  /** Other public services required when this service is activated. */
-  readonly activates?: ReadonlyArray<ServiceName>;
-  /** Private companions whose lifecycle is exclusively owned by this service. */
-  readonly owns?: ReadonlyArray<ServiceName>;
-}
-
-/**
- * Central ownership map for lazy startup. Services with a direct TCP or HTTP
- * endpoint must be running before that endpoint is published. Companion
- * services are activated with the public service that consumes them.
- */
-export const SERVICE_ACTIVATION_POLICY: Readonly<Record<ServiceName, ServiceActivationPolicy>> = {
-  postgres: { startup: "eager" },
-  postgrest: { startup: "lazy" },
-  auth: { startup: "lazy" },
-  "edge-runtime": { startup: "lazy" },
-  realtime: { startup: "eager" },
-  storage: { startup: "lazy", activates: ["imgproxy"], owns: ["imgproxy"] },
-  imgproxy: { startup: "lazy" },
-  mailpit: { startup: "eager" },
-  pgmeta: { startup: "lazy" },
-  studio: { startup: "eager", activates: ["analytics"] },
-  analytics: { startup: "lazy", activates: ["vector"], owns: ["vector"] },
-  vector: { startup: "lazy" },
-  pooler: { startup: "eager" },
-};
+import { serviceMetadata } from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
 export const eagerServices = (enabled: ReadonlyArray<ServiceName>): ReadonlyArray<ServiceName> =>
-  enabled.filter((service) => SERVICE_ACTIVATION_POLICY[service].startup === "eager");
+  enabled.filter((service) => serviceMetadata(service).activation.startup === "eager");
 
 export const activationTargetsForService = (
   enabledServices: ReadonlyArray<ServiceName>,
@@ -45,7 +16,7 @@ export const activationTargetsForService = (
   const targets = new Set<ServiceName>();
   const addWithCompanions = (target: ServiceName): void => {
     if (!enabled.has(target) || targets.has(target)) return;
-    for (const activated of SERVICE_ACTIVATION_POLICY[target].activates ?? []) {
+    for (const activated of serviceMetadata(target).activation.activates) {
       addWithCompanions(activated);
     }
     targets.add(target);
@@ -68,7 +39,7 @@ export const lifecycleTargetsForService = (
 
   const addWithOwnedCompanions = (target: ServiceName): void => {
     add(target);
-    for (const owned of SERVICE_ACTIVATION_POLICY[target].owns ?? []) {
+    for (const owned of serviceMetadata(target).activation.owns) {
       addWithOwnedCompanions(owned);
     }
   };
