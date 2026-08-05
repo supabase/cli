@@ -871,6 +871,26 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
     search: dependencies.goViperCompat ? false : undefined,
     tomlOnly: dependencies.goViperCompat,
   });
+  // A project with no `supabase/config.toml`/`config.json` makes
+  // `loadProjectConfig` return `null` outright, so `denoVersion` below falls
+  // through to `undefined` and this always resolves the v2 default. Go's
+  // `flags.LoadConfig` never short-circuits like that: `Config.Load` →
+  // `loadFromFile` (`pkg/config/config.go:579-611`) merges the template
+  // defaults and enables `viper.AutomaticEnv()` with `SetEnvPrefix("SUPABASE")`
+  // *before* attempting to read the file — `mergeFileConfig` (`config.go:701-716`)
+  // simply no-ops on `os.ErrNotExist` — so `SUPABASE_EDGE_RUNTIME_DENO_VERSION=1`
+  // (or the same key in `supabase/.env`, via `loadNestedEnv`) still pins the
+  // deno-v1 image even with no config.toml on disk. Pre-existing, not
+  // introduced by this PR: `@supabase/config`'s `loadProjectConfig` has no
+  // equivalent of Go's generic `ExperimentalBindStruct`+`AutomaticEnv` field
+  // binding at all (it only expands literal `env(...)` references already
+  // written inside the TOML), so `deploy.ts`'s identical
+  // `resolveEdgeRuntimeVersion(deployConfig?.edge_runtime.deno_version, ...)`
+  // call has the same gap whether or not config.toml exists. A fix belongs in
+  // the shared config-loading layer every native caller goes through (`gen
+  // types`, `next start`, `functions dev/serve/deploy`, …), not duplicated
+  // per call site here — left open (review round on CLI-1963's `functions
+  // download` port).
   const denoVersion = loadedConfig?.config?.edge_runtime.deno_version;
   const projectId = loadedConfig?.config?.project_id ?? projectRef;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
@@ -985,6 +1005,19 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   // must fall through to the generated network name too, not just an omitted
   // flag — `explicitNonEmptyStringFlag` (unlike the unexported
   // `explicitStringFlag`) treats that case as unset for exactly this reason.
+  //
+  // Go's root `init()` also binds every persistent flag (including
+  // `network-id`) through `viper.BindPFlags` after enabling
+  // `viper.AutomaticEnv()` with `SetEnvPrefix("SUPABASE")` and a `-`→`_`
+  // replacer (`cmd/root.go:316-334`), so `SUPABASE_NETWORK_ID` overrides the
+  // flag's empty default whenever `--network-id` itself is never passed —
+  // this raw-argv-only lookup has no equivalent env-var fallback. Pre-existing,
+  // not introduced by this PR: `start.handler.ts`'s `LegacyNetworkIdFlag` and
+  // `deploy.ts`'s/`serve.ts`'s own network-id resolution don't check
+  // `SUPABASE_NETWORK_ID` either — no native command does today. A fix
+  // belongs in one shared place for the global `--network-id` resolution,
+  // not duplicated per Docker-path call site here — left open (review round
+  // on CLI-1963's `functions download` port).
   const networkMode =
     explicitNonEmptyStringFlag(dependencies.rawArgs, "network-id") ??
     localDockerId("network", projectId);
