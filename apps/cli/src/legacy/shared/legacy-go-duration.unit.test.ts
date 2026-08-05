@@ -87,6 +87,17 @@ describe("legacyParseGoDuration", () => {
     expect(legacyParseGoDuration("1.9ns")).toBe(1);
   });
 
+  // Go converts the fractional remainder through an intermediate float64 multiplication
+  // (`uint64(float64(f) * (float64(unit)/scale))`) BEFORE truncating to `uint64` — not an
+  // exact-precision division. Once the fraction has enough digits to exceed float64's 53-bit
+  // integer precision, rounding the fraction itself up can push the float64 product past the
+  // next integer, so Go's real result rounds UP to a full second here — verified against the
+  // real `time` package (CLI-1961 Codex review finding): an exact BigInt division would instead
+  // truncate DOWN to `999_999_999`.
+  it('rounds a long fractional remainder up like Go\'s float64 conversion ("0.999999999999999999s")', () => {
+    expect(legacyParseGoDuration("0.999999999999999999s")).toBe(1_000_000_000);
+  });
+
   // Go's `time.Duration` is bounded by `math.MaxInt64` nanoseconds
   // (~292.47 years); `time.ParseDuration` rejects any value whose
   // accumulated nanosecond count would exceed it.

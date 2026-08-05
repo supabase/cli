@@ -100,6 +100,40 @@ function isAbsentJwkField(value: unknown): boolean {
 }
 
 /**
+ * Go's `encoding/json` struct-field matching is case-insensitive — the decoder
+ * "match[es] incoming object keys to the keys used by Marshal (either the struct field
+ * name or its tag), preferring an exact match but also accepting a case-insensitive
+ * match" — and `config.JWK` gets NO field-specific exemption from this: verified
+ * directly against the real `config.JWK` struct for every field this file reads
+ * (`kty`, `kid`, `use`, `key_ops`, `alg`, `ext`, `n`, `e`, `d`, `p`, `q`, `dp`, `dq`,
+ * `qi`, `crv`, `x`, `y`), including `alg` despite its extra `encoding.TextUnmarshaler`
+ * hook — `{"KTY":"EC","ALG":"ES256"}` decodes identically to the all-lowercase
+ * spelling. A plain `record[field]` index (JS property access is always exact-case)
+ * would otherwise treat `"KTY"`/`"ALG"`/etc. as absent instead of decoding them,
+ * incorrectly rejecting keys Go's real decoder accepts (CLI-1961 Codex review finding).
+ *
+ * When MULTIPLE case-variant spellings of the same field are present, Go's decoder
+ * processes JSON keys strictly in SOURCE order and overwrites the struct field on
+ * each match, so whichever case-variant key comes LAST in the object wins — verified
+ * directly: `{"KTY":"EC","kty":"RSA"}` decodes to `kty:"RSA"`, and `{"kty":"EC",
+ * "KTY":"RSA"}` also decodes to `kty:"RSA"` (the later key, regardless of casing,
+ * always wins). This only GENERALIZES `JSON.parse`'s own already-relied-on
+ * last-value-wins behavior for a same-case duplicate key to cross-case duplicates
+ * too — it never changes the answer for an object with no case-variant duplicates.
+ */
+export function resolveJwkFieldValue(record: Record<string, unknown>, field: string): unknown {
+  let value: unknown;
+  let found = false;
+  for (const key of Object.keys(record)) {
+    if (key.toLowerCase() === field) {
+      value = record[key];
+      found = true;
+    }
+  }
+  return found ? value : undefined;
+}
+
+/**
  * Reads an optional STRING field, throwing Go's exact struct-field type-mismatch text
  * (see {@link jwkStructFieldTypeMismatch}) when the field is PRESENT with a non-string
  * value — e.g. `{"kid":123}` or `{"ext":"true"}` — rather than silently treating a
@@ -108,13 +142,15 @@ function isAbsentJwkField(value: unknown): boolean {
  * if the field had simply been omitted. Hoisted here (rather than living only in
  * `bearer-jwt.signing-key.ts`) because {@link assertNoMalformedDuplicateJwkField} — used
  * by BOTH `gen signing-key` and `gen bearer-jwt` via {@link legacyReadSigningKeysFile} —
- * needs the exact same per-field check (CLI-1961 Codex review finding).
+ * needs the exact same per-field check (CLI-1961 Codex review finding). Looks the field
+ * up case-insensitively via {@link resolveJwkFieldValue} to match Go's own
+ * case-insensitive struct-field matching (CLI-1961 Codex review finding).
  */
 export function readOptionalString(
   record: Record<string, unknown>,
   field: string,
 ): string | undefined {
-  const value = record[field];
+  const value = resolveJwkFieldValue(record, field);
   if (isAbsentJwkField(value)) {
     return undefined;
   }
@@ -147,7 +183,7 @@ export function readOptionalStringArray(
   record: Record<string, unknown>,
   field: string,
 ): ReadonlyArray<string> | undefined {
-  const value = record[field];
+  const value = resolveJwkFieldValue(record, field);
   if (isAbsentJwkField(value)) {
     return undefined;
   }
@@ -176,7 +212,7 @@ export function readOptionalBoolean(
   record: Record<string, unknown>,
   field: string,
 ): boolean | undefined {
-  const value = record[field];
+  const value = resolveJwkFieldValue(record, field);
   if (isAbsentJwkField(value)) {
     return undefined;
   }
@@ -300,10 +336,21 @@ function splitJsonArrayElementTexts(arrayText: string): ReadonlyArray<string> {
 }
 
 /**
- * Returns every top-level field of a JSON *object* literal, keyed by field name, with
- * ALL occurrences' raw source substrings preserved in true source order — including
- * duplicates `JSON.parse` would silently collapse down to just the last one. See
- * {@link assertNoMalformedDuplicateJwkField}'s doc comment for why this matters.
+ * Returns every top-level field of a JSON *object* literal, keyed by the field name
+ * LOWERCASED, with ALL occurrences' raw source substrings preserved in true source
+ * order — including duplicates `JSON.parse` would silently collapse down to just the
+ * last one, AND case-variant "duplicates" of the same `config.JWK` field (e.g. `{"KID":
+ * 1,"kid":"k"}`) that a same-case-only grouping would otherwise miss entirely: Go's
+ * `encoding/json` matches struct fields case-insensitively (see
+ * {@link resolveJwkFieldValue}'s doc comment), so `KID` and `kid` here both feed the
+ * SAME struct field and must be checked together, in true relative source order, for
+ * {@link assertNoMalformedDuplicateJwkField} to catch a malformed earlier occurrence
+ * regardless of which case variant it used (verified against the real binary,
+ * CLI-1961 Codex review finding: `{"KID":123,"kid":"validkid"}` still errors
+ * `"...JWK.kid..."` in Go, even though `kid`'s own final, valid occurrence comes
+ * later). Grouping by lowercase here — rather than post-hoc merging per-key arrays
+ * after the fact — keeps every occurrence in exactly the order it appeared in the
+ * source, regardless of which case variant it used.
  */
 function findTopLevelObjectFieldOccurrences(
   objectText: string,
@@ -319,7 +366,7 @@ function findTopLevelObjectFieldOccurrences(
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
     const keyStart = i;
     i = skipJsonValue(objectText, i);
-    const key = JSON.parse(objectText.slice(keyStart, i)) as string;
+    const key = (JSON.parse(objectText.slice(keyStart, i)) as string).toLowerCase();
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
     if (objectText[i] === ":") i++;
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
@@ -597,7 +644,10 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     const record = item === null ? {} : item;
     const elementText = elementTexts[index];
     try {
-      const alg = record["alg"];
+      // Case-insensitive lookup (`resolveJwkFieldValue`) — Go's `alg` allowlist check
+      // (`config.Algorithm.UnmarshalText`) runs at JSON-decode time regardless of the
+      // key's casing (CLI-1961 Codex review finding); see that function's doc comment.
+      const alg = resolveJwkFieldValue(record, "alg");
       legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
       if (elementText !== undefined) {
         assertNoMalformedDuplicateJwkField(elementText);

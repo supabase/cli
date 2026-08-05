@@ -150,11 +150,26 @@ export function legacyParseGoDuration(value: string): number {
       throw new Error(`time: unknown unit in duration "${orig}"`);
     }
 
-    // Go converts the fractional remainder via `uint64(float64(f) * (float64(unit)/scale))` —
-    // a float64->uint64 conversion, which truncates toward zero, not rounds: `"0.5ns"` becomes
-    // `0`, not `1`. `BigInt` division truncates toward zero unconditionally, so
-    // `(frac * unitNs) / post` matches that exactly, without any intermediate float64 rounding.
-    total += n * unitNs + (frac * unitNs) / post;
+    // Go converts the fractional remainder via `uint64(float64(f) * (float64(unit)/scale))`
+    // (`time/format.go`'s `ParseDuration`) — an intermediate float64 MULTIPLICATION, THEN a
+    // float64->uint64 conversion that truncates toward zero. That intermediate float64 step
+    // means this is NOT equivalent to an exact BigInt division: once `frac` exceeds float64's
+    // 53-bit integer precision, rounding `frac` itself up to the nearest representable double
+    // can push the product past the next integer, so Go's result rounds UP to a full unit where
+    // an exact-BigInt computation would truncate DOWN — verified against the real `time`
+    // package (CLI-1961 Codex review finding): `time.ParseDuration("0.999999999999999999s")`
+    // (18 nines) returns exactly `1_000_000_000` ns, a full second, not the `999_999_999` an
+    // exact-BigInt truncation produces. Converting `frac`/`unitNs`/`post` to `Number` before
+    // multiplying reproduces Go's float64 step — and its rounding — bit-for-bit: both Go's
+    // `float64(uint64)` and JS's `BigInt`->`Number` conversion round to the nearest
+    // representable double (IEEE 754 round-to-nearest-even), so the same magnitude rounds the
+    // same way in both languages. `Math.trunc` mirrors the truncating `uint64(...)` conversion
+    // (both operands here are always non-negative, so truncation and floor coincide).
+    let term = n * unitNs;
+    if (frac > 0n) {
+      term += BigInt(Math.trunc(Number(frac) * (Number(unitNs) / Number(post))));
+    }
+    total += term;
     if (total > UINT64_ACCUMULATOR_BOUND_NS) {
       throw new Error(`time: invalid duration "${orig}"`);
     }

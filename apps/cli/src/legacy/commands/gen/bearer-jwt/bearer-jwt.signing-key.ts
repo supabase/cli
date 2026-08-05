@@ -6,6 +6,7 @@ import {
   readOptionalBoolean,
   readOptionalString,
   readOptionalStringArray,
+  resolveJwkFieldValue,
 } from "../gen.signing-keys-config.ts";
 import {
   legacyAssertDecodableJwkAlgorithm,
@@ -147,7 +148,11 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
     );
   }
   const record = parsed as Record<string, unknown>;
-  const alg = record["alg"];
+  // Case-insensitive lookup (`resolveJwkFieldValue`) — Go's `alg` allowlist check
+  // (`config.Algorithm.UnmarshalText`) runs at JSON-decode time regardless of the
+  // key's casing (CLI-1961 Codex review finding); see that function's doc comment
+  // in `gen.signing-keys-config.ts`.
+  const alg = resolveJwkFieldValue(record, "alg");
   try {
     legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
   } catch (cause) {

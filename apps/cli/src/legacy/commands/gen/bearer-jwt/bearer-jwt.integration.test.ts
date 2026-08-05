@@ -41,7 +41,7 @@ const LEGACY_DEFAULT_SIGNING_KEY_PUBLIC = {
   y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
 };
 
-function generateEcJwk(kid: string) {
+function generateEcJwk(kid: string): Record<string, unknown> {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const jwk = privateKey.export({ format: "jwk" }) as Record<string, unknown>;
   return { ...jwk, kty: "EC", alg: "ES256", kid };
@@ -656,6 +656,64 @@ describe("legacy gen bearer-jwt integration", () => {
   );
 
   it.live(
+    "Branch A: accepts a pasted JWK with Go-decodable case-variant field names (CLI-1961 Codex review finding)",
+    () => {
+      // Go's `encoding/json` matches `config.JWK`'s struct fields case-insensitively —
+      // verified against the real binary: `{"KTY":"EC","ALG":"ES256",...}` decodes
+      // identically to the all-lowercase spelling, including `alg` despite its extra
+      // `encoding.TextUnmarshaler` allowlist hook. A previous version of this
+      // normalizer only read exact lowercase property names, silently treating a
+      // case-variant field as absent and rejecting a key Go's real decode accepts.
+      const jwk = generateEcJwk("case-variant-kid");
+      const caseVariantJwk = {
+        KTY: jwk.kty,
+        ALG: jwk.alg,
+        KID: jwk.kid,
+        CRV: jwk.crv,
+        X: jwk.x,
+        Y: jwk.y,
+        D: jwk.d,
+      };
+      const { layer, out } = setup({ pipedAnswer: JSON.stringify(caseVariantJwk) });
+      return Effect.gen(function* () {
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "case-variant-kid",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch A: rejects a pasted JWK with a case-variant duplicate kid where the earlier occurrence is malformed (CLI-1961 Codex review finding)",
+    () => {
+      // Same mechanism as the exact-case duplicate-kid test above, but the earlier
+      // malformed occurrence spells the field "KID" while the later, valid one spells
+      // it "kid" — Go's case-insensitive struct-field matching means both feed the
+      // SAME `config.JWK.KeyID` field, so the earlier malformed occurrence still fails
+      // the overall decode, exactly like a same-case duplicate does. Verified against
+      // the real binary: `{"kty":"oct","alg":"ES256","KID":1,"kid":"k1"}` fails with
+      // this exact message even though `kid`'s own later, valid occurrence is "k1".
+      const { layer } = setup({
+        pipedAnswer: '{"kty":"oct","alg":"ES256","KID":1,"kid":"k1"}',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "Branch A: a null field value is treated as absent, not a type mismatch (Go's encoding/json no-op)",
     () => {
       const { layer, out } = setup({
@@ -777,6 +835,43 @@ describe("legacy gen bearer-jwt integration", () => {
         expect(out.stderrText).toContain(
           "Enter the kid of your signing key (or leave blank to use the first one): ",
         );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: accepts a stored signing key with Go-decodable case-variant field names (CLI-1961 Codex review finding)",
+    () => {
+      // Same fix as Branch A's pasted-JWK case-variant test, but for a
+      // `signing_keys_path` file entry — `normalizeStoredJwk`'s field lookups go
+      // through the SAME case-insensitive `resolveJwkFieldValue` helper, and the
+      // `alg` allowlist pre-check in `legacyReadSigningKeysFile` needs the identical
+      // fix (CLI-1961 Codex review finding).
+      const jwk = generateEcJwk("case-variant-stored-kid");
+      const caseVariantJwk = {
+        KTY: jwk.kty,
+        ALG: jwk.alg,
+        KID: jwk.kid,
+        CRV: jwk.crv,
+        X: jwk.x,
+        Y: jwk.y,
+        D: jwk.d,
+      };
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([caseVariantJwk])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "case-variant-stored-kid",
+          typ: "JWT",
+        });
       }).pipe(Effect.provide(layer));
     },
   );
