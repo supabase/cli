@@ -7,8 +7,9 @@ Programmatic local Supabase stack for TypeScript. Create a local Supabase runtim
 - **Single entry point** -- `createStack()` resolves config and returns a handle; `start()` prepares assets, starts services, and waits for readiness
 - **Preparation-aware startup** -- cold-cache startup can surface `Downloading` before normal runtime states like `Starting`, `Initializing`, and `Healthy`
 - **Native binaries with Docker fallback** -- uses native services when available and falls back to Docker images automatically
-- **Automatic port allocation** -- all ports are optional and auto-assigned to avoid conflicts
+- **Leased port allocation** -- optional ports are auto-assigned and held until their service starts
 - **API proxy with opaque keys** -- SDKs use `publishableKey`/`secretKey` (like production), translated to JWTs internally
+- **Lazy HTTP services** -- opt into `startupMode: "lazy"` to start proxied HTTP services on first use while keeping direct listeners and Realtime reachable
 - **`AsyncDisposable` support** -- use `await using` for automatic cleanup
 - **Streaming logs and status** -- real-time `AsyncIterable` streams for service state changes and log output
 - **Per-service lifecycle control** -- start, stop, and restart individual services independently
@@ -75,13 +76,14 @@ await stack.dispose();
 
 ### Top-level settings
 
-| Field            | Type                             | Required | Default  | Description                                                                                                                                                     |
-| ---------------- | -------------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"` | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
-| `jwtSecret`      | `string`                         | No       |          | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
-| `port`           | `number`                         | No       |          | API proxy port (auto-allocated if omitted)                                                                                                                      |
-| `publishableKey` | `string`                         | No       |          | Custom opaque publishable key                                                                                                                                   |
-| `secretKey`      | `string`                         | No       |          | Custom opaque secret key                                                                                                                                        |
+| Field            | Type                             | Required | Default   | Description                                                                                                                                                     |
+| ---------------- | -------------------------------- | -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"`  | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
+| `startupMode`    | `"eager" \| "lazy"`              | No       | `"eager"` | In lazy mode, proxied HTTP services start on first use. Direct listeners and Realtime start with the stack.                                                     |
+| `jwtSecret`      | `string`                         | No       |           | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
+| `port`           | `number`                         | No       |           | API proxy port (auto-allocated if omitted)                                                                                                                      |
+| `publishableKey` | `string`                         | No       |           | Custom opaque publishable key                                                                                                                                   |
+| `secretKey`      | `string`                         | No       |           | Custom opaque secret key                                                                                                                                        |
 
 ### `postgres`
 
@@ -176,10 +178,14 @@ service process exists. During that phase, `getStatus()` / `statusChanges()` can
 ### Per-Service Lifecycle
 
 ```typescript
-await stack.stopService("auth"); // Stop a single service
+await stack.stopService("auth"); // Stop a service and its active dependents
 await stack.startService("auth"); // Restart it (blocks until ready)
 await stack.restartService("auth"); // Stop + start in one call
 ```
+
+Service activation is dependency-aware. Starting Storage also starts imgproxy when enabled, and
+starting Analytics also starts Vector when enabled, so a public service never comes up without the
+companion it calls or feeds.
 
 Common service names include `"postgres"`, `"postgrest"`, `"auth"`, `"realtime"`, `"storage"`,
 `"imgproxy"`, `"mailpit"`, `"pgmeta"`, `"studio"`, `"analytics"`, `"vector"`, and `"pooler"`.
@@ -197,7 +203,11 @@ await stack.serviceReady("postgres"); // Wait for one service
 await stack.serviceReady("auth", { timeout: 10_000 });
 ```
 
-Note: `start()` already blocks until all services are ready. Use `ready()` and `serviceReady()` after manually starting individual services.
+In eager mode, `start()` blocks until every enabled service is ready. In lazy mode it waits only
+for direct listeners and services activated so far. Unrequested lazy services report `Dormant`.
+Calling `serviceReady()` for a dormant lazy
+service fails immediately; activate it through the proxy or call `startService()` first. Foreground
+and detached stacks use the same readiness rules.
 
 ### Status
 

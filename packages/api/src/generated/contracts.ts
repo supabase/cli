@@ -816,7 +816,6 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
   id: Schema.String,
   saml: Schema.optionalKey(
     Schema.Struct({
-      id: Schema.String,
       entity_id: Schema.String,
       metadata_url: Schema.optionalKey(Schema.String),
       metadata_xml: Schema.optionalKey(Schema.String),
@@ -848,7 +847,6 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
   domains: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        id: Schema.String,
         domain: Schema.optionalKey(Schema.String),
         created_at: Schema.optionalKey(Schema.String),
         updated_at: Schema.optionalKey(Schema.String),
@@ -1168,7 +1166,6 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
   id: Schema.String,
   saml: Schema.optionalKey(
     Schema.Struct({
-      id: Schema.String,
       entity_id: Schema.String,
       metadata_url: Schema.optionalKey(Schema.String),
       metadata_xml: Schema.optionalKey(Schema.String),
@@ -1200,7 +1197,6 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
   domains: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        id: Schema.String,
         domain: Schema.optionalKey(Schema.String),
         created_at: Schema.optionalKey(Schema.String),
         updated_at: Schema.optionalKey(Schema.String),
@@ -1634,7 +1630,6 @@ export const V1GetASsoProviderOutput = Schema.Struct({
   id: Schema.String,
   saml: Schema.optionalKey(
     Schema.Struct({
-      id: Schema.optionalKey(Schema.String),
       entity_id: Schema.String,
       metadata_url: Schema.optionalKey(Schema.String),
       metadata_xml: Schema.optionalKey(Schema.String),
@@ -1666,7 +1661,6 @@ export const V1GetASsoProviderOutput = Schema.Struct({
   domains: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        id: Schema.String,
         domain: Schema.optionalKey(Schema.String),
         created_at: Schema.optionalKey(Schema.String),
         updated_at: Schema.optionalKey(Schema.String),
@@ -3735,7 +3729,6 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
       id: Schema.String,
       saml: Schema.optionalKey(
         Schema.Struct({
-          id: Schema.optionalKey(Schema.String),
           entity_id: Schema.String,
           metadata_url: Schema.optionalKey(Schema.String),
           metadata_xml: Schema.optionalKey(Schema.String),
@@ -3767,7 +3760,6 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
       domains: Schema.optionalKey(
         Schema.Array(
           Schema.Struct({
-            id: Schema.String,
             domain: Schema.optionalKey(Schema.String),
             created_at: Schema.optionalKey(Schema.String),
             updated_at: Schema.optionalKey(Schema.String),
@@ -4529,7 +4521,6 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
   id: Schema.String,
   saml: Schema.optionalKey(
     Schema.Struct({
-      id: Schema.String,
       entity_id: Schema.String,
       metadata_url: Schema.optionalKey(Schema.String),
       metadata_xml: Schema.optionalKey(Schema.String),
@@ -4561,7 +4552,6 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
   domains: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        id: Schema.String,
         domain: Schema.optionalKey(Schema.String),
         created_at: Schema.optionalKey(Schema.String),
         updated_at: Schema.optionalKey(Schema.String),

@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Context, Schedule, Result } from "effect";
+import { Effect, Layer, Option, Context, Duration, Schedule, Result } from "effect";
 import {
   Headers,
   HttpBody,
@@ -9,9 +9,12 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import { StackServiceActivator } from "./ServiceActivation.ts";
+import type { ServiceName } from "./versions.ts";
 
 export interface ProxyConfig {
   readonly listenPort: number;
+  readonly activationTimeout?: Duration.Input;
   readonly gotruePort: number;
   readonly postgrestPort: number;
   readonly postgrestAdminPort: number;
@@ -111,8 +114,10 @@ function addCorsHeaders(
 // status does not mean a function is servable yet. Briefly retry transport
 // failures on that route so a user's first call doesn't surface as a 502.
 const COLD_START_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(Schedule.upTo({ times: 8 }));
+const DEFAULT_SERVICE_ACTIVATION_TIMEOUT = Duration.seconds(30);
 
 interface ProxyHandlerOptions {
+  readonly service: ServiceName;
   readonly backendPort: number;
   readonly stripPrefix?: string;
   readonly backendPath?: string;
@@ -128,10 +133,24 @@ interface ProxyHandlerOptions {
 function makeProxyHandler(
   client: HttpClient.HttpClient,
   config: ProxyConfig,
+  activator: StackServiceActivator["Service"],
   opts: ProxyHandlerOptions,
 ) {
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
+      const activation = yield* activator
+        .activate(opts.service)
+        .pipe(
+          Effect.timeout(config.activationTimeout ?? DEFAULT_SERVICE_ACTIVATION_TIMEOUT),
+          Effect.result,
+        );
+      if (Result.isFailure(activation)) {
+        return HttpServerResponse.text("Service unavailable", {
+          status: 503,
+          headers: { "retry-after": "1" },
+        });
+      }
+
       let backendPath = opts.backendPath;
 
       if (backendPath === undefined) {
@@ -209,18 +228,24 @@ export class ApiProxy extends Context.Service<
 >()("local/ApiProxy") {
   static layer = (
     config: ProxyConfig,
-  ): Layer.Layer<ApiProxy, never, HttpServer.HttpServer | HttpClient.HttpClient> =>
+  ): Layer.Layer<
+    ApiProxy,
+    never,
+    HttpServer.HttpServer | HttpClient.HttpClient | StackServiceActivator
+  > =>
     Layer.effect(ApiProxy)(
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer;
         const client = yield* HttpClient.HttpClient;
+        const activator = yield* StackServiceActivator;
 
         const routes = [
           HttpRouter.route("*", "/health", HttpServerResponse.text("OK", { status: 200 })),
           HttpRouter.route(
             "*",
             "/.well-known/oauth-authorization-server",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "auth",
               backendPort: config.gotruePort,
               backendPath: "/.well-known/oauth-authorization-server",
             }),
@@ -228,7 +253,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/verify",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
             }),
@@ -236,7 +262,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/callback",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
             }),
@@ -244,7 +271,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/authorize",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
             }),
@@ -252,7 +280,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
               transformAuth: true,
@@ -261,7 +290,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/rest/v1/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "postgrest",
               backendPort: config.postgrestPort,
               stripPrefix: "/rest/v1",
               transformAuth: true,
@@ -270,7 +300,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/rest-admin/v1/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "postgrest",
               backendPort: config.postgrestAdminPort,
               stripPrefix: "/rest-admin/v1",
             }),
@@ -278,7 +309,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/graphql/v1",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "postgrest",
               backendPort: config.postgrestPort,
               backendPath: "/rpc/graphql",
               transformAuth: true,
@@ -288,7 +320,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/functions/v1/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "edge-runtime",
               backendPort: config.edgeRuntimePort,
               stripPrefix: "/functions/v1",
               transformAuth: true,
@@ -299,7 +332,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/realtime/v1/api/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "realtime",
               backendPort: config.realtimePort,
               stripPrefix: "/realtime/v1",
               transformAuth: true,
@@ -308,7 +342,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/realtime/v1/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "realtime",
               backendPort: config.realtimePort,
               stripPrefix: "/realtime/v1",
             }),
@@ -316,7 +351,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/storage/v1/s3/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "storage",
               backendPort: config.storagePort,
               stripPrefix: "/storage/v1",
             }),
@@ -324,7 +360,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/storage/v1/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "storage",
               backendPort: config.storagePort,
               stripPrefix: "/storage/v1",
               transformAuth: true,
@@ -333,7 +370,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/pg/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "pgmeta",
               backendPort: config.pgmetaPort,
               stripPrefix: "/pg",
             }),
@@ -341,7 +379,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/analytics/v1/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "analytics",
               backendPort: config.analyticsPort,
               stripPrefix: "/analytics/v1",
             }),
@@ -349,7 +388,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/pooler/v2/*",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "pooler",
               backendPort: config.poolerPort,
               stripPrefix: "/pooler",
             }),
@@ -357,7 +397,8 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/mcp",
-            makeProxyHandler(client, config, {
+            makeProxyHandler(client, config, activator, {
+              service: "studio",
               backendPort: config.studioPort,
               backendPath: "/api/mcp",
             }),
