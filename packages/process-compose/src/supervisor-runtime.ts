@@ -24,6 +24,8 @@ interface ChildExit {
   readonly signal: NodeJS.Signals | null;
 }
 
+const DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS = 5_000;
+
 const isMain = (() => {
   if (process.argv[1] == null) {
     return false;
@@ -278,8 +280,9 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
         try {
           if (action._tag === "RunCommand") {
             execFileSync(action.executable, action.args, {
+              env: childEnv,
               stdio: "ignore",
-              timeout: action.timeoutMs,
+              timeout: action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS,
             });
           } else if (action._tag === "RemovePath") {
             await removePathWithRetry(action);
