@@ -24,17 +24,14 @@ const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 
 const EXISTING_PROVIDER = {
   id: VALID_PROVIDER_ID,
-  saml: { id: "saml-1", entity_id: "https://example.com" },
-  domains: [
-    { id: "d1", domain: "old1.com" },
-    { id: "d2", domain: "old2.com" },
-  ],
+  saml: { entity_id: "https://example.com" },
+  domains: [{ domain: "old1.com" }, { domain: "old2.com" }],
 };
 
 const RESPONSE_PROVIDER = {
   id: VALID_PROVIDER_ID,
-  saml: { id: "saml-1", entity_id: "https://example.com" },
-  domains: [{ id: "d3", domain: "new.com" }],
+  saml: { entity_id: "https://example.com" },
+  domains: [{ domain: "new.com" }],
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-update-int-");
@@ -1333,7 +1330,7 @@ describe("legacy sso update integration", () => {
     const { layer, api } = setup({
       getBody: {
         ...EXISTING_PROVIDER,
-        domains: [{ id: "d1", domain: "" }, { id: "d2", domain: "old1.com" }, { id: "d3" }],
+        domains: [{ domain: "" }, { domain: "old1.com" }, {}],
       },
     });
     return Effect.gen(function* () {
