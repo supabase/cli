@@ -1,9 +1,9 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BunServices } from "@effect/platform-bun";
+import { BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
 
@@ -156,6 +156,57 @@ describe("legacySqlFilesGlob", () => {
             expect(result.warnings).toEqual([
               "no files matched pattern: /__legacy_sql_glob_root_canary_dir__*/*.sql",
             ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "preserves a Windows drive root ('C:/') as the directory when splitting a glob pattern (Go filepath.Split parity)",
+    () => {
+      // Go's `filepath.Split` treats `"C:"` as the volume name on Windows
+      // (`volumeNameLen`, `internal/filepathlite/path_windows.go`) and always
+      // keeps the following separator attached to `dir` — so `Split("C:/*.sql")`
+      // returns `dir: "C:/"`, not `dir: "C:"` (verified directly against that
+      // stdlib source; there is no Windows machine available to run the
+      // compiled binary on). Losing the trailing slash matters: Node's
+      // `path.isAbsolute("C:")` is `false` (a bare drive letter is
+      // *drive-relative*, not absolute, in Windows semantics), so `globOne`'s
+      // `resolve()` would wrongly `join` it under the workdir instead of
+      // resolving the real drive root. Force win32 path semantics
+      // (`BunPath.layerWin32`) and this module's own `process.platform` gate
+      // so the test exercises the same branch a real Windows install takes.
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-drive-root-"));
+      writeFileSync(join(dir, "a.sql"), "select 1;");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // A "C:/" drive root doesn't exist on this (non-Windows) test host, so
+        // fake just the two calls that must resolve against it, reusing a real
+        // file's stat info to avoid hand-rolling a `File.Info`.
+        const realFileInfo = yield* fs.stat(join(dir, "a.sql"));
+        const driveRootFs: FileSystem.FileSystem = {
+          ...fs,
+          readDirectory: (p: string) =>
+            p === "C:/" ? Effect.succeed(["a.sql"]) : fs.readDirectory(p),
+          stat: (p: string) => (p === "C:/a.sql" ? Effect.succeed(realFileInfo) : fs.stat(p)),
+        };
+        return yield* legacySqlFilesGlob(driveRootFs, path, ["C:/*.sql"], dir);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layerWin32)),
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["C:/a.sql"]);
+            expect(result.warnings).toEqual([]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            Object.defineProperty(process, "platform", { value: originalPlatform });
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

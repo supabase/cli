@@ -75,13 +75,28 @@ const joinRelChild = (path: Path.Path, rel: string, name: string): string => pat
  * that first component against the filesystem ROOT, not cwd. Collapsing this
  * to `dir: ""` would make `globOne` below treat such an absolute root-level
  * pattern as relative to the workdir instead of the filesystem root.
+ *
+ * On Windows, a bare drive-root prefix (`"C:/"`) needs the exact same
+ * preservation, for the same reason but a different mechanism: Go's
+ * `filepath.Split` treats `"C:"` as the volume name (`volumeNameLen`,
+ * `internal/filepathlite/path_windows.go`) and always keeps the following
+ * separator attached to `dir` — verified against that source directly, since
+ * there is no Windows machine available to run the compiled stdlib on:
+ * `Split("C:/*.sql")` returns `dir: "C:/"`, not `dir: "C:"`. Chopping the
+ * separator here would matter downstream: Node's `path.isAbsolute("C:")` is
+ * `false` (a bare drive letter is a *drive-relative* path in Windows
+ * semantics, not absolute), so `globOne`'s `resolve()` would wrongly `join`
+ * it under the workdir instead of resolving the real drive root, while
+ * `path.isAbsolute("C:/")` is `true`.
  */
 const splitPath = (p: string): { readonly dir: string; readonly file: string } => {
   const slash = p.lastIndexOf("/");
   if (slash === -1) return { dir: "", file: p };
-  return slash === 0
-    ? { dir: "/", file: p.slice(1) }
-    : { dir: p.slice(0, slash), file: p.slice(slash + 1) };
+  if (slash === 0) return { dir: "/", file: p.slice(1) };
+  if (process.platform === "win32" && slash === 2 && p.charAt(1) === ":") {
+    return { dir: p.slice(0, 3), file: p.slice(3) };
+  }
+  return { dir: p.slice(0, slash), file: p.slice(slash + 1) };
 };
 
 /** Faithful port of Go's `fs.Glob` for one pattern, rooted at `workdir`. */
