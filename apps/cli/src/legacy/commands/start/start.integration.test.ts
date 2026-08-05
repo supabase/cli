@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -40,6 +40,12 @@ import {
   type LegacyDbSession,
 } from "../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../shared/legacy-edge-runtime-script.errors.ts";
+import {
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { LegacyStartFlags } from "./start.command.ts";
 import { legacyStart } from "./start.handler.ts";
@@ -201,6 +207,29 @@ function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArr
     .map((s) => containerNameFromCreateArgs(s.args));
 }
 
+/**
+ * Wraps `base` to also intercept every `docker cp <hostPath> <containerId>:<containerPath>` call
+ * `legacyStartContainer`'s `secretFiles` delivery issues (`legacyCopyStartSecretFileIntoContainer`,
+ * `container-lifecycle.ts` — supabase/cli#6022): synchronously reads the host-side temp file's
+ * content while it's still on disk (its own cleanup only runs once THIS spawn's effect resolves)
+ * and records it against the destination `containerPath`, so a test can assert on delivered secret
+ * content without any host-persisted staging directory left behind to inspect afterward.
+ */
+function capturingSecretCopyRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+  onCopy: (containerPath: string, content: string) => void,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    if (args[0] === "cp") {
+      const hostPath = args[1] ?? "";
+      const dest = args[2] ?? "";
+      const containerPath = dest.slice(dest.indexOf(":") + 1);
+      onCopy(containerPath, readFileSync(hostPath, "utf8"));
+    }
+    return base(args);
+  };
+}
+
 function rollbackWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
   return spawned.some((s) => s.args[0] === "container" && s.args[1] === "prune");
 }
@@ -358,6 +387,10 @@ interface SetupOpts {
   readonly networkId?: Option.Option<string>;
   /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
   readonly experimental?: boolean;
+  /** `LegacyEdgeRuntimeScript`'s mocked stdout for the pg-delta catalog-export call (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`). Only ever reached on a fresh volume with pg-delta enabled. */
+  readonly catalogStdout?: string;
+  /** Fails the mocked catalog-export call with this message instead of succeeding. */
+  readonly catalogExportFailWith?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -376,6 +409,22 @@ function setup(opts: SetupOpts = {}) {
     failSpawn: opts.failSpawn,
   });
   const dbSession = fakeDbSession();
+  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      edgeRunCalls.push(runOpts);
+      if (opts.catalogExportFailWith !== undefined) {
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
+        );
+      }
+      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
+    },
+  });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
 
   const layer = Layer.mergeAll(
     BunServices.layer,
@@ -412,9 +461,11 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     mockTty({ stdinIsTty: false }),
     mockStdin(false),
+    edgeRuntime,
+    sslProbe,
   );
 
-  return { workdir, out, telemetry, analytics, child, dbSession, layer };
+  return { workdir, out, telemetry, analytics, child, dbSession, edgeRunCalls, layer };
 }
 
 /**
@@ -2331,6 +2382,61 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "caches the migrations catalog after a fresh-volume setup when pg-delta is enabled",
+      () => {
+        const { layer, out, workdir, edgeRunCalls } = setup({
+          configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
+          route: freshVolumeRoute(defaultRoute()),
+          catalogStdout: '{"snapshot":"ok"}',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+          // Runs once, AFTER the fresh-volume migrate+seed pipeline — matching Go's
+          // `SetupLocalDatabase` calling `pgcache.TryCacheMigrationsCatalog` immediately
+          // after `apply.MigrateAndSeed` (`start.go:368-379`).
+          expect(edgeRunCalls).toHaveLength(1);
+          const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
+          const catalogFiles = readdirSync(tempDir).filter((name) =>
+            name.startsWith("catalog-local-migrations-"),
+          );
+          expect(catalogFiles).toHaveLength(1);
+          expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "warns without failing supabase start when the migrations-catalog export fails on a fresh volume",
+      () => {
+        const { layer, out } = setup({
+          configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
+          route: freshVolumeRoute(defaultRoute()),
+          catalogExportFailWith: "edge-runtime script produced no output",
+        });
+        return Effect.gen(function* () {
+          const exit = yield* legacyStart(flags({ exclude: ["edge-runtime"] })).pipe(Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain(
+            "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "does not attempt to cache the migrations catalog on a fresh volume when pg-delta is disabled",
+      () => {
+        const { layer, out, edgeRunCalls } = setup({ route: freshVolumeRoute(defaultRoute()) });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(edgeRunCalls).toHaveLength(0);
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
       "resolves an excluded service's migrate-job image through a project-dotenv-only registry override",
       () => {
         // The auth/realtime/storage migrate jobs run regardless of `--exclude` (Go parity —
@@ -3630,19 +3736,38 @@ content_path = "./templates/custom_notice.html"
   });
 
   describe("db.root_key", () => {
-    it.live("stages a configured db.root_key as the Postgres container's pgsodium root key", () => {
-      const { layer, workdir, child } = setup({
-        configContents: 'project_id = "demo"\n[db]\nroot_key = "custom-root-key-value"\n',
-      });
-      return Effect.gen(function* () {
-        yield* legacyStart(flags());
-        const containerName = legacyServiceContainerName("db", "demo");
-        const secretDir = join(workdir, "supabase", ".temp", "start-secrets", containerName);
-        const staged = readFileSync(join(secretDir, "secret-0"), "utf8");
-        expect(staged).toBe("custom-root-key-value");
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-      }).pipe(Effect.provide(layer));
-    });
+    it.live(
+      "delivers a configured db.root_key into the Postgres container's pgsodium root key via `docker cp`, never leaving it on host disk",
+      () => {
+        const copied = new Map<string, string>();
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[db]\nroot_key = "custom-root-key-value"\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const containerName = legacyServiceContainerName("db", "demo");
+          expect(copied.get("/etc/postgresql-custom/pgsodium_root.key")).toBe(
+            "custom-root-key-value",
+          );
+          const dbCp = child.spawned.find(
+            (s) =>
+              s.args[0] === "cp" &&
+              s.args[2] ===
+                `${fakeContainerId(containerName)}:/etc/postgresql-custom/pgsodium_root.key`,
+          );
+          expect(dbCp).toBeDefined();
+          // Delivered straight into the container — the host-side temp file is removed
+          // immediately after the copy, so nothing persists on host disk afterward.
+          const dbCpHostPath = dbCp?.args[1] ?? "";
+          expect(dbCpHostPath.length > 0).toBe(true);
+          expect(existsSync(dbCpHostPath)).toBe(false);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("container-not-found stderr shapes", () => {
@@ -4398,19 +4523,17 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "writes the embedded default cert/key when TLS is unconfigured, never empty files",
       () => {
-        const { layer, child, workdir } = setup();
+        const copied = new Map<string, string>();
+        const { layer, child } = setup({
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
+        });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-          );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          // secretFiles order in kong.service.ts: [kong.yml, localhost.crt, localhost.key].
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -4420,21 +4543,19 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "falls back to the embedded default cert/key when cert_path/key_path are present but empty",
       () => {
-        const { layer, child, workdir } = setup({
+        const copied = new Map<string, string>();
+        const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = ""\nkey_path = ""\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-          );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -4446,8 +4567,12 @@ content_path = "./templates/custom_notice.html"
       () => {
         const previousCert = process.env["SUPABASE_API_TLS_CERT_PATH"];
         const previousKey = process.env["SUPABASE_API_TLS_KEY_PATH"];
+        const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
         });
         mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
         writeFileSync(
@@ -4462,15 +4587,11 @@ content_path = "./templates/custom_notice.html"
         process.env["SUPABASE_API_TLS_KEY_PATH"] = "certs/env-server.key";
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(
+            "-----BEGIN CERTIFICATE-----env-cert",
           );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe("-----BEGIN CERTIFICATE-----env-cert");
-          expect(keyContent).toBe("-----BEGIN PRIVATE KEY-----env-key");
+          expect(copied.get("/home/kong/localhost.key")).toBe("-----BEGIN PRIVATE KEY-----env-key");
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
@@ -4495,8 +4616,12 @@ content_path = "./templates/custom_notice.html"
       () => {
         const previous = process.env["SUPABASE_API_ENABLED"];
         process.env["SUPABASE_API_ENABLED"] = "false";
+        const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
         });
         mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
         writeFileSync(
@@ -4509,15 +4634,9 @@ content_path = "./templates/custom_notice.html"
         );
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-          );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(

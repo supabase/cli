@@ -49,6 +49,24 @@
  * 5. **`apply.MigrateAndSeed`** (`start.go:368`, via the already-ported
  *    `legacyMigrateAndSeed`) with `version: ""` — every pending migration, matching
  *    `SetupLocalDatabase`'s own call in the `start` context.
+ * 6. **`pgcache.TryCacheMigrationsCatalog`** (`start.go:371-379`) — a best-effort
+ *    warmup of the `catalog-local-migrations-*` snapshot subsequent pg-delta
+ *    workflows (`db diff`/`db push`) consume, via the already-ported
+ *    `legacyTryCacheMigrationsCatalog` ({@link legacy-pgdelta.cache.ts}, the exact
+ *    same function `db push` already calls after its own migration apply). Gated
+ *    identically to Go's `ShouldCacheMigrationsCatalog()` (`pgcache/cache.go:93-95`):
+ *    `toml.pgDelta.enabled` OR the `SUPABASE_EXPERIMENTAL_PG_DELTA` env override —
+ *    Go's other half of the gate, `len(version) == 0`, is unconditionally true here
+ *    since step 5 above always runs with `version: ""`. A failure prints Go's exact
+ *    warning (`Warning: failed to cache migrations catalog: <err>`, `start.go:378`)
+ *    to stderr and is otherwise swallowed, reusing the identical best-effort
+ *    catch/warn shape `legacy-db-push-core.ts` already established for its own call
+ *    — this step never fails {@link legacyStartSetupLocalDatabase} or the caller's
+ *    `start`/`db start` run. Requires `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe`
+ *    in this function's own effect environment (widened accordingly below), so both
+ *    `start.command.ts` and `db/start/start.layers.ts` now compose
+ *    `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer`, matching `db push`'s
+ *    own layer composition (`push.layers.ts`).
  *
  * Go's `initCurrentBranch` (`start.go:233-241`, writes `supabase/.branches/
  * _current_branch` = `"main"` if absent) is NOT part of this pipeline, even though
@@ -57,17 +75,6 @@
  * regardless of `NoBackupVolume` (`start.go:184-189`) — unlike everything above,
  * which only runs on a fresh volume. `start.handler.ts` calls it directly, outside
  * the `isFreshVolume` gate that wraps {@link legacyStartSetupLocalDatabase}.
- *
- * Go's best-effort `pgcache.TryCacheMigrationsCatalog` (`start.go:371-379`) is NOT called
- * here. This IS a real gap, not a no-op divergence: it skips warming the
- * `catalog-local-migrations-*` snapshot subsequent pg-delta workflows (`db diff`/`db push`)
- * consume, and suppresses Go's own warning-on-failure text. The already-ported
- * `legacyTryCacheMigrationsCatalog` (used by `db push`) would close this gap, but it needs
- * `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe` in its effect environment — adding it
- * here would widen `legacyStartDatabase`'s (and both `db start`'s and `supabase start`'s
- * own) environment requirements across their entire call graph and every test that
- * exercises the fresh-volume setup path. Deliberately deferred to a dedicated follow-up
- * rather than folded into this hoist — tracked as CLI-2043.
  *
  * This module also duplicates ONE config-load pass: `legacyCheckDbToml` is called
  * internally (not threaded in from the caller) to resolve `[db.vault]`, `[db.seed]`,
@@ -78,20 +85,26 @@
  */
 
 import type { ProjectConfig } from "@supabase/config";
-import { Data, Effect, type FileSystem, Option, type Path } from "effect";
+import { Clock, Data, Effect, type FileSystem, Option, type Path } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { legacyTryCacheMigrationsCatalog } from "../../commands/db/shared/legacy-pgdelta.cache.ts";
+import type { LegacyPgDeltaContext } from "../../commands/db/shared/legacy-pgdelta.ts";
+import { legacyParseBoolEnv } from "../../commands/db/shared/legacy-diff-engine.ts";
 import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
+import { redactLegacyConnectionString } from "../legacy-db-config.parse.ts";
 import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
 import { LEGACY_CLI_PROJECT_LABEL, legacyServiceContainerName } from "../legacy-docker-ids.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
+import { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
 import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migration-apply.ts";
 import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
+import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import { ramInBytes } from "../legacy-size-units.ts";
 import { LegacyMigrationVaultError, legacyUpsertVaultSecrets } from "../legacy-vault.ts";
 import { LEGACY_COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
@@ -662,7 +675,19 @@ export const legacyStartSetupLocalDatabase = (
 ): Effect.Effect<
   void,
   LegacyStartSetupLocalDatabaseError,
-  Output | LegacyDockerRun | RuntimeInfo
+  | Output
+  | LegacyDockerRun
+  | RuntimeInfo
+  | LegacyEdgeRuntimeScript
+  | LegacyPgDeltaSslProbe
+  // `legacyTryCacheMigrationsCatalog`'s own pg-delta export call resolves
+  // `FileSystem.FileSystem`/`Path.Path` from the effect context itself (not from
+  // the `fs`/`path` values this function already threads through as plain data —
+  // see `legacy-pgdelta.ts`'s `legacyExportCatalogPgDelta`), so both must be
+  // ambient here too; every real caller already gets them from `BunServices.layer`
+  // at the CLI root runtime, same as `db push`'s own composition.
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
@@ -749,10 +774,55 @@ export const legacyStartSetupLocalDatabase = (
       schemaPaths: toml.schemaPaths,
     });
 
-    // Go's best-effort pgcache catalog warning (`pgcache.TryCacheMigrationsCatalog`,
-    // start.go:371-379) is not ported here — see this module's header for why (a real,
-    // tracked gap, not a no-op divergence).
-    //
+    // pgcache.TryCacheMigrationsCatalog(ctx, pgconn.Config{Host: Config.Hostname,
+    // Port: Config.Db.Port, User: "postgres", Password: Config.Db.Password, Database:
+    // "postgres"}, "local", version, fsys, ...) (start.go:371-379): best-effort, run
+    // immediately after MigrateAndSeed above, on every call — this function's
+    // `version` is always `""` (the line above), matching the `len(version) == 0`
+    // half of Go's `ShouldCacheMigrationsCatalog()` gate unconditionally. `cacheEnabled`
+    // reproduces the OTHER half of that gate (`pgcache/cache.go:93-95`) exactly — the
+    // same `toml.pgDelta.enabled || SUPABASE_EXPERIMENTAL_PG_DELTA` formula
+    // `legacy-db-push-core.ts` already uses for its own call. `input.dbUrl` is already
+    // the HOST-facing `postgresql://postgres:<password>@<hostname>:<port>/postgres`
+    // address (see its own doc comment) — the exact same shape Go's `utils.
+    // ToPostgresURL(config)` builds from that literal `pgconn.Config` here, so it's
+    // reused directly as `targetUrl` rather than re-derived. `conn`'s fields are only
+    // ever read by `legacyCatalogPrefixFromConfig` on a non-local prefix fallback,
+    // unreachable here since `isLocal` is always `true`.
+    const cacheEnabled =
+      toml.pgDelta.enabled || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
+    const pgDeltaCtx: LegacyPgDeltaContext = {
+      projectId: input.projectId,
+      cwd: workdir,
+      npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+      denoVersion: toml.denoVersion,
+    };
+    const hostDbUrl = new URL(input.dbUrl);
+    yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
+      enabled: cacheEnabled,
+      targetUrl: input.dbUrl,
+      conn: {
+        host: hostDbUrl.hostname,
+        port: Number(hostDbUrl.port),
+        user: "postgres",
+        database: "postgres",
+      },
+      isLocal: true,
+      migrationsDir: path.join(workdir, "supabase", "migrations"),
+      nowMillis: yield* Clock.currentTimeMillis,
+    }).pipe(
+      // Best-effort: Go's own `TryCacheMigrationsCatalog` failure only ever warns
+      // (`fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)`,
+      // start.go:378) and never fails `SetupLocalDatabase` — same shape
+      // `legacy-db-push-core.ts` already established for this exact call.
+      Effect.catch((error) =>
+        output.raw(
+          `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
+          "stderr",
+        ),
+      ),
+    );
+
     // `initCurrentBranch` (start.go:233-241) is NOT called here — see this
     // module's header for why it moved to the caller instead.
   });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -30,6 +30,12 @@ import {
   type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
+import {
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyDbStart } from "./start.handler.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
@@ -265,6 +271,10 @@ interface SetupOpts {
   readonly experimental?: boolean;
   /** `--debug`. Defaults to `false`. */
   readonly debug?: boolean;
+  /** `LegacyEdgeRuntimeScript`'s mocked stdout for the pg-delta catalog-export call (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`). Only ever reached on a fresh volume with pg-delta enabled. */
+  readonly catalogStdout?: string;
+  /** Fails the mocked catalog-export call with this message instead of succeeding. */
+  readonly catalogExportFailWith?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -284,6 +294,22 @@ function setup(opts: SetupOpts = {}) {
         : baseRoute;
   const child = mockContainerCliSpawner(route);
   const dbSession = fakeDbSession();
+  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      edgeRunCalls.push(runOpts);
+      if (opts.catalogExportFailWith !== undefined) {
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
+        );
+      }
+      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
+    },
+  });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
 
   const layer = Layer.mergeAll(
     BunServices.layer,
@@ -306,8 +332,10 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
+    edgeRuntime,
+    sslProbe,
   );
-  return { layer, out, telemetry, child, dbSession };
+  return { layer, out, telemetry, child, dbSession, edgeRunCalls };
 }
 
 const currentBranchPath = (workdir: string) =>
@@ -430,6 +458,63 @@ describe("legacy db start", () => {
           }),
         ),
       );
+    },
+  );
+
+  it.live(
+    "caches the migrations catalog after a fresh-volume setup when pg-delta is enabled",
+    () => {
+      const { layer, out, edgeRunCalls } = setup({
+        configContents: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        route: freshVolumeRoute(defaultRoute()),
+        catalogStdout: '{"snapshot":"ok"}',
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        // Runs once, AFTER the fresh-volume migrate+seed pipeline — matching Go's
+        // `SetupLocalDatabase` calling `pgcache.TryCacheMigrationsCatalog` immediately
+        // after `apply.MigrateAndSeed` (`start.go:368-379`).
+        expect(edgeRunCalls).toHaveLength(1);
+        const tempDir = join(tempRoot.current, "supabase", ".temp", "pgdelta");
+        const catalogFiles = readdirSync(tempDir).filter((name) =>
+          name.startsWith("catalog-local-migrations-"),
+        );
+        expect(catalogFiles).toHaveLength(1);
+        expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+      });
+    },
+  );
+
+  it.live(
+    "warns without failing db start when the migrations-catalog export fails on a fresh volume",
+    () => {
+      const { layer, out } = setup({
+        configContents: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        route: freshVolumeRoute(defaultRoute()),
+        catalogExportFailWith: "edge-runtime script produced no output",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(
+          "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+        );
+        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+      });
+    },
+  );
+
+  it.live(
+    "does not attempt to cache the migrations catalog on a fresh volume when pg-delta is disabled",
+    () => {
+      const { layer, out, edgeRunCalls } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(edgeRunCalls).toHaveLength(0);
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(existsSync(join(tempRoot.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+      });
     },
   );
 

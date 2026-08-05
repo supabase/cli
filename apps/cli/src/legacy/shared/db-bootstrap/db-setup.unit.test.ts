@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectConfig } from "@supabase/config";
@@ -12,6 +12,12 @@ import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts"
 import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
 import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
+import { LegacyEdgeRuntimeScriptError } from "../legacy-edge-runtime-script.errors.ts";
+import {
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyStartDbSetupError,
   legacyStartInitCurrentBranch,
@@ -125,6 +131,35 @@ function mockDockerRunFails() {
   return { layer };
 }
 
+/**
+ * `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe` back
+ * `legacyTryCacheMigrationsCatalog`'s own pg-delta catalog-export call (`db-setup.ts`'s
+ * pgcache-warmup step) — required by {@link legacyStartSetupLocalDatabase}'s own widened
+ * effect environment regardless of whether a given test's config actually enables
+ * pg-delta (the early `!params.enabled` return means these mocks are never invoked at
+ * runtime unless a test opts in via `writeConfigToml`'s `[experimental.pgdelta]`).
+ */
+function mockEdgeRuntime(opts: { readonly stdout?: string; readonly failWith?: string } = {}) {
+  const calls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      calls.push(runOpts);
+      if (opts.failWith !== undefined) {
+        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.failWith }));
+      }
+      return Effect.succeed({ stdout: opts.stdout ?? '{"version":1}', stderr: "" });
+    },
+  });
+  return { layer, calls };
+}
+
+function mockPgDeltaSslProbeLayer() {
+  return Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
+}
+
 function makeWorkdir(): string {
   return mkdtempSync(join(tmpdir(), "legacy-db-setup-"));
 }
@@ -173,6 +208,7 @@ const run = (
   input: Omit<LegacyStartSetupLocalDatabaseInput, "fs" | "path">,
   out: ReturnType<typeof mockOutput>,
   docker: ReturnType<typeof mockDockerRun> | ReturnType<typeof mockDockerRunFails>,
+  edgeRuntime: ReturnType<typeof mockEdgeRuntime> = mockEdgeRuntime(),
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -189,6 +225,8 @@ const run = (
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
+        edgeRuntime.layer,
+        mockPgDeltaSslProbeLayer(),
       ),
     ),
   );
@@ -590,6 +628,104 @@ describe("legacyStartSetupLocalDatabase", () => {
               (c) => c.kind === "exec" && c.sql.includes("custom_role"),
             );
             expect(rolesCallIndex).toBe(-1);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+  });
+
+  describe("pgcache migrations-catalog warmup (start.go:371-379)", () => {
+    it.effect("does not attempt to cache the migrations catalog when pg-delta is disabled", () => {
+      const workdir = makeWorkdir();
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const edgeRuntime = mockEdgeRuntime();
+      return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker, edgeRuntime).pipe(
+        Effect.map(() => {
+          expect(edgeRuntime.calls).toHaveLength(0);
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
+
+    it.effect(
+      "caches the migrations catalog after MigrateAndSeed when [experimental.pgdelta] is enabled",
+      () => {
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(1);
+            expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+            const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
+            const catalogFiles = readdirSync(tempDir).filter((name) =>
+              name.startsWith("catalog-local-migrations-"),
+            );
+            expect(catalogFiles).toHaveLength(1);
+            expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
+      "caches the migrations catalog when SUPABASE_EXPERIMENTAL_PG_DELTA is enabled via project .env",
+      () => {
+        const workdir = makeWorkdir();
+        mkdirSync(join(workdir, "supabase"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(1);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
+      "warns without failing legacyStartSetupLocalDatabase when the catalog export fails",
+      () => {
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({
+          failWith: "edge-runtime script produced no output",
+        });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(out.stderrText).toContain(
+              "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+            );
             rmSync(workdir, { recursive: true, force: true });
           }),
         );

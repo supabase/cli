@@ -6,6 +6,8 @@ import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts"
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 
 /**
@@ -27,9 +29,18 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * wait (`legacyWaitForHealthyServices`) requires `HttpClient.HttpClient` in its type signature
  * even though `db start` never uses the PostgREST/Edge-Runtime gateway probes — same reasoning
  * as `start.command.ts`'s own composition of all three.
+ *
+ * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back that same fresh-volume
+ * pipeline's best-effort pg-delta migrations-catalog warmup (`db-setup.ts`'s
+ * `legacyTryCacheMigrationsCatalog` call) — the exact same pair `db push` already composes
+ * for its own call to that function (`push.layers.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(cliConfig),
+);
 
 export const legacyDbStartRuntimeLayer = Layer.mergeAll(
   cliConfig,
@@ -38,4 +49,6 @@ export const legacyDbStartRuntimeLayer = Layer.mergeAll(
   legacyDockerRunLayer,
   legacyDbConnectionLayer,
   httpClient,
+  edgeRuntime,
+  legacyPgDeltaSslProbeLayer,
 );

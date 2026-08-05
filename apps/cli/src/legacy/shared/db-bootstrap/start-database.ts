@@ -59,6 +59,8 @@ import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import type { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
 import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
+import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
+import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
   legacyEnsureStartNetwork,
   legacyStartContainer,
@@ -200,7 +202,17 @@ export const legacyStartDatabase = <E>(
 ): Effect.Effect<
   void,
   LegacyStartDatabaseError | E,
-  Output | LegacyDbConnection | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient
+  | Output
+  | LegacyDbConnection
+  | LegacyDockerRun
+  | RuntimeInfo
+  | HttpClient.HttpClient
+  | LegacyEdgeRuntimeScript
+  | LegacyPgDeltaSslProbe
+  // Widened for `legacyStartSetupLocalDatabase`'s own pgcache-warmup call — see
+  // its own R type's doc comment (`db-setup.ts`).
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
