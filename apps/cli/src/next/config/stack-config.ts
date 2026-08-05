@@ -87,6 +87,8 @@ function expandPresentValues(
   root: unknown,
   segments: ReadonlyArray<string>,
   prefix = "",
+  wildcardExclusions: Readonly<Record<number, ReadonlyArray<string>>> = {},
+  segmentIndex = 0,
 ): ReadonlyArray<PresentConfigValue> {
   const [segment, ...rest] = segments;
   if (segment === undefined) {
@@ -97,15 +99,30 @@ function expandPresentValues(
   }
 
   if (segment === "*") {
+    const excluded = new Set(wildcardExclusions[segmentIndex] ?? []);
     return Object.entries(root).flatMap(([key, value]) =>
-      expandPresentValues(value, rest, prefix === "" ? key : `${prefix}.${key}`),
+      excluded.has(key)
+        ? []
+        : expandPresentValues(
+            value,
+            rest,
+            prefix === "" ? key : `${prefix}.${key}`,
+            wildcardExclusions,
+            segmentIndex + 1,
+          ),
     );
   }
 
   if (!(segment in root)) {
     return [];
   }
-  return expandPresentValues(root[segment], rest, prefix === "" ? segment : `${prefix}.${segment}`);
+  return expandPresentValues(
+    root[segment],
+    rest,
+    prefix === "" ? segment : `${prefix}.${segment}`,
+    wildcardExclusions,
+    segmentIndex + 1,
+  );
 }
 
 function hasMeaningfulDecodedValue(value: unknown): boolean {
@@ -117,6 +134,83 @@ function hasMeaningfulDecodedValue(value: unknown): boolean {
   }
   if (isRecord(value) && Object.getPrototypeOf(value) === Object.prototype) {
     return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function nestedValue(root: unknown, path: ReadonlyArray<string>): unknown {
+  let current = root;
+  for (const segment of path) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function structurallyEqual(left: unknown, right: unknown): boolean {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => structurallyEqual(value, right[index]))
+    );
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every((key) => key in right && structurallyEqual(left[key], right[key]))
+    );
+  }
+  return Object.is(left, right);
+}
+
+function effectiveDiagnosticValue(input: {
+  readonly configured: unknown;
+  readonly loadedProjectConfig: LoadedProjectConfig | null;
+  readonly projectEnvironment: ProjectEnvironment | null;
+  readonly path: string;
+}): unknown {
+  const override = effectiveEnvironmentOverride({
+    loaded: input.loadedProjectConfig,
+    environment: input.projectEnvironment,
+    path: input.path,
+  });
+  if (override === undefined) return input.configured;
+  if (typeof input.configured === "boolean") return parseGoBoolean(override) ?? override;
+  if (typeof input.configured === "number") {
+    const parsed = Number(override);
+    return Number.isFinite(parsed) ? parsed : override;
+  }
+  if (Array.isArray(input.configured)) return override.split(",");
+  return override;
+}
+
+function isEnabledSubtree(input: {
+  readonly projectConfig: ProjectConfig;
+  readonly loadedProjectConfig: LoadedProjectConfig | null;
+  readonly projectEnvironment: ProjectEnvironment | null;
+  readonly path: string;
+}): boolean {
+  const segments = input.path.split(".");
+  for (let length = segments.length; length > 0; length -= 1) {
+    const ancestorPath = segments.slice(0, length);
+    const ancestor = nestedValue(input.projectConfig, ancestorPath);
+    const enabledPath = isRecord(ancestor)
+      ? [...ancestorPath, "enabled"]
+      : ancestorPath.at(-1) === "enabled"
+        ? ancestorPath
+        : undefined;
+    if (enabledPath === undefined) continue;
+    const configured = nestedValue(input.projectConfig, enabledPath);
+    return (
+      effectiveDiagnosticValue({
+        configured,
+        loadedProjectConfig: input.loadedProjectConfig,
+        projectEnvironment: input.projectEnvironment,
+        path: enabledPath.join("."),
+      }) === true
+    );
   }
   return true;
 }
@@ -133,24 +227,53 @@ export function explicitLocalStackConfigEntries(input: {
   readonly loadedProjectConfig?: LoadedProjectConfig | null;
   readonly projectEnvironment?: ProjectEnvironment | null;
 }): ReadonlyArray<ExplicitLocalStackConfigEntry> {
-  return flattenLocalStackConfigParity().flatMap(({ path, decision }) => {
+  return flattenLocalStackConfigParity().flatMap(({ path, decision, wildcardExclusions }) => {
     const source = decision.presence === "raw-document" ? input.rawDocument : input.projectConfig;
-    const configuredEntries =
+    const expanded =
       source === undefined
         ? []
-        : expandPresentValues(source, path.split("."))
-            .filter(({ value }) =>
-              decision.presence === "raw-document" ? true : hasMeaningfulDecodedValue(value),
-            )
-            .map(({ path: explicitPath }) => ({ path: explicitPath, decision }));
-    if (configuredEntries.length > 0 || path.includes("*")) return configuredEntries;
-    return hasEffectiveEnvironmentOverride({
-      loaded: input.loadedProjectConfig ?? null,
-      environment: input.projectEnvironment ?? null,
-      path,
-    })
-      ? [{ path, decision }]
-      : [];
+        : expandPresentValues(source, path.split("."), "", wildcardExclusions);
+    const concretePaths = expanded.length > 0 ? expanded : path.includes("*") ? [] : [{ path }];
+    return concretePaths.flatMap(({ path: explicitPath }) => {
+      const configured = nestedValue(input.projectConfig, explicitPath.split("."));
+      const defaultValue = nestedValue(defaultProjectConfig, explicitPath.split("."));
+      const hasEnvironmentOverride = hasEffectiveEnvironmentOverride({
+        loaded: input.loadedProjectConfig ?? null,
+        environment: input.projectEnvironment ?? null,
+        path: explicitPath,
+      });
+      const effectiveValue = effectiveDiagnosticValue({
+        configured,
+        loadedProjectConfig: input.loadedProjectConfig ?? null,
+        projectEnvironment: input.projectEnvironment ?? null,
+        path: explicitPath,
+      });
+      const enabled = isEnabledSubtree({
+        projectConfig: input.projectConfig,
+        loadedProjectConfig: input.loadedProjectConfig ?? null,
+        projectEnvironment: input.projectEnvironment ?? null,
+        path: explicitPath,
+      });
+      const present =
+        hasEnvironmentOverride ||
+        decision.presence === "raw-document" ||
+        decision.presence === "effective-global-secret"
+          ? hasMeaningfulDecodedValue(effectiveValue) || decision.presence === "raw-document"
+          : decision.presence === "effective-secret" || decision.presence === "enabled-subtree"
+            ? enabled && hasMeaningfulDecodedValue(effectiveValue)
+            : decision.presence === "non-default-value"
+              ? !structurallyEqual(effectiveValue, defaultValue)
+              : hasMeaningfulDecodedValue(effectiveValue);
+      if (!present) return [];
+      if (
+        (decision._tag === "unsupported-blocking" || decision._tag === "unsupported-warning") &&
+        !hasEnvironmentOverride &&
+        structurallyEqual(configured, defaultValue)
+      ) {
+        return [];
+      }
+      return [{ path: explicitPath, decision }];
+    });
   });
 }
 

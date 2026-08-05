@@ -645,6 +645,8 @@ const localStackConfigParity = {
 export interface LocalStackConfigParityEntry {
   readonly path: string;
   readonly decision: LocalStackConfigParityDecision;
+  /** Fixed sibling names that a wildcard at a given path segment must not match. */
+  readonly wildcardExclusions: Readonly<Record<number, ReadonlyArray<string>>>;
 }
 
 function isDecision(node: Node): node is LocalStackConfigParityDecision {
@@ -659,16 +661,25 @@ function isBranch(node: Node): node is LocalStackConfigParityBranch {
 export function flattenLocalStackConfigParity(
   section: LocalStackConfigParitySection = localStackConfigParity,
   prefix = "",
+  inheritedWildcardExclusions: Readonly<Record<number, ReadonlyArray<string>>> = {},
 ): ReadonlyArray<LocalStackConfigParityEntry> {
+  const fixedSiblings = Object.keys(section).filter((field) => field !== "*");
   return Object.entries(section).flatMap(([field, node]) => {
     const path = prefix === "" ? field : `${prefix}.${field}`;
-    if (isDecision(node)) return [{ path, decision: node }];
+    const wildcardExclusions =
+      field === "*" && fixedSiblings.length > 0
+        ? {
+            ...inheritedWildcardExclusions,
+            [prefix === "" ? 0 : prefix.split(".").length]: fixedSiblings,
+          }
+        : inheritedWildcardExclusions;
+    if (isDecision(node)) return [{ path, decision: node, wildcardExclusions }];
     if (isBranch(node)) {
       return [
-        { path, decision: node.decision },
-        ...flattenLocalStackConfigParity(node.children, path),
+        { path, decision: node.decision, wildcardExclusions },
+        ...flattenLocalStackConfigParity(node.children, path, wildcardExclusions),
       ];
     }
-    return flattenLocalStackConfigParity(node, path);
+    return flattenLocalStackConfigParity(node, path, wildcardExclusions);
   });
 }

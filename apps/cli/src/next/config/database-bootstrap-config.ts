@@ -95,10 +95,6 @@ function resolveList(input: {
   return override === undefined ? input.configured : override.split(",");
 }
 
-function rawDefines(loaded: LoadedProjectConfig, path: ReadonlyArray<string>): boolean {
-  return nestedValue(loaded.document, path) !== undefined;
-}
-
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -233,12 +229,14 @@ export const translateDatabaseBootstrapConfig = Effect.fnUntraced(function* (inp
 
   return yield* Effect.tryPromise({
     try: async (): Promise<DatabaseBootstrapTranslation> => {
-      const schemaPathsConfigured =
-        rawDefines(loaded, ["db", "migrations", "schema_paths"]) ||
-        remoteDefines(loaded, ["db", "migrations", "schema_paths"]) ||
-        environmentOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS", input.projectEnvironment) !==
-          undefined;
-      if (schemaPathsConfigured) {
+      const schemaPaths = resolveList({
+        loaded,
+        environment: input.projectEnvironment,
+        path: ["db", "migrations", "schema_paths"],
+        envName: "SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+        configured: loaded.config.db.migrations.schema_paths,
+      });
+      if (schemaPaths.length > 0) {
         throw invalidLocalStackConfig(
           "db.migrations.schema_paths",
           "Use the legacy local stack until declarative schema diffing is implemented.",

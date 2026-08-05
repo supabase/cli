@@ -5,7 +5,9 @@ import {
 } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Schema } from "effect";
+import * as SmolToml from "smol-toml";
 import { describe, expect, it } from "vitest";
+import { renderProjectConfigTemplate } from "../../shared/init/project-init.templates.ts";
 import {
   AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING,
   baseStackConfig,
@@ -138,9 +140,56 @@ describe("explicitLocalStackConfigEntries", () => {
     expect(entries.map(({ path }) => path)).toContain("auth.jwt_secret");
     expect(JSON.stringify(entries)).not.toContain("do-not-return");
   });
+
+  it("does not classify built-in Auth providers through the custom-provider wildcard", () => {
+    const projectConfig = decodeProjectConfig({
+      auth: {
+        external: {
+          github: { enabled: true, client_id: "github-client", secret: "github-secret" },
+        },
+      },
+    });
+    const entries = explicitLocalStackConfigEntries({
+      projectConfig,
+      rawDocument: {
+        auth: {
+          external: {
+            github: { enabled: true, client_id: "github-client", secret: "github-secret" },
+          },
+        },
+      },
+    });
+
+    expect(entries.filter(({ path }) => path.startsWith("auth.external.github"))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "auth.external.github.enabled",
+          decision: expect.objectContaining({ _tag: "mapped" }),
+        }),
+      ]),
+    );
+    expect(
+      entries.some(
+        ({ path, decision }) =>
+          path.startsWith("auth.external.github") && decision._tag === "unsupported-blocking",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("resolveLocalStackLaunch", () => {
+  it("accepts the generated project configuration without treating defaults as opt-ins", async () => {
+    const document = SmolToml.parse(renderProjectConfigTemplate("generated-project", false));
+    const result = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded(document),
+      }),
+    );
+
+    expect(result.stackConfig).toBeDefined();
+  });
+
   it("maps API and database topology into the stack interface", async () => {
     const result = await Effect.runPromise(
       resolveLocalStackLaunchWithBun({
@@ -436,8 +485,8 @@ describe("resolveLocalStackLaunch", () => {
       resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
-          auth: { captcha: { secret: "do-not-leak" } },
-          api: { tls: { cert_path: "another-private-value" } },
+          auth: { captcha: { enabled: true, secret: "do-not-leak" } },
+          api: { tls: { enabled: true, cert_path: "another-private-value" } },
           db: { migrations: { schema_paths: ["./private-schema.sql"] } },
           storage: { buckets: { images: { objects_path: "third-private-value" } } },
         }),

@@ -7,7 +7,7 @@ describe("localStackConfigParity", () => {
   it("classifies every fixed project-config leaf exactly once", () => {
     const paths = entries.map(({ path }) => path);
 
-    expect(paths).toHaveLength(373);
+    expect(paths).toHaveLength(370);
     expect(new Set(paths).size).toBe(paths.length);
     expect(
       Object.fromEntries(
@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 255,
+      mapped: 262,
       "not-applicable": 11,
-      "unsupported-blocking": 101,
+      "unsupported-blocking": 91,
       "unsupported-warning": 6,
     });
   });
@@ -80,7 +80,7 @@ describe("localStackConfigParity", () => {
       "studio.openai_api_key",
       "studio.port",
     ]);
-    expect(mappedPaths.filter((path) => path.startsWith("auth."))).toHaveLength(206);
+    expect(mappedPaths.filter((path) => path.startsWith("auth."))).toHaveLength(213);
     expect(mappedPaths).toEqual(
       expect.arrayContaining([
         "auth.enabled",
