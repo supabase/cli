@@ -87,7 +87,12 @@ Legacy `--output` / `-o` does not change deploy output, matching the Go command.
   the nearest git root still upload, with `../`-relative names. The git-root
   containment boundary is a TS-only safeguard with no Go equivalent — Go uploads any
   reachable import unbounded; #5755 widened the TS boundary from the workdir to the
-  git root.
+  git root. The boundary additionally admits the real (symlink-resolved) directories
+  of `supabase/functions` and each function's entrypoint, so function sources whose
+  symlink targets lie outside the git root still upload with their workdir-anchored
+  names, matching Go's symlink-following walker (INC-699 follow-up: skipping them
+  produced deploys with no file parts, rejected by the API with 400 "Entrypoint path
+  does not exist").
 - Requires a linked project unless `--project-ref` is provided.
 - Uses API/server-side bundling by default; `--use-docker` and `--legacy-bundle` select local bundling.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
