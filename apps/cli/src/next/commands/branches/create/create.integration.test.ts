@@ -27,7 +27,7 @@ function makeCreatedBranch(
   overrides: Partial<typeof V1CreateABranchOutput.Type> = {},
 ): typeof V1CreateABranchOutput.Type {
   return {
-    id: "00000000-0000-0000-0000-000000000002",
+    id: "00000000-0000-4000-8000-000000000002",
     name: "feature-branch",
     project_ref: "branchrefabcdefghijk",
     parent_project_ref: "parentrefabcdefghijk",

@@ -29,6 +29,8 @@ import {
   ProcessControl,
   type CliProcessSignal,
 } from "../../../../shared/runtime/process-control.service.ts";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
+import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
 
 const deployMockState = vi.hoisted(() => ({
@@ -617,6 +619,9 @@ describe("legacy functions serve integration", () => {
         throw new Error("expected docker run call");
       }
 
+      expect(dockerRun.args).toContain(
+        legacyGetRegistryImageUrl(dockerfileServiceImage("edgeruntime")),
+      );
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 
