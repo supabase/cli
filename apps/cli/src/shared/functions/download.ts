@@ -69,6 +69,14 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
    * rendering. Go: `utils.Bold(slug)` (`downloadOne`, `download.go:219`).
    */
   readonly styleEmphasis?: (text: string) => string;
+  /**
+   * Optional shell-specific styling hook for the `--legacy-bundle` command
+   * suggested inside {@link suggestLegacyBundle} — same isolation rationale
+   * as {@link styleEmphasis}, just a different Go colour. Go:
+   * `utils.Aqua("supabase functions download --legacy-bundle "+slug)`
+   * (`suggestLegacyBundle`, `download.go:315`).
+   */
+  readonly styleAqua?: (text: string) => string;
 }
 
 /**
@@ -839,10 +847,15 @@ const downloadEszipBody = Effect.fnUntraced(function* (
   );
 });
 
-function suggestLegacyBundle(slug: string): string {
+function suggestLegacyBundle(
+  slug: string,
+  styleAqua: (text: string) => string = (text) => text,
+): string {
   // Go: `suggestLegacyBundle` (`download.go:314-316`) — verbatim, including
-  // the source's own "trying running" wording and its leading newline.
-  return `\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle ${slug} instead.`;
+  // the source's own "trying running" wording and its leading newline. Go
+  // wraps only the suggested command itself in `utils.Aqua`, not the whole
+  // sentence — `styleAqua` mirrors that scope exactly.
+  return `\nIf your function is deployed using CLI < 1.120.0, trying running ${styleAqua(`supabase functions download --legacy-bundle ${slug}`)} instead.`;
 }
 
 function suggestDenoV2(): string {
@@ -862,10 +875,10 @@ function suggestDenoV2(): string {
  * they raise themselves (`functions-docker.ts`), so this only normalizes
  * (never re-prefixes) whatever `legacyDescribeContainerCliFailure` reports.
  */
-function withLegacyBundleSuggestion(slug: string) {
+function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(legacyDescribeContainerCliFailure(cause)), {
-      suggestion: suggestLegacyBundle(slug),
+      suggestion: suggestLegacyBundle(slug, styleAqua),
     });
 }
 
@@ -877,10 +890,10 @@ function withLegacyBundleSuggestion(slug: string) {
  * running, unlike `ensureDockerNetwork`/`ensureDockerNamedVolume`'s
  * self-describing errors.
  */
-function withDockerStepFailure(step: string, slug: string) {
+function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(`${step}: ${legacyDescribeContainerCliFailure(cause)}`), {
-      suggestion: suggestLegacyBundle(slug),
+      suggestion: suggestLegacyBundle(slug, styleAqua),
     });
 }
 
@@ -1024,6 +1037,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
   const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
+  const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
 
   // Go: `downloadOne` (`download.go:219`) — lowercase "function", distinct
   // from the server-side path's "Downloading Function:" (capital F,
@@ -1108,10 +1122,10 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
 
   const extract = Effect.gen(function* () {
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
-      Effect.mapError(withLegacyBundleSuggestion(slug)),
+      Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
     yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId).pipe(
-      Effect.mapError(withLegacyBundleSuggestion(slug)),
+      Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
 
     // Bind order matches `extractOne` (`download.go:260-266`) exactly. Go's
@@ -1128,6 +1142,22 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       `${hostEszipPath}:${dockerEszipPath}:ro`,
       `${functionsDir}:${DOCKER_DENO_DIR}:rw`,
     ];
+    // No `com.supabase.cli.project`/`com.docker.compose.project` labels on
+    // this container itself — Go's `DockerStart` (`internal/utils/docker.go:372-376`)
+    // sets both unconditionally on `config.Labels` for every container it
+    // starts via the Engine API, including this exact unbundle container
+    // (`DockerRunOnceWithConfig` → `DockerStart`, `download.go:268`), so
+    // label-based cleanup/inspection can't associate an orphaned one-shot
+    // container with the project if the CLI is interrupted mid-run. Pre-existing
+    // and cross-cutting, not introduced by this PR: `deploy.ts`'s own
+    // `bundleFunctionWithDocker` builds an equally raw `docker run` command
+    // (its own `command.push(image, "bundle", ...)`) with the identical gap —
+    // only `ensureDockerNetwork`/`ensureDockerNamedVolume` (`functions-docker.ts`)
+    // thread `dockerProjectLabels` today, for the network/volume they create,
+    // not for the one-shot containers either Docker path runs. Adding `--label`
+    // to every `functions` Docker `run` invocation belongs in a shared
+    // container-build helper both call sites use, not duplicated per call site
+    // here — left open (review round on CLI-1963's `functions download` port).
     const command = [
       "run",
       "--rm",
@@ -1140,12 +1170,26 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     }
     command.push(image, "unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath);
 
+    // Go pipes the container's stdout/stderr straight to `os.Stdout`/`getErrorLogger()`
+    // while the container runs (`DockerRunOnceWithConfig`, copied live via the
+    // log stream) — this awaits `runChildProcess`, which buffers the whole
+    // run via `collectByteStream`'s `Stream.runFold` and only writes below
+    // once the process exits, so live progress/error output is hidden and
+    // stdout/stderr ordering can't be preserved relative to each other while
+    // the container is still running. Pre-existing and cross-cutting, not
+    // introduced by this PR: `deploy.ts`'s `bundleFunctionWithDocker` (added
+    // in #5561, before `functions-docker.ts` existed as its own file) calls
+    // the exact same `runChildProcess` helper the exact same way for its own
+    // bundler container. A real fix needs a streaming variant of
+    // `runChildProcess` used by both `functions` Docker paths, not a
+    // one-off change here — left open (review round on CLI-1963's `functions
+    // download` port).
     const result = yield* runChildProcess("docker", command, {
       stdout: "pipe",
       stderr: "pipe",
     }).pipe(
       Effect.mapError(
-        withDockerStepFailure("failed to run the edge-runtime unbundle container", slug),
+        withDockerStepFailure("failed to run the edge-runtime unbundle container", slug, styleAqua),
       ),
     );
 
@@ -1174,7 +1218,8 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
         result.stderr
           .split(/\r?\n/)
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
-      const suggestion = (invalidEszipV2 ? suggestDenoV2() : "") + suggestLegacyBundle(slug);
+      const suggestion =
+        (invalidEszipV2 ? suggestDenoV2() : "") + suggestLegacyBundle(slug, styleAqua);
       return yield* Effect.fail(
         Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
           suggestion,
@@ -1361,6 +1406,19 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     // alongside this — a boolean that could disagree with whether an image
     // was actually resolved would let the loop below silently downgrade to
     // the server-side path while claiming to honor `--use-docker`.
+    //
+    // The "WARNING: Docker is not running" text below is plain, but Go
+    // styles the `WARNING:` prefix with `utils.Yellow` (`download.go:146`,
+    // same as `deploy.go:60`). Pre-existing and cross-cutting, not introduced
+    // by this PR: `deploy.ts`'s identical "WARNING: Docker is not running"
+    // fallback (added in #5561) has never styled it either — this file lives
+    // in `shared/functions/`, used by both shells, so it can't reach for
+    // `legacy/`'s `legacyYellow` directly (same isolation reason
+    // `styleEmphasis`/`styleAqua` above are injected dependencies rather than
+    // direct imports). A `styleWarning`-shaped hook belongs in a shared place
+    // both `deploy.ts` and `download.ts` inject from, not duplicated per
+    // call site here — left open (review round on CLI-1963's `functions
+    // download` port).
     const edgeRuntimeImage: EdgeRuntimeImage | undefined =
       !flags.useApi && flags.useDocker
         ? (yield* isDockerRunning())
