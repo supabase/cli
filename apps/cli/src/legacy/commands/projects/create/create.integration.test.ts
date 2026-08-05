@@ -461,8 +461,8 @@ describe("legacy projects create integration", () => {
   // silently succeeding where Go errors.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
-      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
       Command.withSubcommands([legacyProjectsCreateCommand]),
+      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
     );
 
     return Effect.gen(function* () {
