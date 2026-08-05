@@ -61,6 +61,14 @@ interface DownloadRuntimeDependencies {
 /** Adds what the Docker-unbundle path needs beyond the server-side path. */
 interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies {
   readonly rawArgs: ReadonlyArray<string>;
+  /**
+   * Optional shell-specific styling hook for the `Downloading function:`
+   * progress line — mirrors `deploy.ts`'s `DeployFunctionsDependencies.styleEmphasis`.
+   * Defaults to identity (plain text); the legacy shell injects Go's bold
+   * styling here so the next shell stays isolated from `legacy/`-specific
+   * rendering. Go: `utils.Bold(slug)` (`downloadOne`, `download.go:219`).
+   */
+  readonly styleEmphasis?: (text: string) => string;
 }
 
 /**
@@ -972,11 +980,15 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   slug: string,
 ) {
   const output = yield* Output;
+  const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
 
   // Go: `downloadOne` (`download.go:219`) — lowercase "function", distinct
   // from the server-side path's "Downloading Function:" (capital F,
-  // `downloadWithServerSideUnbundle`, `download.go:329`).
-  yield* output.raw(`Downloading function: ${slug}\n`, "stderr");
+  // `downloadWithServerSideUnbundle`, `download.go:329`). Both Go call sites
+  // bold the slug (`utils.Bold`); this path is new in CLI-1963, so it picks
+  // up the styling hook now. `downloadSingle`'s server-side path below has
+  // the identical gap, but predates this PR (#5527) — left as-is here.
+  yield* output.raw(`Downloading function: ${styleEmphasis(slug)}\n`, "stderr");
 
   const eszip = yield* downloadEszipBody(dependencies.api, projectRef, slug);
 

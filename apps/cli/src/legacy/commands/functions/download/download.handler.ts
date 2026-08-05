@@ -6,6 +6,7 @@ import {
 } from "../../../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -35,6 +36,9 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
     rawArgs,
     goViperCompat: true,
     edgeRuntimeVersion,
+    // Go: `utils.Bold` on the `Downloading function:` slug (`downloadOne`,
+    // `download.go:219`, stderr) — matches `legacyBold`'s default TTY gate.
+    styleEmphasis: (text) => legacyBold(text),
     resolveProjectRef: (projectRef) =>
       resolver.resolve(projectRef).pipe(
         Effect.tap((ref) =>
