@@ -1646,7 +1646,7 @@ describe("Orchestrator", () => {
     });
 
     it.live("stop() force-interrupts when global timeout expires", () => {
-      const { layer } = setupOrchestratorWithStuckKill(
+      const { layer, proc } = setupOrchestratorWithStuckKill(
         [svc("stuck", { shutdown: { timeoutSeconds: 999 } })],
         { shutdownTimeoutSeconds: 0.5 },
       );
@@ -1662,6 +1662,7 @@ describe("Orchestrator", () => {
         expect(state.status).toBe("Stopped");
         expect(state.pid).toBeNull();
         expect(state.exitCode).toBe(143);
+        expect(proc.killed).toEqual(["SIGTERM", "SIGKILL"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 

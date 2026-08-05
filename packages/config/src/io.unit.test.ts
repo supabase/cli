@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
-import { ProjectConfigSchema } from "./base.ts";
+import { ProjectConfigSchema, toProjectConfigJsonSchema } from "./base.ts";
 import { loadProjectConfig as loadProjectConfigFromBun } from "./bun.ts";
 import {
   configJsonPath,
@@ -921,9 +921,10 @@ major_version = 16
   });
 
   test("includes current keys in generated JSON schema", () => {
-    const document = Schema.toJsonSchemaDocument(ProjectConfigSchema).schema;
-    const schemaString = JSON.stringify(document);
+    const schema = toProjectConfigJsonSchema();
+    const schemaString = JSON.stringify(schema);
 
+    expect(schema).toHaveProperty("$defs");
     expect(schemaString).toContain("local_smtp");
     expect(schemaString).toContain("remotes");
     expect(schemaString).toContain("static_files");

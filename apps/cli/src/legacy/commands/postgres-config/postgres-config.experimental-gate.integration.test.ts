@@ -29,8 +29,8 @@ import { legacyPostgresConfigCommand } from "./postgres-config.command.ts";
 const tempRoot = useLegacyTempWorkdir("supabase-postgres-config-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyPostgresConfigCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {

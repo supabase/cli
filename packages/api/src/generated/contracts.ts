@@ -797,17 +797,7 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(
-            Schema.Union(
-              [
-                Schema.Struct({}),
-                Schema.Number.check(Schema.isFinite()),
-                Schema.String,
-                Schema.Boolean,
-              ],
-              { mode: "oneOf" },
-            ),
-          ),
+          default: Schema.optionalKey(Schema.Json),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -837,14 +827,7 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -1194,14 +1177,7 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -1665,14 +1641,7 @@ export const V1GetASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -3771,14 +3740,7 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                   Schema.Struct({
                     name: Schema.optionalKey(Schema.String),
                     names: Schema.optionalKey(Schema.Array(Schema.String)),
-                    default: Schema.optionalKey(
-                      Schema.Union([
-                        Schema.Struct({}),
-                        Schema.Number.check(Schema.isFinite()),
-                        Schema.String,
-                        Schema.Boolean,
-                      ]),
-                    ),
+                    default: Schema.optionalKey(Schema.Json),
                     array: Schema.optionalKey(Schema.Boolean),
                   }),
                 ),
@@ -4540,17 +4502,7 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(
-            Schema.Union(
-              [
-                Schema.Struct({}),
-                Schema.Number.check(Schema.isFinite()),
-                Schema.String,
-                Schema.Boolean,
-              ],
-              { mode: "oneOf" },
-            ),
-          ),
+          default: Schema.optionalKey(Schema.Json),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -4580,14 +4532,7 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
