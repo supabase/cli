@@ -248,6 +248,86 @@ describe("legacySqlFilesGlob", () => {
   );
 
   it.effect(
+    "cleans a direct glob match whose directory portion has a '.' segment (Go afero.Glob parity)",
+    () => {
+      // Distinct from the walked-child cleaning above: this pattern's glob metacharacter
+      // (`*`) is in the FINAL component, so `globOne` matches `a.sql` directly against
+      // the directory entries of `schemas/.` — it never goes through
+      // `legacyWalkSqlFiles`. Go's real runtime glob path resolves through
+      // `afero.IOFS.Glob` -> `afero.Glob`'s `glob()` helper, which appends each match as
+      // `filepath.Join(dir, n)` (`match.go:99`) — so the recorded match is the CLEANED
+      // `schemas/a.sql`, not a raw `schemas/./a.sql` concatenation. Verified empirically:
+      // a scratch `afero.Glob(fs, ".../tmp/./schemas/*.sql")` probe against a real
+      // filesystem returns the cleaned path.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-direct-dot-segment-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      return run(["schemas/./*.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/a.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "cleans a direct glob match whose directory portion has a '..' segment (Go afero.Glob parity)",
+    () => {
+      // Same distinction as above (a direct match via `globOne`, not a walked directory
+      // expansion), but for an embedded `..` rather than a `.` segment — e.g. an absolute
+      // `schema_paths`/`sql_paths` entry like `/tmp/x/../schemas/*.sql`. `filepath.Join`
+      // lexically resolves `..` the same way it drops a bare `.` root, so Go still records
+      // the cleaned `schemas/a.sql`, not `nested/../schemas/a.sql`. For seed files, that
+      // recorded path is the `supabase_migrations.seed_files.path` hash key, so leaving it
+      // uncleaned would make a TS-resolved match fail to line up with an already-recorded
+      // Go-CLI key and re-run/re-record the seed.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-direct-dotdot-segment-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      return run(["nested/../schemas/*.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/a.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "normalizes a doubled slash for a direct glob match under a trailing-slash directory component (Go afero.Glob parity)",
+    () => {
+      // Same distinction again: `splitPath` on `"schemas//*.sql"` yields a `dir` of
+      // `"schemas/"` (a single trailing slash survives the split), so the old raw
+      // `` `${d}/${name}` `` concatenation inserted a SECOND slash on top of it
+      // (`"schemas//a.sql"`). `filepath.Join`/`path.join` collapse doubled slashes
+      // regardless of where they came from, so the recorded match must be the
+      // single-slash `schemas/a.sql`.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-direct-doubled-slash-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      return run(["schemas//*.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/a.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "still includes a '.sql' child whose stat fails after it's already listed (Go WalkDir parity)",
     () => {
       // Go's `fs.WalkDir` types each child from the parent's `ReadDir`-returned `DirEntry`

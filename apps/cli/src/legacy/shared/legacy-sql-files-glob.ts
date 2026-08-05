@@ -18,6 +18,48 @@ const GLOB_META_CHARS = /[*?[]/u;
 // that escape — see `legacyPathMatch`'s escape handling below.
 const toSlash = (p: string): string => (process.platform === "win32" ? p.replaceAll("\\", "/") : p);
 
+// Joins a matched directory (or glob-split directory prefix) with a child/entry name,
+// delegating to the injected `Path.Path` service for Go's `path.Join`-equivalent
+// cleaning. Two Go call sites build a path exactly this way, and both need the same
+// cleaning:
+//
+//   - Direct glob-match construction (`globOne`, below): the real runtime glob path —
+//     `config.Glob.SQLFiles`'s `fs.Glob(fsys, pattern)` call (`apps/cli-go/pkg/config/
+//     config.go:145`) resolves to `afero.IOFS.Glob` (it implements `fs.GlobFS`), which
+//     delegates to `afero.Glob` (`github.com/spf13/afero@v1.15.0/iofs.go:56-65`). Its
+//     `glob()` helper appends each match as `filepath.Join(dir, n)`
+//     (`match.go:99`), so a glob whose directory portion has a cleanable segment
+//     (`/tmp/./schemas/*.sql`, `/tmp/x/../schemas/*.sql`, a doubled `/tmp/schemas//*.sql`)
+//     still records the CLEANED path, not a raw concatenation. Verified empirically: a
+//     scratch `afero.Glob` probe against all three shapes above returns
+//     `.../tmp/schemas/a.sql` in every case.
+//   - Walked-child construction (`legacyWalkSqlFiles`, below): Go's `fs.WalkDir` builds
+//     each child path via `path.Join(dirname, name)` (`io/fs/walk.go`).
+//
+// `path.Join`/`filepath.Join` both run Clean on the joined result — collapsing doubled
+// slashes, dropping a bare `.` root, and lexically resolving `.`/`..` segments anywhere
+// else in the path. Node's `path.join` (via this module's injected `Path.Path` service,
+// backed by `node:path`) runs the same POSIX lexical-cleaning algorithm and was verified
+// empirically to match byte-for-byte across every case either call site can hit —
+// dot-root, trailing slash, embedded `.`/`..`, and doubled slashes:
+//
+//   Go:   path.Join(".", "foo.sql")                    = "foo.sql"
+//         filepath.Join("/tmp/schemas/", "a.sql")       = "/tmp/schemas/a.sql"
+//         filepath.Join("/tmp/./schemas", "a.sql")      = "/tmp/schemas/a.sql"
+//         filepath.Join("/tmp/x/../schemas", "a.sql")   = "/tmp/schemas/a.sql"
+//         path.Join("..", "foo.sql")                    = "../foo.sql"
+//   Node: path.join(".", "foo.sql")                     = "foo.sql"
+//         path.join("/tmp/schemas/", "a.sql")           = "/tmp/schemas/a.sql"
+//         path.join("/tmp/./schemas", "a.sql")          = "/tmp/schemas/a.sql"
+//         path.join("/tmp/x/../schemas", "a.sql")       = "/tmp/schemas/a.sql"
+//         path.join("..", "foo.sql")                    = "../foo.sql"
+//
+// For seeds, the resulting path becomes the `supabase_migrations.seed_files.path` hash
+// key, so any of these cleaning differences would make a TS-resolved path fail to match
+// an already-recorded Go-CLI key and re-run/re-record the seed; for schema files it
+// changes what path is suggested on an apply failure.
+const joinRelChild = (path: Path.Path, rel: string, name: string): string => path.join(rel, name);
+
 /**
  * Splits a forward-slashed path into its directory prefix and final element.
  *
@@ -78,10 +120,12 @@ const globOne = (
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
       for (const name of names) {
         if (legacyPathMatch(file, name).matched) {
-          // `d === "/"` is the filesystem root (from `splitPath`'s preserved root
-          // prefix, above) — join without a doubled slash, matching Go's
-          // `filepath.Join("/", name)`.
-          result.push(d === "" ? name : d === "/" ? `/${name}` : `${d}/${name}`);
+          // `joinRelChild` (above) is the same Path-service clean-join the walked-child
+          // path below uses — see its comment for why a raw `${d}/${name}` concatenation
+          // isn't enough here (Go's `afero.Glob` cleans via `filepath.Join(dir, n)`, so
+          // `d === "/"`, `d === ""`, and a `dir` containing `.`/`..`/doubled-slash
+          // segments must all clean the same way as the walked-child case does).
+          result.push(toSlash(joinRelChild(path, d, name)));
         }
       }
     }
@@ -103,33 +147,6 @@ const globOne = (
  * empirically: an unreadable matched directory makes `Glob.SQLFiles` return a
  * `failed to walk matched directory: ...` error with zero files, not an empty match).
  */
-// Go's `fs.WalkDir` builds each child path via `path.Join(dirname, name)` (`io/fs/walk.go`),
-// and `path.Join` runs `path.Clean` on the joined result — collapsing doubled slashes,
-// dropping a bare `.` root, and lexically resolving `.`/`..` segments anywhere else in the
-// path (e.g. an absolute `schema_paths`/`sql_paths` directory configured as `/tmp/./schemas`
-// or `/tmp/x/../schemas`). Node's `path.join` (via this module's injected `Path.Path`
-// service, backed by `node:path`) runs the same POSIX lexical-cleaning algorithm and was
-// verified empirically to match Go's `path.Join` byte-for-byte across every case this walk
-// can hit — dot-root, trailing slash, embedded `.`/`..`, and doubled slashes — so delegating
-// to it (rather than accumulating more hand-rolled special cases here) closes this whole
-// class of cleaning edge cases at once:
-//
-//   Go:   path.Join(".", "foo.sql")                = "foo.sql"
-//         path.Join("/tmp/schemas/", "a.sql")       = "/tmp/schemas/a.sql"
-//         path.Join("/tmp/./schemas", "a.sql")      = "/tmp/schemas/a.sql"
-//         path.Join("/tmp/x/../schemas", "a.sql")   = "/tmp/schemas/a.sql"
-//         path.Join("..", "foo.sql")                = "../foo.sql"
-//   Node: path.join(".", "foo.sql")                 = "foo.sql"
-//         path.join("/tmp/schemas/", "a.sql")       = "/tmp/schemas/a.sql"
-//         path.join("/tmp/./schemas", "a.sql")      = "/tmp/schemas/a.sql"
-//         path.join("/tmp/x/../schemas", "a.sql")   = "/tmp/schemas/a.sql"
-//         path.join("..", "foo.sql")                = "../foo.sql"
-//
-// For seeds, the walked path becomes the `supabase_migrations.seed_files.path` hash key, so
-// any of these cleaning differences would make a TS-walked path fail to match an
-// already-recorded Go-CLI key and re-run/re-record the seed.
-const joinRelChild = (path: Path.Path, rel: string, name: string): string => path.join(rel, name);
-
 const legacyWalkSqlFiles = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
