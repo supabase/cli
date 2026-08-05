@@ -42,8 +42,11 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
 // ---------------------------------------------------------------------------
 
 /** Bun platform factory for use with foregroundLayer / daemonLayer. */
-export const platformFactory: PlatformFactory = (apiPort) =>
-  Layer.mergeAll(BunServices.layer, BunHttpServer.layer({ port: apiPort }));
+export const platformFactory: PlatformFactory = ({ apiPort, releaseApiPort }) =>
+  Layer.mergeAll(
+    BunServices.layer,
+    Layer.unwrap(releaseApiPort.pipe(Effect.as(BunHttpServer.layer({ port: apiPort })))),
+  );
 
 /** Path to the Bun daemon entry point for use with daemonLayer. */
 export const daemonEntryPoint: string = fileURLToPath(new URL("./daemon-bun.ts", import.meta.url));

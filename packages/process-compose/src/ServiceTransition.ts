@@ -8,6 +8,7 @@ import { ServiceState, type ServiceStatus } from "./ServiceState.ts";
 export type ServiceEvent =
   | { readonly _tag: "DependenciesSatisfied" }
   | { readonly _tag: "DependencyFailed"; readonly error: string }
+  | { readonly _tag: "SpawnFailed"; readonly error: string }
   | {
       readonly _tag: "ProcessSpawned";
       readonly pid: number;
@@ -31,8 +32,10 @@ export type ServiceEvent =
 const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
   "Pending:DependenciesSatisfied",
   "Pending:DependencyFailed",
+  "Pending:SpawnFailed",
   "Pending:StopRequested",
   "Starting:ProcessSpawned",
+  "Starting:SpawnFailed",
   "Starting:StopRequested",
   "Running:HealthCheckPassed",
   "Running:ProcessExited",
@@ -67,6 +70,7 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
       return new ServiceState({ ...state, status: "Starting" });
 
     case "DependencyFailed":
+    case "SpawnFailed":
       return new ServiceState({
         ...state,
         status: "Failed",

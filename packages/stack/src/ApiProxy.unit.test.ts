@@ -1,10 +1,13 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as http from "node:http";
 import { gzipSync } from "node:zlib";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
+import { StackNotRunningError } from "./errors.ts";
+import { StackServiceActivator } from "./ServiceActivation.ts";
+import type { ServiceName } from "./versions.ts";
 
 interface EchoServer {
   readonly port: number;
@@ -102,18 +105,23 @@ function startFlakyBackend(opts: { failFirst: number; body: string }): Promise<F
 }
 
 // Builds the full proxy layer backed by a Node HTTP server.
-function buildProxyLayer(config: ProxyConfig): Layer.Layer<ApiProxy, never, never> {
+function buildProxyLayer(
+  config: ProxyConfig,
+  activatorLayer: Layer.Layer<StackServiceActivator> = StackServiceActivator.noop,
+): Layer.Layer<ApiProxy, never, never> {
   return ApiProxy.layer(config).pipe(
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
     Layer.provide(FetchHttpClient.layer),
+    Layer.provide(activatorLayer),
   ) as Layer.Layer<ApiProxy, never, never>;
 }
 
 // Spins up a proxy for an ad-hoc config and returns its URL plus a disposer.
 async function startProxy(
   config: ProxyConfig,
+  activatorLayer?: Layer.Layer<StackServiceActivator>,
 ): Promise<{ url: string; dispose: () => Promise<void> }> {
-  const proxyRuntime = ManagedRuntime.make(buildProxyLayer(config));
+  const proxyRuntime = ManagedRuntime.make(buildProxyLayer(config, activatorLayer));
   const proxy = await proxyRuntime.runPromise(ApiProxy);
   const addr = proxy.address;
   let url = "";
@@ -204,6 +212,38 @@ describe("ApiProxy", () => {
   test("non-OPTIONS responses include CORS headers", async () => {
     const res = await fetch(`${proxyUrl}/health`);
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  test("activates the routed service before forwarding", async () => {
+    const activated: ServiceName[] = [];
+    const activatorLayer = Layer.succeed(StackServiceActivator, {
+      activate: (service) =>
+        Effect.sync(() => {
+          activated.push(service);
+        }),
+    });
+    const proxy = await startProxy(configForPort(echoServer.port), activatorLayer);
+    try {
+      const res = await fetch(`${proxy.url}/rest/v1/users`);
+      expect(res.status).toBe(200);
+      expect(activated).toEqual(["postgrest"]);
+    } finally {
+      await proxy.dispose();
+    }
+  });
+
+  test("returns 503 when the stack cannot activate a service", async () => {
+    const activatorLayer = Layer.succeed(StackServiceActivator, {
+      activate: () => Effect.fail(new StackNotRunningError({ phase: "idle" })),
+    });
+    const proxy = await startProxy(configForPort(echoServer.port), activatorLayer);
+    try {
+      const res = await fetch(`${proxy.url}/rest/v1/users`);
+      expect(res.status).toBe(503);
+      expect(res.headers.get("retry-after")).toBe("1");
+    } finally {
+      await proxy.dispose();
+    }
   });
 
   // ---------------------------------------------------------------------------

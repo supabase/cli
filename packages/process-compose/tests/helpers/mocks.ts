@@ -1,4 +1,5 @@
 import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { writeFileSync } from "node:fs";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 interface SpawnRecord {
@@ -8,11 +9,30 @@ interface SpawnRecord {
 
 const encoder = new TextEncoder();
 
+const signalSupervisorSpawnGate = (args: ReadonlyArray<string>): void => {
+  const encoded = args.at(-1);
+  if (encoded === undefined) return;
+  try {
+    const config: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (typeof config !== "object" || config === null || !("spawnGate" in config)) return;
+    const gate = config.spawnGate;
+    if (
+      typeof gate === "object" &&
+      gate !== null &&
+      "requestPath" in gate &&
+      typeof gate.requestPath === "string"
+    ) {
+      writeFileSync(gate.requestPath, "ready", { flag: "wx" });
+    }
+  } catch {}
+};
+
 export function mockChildProcessSpawner(
   opts: {
     exitCode?: number;
     stdout?: string[];
     stderr?: string[];
+    beforeSpawn?: (record: SpawnRecord) => Effect.Effect<void>;
     onSpawn?: (record: SpawnRecord) => void;
   } = {},
 ) {
@@ -27,6 +47,8 @@ export function mockChildProcessSpawner(
           const cmd = command._tag === "StandardCommand" ? command.command : "";
           const args = command._tag === "StandardCommand" ? command.args : [];
           const record: SpawnRecord = { command: cmd, args };
+          signalSupervisorSpawnGate(args);
+          yield* opts.beforeSpawn?.(record) ?? Effect.void;
           spawned.push(record);
           opts.onSpawn?.(record);
 

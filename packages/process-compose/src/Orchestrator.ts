@@ -7,6 +7,7 @@ import {
   FiberMap,
   Layer,
   Context,
+  Semaphore,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -14,11 +15,16 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { buildGraph, type ResolvedGraph } from "./DependencyGraph.ts";
 import { type HealthProbeCallbacks, runHealthProbe } from "./HealthProbe.ts";
 import { LogBuffer } from "./LogBuffer.ts";
-import type { HookTrigger, OrchestratorConfig, RestartPolicy, ServiceDef } from "./ServiceDef.ts";
+import type {
+  HookTrigger,
+  OrchestratorConfig,
+  RestartPolicy,
+  ServiceDef,
+  ServiceStartOptions,
+} from "./ServiceDef.ts";
 import { defaults } from "./ServiceDef.ts";
-import { initial } from "./ServiceState.ts";
+import { initial, ServiceState, type ServiceDesiredState } from "./ServiceState.ts";
 import { makeSupervisedCommand, usesSupervisor } from "./Supervisor.ts";
-import type { ServiceState } from "./ServiceState.ts";
 import {
   CyclicDependencyError,
   MissingDependencyError,
@@ -42,11 +48,17 @@ const waitForProcessToStop = (handle: {
 export class Orchestrator extends Context.Service<
   Orchestrator,
   {
-    readonly start: () => Effect.Effect<void>;
-    readonly startService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
+    readonly start: (options?: ServiceStartOptions) => Effect.Effect<void>;
+    readonly startService: (
+      name: string,
+      options?: ServiceStartOptions,
+    ) => Effect.Effect<void, ServiceNotFoundError>;
     readonly stop: () => Effect.Effect<void>;
     readonly stopService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
-    readonly restartService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
+    readonly restartService: (
+      name: string,
+      options?: ServiceStartOptions,
+    ) => Effect.Effect<void, ServiceNotFoundError>;
     readonly updateServiceDefinition: (
       name: string,
       def: ServiceDef,
@@ -100,7 +112,8 @@ export class Orchestrator extends Context.Service<
           healthy: Deferred.Deferred<void>;
           completed: Deferred.Deferred<number>;
           stopped: Deferred.Deferred<void>;
-          stoppedByUser: boolean;
+          readonly readinessWaiters: Set<Deferred.Deferred<void>>;
+          readonly completionWaiters: Set<Deferred.Deferred<number>>;
         }
         const services = new Map<string, ServiceSignals>();
 
@@ -113,12 +126,14 @@ export class Orchestrator extends Context.Service<
             healthy: Deferred.makeUnsafe<void>(),
             completed: Deferred.makeUnsafe<number>(),
             stopped: Deferred.makeUnsafe<void>(),
-            stoppedByUser: false,
+            readinessWaiters: new Set(),
+            completionWaiters: new Set(),
           });
         }
 
         // FiberMap to track running service fibers — auto-interrupted on scope close
         const fibers = yield* FiberMap.make<string>();
+        const startServiceLock = Semaphore.makeUnsafe(1);
 
         // Helper: send a validated FSM event — only does the state transition
         const sendEvent = (
@@ -129,6 +144,21 @@ export class Orchestrator extends Context.Service<
           if (svc === undefined) return Effect.succeed(null);
           return transition(svc.state, event);
         };
+
+        const setDesired = (name: string, desired: ServiceDesiredState): Effect.Effect<void> => {
+          const svc = services.get(name);
+          if (svc === undefined) return Effect.void;
+          return SubscriptionRef.update(svc.state, (state) =>
+            state.desired === desired ? state : new ServiceState({ ...state, desired }),
+          );
+        };
+
+        const signalHealthy = (svc: ServiceSignals): Effect.Effect<void> =>
+          Effect.forEach(
+            [svc.healthy, ...svc.readinessWaiters],
+            (waiter) => Deferred.succeed(waiter, void 0),
+            { discard: true },
+          );
 
         // Helper: run all hooks for a given trigger in sequence
         const runHooks = (def: ServiceDef, trigger: HookTrigger): Effect.Effect<void> =>
@@ -165,11 +195,22 @@ export class Orchestrator extends Context.Service<
         const shouldRestartOnUnhealthy = (policy: RestartPolicy): boolean => policy !== "no";
 
         // The full lifecycle loop for a single service
-        const runService = (def: ServiceDef): Effect.Effect<void, SpawnError> =>
+        const runService = (
+          def: ServiceDef,
+          options?: ServiceStartOptions,
+        ): Effect.Effect<void, SpawnError> =>
           Effect.gen(function* () {
             let restartCount = 0;
             const maxRestarts = def.maxRestarts ?? defaults.maxRestarts;
             const restartPolicy = def.restart ?? defaults.restart;
+            const prepareStart = () =>
+              options
+                ?.beforeStart?.(def.name)
+                .pipe(
+                  Effect.mapError((cause) => new SpawnError({ service: def.command, cause })),
+                ) ?? Effect.void;
+
+            yield* prepareStart();
 
             // Re-create signals on each run (needed for restarts)
             const resetSignals = Effect.sync(() => {
@@ -236,6 +277,10 @@ export class Orchestrator extends Context.Service<
                         extendEnv: true,
                         stdin: "ignore",
                       });
+
+                  // Release external resources such as port reservations only
+                  // once dependencies are satisfied and spawning is imminent.
+                  yield* options?.beforeSpawn?.(def.name) ?? Effect.void;
 
                   // Spawn the process
                   const handle = yield* spawner
@@ -349,7 +394,7 @@ export class Orchestrator extends Context.Service<
                               yield* runHooks(def, "healthy");
                               const current = SubscriptionRef.getUnsafe(svcSig.state);
                               if (current.status !== "Failed") {
-                                yield* Deferred.succeed(svcSig.healthy, void 0);
+                                yield* signalHealthy(svcSig);
                               }
                             }
                           }
@@ -382,7 +427,7 @@ export class Orchestrator extends Context.Service<
                     if (svcSig) {
                       const current = SubscriptionRef.getUnsafe(svcSig.state);
                       if (current.status !== "Failed") {
-                        yield* Deferred.succeed(svcSig.healthy, void 0);
+                        yield* signalHealthy(svcSig);
                       }
                     }
                   }
@@ -441,8 +486,14 @@ export class Orchestrator extends Context.Service<
             const handleResult = (r: SpawnResult) =>
               Effect.gen(function* () {
                 if (r._tag === "Exited") {
-                  const completeSig = services.get(def.name)?.completed;
-                  if (completeSig) yield* Deferred.succeed(completeSig, r.exitCode);
+                  const service = services.get(def.name);
+                  if (service !== undefined) {
+                    yield* Effect.forEach(
+                      [service.completed, ...service.completionWaiters],
+                      (waiter) => Deferred.succeed(waiter, r.exitCode),
+                      { discard: true },
+                    );
+                  }
                   if (r.exitCode !== 0 && r.exitCode !== 143) {
                     yield* appendRecentServiceLogs(
                       def.name,
@@ -458,19 +509,24 @@ export class Orchestrator extends Context.Service<
 
             // Restart loop
             const shouldRestart = (r: SpawnResult): boolean => {
+              const svc = services.get(def.name);
+              if (svc === undefined || SubscriptionRef.getUnsafe(svc.state).desired !== "running") {
+                return false;
+              }
               if (r._tag === "UnhealthyRestart") return true;
               if (restartPolicy === "no") return false;
               if (restartPolicy === "always") return true;
-              if (restartPolicy === "unless-stopped") {
-                const svc = services.get(def.name);
-                return svc ? !svc.stoppedByUser : false;
-              }
+              if (restartPolicy === "unless-stopped") return true;
               if (restartPolicy === "on-failure") return r.exitCode !== 0;
               return false;
             };
 
             while (shouldRestart(result) && (maxRestarts === 0 || restartCount < maxRestarts)) {
               restartCount++;
+
+              // The previous process scope has closed, so external resources can
+              // be reserved safely for the duration of this restart's backoff.
+              yield* prepareStart();
 
               if (result._tag === "UnhealthyRestart") {
                 yield* appendRecentServiceLogs(
@@ -495,11 +551,11 @@ export class Orchestrator extends Context.Service<
             }
           });
 
-        const runServiceSafe = (def: ServiceDef) =>
-          runService(def).pipe(
+        const runServiceSafe = (def: ServiceDef, options?: ServiceStartOptions) =>
+          runService(def, options).pipe(
             Effect.catch((error) =>
               sendEvent(def.name, {
-                _tag: "DependencyFailed",
+                _tag: "SpawnFailed",
                 error: `Spawn failed: ${error.service} - ${String(error.cause)}`,
               }).pipe(Effect.asVoid),
             ),
@@ -512,12 +568,12 @@ export class Orchestrator extends Context.Service<
           Effect.gen(function* () {
             const svc = services.get(name);
             if (svc) {
-              yield* SubscriptionRef.set(svc.state, initial(name));
+              const desired = SubscriptionRef.getUnsafe(svc.state).desired;
+              yield* SubscriptionRef.set(svc.state, initial(name, desired));
               svc.started = Deferred.makeUnsafe<void>();
               svc.healthy = Deferred.makeUnsafe<void>();
               svc.completed = Deferred.makeUnsafe<number>();
               svc.stopped = Deferred.makeUnsafe<void>();
-              svc.stoppedByUser = false;
             }
           });
 
@@ -530,12 +586,24 @@ export class Orchestrator extends Context.Service<
 
         const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
           const names = new Set<string>([name]);
-          const collectDependents = (current: string): void => {
+          const visited = new Set<string>();
+          const collectDependents = (current: string): boolean => {
+            if (visited.has(current)) return names.has(current);
+            visited.add(current);
+            let hasActiveDependent = false;
             for (const dependent of graph.dependentsOf(current)) {
-              if (names.has(dependent.name)) continue;
-              names.add(dependent.name);
-              collectDependents(dependent.name);
+              const dependentService = services.get(dependent.name);
+              const dependentIsActive =
+                FiberMap.hasUnsafe(fibers, dependent.name) ||
+                (dependentService !== undefined &&
+                  SubscriptionRef.getUnsafe(dependentService.state).desired === "running");
+              const descendantIsActive = collectDependents(dependent.name);
+              if (dependentIsActive || descendantIsActive) {
+                names.add(dependent.name);
+                hasActiveDependent = true;
+              }
             }
+            return hasActiveDependent;
           };
           collectDependents(name);
           return graph.startOrder.filter((def) => names.has(def.name));
@@ -547,8 +615,18 @@ export class Orchestrator extends Context.Service<
             if (!svc) return Effect.void;
             const restartPolicy = def.restart ?? defaults.restart;
 
-            // Check if already failed
             const current = SubscriptionRef.getUnsafe(svc.state);
+            if (current.desired !== "running") {
+              return Effect.fail(
+                new ServiceReadyError({
+                  name: def.name,
+                  reason:
+                    current.desired === "inactive"
+                      ? "Service has not been started"
+                      : "Service was explicitly stopped",
+                }),
+              );
+            }
             if (current.status === "Failed") {
               return Effect.fail(
                 new ServiceReadyError({
@@ -559,8 +637,17 @@ export class Orchestrator extends Context.Service<
             }
 
             if (restartPolicy === "no") {
-              // One-shot: wait for completed, check exit code
-              return Deferred.await(svc.completed).pipe(
+              const completion = Deferred.makeUnsafe<number>();
+              svc.completionWaiters.add(completion);
+              return Deferred.isDone(svc.completed).pipe(
+                Effect.flatMap((alreadyCompleted) =>
+                  alreadyCompleted
+                    ? Deferred.await(svc.completed).pipe(
+                        Effect.flatMap((exitCode) => Deferred.succeed(completion, exitCode)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(Deferred.await(completion)),
                 Effect.flatMap((exitCode) =>
                   exitCode === 0
                     ? Effect.void
@@ -572,68 +659,182 @@ export class Orchestrator extends Context.Service<
                         }),
                       ),
                 ),
+                Effect.ensuring(Effect.sync(() => svc.completionWaiters.delete(completion))),
               );
             }
 
-            // Long-running: race healthy vs failure
-            return Effect.race(
-              Deferred.await(svc.healthy),
-              SubscriptionRef.changes(svc.state).pipe(
-                Stream.filter((s) => s.status === "Failed"),
-                Stream.take(1),
-                Stream.runDrain,
-                Effect.andThen(
-                  Effect.gen(function* () {
-                    const current = SubscriptionRef.getUnsafe(svc.state);
-                    return yield* Effect.fail(
-                      new ServiceReadyError({
-                        name: def.name,
-                        reason: current.error ?? "Service entered Failed state",
-                      }),
-                    );
-                  }),
+            if (current.status === "Stopped") {
+              return Effect.fail(
+                new ServiceReadyError({
+                  name: def.name,
+                  reason: "Service stopped before becoming ready",
+                }),
+              );
+            }
+
+            // A waiter belongs to the readiness request, not to one service signal
+            // generation. Dependency retries may replace svc.healthy while this
+            // request is pending, so signal the stable waiter from any generation.
+            const readiness = Deferred.makeUnsafe<void>();
+            svc.readinessWaiters.add(readiness);
+            return Deferred.isDone(svc.healthy).pipe(
+              Effect.flatMap((alreadyHealthy) =>
+                alreadyHealthy ? Deferred.succeed(readiness, void 0) : Effect.void,
+              ),
+              Effect.andThen(
+                Effect.race(
+                  Deferred.await(readiness),
+                  SubscriptionRef.changes(svc.state).pipe(
+                    Stream.filter(
+                      (state) => state.status === "Failed" || state.status === "Stopped",
+                    ),
+                    Stream.take(1),
+                    Stream.runDrain,
+                    Effect.andThen(
+                      Deferred.isDone(readiness).pipe(
+                        Effect.flatMap((ready) => {
+                          if (ready) return Effect.void;
+                          const terminal = SubscriptionRef.getUnsafe(svc.state);
+                          return Effect.fail(
+                            new ServiceReadyError({
+                              name: def.name,
+                              reason:
+                                terminal.status === "Stopped"
+                                  ? "Service stopped before becoming ready"
+                                  : (terminal.error ?? "Service entered Failed state"),
+                            }),
+                          );
+                        }),
+                      ),
+                    ),
+                  ),
                 ),
               ),
+              Effect.ensuring(Effect.sync(() => svc.readinessWaiters.delete(readiness))),
             );
           });
 
         return {
-          start: () =>
+          start: (options) =>
             Effect.gen(function* () {
               for (const def of graph.startOrder) {
-                yield* FiberMap.run(fibers, def.name, runServiceSafe(def));
+                yield* setDesired(def.name, "running");
+                yield* FiberMap.run(fibers, def.name, runServiceSafe(def, options));
               }
             }),
 
-          startService: (name: string) =>
+          startService: (name: string, options) =>
             Effect.gen(function* () {
               const def = lookupDef(name);
               if (def === undefined) {
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
               const order = graph.startOrderFor(name);
+              const orderNames = new Set(order.map((service) => service.name));
+              const resetNames = new Set<string>();
+              let dependencySignalsReset = false;
               for (const d of order) {
-                yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
+                const service = services.get(d.name);
+                const state = service?.state;
+                const status =
+                  state === undefined ? undefined : SubscriptionRef.getUnsafe(state).status;
+                const restartPolicy = d.restart ?? defaults.restart;
+
+                // A successful one-shot remains a satisfied dependency after its
+                // process exits. Naturally stopped long-running services can be
+                // started again even when their restart policy did not relaunch them.
+                if (
+                  status === "Stopped" &&
+                  d.name !== name &&
+                  service !== undefined &&
+                  SubscriptionRef.getUnsafe(service.state).desired !== "stopped" &&
+                  restartPolicy === "no"
+                ) {
+                  continue;
+                }
+
+                if (status === "Failed") {
+                  // The failed fiber may still be unwinding its process scope.
+                  // Remove it before replacing the signals used by the retry.
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  resetNames.add(d.name);
+                  dependencySignalsReset = true;
+                } else if (status === "Stopped") {
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  resetNames.add(d.name);
+                  dependencySignalsReset = true;
+                } else if (dependencySignalsReset && status === "Pending") {
+                  // This fiber may be waiting on Deferreds replaced by a retried dependency.
+                  // Relaunch it so it observes the dependency's new signal generation.
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  resetNames.add(d.name);
+                }
+                yield* setDesired(d.name, "running");
+                yield* FiberMap.run(fibers, d.name, runServiceSafe(d, options), {
+                  onlyIfMissing: true,
+                });
               }
-            }),
+
+              // A caller may retry a dependency directly while dependents started by an
+              // earlier request are still waiting on its old Deferred generation.
+              for (const d of graph.startOrder) {
+                if (orderNames.has(d.name)) continue;
+                const dependsOnResetService = graph
+                  .startOrderFor(d.name)
+                  .some((dependency) => resetNames.has(dependency.name));
+                const service = services.get(d.name);
+                if (
+                  dependsOnResetService &&
+                  service !== undefined &&
+                  FiberMap.hasUnsafe(fibers, d.name) &&
+                  SubscriptionRef.getUnsafe(service.state).status === "Pending"
+                ) {
+                  yield* FiberMap.remove(fibers, d.name);
+                  yield* resetService(d.name);
+                  yield* setDesired(d.name, "running");
+                  yield* FiberMap.run(fibers, d.name, runServiceSafe(d, options), {
+                    onlyIfMissing: true,
+                  });
+                }
+              }
+            }).pipe(startServiceLock.withPermit),
 
           stop: () =>
             Effect.gen(function* () {
               const timeoutSecs = config?.shutdownTimeoutSeconds ?? defaults.shutdownTimeoutSeconds;
+              const desiredBeforeStop = new Map(
+                graph.startOrder.map((def) => {
+                  const svc = services.get(def.name);
+                  return [
+                    def.name,
+                    svc === undefined ? "inactive" : SubscriptionRef.getUnsafe(svc.state).desired,
+                  ] as const;
+                }),
+              );
+
+              yield* Effect.forEach(
+                graph.startOrder.filter((def) => desiredBeforeStop.get(def.name) === "running"),
+                (def) => setDesired(def.name, "stopped"),
+                { discard: true },
+              );
 
               const stopAll = Effect.gen(function* () {
                 const stopOne = (def: ServiceDef) =>
                   Effect.gen(function* () {
+                    if (desiredBeforeStop.get(def.name) === "inactive") {
+                      const inactiveSignal = services.get(def.name)?.stopped;
+                      if (inactiveSignal) yield* Deferred.succeed(inactiveSignal, void 0);
+                      return;
+                    }
                     // Wait for all dependents to be stopped first
                     const dependents = graph.dependentsOf(def.name);
                     for (const dep of dependents) {
                       const sig = services.get(dep.name)?.stopped;
                       if (sig) yield* Deferred.await(sig);
                     }
-
-                    // Mark as user-stopped so restart loop won't re-spawn
-                    const svc = services.get(def.name);
-                    if (svc) svc.stoppedByUser = true;
 
                     // Now safe to stop this service
                     yield* sendEvent(def.name, { _tag: "StopRequested" });
@@ -675,15 +876,16 @@ export class Orchestrator extends Context.Service<
               if (lookupDef(name) === undefined) {
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
-              const svc = services.get(name);
-              if (svc) svc.stoppedByUser = true;
-              yield* sendEvent(name, { _tag: "StopRequested" });
-              yield* FiberMap.remove(fibers, name);
-              // Force Stopped if still in Stopping (fiber was interrupted before ProcessExited)
-              yield* sendEvent(name, { _tag: "ProcessExited", exitCode: 143 });
+              const affected = restartClosureFor(name);
+              for (const affectedDef of [...affected].reverse()) {
+                yield* setDesired(affectedDef.name, "stopped");
+                yield* sendEvent(affectedDef.name, { _tag: "StopRequested" });
+                yield* FiberMap.remove(fibers, affectedDef.name);
+                yield* sendEvent(affectedDef.name, { _tag: "ProcessExited", exitCode: 143 });
+              }
             }),
 
-          restartService: (name: string) =>
+          restartService: (name: string, options) =>
             Effect.gen(function* () {
               const def = lookupDef(name);
               if (def === undefined) {
@@ -696,9 +898,10 @@ export class Orchestrator extends Context.Service<
               }
               for (const affectedDef of affected) {
                 yield* resetService(affectedDef.name);
+                yield* setDesired(affectedDef.name, "running");
               }
               for (const affectedDef of affected) {
-                yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef));
+                yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef, options));
               }
             }),
 
@@ -760,9 +963,17 @@ export class Orchestrator extends Context.Service<
             }),
 
           waitAllReady: () =>
-            Effect.all(graph.startOrder.map(waitReadySingle), {
-              concurrency: "unbounded",
-            }).pipe(Effect.asVoid),
+            Effect.all(
+              graph.startOrder
+                .filter((def) => {
+                  const svc = services.get(def.name);
+                  return (
+                    svc !== undefined && SubscriptionRef.getUnsafe(svc.state).desired === "running"
+                  );
+                })
+                .map(waitReadySingle),
+              { concurrency: "unbounded" },
+            ).pipe(Effect.asVoid),
         };
       }),
     );

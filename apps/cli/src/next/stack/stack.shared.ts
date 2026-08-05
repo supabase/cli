@@ -9,13 +9,18 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
   const initialStates = yield* stack.getAllStates();
   const stateNames = new Set(initialStates.map((state) => state.name));
   const statesByName = new Map(initialStates.map((state) => [state.name, state] as const));
-  const readyNames = new Set(
-    initialStates.filter((state) => state.status === "Healthy").map((state) => state.name),
+  const completedNames = new Set(
+    initialStates
+      .filter((state) => state.status === "Healthy" || state.status === "Dormant")
+      .map((state) => state.name),
   );
   const prog = yield* output.progress({ max: initialStates.length });
   yield* prog.start("Waiting for services...");
+  if (completedNames.size > 0) {
+    yield* prog.advance(completedNames.size, "Already ready");
+  }
 
-  const fiber = yield* Stream.runForEach(stack.allStateChanges(), (state) =>
+  const updateProgress = (state: (typeof initialStates)[number]) =>
     Effect.sync(() => {
       const previousState = statesByName.get(state.name);
       statesByName.set(state.name, state);
@@ -28,13 +33,18 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
         Effect.forEach(
           changedStates,
           (serviceState) => {
-            if (serviceState.status === "Healthy") {
-              if (readyNames.has(serviceState.name)) {
+            if (serviceState.status === "Healthy" || serviceState.status === "Dormant") {
+              if (completedNames.has(serviceState.name)) {
                 return Effect.void;
               }
 
-              readyNames.add(serviceState.name);
-              return prog.advance(1, `${serviceState.name} is ready`);
+              completedNames.add(serviceState.name);
+              return prog.advance(
+                1,
+                serviceState.status === "Dormant"
+                  ? `${serviceState.name} is dormant`
+                  : `${serviceState.name} is ready`,
+              );
             }
 
             return prog.message(`${serviceState.name}: ${serviceState.status}`);
@@ -42,13 +52,16 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
           { discard: true },
         ),
       ),
-    ),
-  ).pipe(
+    );
+
+  const fiber = yield* Stream.runForEach(stack.allStateChanges(), updateProgress).pipe(
     Effect.catch(() => Effect.void),
     Effect.forkChild({ startImmediately: true }),
   );
 
   yield* stack.start().pipe(Effect.ensuring(Fiber.interrupt(fiber)));
+  const finalStates = yield* stack.getAllStates();
+  yield* Effect.forEach(finalStates, updateProgress, { discard: true });
   yield* prog.stop("All services started");
 });
 

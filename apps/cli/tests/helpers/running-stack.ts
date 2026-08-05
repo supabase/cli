@@ -125,6 +125,7 @@ function makeProjectHome(projectRoot: string) {
 function makeStackLayer(opts: {
   info: StackInfo;
   states: ReadonlyArray<StackServiceState>;
+  waitAllReadyNever?: boolean;
   history: ReadonlyArray<LogEntry>;
   live: ReadonlyArray<LogEntry>;
   onStop?: () => void;
@@ -178,7 +179,7 @@ function makeStackLayer(opts: {
       opts.states.some((state) => state.name === name)
         ? Effect.void
         : Effect.fail(new ServiceNotFoundError({ name })),
-    waitAllReady: () => Effect.void,
+    waitAllReady: () => (opts.waitAllReadyNever ? Effect.never : Effect.void),
     subscribeLogs: (name: string) =>
       Stream.fromIterable(opts.live.filter((entry) => entry.service === name)),
     subscribeAllLogs: (services?: ReadonlyArray<string>) =>
@@ -238,6 +239,7 @@ export async function makeStackFixture(
     services?: PartialVersionManifest;
     metadata?: StackMetadata;
     states?: ReadonlyArray<StackServiceState>;
+    waitAllReadyNever?: boolean;
     history?: ReadonlyArray<LogEntry>;
     live?: ReadonlyArray<LogEntry>;
   } = {},
@@ -308,6 +310,7 @@ export async function makeStackFixture(
           makeStackLayer({
             info,
             states,
+            waitAllReadyNever: opts.waitAllReadyNever,
             history,
             live,
             onStop: () => {
