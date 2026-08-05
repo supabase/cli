@@ -114,7 +114,7 @@ function addCorsHeaders(
 // status does not mean a function is servable yet. Briefly retry transport
 // failures on that route so a user's first call doesn't surface as a 502.
 const COLD_START_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(Schedule.upTo({ times: 8 }));
-const DEFAULT_SERVICE_ACTIVATION_TIMEOUT = Duration.seconds(30);
+const DEFAULT_SERVICE_ACTIVATION_TIMEOUT = Duration.seconds(180);
 
 interface ProxyHandlerOptions {
   readonly service: ServiceName;
