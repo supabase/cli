@@ -81,5 +81,14 @@ export const ProjectConfigSchema = Schema.Struct({
   remotes: RemotesSchema.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 
+export function toProjectConfigJsonSchema() {
+  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema);
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    ...document.schema,
+    ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
+  };
+}
+
 export type ProjectConfig = typeof ProjectConfigSchema.Type;
 export type ProjectConfigJson = typeof ProjectConfigSchema.Encoded;

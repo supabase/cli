@@ -752,7 +752,7 @@ describe("Stack", () => {
         Effect.forkChild({ startImmediately: true }),
       );
       yield* coordinator.stopService("auth");
-      yield* Fiber.join(stoppedState);
+      expect((yield* Fiber.join(stoppedState))._tag).toBe("Some");
       expect((yield* coordinator.getState("auth")).status).toBe("Stopped");
 
       yield* coordinator.stop();
