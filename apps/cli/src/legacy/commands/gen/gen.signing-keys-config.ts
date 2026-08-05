@@ -51,7 +51,26 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   onConfigParseError: (message: string) => E,
 ) {
   const path = yield* Path.Path;
-  const loaded = yield* loadProjectConfig(cwd, { goViperCompat: true }).pipe(
+  const loaded = yield* loadProjectConfig(cwd, {
+    goViperCompat: true,
+    // `cwd` here is the ALREADY-resolved `LegacyCliConfig.workdir` (Go's own ancestor
+    // climb, `ChangeWorkDir`/`getProjectRoot`, already ran once to produce it — see
+    // `legacy-cli-config.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
+    // call would climb AGAIN from `cwd`, which diverges from Go's real
+    // `Config.Load("")` (`pkg/config/utils.go:43-48`) whenever an explicit `--workdir`
+    // points at a subdirectory below another project's root: Go changes directly into
+    // that exact subdirectory (no climb once `--workdir`/`SUPABASE_WORKDIR` is set —
+    // `internal/utils/misc.go:246-249`) and finds no `supabase/config.toml` there,
+    // while this call would otherwise still find the ANCESTOR project's config —
+    // verified against the real binary (Codex review finding, CLI-1961): the ancestor's
+    // `signing_keys_path` leaked into the picker prompt in the TS port but not in Go.
+    // `tomlOnly: true` matches the same `Config.Load` — Go has no concept of a JSON
+    // project config file, so a stray `supabase/config.json` must never win over
+    // `config.toml` here either (`legacy-local-project-context.ts` establishes this
+    // exact pair of options for the same underlying reason).
+    search: false,
+    tomlOnly: true,
+  }).pipe(
     Effect.catchTag("ProjectConfigParseError", (cause) =>
       Effect.fail(onConfigParseError(`failed to parse ${cause.path}: ${String(cause.cause)}`)),
     ),

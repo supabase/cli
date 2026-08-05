@@ -201,18 +201,27 @@ describe("legacy gen signing-key integration", () => {
     }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
   });
 
-  it.live("uses the project-relative config file path in the local setup hint", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
-      yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+  it.live(
+    "ignores a stray config.json and uses the default config.toml path in the local setup hint (CLI-1961)",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        // Go's `Config.Load` (`pkg/config/utils.go:43-48`) has no concept of a JSON project
+        // config file — a stray `supabase/config.json` with no `config.toml` present must be
+        // treated exactly like no config at all, never as a substitute config source
+        // (`gen.signing-keys-config.ts`'s `loadProjectConfig(..., { tomlOnly: true })`; Codex
+        // review finding, CLI-1961). Go prints the CWD-relative `supabase/config.toml` in this
+        // "absent config" case; the hint must stay relative and must never leak the absolute
+        // temp-dir path either.
+        yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      // Go prints the CWD-relative `supabase/config.toml`; the hint must stay relative and must
-      // never leak the absolute temp-dir path.
-      expect(out.stderrText).toContain(join("supabase", "config.json"));
-      expect(out.stderrText).not.toContain(join(tempRoot.current, "supabase", "config.json"));
-    }).pipe(Effect.provide(layer));
-  });
+        expect(out.stderrText).toContain(join("supabase", "config.toml"));
+        expect(out.stderrText).not.toContain("config.json");
+        expect(out.stderrText).not.toContain(tempRoot.current);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "overwrites the configured signing keys file and defaults to yes on non-tty when stdin has no piped answer",
