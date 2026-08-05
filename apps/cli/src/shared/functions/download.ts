@@ -664,9 +664,21 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
       if (!Array.isArray(parsed)) {
         throw new Error("expected functions list response to be an array");
       }
-      return parsed.flatMap((value) => {
+      // Go: `FunctionResponse.Slug` (`apps/cli-go/pkg/api/types.gen.go:6465`)
+      // is a required, non-pointer `string` — a list entry with a missing or
+      // `null` "slug" decodes to the zero value `""` rather than erroring
+      // (`encoding/json`'s documented null-into-non-pointer no-op), and that
+      // empty slug then fails loudly downstream (`validateRemoteSlug`,
+      // matching Go's own per-item `ValidateFunctionSlug` in `downloadAll`,
+      // `download.go:182-188`) instead of silently vanishing from the list.
+      // Coercing here (rather than filtering the entry out, as before)
+      // preserves that "always surface an unexpected API response, never
+      // silently download fewer functions than requested" invariant — the
+      // exact CLI-1891 threat model `validateRemoteSlug` exists for (review
+      // round on CLI-1963's `functions download` port).
+      return parsed.map((value) => {
         const slug = getObjectProperty(value, "slug");
-        return typeof slug === "string" ? [slug] : [];
+        return typeof slug === "string" ? slug : "";
       });
     },
     catch: (cause) =>
