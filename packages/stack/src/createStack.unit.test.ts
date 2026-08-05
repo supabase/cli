@@ -83,6 +83,7 @@ describe("createStack types", () => {
   it("StackConfig interface has expected shape", () => {
     const check = (_config: StackConfig) => {
       const _jwtSecret: string | undefined = _config.jwtSecret;
+      const _startupMode: "eager" | "lazy" | undefined = _config.startupMode;
       const _projectDir: string | undefined = _config.projectDir;
       const _functions = _config.functions;
       const _postgres: PostgresConfig | undefined = _config.postgres;
@@ -92,6 +93,7 @@ describe("createStack types", () => {
       const _publishableKey: string | undefined = _config.publishableKey;
       const _secretKey: string | undefined = _config.secretKey;
       void _jwtSecret;
+      void _startupMode;
       void _projectDir;
       void _functions;
       void _postgres;
@@ -235,5 +237,17 @@ describe("resolveConfig edge runtime defaults", () => {
         version: DEFAULT_VERSIONS["edge-runtime"],
       }),
     );
+  });
+});
+
+describe("resolveConfig startup mode", () => {
+  it("keeps eager startup as the package default", async () => {
+    const config = await resolveConfig();
+    expect(config.startupMode).toBe("eager");
+  });
+
+  it("preserves an explicit lazy startup mode", async () => {
+    const config = await resolveConfig({ startupMode: "lazy" });
+    expect(config.startupMode).toBe("lazy");
   });
 });

@@ -7,7 +7,13 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { makeApiClient, operationDefinitions } from "./effect.ts";
-import { V1GetASsoProviderOutput, V1ListAllSsoProviderOutput } from "./generated/contracts.ts";
+import {
+  V1CreateASsoProviderOutput,
+  V1DeleteASsoProviderOutput,
+  V1GetASsoProviderOutput,
+  V1ListAllSsoProviderOutput,
+  V1UpdateASsoProviderOutput,
+} from "./generated/contracts.ts";
 
 const textDecoder = new TextDecoder();
 
@@ -51,34 +57,64 @@ const config = {
   userAgent: "supabase-api/test",
 } as const;
 
-describe("makeApiClient", () => {
-  test("decodes SSO provider responses with empty attribute mappings and no SAML ID", () => {
-    const provider = {
-      id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-      saml: {
-        entity_id: "https://example.com",
-        metadata_url: "https://example.com",
-        metadata_xml: '<?xml version="2.0"?>',
-        attribute_mapping: {},
+describe("SSO provider response contracts", () => {
+  // The provider payload the Management API actually returns: no `saml.id` and
+  // no `domains[].id` — neither field exists in the spec (or in the Go CLI's
+  // `api.ListProvidersResponse`). Every SSO subcommand decodes one of these
+  // five schemas, so a stale required-key here breaks the whole command family
+  // (supabase/cli#5475, #5589, #6051).
+  const SPARSE_PROVIDER = {
+    id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
+    saml: {
+      entity_id: "https://example.com",
+      metadata_url: "https://example.com",
+      metadata_xml: '<?xml version="2.0"?>',
+      attribute_mapping: {},
+    },
+    domains: [
+      {
+        domain: "example.com",
+        created_at: "2023-03-28T13:50:14.464Z",
+        updated_at: "2023-03-28T13:50:14.464Z",
       },
-      domains: [
-        {
-          id: "9484591c-a203-4500-bea7-d0aaa845e2f5",
-          domain: "example.com",
-          created_at: "2023-03-28T13:50:14.464Z",
-          updated_at: "2023-03-28T13:50:14.464Z",
-        },
-      ],
-      created_at: "2023-03-28T13:50:14.464Z",
-      updated_at: "2023-03-28T13:50:14.464Z",
-    };
+    ],
+    created_at: "2023-03-28T13:50:14.464Z",
+    updated_at: "2023-03-28T13:50:14.464Z",
+  };
 
+  const SINGLE_PROVIDER_SCHEMAS = [
+    V1GetASsoProviderOutput,
+    V1CreateASsoProviderOutput,
+    V1UpdateASsoProviderOutput,
+    V1DeleteASsoProviderOutput,
+  ];
+
+  test("decodes SSO provider responses without nested SAML and domain IDs", () => {
     expect(() =>
-      Schema.decodeUnknownSync(V1ListAllSsoProviderOutput)({ items: [provider] }),
+      Schema.decodeUnknownSync(V1ListAllSsoProviderOutput)({ items: [SPARSE_PROVIDER] }),
     ).not.toThrow();
-    expect(() => Schema.decodeUnknownSync(V1GetASsoProviderOutput)(provider)).not.toThrow();
+    for (const schema of SINGLE_PROVIDER_SCHEMAS) {
+      expect(() => Schema.decodeUnknownSync(schema)(SPARSE_PROVIDER)).not.toThrow();
+    }
   });
 
+  test("drops nested SAML and domain IDs the spec no longer declares", () => {
+    const withLegacyIds = {
+      ...SPARSE_PROVIDER,
+      saml: { ...SPARSE_PROVIDER.saml, id: "8682fcf4-4056-455c-bd93-f33295604929" },
+      domains: [{ ...SPARSE_PROVIDER.domains[0], id: "9484591c-a203-4500-bea7-d0aaa845e2f5" }],
+    };
+
+    // Go's structs have no such fields, so `encoding/json` never echoes them.
+    for (const schema of SINGLE_PROVIDER_SCHEMAS) {
+      const decoded = Schema.decodeUnknownSync(schema)(withLegacyIds);
+      expect(decoded.saml).not.toHaveProperty("id");
+      expect(decoded.domains?.[0]).not.toHaveProperty("id");
+    }
+  });
+});
+
+describe("makeApiClient", () => {
   test("allows raw operations to override generated request headers", async () => {
     let accept: string | undefined;
 

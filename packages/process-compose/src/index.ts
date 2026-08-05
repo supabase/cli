@@ -11,11 +11,12 @@ export type {
   HookLog,
   LifecycleHook,
   OrchestratorConfig,
+  ServiceStartOptions,
   ServiceDef,
 } from "./ServiceDef.ts";
 export { defaults } from "./ServiceDef.ts";
 
-export type { ServiceStatus } from "./ServiceState.ts";
+export type { ServiceDesiredState, ServiceStatus } from "./ServiceState.ts";
 export { ServiceState, initial } from "./ServiceState.ts";
 
 export {
