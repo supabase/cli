@@ -18,8 +18,8 @@ describe("localStackConfigParity", () => {
       ),
     ).toEqual({
       mapped: 262,
-      "not-applicable": 11,
-      "unsupported-blocking": 91,
+      "not-applicable": 13,
+      "unsupported-blocking": 89,
       "unsupported-warning": 6,
     });
   });
@@ -147,6 +147,8 @@ describe("localStackConfigParity", () => {
         "project_id",
         "remotes",
         "edge_runtime.inspector_port",
+        "storage.vector.max_buckets",
+        "storage.vector.max_indexes",
       ].sort(),
     );
   });
@@ -158,7 +160,6 @@ describe("localStackConfigParity", () => {
       "storage.buckets.*.objects_path",
       "storage.buckets.*.public",
       "storage.analytics.max_namespaces",
-      "storage.vector.max_buckets",
     ]) {
       expect(byPath.get(path)?._tag).toBe("unsupported-blocking");
     }

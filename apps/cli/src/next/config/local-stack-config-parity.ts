@@ -200,6 +200,12 @@ const commandOnlyDatabaseField: LocalStackConfigParityDecision = {
     "This field configures database tooling outside local stack startup and does not belong in StackConfig.",
 };
 
+const hostedConfigurationField: LocalStackConfigParityDecision = {
+  _tag: "not-applicable",
+  presence: "decoded-value",
+  rationale:
+    "This hosted-service limit is used by configuration management but does not change the local stack runtime.",
+};
 const remoteOverlayField: LocalStackConfigParityDecision = {
   _tag: "not-applicable",
   presence: "raw-document",
@@ -602,8 +608,8 @@ const localStackConfigParity = {
     } satisfies Record<keyof ProjectConfig["storage"]["analytics"], Node>,
     vector: {
       enabled: mappedDataPlaneRuntimeField,
-      max_buckets: unsupportedEnabledProviderField,
-      max_indexes: unsupportedEnabledProviderField,
+      max_buckets: hostedConfigurationField,
+      max_indexes: hostedConfigurationField,
       buckets: {
         "*": {
           decision: unsupportedEnabledProviderField,
