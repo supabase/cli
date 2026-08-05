@@ -48,7 +48,7 @@ import {
 } from "../../shared/legacy-vault-decrypt.ts";
 import { ramInBytes } from "../../shared/legacy-size-units.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
-import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
+import { legacyParseGoDuration } from "../../../shared/config/go-duration.ts";
 import {
   LEGACY_CLI_PROJECT_LABEL,
   legacyCliProjectFilterValue,

@@ -9,7 +9,7 @@ import type { ProjectConfig } from "@supabase/config";
  * explicitly configured default value, which matters when unsupported fields
  * must be rejected or warned about without rejecting untouched defaults.
  */
-type LocalStackConfigParityDecision =
+export type LocalStackConfigParityDecision =
   | {
       readonly _tag: "mapped";
       readonly presence: "decoded-value" | "raw-document";

@@ -1,4 +1,16 @@
+import {
+  ProjectConfigSchema,
+  type LoadedProjectConfig,
+  type ProjectConfig,
+  type ProjectEnvironment,
+} from "@supabase/config";
 import type { StackConfig, VersionManifest } from "@supabase/stack/effect";
+import { Data, Effect, Schema } from "effect";
+import { legacyParseGoDuration } from "../../shared/config/go-duration.ts";
+import {
+  flattenLocalStackConfigParity,
+  type LocalStackConfigParityDecision,
+} from "./local-stack-config-parity.ts";
 
 export const excludedStackServices = [
   "auth",
@@ -18,7 +30,163 @@ export type ExcludedStackService = (typeof excludedStackServices)[number];
 export const startModes = ["native", "auto", "docker"] as const;
 export type StartMode = (typeof startModes)[number];
 
-export function toStartStackConfig(
+const LEGACY_NON_DATABASE_READINESS_BUDGET_MS = 30_000;
+const decodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const defaultProjectConfig = decodeDefaultProjectConfig({});
+
+type LocalStackReadinessIntent =
+  | { readonly mode: "finite"; readonly timeoutMs: number }
+  | { readonly mode: "infinite" };
+
+interface LocalStackProjectPaths {
+  readonly projectRoot: string;
+  readonly projectStateRoot: string;
+}
+
+export interface LocalStackLaunchInput {
+  readonly loadedProjectConfig: LoadedProjectConfig | null;
+  readonly projectEnvironment: ProjectEnvironment | null;
+  readonly projectPaths: LocalStackProjectPaths;
+  readonly mode: StartMode;
+  readonly exclude: ReadonlyArray<ExcludedStackService>;
+  readonly runtimeVersions: Partial<VersionManifest>;
+  /** Interactive diagnostics may opt out of deadlines; ordinary starts are finite. */
+  readonly readiness?: "finite" | "infinite";
+}
+
+export interface LocalStackWarning {
+  readonly code: "unsupported" | "deprecated";
+  readonly paths: ReadonlyArray<string>;
+  readonly message: string;
+}
+
+export interface LocalStackUnsupportedConfig {
+  readonly path: string;
+  readonly rationale: string;
+}
+
+interface ResolvedLocalStackLaunch {
+  readonly stackConfig: StackConfig;
+  readonly projectPaths: LocalStackProjectPaths;
+  readonly readiness: LocalStackReadinessIntent;
+  readonly postgresStartupTimeoutMs: number;
+  readonly warnings: ReadonlyArray<LocalStackWarning>;
+  /**
+   * Explicit unsupported fields are retained as structured diagnostics during
+   * the staged parity migration. A vertical slice promotes its fields to
+   * mapped behavior and enforcement together; ordinary generated configs are
+   * not rejected merely because later slices have not landed yet.
+   */
+  readonly unsupported: ReadonlyArray<LocalStackUnsupportedConfig>;
+}
+
+export class LocalStackConfigError extends Data.TaggedError("LocalStackConfigError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {}
+
+interface PresentConfigValue {
+  readonly path: string;
+  readonly value: unknown;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function expandPresentValues(
+  root: unknown,
+  segments: ReadonlyArray<string>,
+  prefix = "",
+): ReadonlyArray<PresentConfigValue> {
+  const [segment, ...rest] = segments;
+  if (segment === undefined) {
+    return [{ path: prefix, value: root }];
+  }
+  if (!isRecord(root)) {
+    return [];
+  }
+
+  if (segment === "*") {
+    return Object.entries(root).flatMap(([key, value]) =>
+      expandPresentValues(value, rest, prefix === "" ? key : `${prefix}.${key}`),
+    );
+  }
+
+  if (!(segment in root)) {
+    return [];
+  }
+  return expandPresentValues(root[segment], rest, prefix === "" ? segment : `${prefix}.${segment}`);
+}
+
+function hasMeaningfulDecodedValue(value: unknown): boolean {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (isRecord(value) && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+export interface ExplicitLocalStackConfigEntry {
+  readonly path: string;
+  readonly decision: LocalStackConfigParityDecision;
+}
+
+/** Resolves presence-sensitive ledger decisions without ever retaining field values. */
+export function explicitLocalStackConfigEntries(input: {
+  readonly projectConfig: ProjectConfig;
+  readonly rawDocument?: Readonly<Record<string, unknown>>;
+}): ReadonlyArray<ExplicitLocalStackConfigEntry> {
+  return flattenLocalStackConfigParity().flatMap(({ path, decision }) => {
+    const source = decision.presence === "raw-document" ? input.rawDocument : input.projectConfig;
+    if (source === undefined) {
+      return [];
+    }
+    return expandPresentValues(source, path.split("."))
+      .filter(({ value }) =>
+        decision.presence === "raw-document" ? true : hasMeaningfulDecodedValue(value),
+      )
+      .map(({ path: explicitPath }) => ({ path: explicitPath, decision }));
+  });
+}
+
+function diagnosticsFor(input: {
+  readonly projectConfig: ProjectConfig;
+  readonly rawDocument?: Readonly<Record<string, unknown>>;
+}): {
+  readonly warnings: ReadonlyArray<LocalStackWarning>;
+  readonly unsupported: ReadonlyArray<LocalStackUnsupportedConfig>;
+} {
+  const entries = explicitLocalStackConfigEntries(input);
+  const warningPaths = entries
+    .filter(({ decision }) => decision._tag === "unsupported-warning")
+    .map(({ path }) => path)
+    .sort();
+  const unsupported = entries.flatMap(({ path, decision }) =>
+    decision._tag === "unsupported-blocking" ? [{ path, rationale: decision.rationale }] : [],
+  );
+
+  return {
+    warnings:
+      warningPaths.length === 0
+        ? []
+        : [
+            {
+              code: "unsupported",
+              paths: warningPaths,
+              message: `The next local stack does not yet apply these experimental settings: ${warningPaths.join(", ")}.`,
+            },
+          ],
+    unsupported,
+  };
+}
+
+export function baseStackConfig(
   exclude: ReadonlyArray<ExcludedStackService>,
   mode: StartMode,
 ): StackConfig {
@@ -40,7 +208,7 @@ export function toStartStackConfig(
   };
 }
 
-export function withServiceVersions(
+function withServiceVersions(
   stackConfig: StackConfig,
   versions: Partial<VersionManifest>,
 ): StackConfig {
@@ -94,5 +262,106 @@ export function withServiceVersions(
       stackConfig.pooler === false || versions.pooler === undefined
         ? stackConfig.pooler
         : { ...stackConfig.pooler, version: versions.pooler },
+  };
+}
+
+export function resolveStoredStackLaunch(input: {
+  readonly exclude: ReadonlyArray<ExcludedStackService>;
+  readonly mode: StartMode;
+  readonly runtimeVersions: Partial<VersionManifest>;
+}): StackConfig {
+  return withServiceVersions(baseStackConfig(input.exclude, input.mode), input.runtimeVersions);
+}
+
+export function resolveFunctionsDevStackLaunch(
+  runtimeVersions: Partial<VersionManifest>,
+): StackConfig {
+  return resolveStoredStackLaunch({ exclude: [], mode: "auto", runtimeVersions });
+}
+
+function resolvePostgresStartupTimeout(input: {
+  readonly projectConfig: ProjectConfig;
+  readonly projectEnvironment: ProjectEnvironment | null;
+}): Effect.Effect<number, LocalStackConfigError> {
+  const configured =
+    input.projectEnvironment?.values["SUPABASE_DB_HEALTH_TIMEOUT"] ??
+    input.projectConfig.db.health_timeout;
+
+  return Effect.try({
+    try: () => {
+      const postgresStartupTimeoutMs = Math.trunc(legacyParseGoDuration(configured) / 1_000_000);
+      if (postgresStartupTimeoutMs < 0) {
+        throw new Error("duration must not be negative");
+      }
+      return postgresStartupTimeoutMs;
+    },
+    catch: (cause) =>
+      new LocalStackConfigError({
+        detail: `Invalid db.health_timeout '${configured}': ${cause instanceof Error ? cause.message : String(cause)}`,
+        suggestion: "Use a non-negative Go duration such as 2m or 30s.",
+      }),
+  });
+}
+
+export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: LocalStackLaunchInput) {
+  const projectConfig = input.loadedProjectConfig?.config ?? defaultProjectConfig;
+  const postgresStartupTimeoutMs = yield* resolvePostgresStartupTimeout({
+    projectConfig,
+    projectEnvironment: input.projectEnvironment,
+  });
+  const readiness: LocalStackReadinessIntent =
+    input.readiness === "infinite"
+      ? { mode: "infinite" }
+      : {
+          mode: "finite",
+          timeoutMs: postgresStartupTimeoutMs + LEGACY_NON_DATABASE_READINESS_BUDGET_MS,
+        };
+  const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
+    projectConfig.api.auto_expose_new_tables,
+  );
+  const diagnostics = diagnosticsFor({
+    projectConfig,
+    rawDocument: input.loadedProjectConfig?.document,
+  });
+  const versionedConfig = resolveStoredStackLaunch({
+    exclude: input.exclude,
+    mode: input.mode,
+    runtimeVersions: input.runtimeVersions,
+  });
+
+  return {
+    stackConfig: {
+      ...versionedConfig,
+      projectDir: input.projectPaths.projectRoot,
+      postgres: { ...versionedConfig.postgres, autoExposeNewTables },
+    },
+    projectPaths: input.projectPaths,
+    readiness,
+    postgresStartupTimeoutMs,
+    warnings:
+      deprecationWarning === undefined
+        ? diagnostics.warnings
+        : [
+            ...diagnostics.warnings,
+            {
+              code: "deprecated",
+              paths: ["api.auto_expose_new_tables"],
+              message: deprecationWarning,
+            },
+          ],
+    unsupported: diagnostics.unsupported,
+  } satisfies ResolvedLocalStackLaunch;
+});
+
+export const AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING =
+  "api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.";
+
+export function resolveAutoExposeNewTables(value: boolean | undefined): {
+  readonly autoExposeNewTables: boolean;
+  readonly deprecationWarning: string | undefined;
+} {
+  return {
+    autoExposeNewTables: value ?? false,
+    deprecationWarning: value === true ? AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING : undefined,
   };
 }

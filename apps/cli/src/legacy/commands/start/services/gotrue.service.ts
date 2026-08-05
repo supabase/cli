@@ -57,7 +57,7 @@ import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts
 import {
   legacyFormatGoDuration,
   legacyParseGoDuration,
-} from "../../../shared/legacy-go-duration.ts";
+} from "../../../../shared/config/go-duration.ts";
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import type { LegacyResolvedAuthEmail } from "../../../shared/legacy-local-config-values.ts";
 import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";

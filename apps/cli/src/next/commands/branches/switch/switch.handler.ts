@@ -8,7 +8,7 @@ import {
   ProjectLinkState,
   ProjectNotLinkedError,
 } from "../../../config/project-link-state.service.ts";
-import { toStartStackConfig, withServiceVersions } from "../../../config/stack-config.ts";
+import { resolveStoredStackLaunch } from "../../../config/stack-config.ts";
 import { NonInteractiveError } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -144,13 +144,13 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     // so the local config reflects the branch's migrations and seed state.
     // `pull` does not exist yet.
     const launchConfig = Option.match(maybeMetadata, {
-      onNone: () => toStartStackConfig([], "auto"),
+      onNone: () => resolveStoredStackLaunch({ exclude: [], mode: "auto", runtimeVersions: {} }),
       onSome: (metadata) => {
-        const base =
-          metadata.launch !== undefined
-            ? toStartStackConfig(metadata.launch.excludedServices, metadata.launch.mode)
-            : toStartStackConfig([], "auto");
-        return withServiceVersions(base, metadata.services);
+        return resolveStoredStackLaunch({
+          exclude: metadata.launch?.excludedServices ?? [],
+          mode: metadata.launch?.mode ?? "auto",
+          runtimeVersions: metadata.services,
+        });
       },
     });
 

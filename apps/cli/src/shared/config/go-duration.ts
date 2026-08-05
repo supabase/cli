@@ -2,7 +2,7 @@
  * Go `time.Duration` string parsing and formatting, ported from Go's
  * `src/time/time.go` `time.ParseDuration()` and `Duration.String()`.
  *
- * Several `config.toml` fields decode in `@supabase/config` as the raw
+ * Shared local-config fields decode in `@supabase/config` as the raw
  * duration STRING (e.g. `auth.sessions.timebox = "1h"`,
  * `auth.sms.max_frequency = "5s"`) rather than Go's parsed `time.Duration`
  * (nanoseconds as `int64`). Go itself re-serializes the PARSED value with

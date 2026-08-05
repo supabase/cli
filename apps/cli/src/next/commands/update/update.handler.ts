@@ -10,7 +10,7 @@ import {
 } from "../../config/project-link-remote.service.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
-import { toStartStackConfig, withServiceVersions } from "../../config/stack-config.ts";
+import { resolveStoredStackLaunch } from "../../config/stack-config.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import type { UpdateFlags } from "./update.command.ts";
@@ -100,10 +100,11 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
       projectDir: projectHome.projectRoot,
       projectStateRoot: projectHome.projectHomeDir,
       name: flags.stack,
-      ...withServiceVersions(
-        toStartStackConfig(persistedLaunch.excludedServices, persistedLaunch.mode),
-        serviceVersionContext.candidateBaseline,
-      ),
+      ...resolveStoredStackLaunch({
+        exclude: persistedLaunch.excludedServices,
+        mode: persistedLaunch.mode,
+        runtimeVersions: serviceVersionContext.candidateBaseline,
+      }),
     }),
   );
 

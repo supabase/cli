@@ -14,6 +14,7 @@ import { projectLocalServiceVersionsLayer } from "../../config/project-local-ser
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
+import { ProjectContext } from "../../config/project-context.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
 import {
@@ -23,10 +24,9 @@ import {
 import {
   excludedStackServices,
   type ExcludedStackService,
+  resolveLocalStackLaunch,
   startModes,
   type StartMode,
-  toStartStackConfig,
-  withServiceVersions,
 } from "../../config/stack-config.ts";
 import { projectStackStateManagerLayer } from "../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -36,31 +36,6 @@ import { inkLayer } from "../../../shared/runtime/ink.layer.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { start } from "./start.handler.ts";
-
-/**
- * Deprecation warning shown when `[api].auto_expose_new_tables = true` is loaded from
- * config.toml. Mirrors the Go CLI warning emitted during config validation
- * (`apps/cli-go/pkg/config/config.go`).
- */
-export const AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING =
-  "api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.";
-
-/**
- * Resolves the tri-state `[api].auto_expose_new_tables` flag from config.toml.
- *
- *   - unset (`undefined`): defaults to `false` (revoke), matching the 2026-05-30 cloud flip.
- *   - `true`: keep the legacy auto-expose behaviour, but surface a deprecation warning.
- *   - `false`: revoke explicitly (no warning).
- */
-export function resolveAutoExposeNewTables(value: boolean | undefined): {
-  readonly autoExposeNewTables: boolean;
-  readonly deprecationWarning: string | undefined;
-} {
-  return {
-    autoExposeNewTables: value ?? false,
-    deprecationWarning: value === true ? AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING : undefined,
-  };
-}
 
 export const excludeFlag = Flag.choice("exclude", excludedStackServices).pipe(
   Flag.atMost(excludedStackServices.length),
@@ -162,6 +137,7 @@ export const startCommand = Command.make("start", flags).pipe(
       const output = yield* Output;
       const cliConfig = yield* CliConfig;
       const projectHome = yield* ProjectHome;
+      const projectContext = yield* ProjectContext;
       const runtimeInfo = yield* RuntimeInfo;
       const stateManager = yield* StateManager;
       const existingMetadata = yield* stateManager.readMetadata(flags.stack).pipe(
@@ -175,25 +151,25 @@ export const startCommand = Command.make("start", flags).pipe(
           onSome: (metadata) => metadata.services,
         }),
       );
-      // The flag is tri-state in config.toml: unset / true / false. As of the 2026-05-30 flip,
-      // unset behaves as false (revoke the default Data API GRANTs) to match the new cloud
-      // default. Explicit true preserves the legacy auto-expose behaviour but is deprecated and
-      // emits a warning; the field is removed entirely on 2026-10-30.
-      const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
-      const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
-        loadedProjectConfig?.config.api.auto_expose_new_tables,
+      const projectEnvironment = Option.getOrNull(projectContext.projectEnv);
+      const loadedProjectConfig = yield* loadProjectConfig(
+        projectHome.projectRoot,
+        projectEnvironment === null ? undefined : { projectEnv: projectEnvironment },
       );
-      if (deprecationWarning !== undefined) {
-        yield* output.warn(deprecationWarning);
+      const launch = yield* resolveLocalStackLaunch({
+        loadedProjectConfig,
+        projectEnvironment,
+        projectPaths: {
+          projectRoot: projectHome.projectRoot,
+          projectStateRoot: projectHome.projectHomeDir,
+        },
+        mode: flags.mode,
+        exclude: flags.exclude,
+        runtimeVersions: serviceVersionContext.runtimeVersions,
+      });
+      for (const warning of launch.warnings) {
+        yield* output.warn(warning.message);
       }
-      const baseStackConfig = withServiceVersions(
-        toStartStackConfig(flags.exclude, flags.mode),
-        serviceVersionContext.runtimeVersions,
-      );
-      const stackConfig = {
-        ...baseStackConfig,
-        postgres: { ...baseStackConfig.postgres, autoExposeNewTables },
-      };
       yield* output.intro("Start local Supabase stack");
       yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
@@ -201,10 +177,9 @@ export const startCommand = Command.make("start", flags).pipe(
         {
           cacheRoot: cliConfig.supabaseHome,
           cwd: runtimeInfo.cwd,
-          projectDir: projectHome.projectRoot,
           projectStateRoot: projectHome.projectHomeDir,
           name: flags.stack,
-          ...stackConfig,
+          ...launch.stackConfig,
         },
         daemonEntryPoint,
       );

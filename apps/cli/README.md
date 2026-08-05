@@ -127,6 +127,13 @@ can surface `Downloading` before normal runtime states. CLI-managed stacks use l
 direct listeners and Realtime start with the stack, while HTTP services activate on first proxied
 use. The package API itself keeps eager startup as its default.
 
+Project files do not flow directly into `@supabase/stack`. The CLI's local-stack launch Adapter
+loads one resolved project-config/environment snapshot, inspects the raw document where explicit
+presence matters, and translates CLI exclusions, project paths, readiness policy, and pinned
+runtime versions into the package-owned `StackConfig`. Its compile-checked parity ledger records
+every project field as mapped, not applicable, or explicitly unsupported so later parity work
+cannot silently add another command-local mapping.
+
 Useful companion docs:
 
 - [`../../packages/stack/docs/architecture.md`](../../packages/stack/docs/architecture.md)

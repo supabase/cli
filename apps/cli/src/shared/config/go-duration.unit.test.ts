@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyFormatGoDuration, legacyParseGoDuration } from "./legacy-go-duration.ts";
+import { legacyFormatGoDuration, legacyParseGoDuration } from "./go-duration.ts";
 
 describe("legacyParseGoDuration", () => {
   it("parses a single unit", () => {

@@ -18,7 +18,7 @@ import {
   resolveServiceVersionContext,
   type ResolvedServiceVersionContext,
 } from "../../../config/service-version-resolution.ts";
-import { toStartStackConfig, withServiceVersions } from "../../../config/stack-config.ts";
+import { resolveFunctionsDevStackLaunch } from "../../../config/stack-config.ts";
 import { ensureProjectStateIgnored } from "../../../config/project-gitignore.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -54,7 +54,7 @@ interface FunctionsDevWatchChange {
 type StackService = typeof Stack.Service;
 
 function versionsFromContext(context: ResolvedServiceVersionContext) {
-  return withServiceVersions(toStartStackConfig([], "auto"), context.runtimeVersions);
+  return resolveFunctionsDevStackLaunch(context.runtimeVersions);
 }
 
 const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptions) {
