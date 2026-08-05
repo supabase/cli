@@ -122,6 +122,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     );
 
     await stack.startService("analytics");
+    await stack.serviceReady("analytics");
 
     const [runningImages, states] = await Promise.all([
       Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
