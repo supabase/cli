@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
+import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
@@ -437,6 +438,67 @@ describe("Stack", () => {
       const startedContainers = spawner.spawned.filter((record) => record.args[0] === "run");
       expect(startedContainers).toEqual([]);
     }).pipe(Effect.provide(providedLayer));
+  });
+
+  it.live("a partial startup failure disposes resources from services already started", () => {
+    let cleaned = false;
+    const spawner = mockChildProcessSpawner({
+      beforeSpawn: (record) =>
+        record.command === "fail" ? Effect.die("simulated spawn failure") : Effect.void,
+    });
+    const graph = Effect.runSync(
+      buildGraph([
+        {
+          name: "postgres",
+          command: process.execPath,
+          restart: "no",
+          cleanup: Effect.sync(() => {
+            cleaned = true;
+          }),
+        },
+        {
+          name: "postgrest",
+          command: "fail",
+          dependencies: [{ service: "postgres", condition: "healthy" }],
+          restart: "no",
+        },
+      ]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.succeed({
+          graph,
+          cleanupTargets: { dockerContainerNames: [] },
+          serviceProjection: new Map([
+            ["postgres", { visibility: "public" }],
+            ["postgrest", { visibility: "public" }],
+          ]),
+        }),
+    });
+    const resolver = mockBinaryResolver();
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const layer = localStackLayer(
+      {
+        ...defaultConfig,
+        readiness: { mode: "finite", timeoutMs: 100 },
+      },
+      noopPortLease(defaultConfig.ports),
+    ).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const exit = yield* stack.start().pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(cleaned).toBe(true);
+      expect(spawner.killed).toContain("SIGTERM");
+    }).pipe(Effect.provide(layer), Effect.timeout("2 seconds"));
   });
 
   it.live("lazy startup starts direct services without starting HTTP backends", () => {

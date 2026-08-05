@@ -3,8 +3,7 @@ import { Effect, type Layer, ManagedRuntime, Stream } from "effect";
 import { FileSystem, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
-import type { CleanupTargets } from "./CleanupTargets.ts";
+import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
 import type { FunctionsConfig } from "./functions.ts";
 import { daemonLayer, foregroundLayer, type DaemonStartError } from "./layers.ts";
@@ -80,24 +79,6 @@ export const projectDaemonLayer = (opts: {
     },
     opts.daemonEntryPoint,
   );
-
-function possibleCleanupTargetsForConfig(config: ResolvedStackConfig): CleanupTargets {
-  const dockerContainerNames = [`supabase-postgres-${config.apiPort}`];
-  if (config.postgrest !== false) dockerContainerNames.push(`supabase-postgrest-${config.apiPort}`);
-  if (config.auth !== false) dockerContainerNames.push(`supabase-auth-${config.apiPort}`);
-  if (config.edgeRuntime !== false)
-    dockerContainerNames.push(`supabase-edge-runtime-${config.apiPort}`);
-  if (config.realtime !== false) dockerContainerNames.push(`supabase-realtime-${config.apiPort}`);
-  if (config.storage !== false) dockerContainerNames.push(`supabase-storage-${config.apiPort}`);
-  if (config.imgproxy !== false) dockerContainerNames.push(`supabase-imgproxy-${config.apiPort}`);
-  if (config.mailpit !== false) dockerContainerNames.push(`supabase-mailpit-${config.apiPort}`);
-  if (config.pgmeta !== false) dockerContainerNames.push(`supabase-pgmeta-${config.apiPort}`);
-  if (config.studio !== false) dockerContainerNames.push(`supabase-studio-${config.apiPort}`);
-  if (config.analytics !== false) dockerContainerNames.push(`supabase-analytics-${config.apiPort}`);
-  if (config.vector !== false) dockerContainerNames.push(`supabase-vector-${config.apiPort}`);
-  if (config.pooler !== false) dockerContainerNames.push(`supabase-pooler-${config.apiPort}`);
-  return { dockerContainerNames };
-}
 
 export async function createStack(
   config: StackConfig | undefined,
@@ -185,7 +166,7 @@ export async function createStack(
     }
   } catch (error: unknown) {
     await Effect.runPromise(portLease.releaseAll);
-    dockerForceRemove(possibleCleanupTargetsForConfig(resolved).dockerContainerNames);
+    dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames);
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);
   }

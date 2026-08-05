@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
 import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
@@ -20,7 +21,7 @@ interface DockerStorageOptions {
   readonly imgproxyUrl: string;
   readonly s3ProtocolEnabled: boolean;
   readonly vectorRuntime?: StorageVectorRuntimeConfig;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
   readonly cleanupDataDirOnExit?: boolean;
 }
@@ -82,12 +83,12 @@ export const makeStorageServiceDocker = (opts: DockerStorageOptions): ServiceDef
 
   return dockerRunService({
     name: "storage",
-    containerName: `supabase-storage-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:${STORAGE_DATA_DIR}`],
     env,
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: storageHealthCheck(opts.port),
     orphanCleanup: orphanCleanup(opts),
   });

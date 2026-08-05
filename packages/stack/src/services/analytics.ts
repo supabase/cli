@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerPortMapArgs } from "../Platform.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 import type { AnalyticsGcpConfig } from "../StackConfig.ts";
@@ -7,14 +8,12 @@ interface DockerAnalyticsOptions {
   readonly image: string;
   readonly apiPort: number;
   readonly hostPort: number;
-  readonly listenPort: number;
-  readonly nodeHost: string;
+  readonly platformOs: string;
   readonly dbHost: string;
   readonly dbPort: number;
   readonly apiKey: string;
   readonly backend: "postgres" | "bigquery";
   readonly gcp?: AnalyticsGcpConfig;
-  readonly networkArgs: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -41,9 +40,10 @@ const analyticsHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
 });
 
 export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): ServiceDef => {
+  const runtimeNetwork = analyticsDockerRuntimeNetwork(opts.platformOs, opts.hostPort, opts.dbHost);
   const env: Record<string, string> = {
-    PORT: String(opts.listenPort),
-    PHX_HTTP_PORT: String(opts.listenPort),
+    PORT: String(runtimeNetwork.listenPort),
+    PHX_HTTP_PORT: String(runtimeNetwork.listenPort),
     DB_DATABASE: "_supabase",
     DB_HOSTNAME: opts.dbHost,
     DB_PORT: String(opts.dbPort),
@@ -55,7 +55,7 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     LOGFLARE_SUPABASE_MODE: "true",
     LOGFLARE_PRIVATE_ACCESS_TOKEN: opts.apiKey,
     LOGFLARE_LOG_LEVEL: "warn",
-    LOGFLARE_NODE_HOST: opts.nodeHost,
+    LOGFLARE_NODE_HOST: runtimeNetwork.nodeHost,
     LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     RELEASE_COOKIE: "cookie",
   };
@@ -71,9 +71,11 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
 
   return dockerRunService({
     name: "analytics",
-    containerName: `supabase-analytics-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerPortMapArgs(opts.platformOs, [
+      { host: opts.hostPort, container: ANALYTICS_CONTAINER_PORT },
+    ]),
     volumes:
       opts.backend === "bigquery" && opts.gcp !== undefined
         ? [`${opts.gcp.credentialsPath}:/opt/app/rel/logflare/bin/gcloud.json:ro`]
@@ -88,7 +90,7 @@ EOF
 `,
     ],
     env,
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: analyticsHealthCheck(opts.hostPort),
   });
 };

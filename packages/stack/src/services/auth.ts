@@ -2,8 +2,9 @@ import type { ServiceDef } from "@supabase/process-compose";
 import type { AuthEnvironmentInput, ResolvedAuthRuntimeConfig } from "../AuthConfig.ts";
 import { authSigningKeysJson } from "../LocalCredentials.ts";
 import type { LocalJwtSigningMaterial } from "../LocalCredentials.ts";
-import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
+import { dockerNetworkArgs } from "../Platform.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
+import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
 interface AuthServiceOptions {
   readonly dbPort: number;
@@ -12,10 +13,7 @@ interface AuthServiceOptions {
   readonly signing: LocalJwtSigningMaterial;
   readonly jwtSecret: string;
   readonly smtpFallback?: AuthEnvironmentInput["smtpFallback"];
-  readonly dependencies: ReadonlyArray<{
-    readonly service: string;
-    readonly condition: "healthy" | "completed";
-  }>;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
 interface NativeAuthOptions extends AuthServiceOptions {
@@ -25,7 +23,7 @@ interface NativeAuthOptions extends AuthServiceOptions {
 interface DockerAuthOptions extends AuthServiceOptions {
   readonly image: string;
   readonly dbHost: string;
-  readonly networkArgs: readonly string[];
+  readonly platformOs: string;
   readonly apiPort: number;
 }
 
@@ -217,17 +215,13 @@ export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef => {
     dbPort: opts.dbPort,
     smtpFallback: opts.smtpFallback,
   });
-  const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const containerName = `supabase-auth-${opts.apiPort}`;
-
-  return {
+  return dockerRunService({
     name: "auth",
-    command: "docker",
-    args: ["run", "--rm", "--name", containerName, ...opts.networkArgs, ...envArgs, opts.image],
+    apiPort: opts.apiPort,
+    image: opts.image,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.authPort]),
+    env,
     dependencies: opts.dependencies,
     healthCheck: authHealthCheck(opts.authPort),
-    cleanup: dockerServiceCleanup(containerName),
-    supervision: { orphanCleanup: dockerServiceOrphanCleanup(containerName) },
-    restart: "unless-stopped",
-  };
+  });
 };

@@ -1,17 +1,21 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import type { ServiceDef } from "@supabase/process-compose";
-import {
-  dockerServiceCleanup,
-  dockerServiceOrphanCleanup,
-  removePathOnOrphanCleanup,
-} from "./docker-cleanup.ts";
+import { dockerContainerName } from "../CleanupTargets.ts";
+import { dockerNetworkArgs } from "../Platform.ts";
+import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { stackHealthBudgets, withStartupHealthTimeout } from "./health-budgets.ts";
+import {
+  dockerExecHealthCheck,
+  dockerRunService,
+  type ServiceDependency,
+} from "./service-utils.ts";
 
 interface PostgresServiceOptions {
   readonly dataDir: string;
   readonly port: number;
   readonly startupHealthTimeoutMs?: number;
   readonly cleanupDataDirOnExit?: boolean;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
 interface NativePostgresOptions extends PostgresServiceOptions {
@@ -22,7 +26,7 @@ interface NativePostgresOptions extends PostgresServiceOptions {
 
 interface DockerPostgresOptions extends PostgresServiceOptions {
   readonly image: string;
-  readonly networkArgs: readonly string[];
+  readonly platformOs: string;
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
   readonly apiPort: number;
@@ -110,14 +114,10 @@ const postgresDockerHealthCheck = (
   containerName: string,
   port: number,
   startupHealthTimeoutMs: number | undefined,
-) => ({
-  probe: {
-    _tag: "Exec" as const,
-    command: "docker",
-    args: ["exec", containerName, "pg_isready", "-p", String(port), "-U", "postgres"],
-  },
-  ...withStartupHealthTimeout(stackHealthBudgets.postgresDocker, startupHealthTimeoutMs),
-});
+) =>
+  dockerExecHealthCheck(containerName, "pg_isready", ["-p", String(port), "-U", "postgres"], {
+    ...withStartupHealthTimeout(stackHealthBudgets.postgresDocker, startupHealthTimeoutMs),
+  });
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
   const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
@@ -155,6 +155,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
         `hba_file=${customHbaPath}`,
       ],
       env: postgresEnv(opts),
+      dependencies: opts.dependencies,
       healthCheck: postgresHealthCheck(opts.binPath, opts.port, opts.startupHealthTimeoutMs),
       shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
       supervision: {
@@ -172,6 +173,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
     command: "bash",
     args: [initScript, "-p", String(opts.port), ...NATIVE_POSTGRES_RUNTIME_ARGS],
     env: postgresEnv(opts),
+    dependencies: opts.dependencies,
     healthCheck: postgresHealthCheck(opts.binPath, opts.port, opts.startupHealthTimeoutMs),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
     supervision: { orphanCleanup: orphanCleanup(opts) },
@@ -181,33 +183,19 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
   const env = postgresDockerEnv(opts);
-  const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const containerName = `supabase-postgres-${opts.apiPort}`;
-  const dockerArgs = [
-    "run",
-    "--rm",
-    "--name",
-    containerName,
-    ...opts.networkArgs,
-    "-v",
-    `${opts.dataDir}:/var/lib/postgresql/data`,
-    ...envArgs,
-    "--entrypoint",
-    "sh",
-    opts.image,
-    "-c",
-    dockerPostgresEntrypoint(opts.port),
-  ];
-  return {
+  const containerName = dockerContainerName("postgres", opts.apiPort);
+  return dockerRunService({
     name: "postgres",
-    command: "docker",
-    args: dockerArgs,
+    apiPort: opts.apiPort,
+    image: opts.image,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
+    volumes: [`${opts.dataDir}:/var/lib/postgresql/data`],
+    env,
+    entrypoint: "sh",
+    cmd: ["-c", dockerPostgresEntrypoint(opts.port)],
+    dependencies: opts.dependencies,
     healthCheck: postgresDockerHealthCheck(containerName, opts.port, opts.startupHealthTimeoutMs),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
-    cleanup: dockerServiceCleanup(containerName),
-    supervision: {
-      orphanCleanup: [...dockerServiceOrphanCleanup(containerName), ...orphanCleanup(opts)],
-    },
-    restart: "unless-stopped",
-  };
+    orphanCleanup: orphanCleanup(opts),
+  });
 };

@@ -61,7 +61,6 @@ type StackService = typeof Stack.Service;
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
   readonly graph: ResolvedGraph;
-  readonly cleanupTargets: CleanupTargets;
 }
 
 const initialPublicStates = (config: ResolvedStackConfig): ReadonlyArray<StackServiceState> =>
@@ -214,6 +213,7 @@ export const localStackLayer = (
       let prepareDeferred: Deferred.Deferred<PreparedStackArtifacts, StackBuildError> | undefined;
       let runtimeState: RuntimeState | undefined;
       let runtimeDeferred: Deferred.Deferred<RuntimeState, StackBuildError> | undefined;
+      let exactCleanupTargets: CleanupTargets | undefined;
 
       const ensurePrepared = Effect.suspend(() => {
         if (preparedArtifacts !== undefined) {
@@ -328,6 +328,7 @@ export const localStackLayer = (
             config,
             prepared,
           );
+          exactCleanupTargets = cleanupTargets;
 
           yield* metadataPersistence.persistCleanupTargets(cleanupTargets).pipe(
             Effect.mapError(
@@ -387,7 +388,6 @@ export const localStackLayer = (
           return {
             orchestrator,
             graph,
-            cleanupTargets,
           } satisfies RuntimeState;
         }).pipe(
           Effect.tap((value) =>
@@ -622,7 +622,7 @@ export const localStackLayer = (
           yield* cleanupLocalStackResources({
             stop: () =>
               runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
-            cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
+            cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
             config,
           }).pipe(
             Effect.ensuring(portLease.releaseAll),
@@ -664,6 +664,9 @@ export const localStackLayer = (
             disposeOnce().pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
+      const cleanupOnStartupFailure = <A, E, R>(
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E, R> => effect.pipe(Effect.onError(() => disposeOnce()));
 
       yield* Effect.addFinalizer(disposeOnce);
 
@@ -719,7 +722,7 @@ export const localStackLayer = (
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
             withLifecycleLock,
             (effect) => withReadinessPolicy(effect, "stack"),
-            cleanupOnReadinessFailure,
+            cleanupOnStartupFailure,
           ),
         stop: () =>
           Effect.gen(function* () {
