@@ -91,6 +91,14 @@ describe("legacySqlFilesGlob", () => {
       // errors.Errorf("failed to stat matched file: %w", err)); continue }` (config.go:157-161)
       // — a match that disappears (or is a broken symlink) between the glob and this stat
       // becomes a warning and is skipped entirely, never silently treated as a regular file.
+      //
+      // Go's `fsys` here is always `afero.NewOsFs()` with the process cwd already the
+      // workdir (`ChangeWorkDir`, `cmd/root.go`), so `fs.Stat(fsys, fp)`'s embedded path
+      // in the resulting error is the workdir-RELATIVE `fp` (verified directly against
+      // `os.Stat`/`afero.OsFs.Stat`, which pass the name through to `os.Stat` unchanged).
+      // This module never `process.chdir`s, so the real stat needs an absolute path — but
+      // the warning must still report the relative form, not that absolute (temp-dir)
+      // path, or it would leak a local filesystem path Go never would.
       const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-stat-fail-"));
       const schemasDir = join(dir, "schemas");
       mkdirSync(schemasDir);
@@ -102,6 +110,8 @@ describe("legacySqlFilesGlob", () => {
             expect(result.files).toEqual(["schemas/good.sql"]);
             expect(result.warnings).toHaveLength(1);
             expect(result.warnings[0]).toMatch(/^failed to stat matched file: /);
+            expect(result.warnings[0]).toContain("schemas/broken.sql");
+            expect(result.warnings[0]).not.toContain(dir);
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

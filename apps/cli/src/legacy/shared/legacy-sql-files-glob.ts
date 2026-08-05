@@ -396,11 +396,20 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
       // to treating it as a regular file (the previous behaviour here) would instead
       // hand a nonexistent path to the caller's later read, turning a warned-but-
       // otherwise-successful reset into a hard apply error.
-      const statResult = yield* fs
-        .stat(path.isAbsolute(fp) ? fp : path.join(workdir, fp))
-        .pipe(Effect.result);
+      //
+      // Go's `fs.Stat(fsys, fp)` (`config.go:157`) runs with its process cwd already
+      // the workdir (`ChangeWorkDir`, `cmd/root.go`), so `fp` IS the exact string the
+      // real syscall sees and the resulting error's path is that workdir-relative
+      // `fp`. This module never `process.chdir`s, so the real stat needs an absolute
+      // path here — but the wrapped message must still report the relative `fp`, not
+      // the absolute path used to make the syscall work. Same substitution pattern as
+      // `legacyApplySchemaFiles`'s read-error display path (`legacy-migration-apply.ts`).
+      const absoluteFp = path.isAbsolute(fp) ? fp : path.join(workdir, fp);
+      const statResult = yield* fs.stat(absoluteFp).pipe(Effect.result);
       if (Result.isFailure(statResult)) {
-        warnings.push(`failed to stat matched file: ${legacyErrorMessage(statResult.failure)}`);
+        const rawMessage = legacyErrorMessage(statResult.failure);
+        const message = absoluteFp === fp ? rawMessage : rawMessage.split(absoluteFp).join(fp);
+        warnings.push(`failed to stat matched file: ${message}`);
         continue;
       }
       const matchType = statResult.success.type;
