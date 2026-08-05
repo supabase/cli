@@ -216,6 +216,33 @@ describe("legacyCliConfigLayer", () => {
       ),
   );
 
+  it.effect("resolves repeated --profile occurrences last-wins — pflag parity", () =>
+    Effect.gen(function* () {
+      // The Effect parser is first-wins ("rogue-profile"); pflag keeps the last.
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          argv: ["link", "--profile", "rogue-profile", "--profile", "supabase"],
+          profileFlag: "rogue-profile",
+          cwd: tempRoot,
+        }),
+      ),
+    ),
+  );
+
+  it.effect("fails when the last --profile occurrence is unloadable — pflag parity", () =>
+    Effect.gen(function* () {
+      const exit = yield* configExit({
+        argv: ["link", "--profile", "supabase", "--profile", "resms"],
+        profileFlag: "supabase",
+        cwd: tempRoot,
+      });
+      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+    }),
+  );
+
   it.effect("explicit --profile supabase shadows an unloadable persisted profile file", () => {
     const home = join(tempRoot, "home");
     mkdirSync(join(home, ".supabase"), { recursive: true });

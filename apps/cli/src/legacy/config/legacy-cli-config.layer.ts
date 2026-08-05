@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { hasExplicitLongFlag } from "../../shared/cli/cobra-flag-groups.ts";
+import { lastExplicitLongFlagValue } from "../../shared/cli/cobra-flag-groups.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import {
@@ -28,15 +28,16 @@ function unknownMessage(error: unknown): string {
  * the built-in `supabase` profile, which silently targeted the wrong keyring
  * token and API (supabase/cli#6091).
  *
- * `flagExplicit` mirrors pflag's `Changed`: an explicitly passed `--profile
- * supabase` shadows env and file even at the default value, which the parsed
- * value alone cannot detect. The persisted file's content is trimmed — a
- * deliberate divergence from Go's raw bytes, compensated by the sso pflag
- * reconciliation (`legacy-pflag-reconcile.ts`).
+ * `explicitFlagValue` mirrors pflag: the LAST explicit `--profile` occurrence
+ * wins (the Effect parser is first-wins), and an explicit `--profile supabase`
+ * shadows env and file even at the default value, which the parsed value
+ * alone cannot detect. The persisted file's content is trimmed — a deliberate
+ * divergence from Go's raw bytes, compensated by the sso pflag reconciliation
+ * (`legacy-pflag-reconcile.ts`).
  */
 function resolveProfile(
   flagValue: string,
-  flagExplicit: boolean,
+  explicitFlagValue: string | undefined,
   envValue: string | undefined,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -45,9 +46,10 @@ function resolveProfile(
 ): Effect.Effect<LegacyLoadedProfile, LegacyProfileLoadError> {
   return Effect.gen(function* () {
     let token: string;
-    if (flagValue !== "supabase" || flagExplicit) {
-      yield* debugLogger.debug(`Loading profile from flag: ${flagValue}`);
-      token = flagValue;
+    if (explicitFlagValue !== undefined || flagValue !== "supabase") {
+      const flag = explicitFlagValue ?? flagValue;
+      yield* debugLogger.debug(`Loading profile from flag: ${flag}`);
+      token = flag;
     } else if (envValue !== undefined && envValue.length > 0) {
       // Go reads SUPABASE_PROFILE through viper's PROFILE key, so debug output
       // cannot distinguish env from an explicitly changed flag.
@@ -140,9 +142,9 @@ export const legacyCliConfigLayer = Layer.unwrap(
         // `serviceOption`: tests without argv default to "not explicit". The
         // empty command path scans all of argv up to `--`, like pflag.
         const cliArgs = yield* Effect.serviceOption(CliArgs);
-        const profileFlagExplicit = Option.match(cliArgs, {
-          onNone: () => false,
-          onSome: ({ args }) => hasExplicitLongFlag(args, [], "profile"),
+        const explicitProfileFlag = Option.match(cliArgs, {
+          onNone: () => undefined,
+          onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
         });
 
         const {
@@ -153,7 +155,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           dashboardUrl,
         } = yield* resolveProfile(
           profileFlag,
-          profileFlagExplicit,
+          explicitProfileFlag,
           env["SUPABASE_PROFILE"],
           fs,
           path,

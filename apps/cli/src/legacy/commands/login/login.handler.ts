@@ -10,7 +10,7 @@ import {
   legacyPostLoginTelemetry,
 } from "../../shared/legacy-ensure-login.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { hasExplicitLongFlag } from "../../../shared/cli/cobra-flag-groups.ts";
+import { lastExplicitLongFlagValue } from "../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyProfileFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -39,22 +39,25 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
   // Mirrors Go's login `PostRunE` (`cmd/login.go:42-48`): persist the chosen
   // profile to `<SUPABASE_HOME or ~/.supabase>/profile` on success. The raw
   // token is written so a YAML-path profile round-trips; a write failure is
-  // fatal. An explicitly passed flag counts even at its default value (pflag
-  // `Changed`, same argv scan as the config layer), so `login --profile
-  // supabase` persists "supabase" — shadowing SUPABASE_PROFILE and healing a
-  // stale profile file like Go, never re-persisting the shadowed env value.
+  // fatal. An explicitly passed flag counts even at its default value, and the
+  // LAST occurrence wins (pflag `Changed` + last-wins, same argv scan as the
+  // config layer), so `login --profile supabase` persists "supabase" —
+  // shadowing SUPABASE_PROFILE and healing a stale profile file like Go, never
+  // re-persisting the shadowed env value.
   const cliArgs = yield* Effect.serviceOption(CliArgs);
-  const profileFlagExplicit = Option.match(cliArgs, {
-    onNone: () => false,
-    onSome: ({ args }) => hasExplicitLongFlag(args, [], "profile"),
+  const explicitProfileFlag = Option.match(cliArgs, {
+    onNone: () => undefined,
+    onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
   });
   const envProfile = process.env["SUPABASE_PROFILE"];
   const profileToken =
-    profileFlagExplicit || profileFlag !== "supabase"
-      ? profileFlag
-      : envProfile !== undefined && envProfile.length > 0
-        ? envProfile
-        : undefined;
+    explicitProfileFlag !== undefined
+      ? explicitProfileFlag
+      : profileFlag !== "supabase"
+        ? profileFlag
+        : envProfile !== undefined && envProfile.length > 0
+          ? envProfile
+          : undefined;
   const saveProfileName =
     profileToken === undefined
       ? Effect.void
