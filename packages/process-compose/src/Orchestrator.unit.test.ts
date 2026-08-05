@@ -1072,7 +1072,6 @@ describe("Orchestrator", () => {
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Stopped");
       expect(state.exitCode).toBe(0);
-      expect(state.pid).toBeNull();
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
@@ -1089,7 +1088,6 @@ describe("Orchestrator", () => {
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Failed");
       expect(state.exitCode).toBe(1);
-      expect(state.pid).toBeNull();
       expect(log.entries.some((e) => e.line.includes("[process-exited]"))).toBe(true);
       expect(log.entries.some((e) => e.line.includes("about to fail"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -1646,7 +1644,7 @@ describe("Orchestrator", () => {
     });
 
     it.live("stop() force-interrupts when global timeout expires", () => {
-      const { layer } = setupOrchestratorWithStuckKill(
+      const { layer, proc } = setupOrchestratorWithStuckKill(
         [svc("stuck", { shutdown: { timeoutSeconds: 999 } })],
         { shutdownTimeoutSeconds: 0.5 },
       );
@@ -1658,10 +1656,7 @@ describe("Orchestrator", () => {
         yield* orc.stop();
         const elapsed = Date.now() - before;
         expect(elapsed).toBeLessThan(3000);
-        const state = yield* orc.getState("stuck");
-        expect(state.status).toBe("Stopped");
-        expect(state.pid).toBeNull();
-        expect(state.exitCode).toBe(143);
+        expect(proc.killed).toEqual(["SIGTERM", "SIGKILL"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
@@ -1862,110 +1857,12 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* proc.waitForSpawn("a", 2);
-        const state = yield* waitForState(
-          orc,
-          "a",
-          (candidate) => candidate.status === "Failed",
-          "Failed",
-        );
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
         // maxRestarts=1 means original spawn + 1 restart = 2 total
         const mainSpawns = proc.spawned.filter((s) => s.command === "a");
         expect(mainSpawns.length).toBe(2);
-        expect(state.pid).toBeNull();
-        expect(state.exitCode).toBeNull();
-        expect(state.error).toBe("Health check failed and restart budget was exhausted");
-
-        const readyError = yield* orc.waitReady("a").pipe(Effect.flip);
-        expect(readyError._tag).toBe("ServiceReadyError");
-        if (readyError._tag === "ServiceReadyError") {
-          expect(readyError.reason).toBe("Health check failed and restart budget was exhausted");
-        }
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
-
-    it.live("applies startup failures before a service has ever been healthy", () => {
-      const { layer, proc } = setupOrchestrator(
-        [
-          svc("a", {
-            restart: "always",
-            maxRestarts: 1,
-            healthCheck: {
-              probe: { _tag: "Exec", command: "check", args: [] },
-              periodSeconds: 0.01,
-              startupFailureThreshold: 2,
-              failureThreshold: 1,
-            },
-          }),
-        ],
-        {
-          exitDelay: "5 seconds",
-          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
-        },
-      );
-
-      return Effect.gen(function* () {
-        const orc = yield* Orchestrator;
-        yield* orc.start();
-        const state = yield* waitForFailed(orc, "a");
-        expect(proc.spawned.filter((spawn) => spawn.command === "a")).toHaveLength(2);
-        expect(state.pid).toBeNull();
-        expect(state.exitCode).toBeNull();
-      }).pipe(Effect.provide(layer), Effect.scoped);
-    });
-
-    it.live("keeps an initially unhealthy no-restart service alive", () => {
-      const { layer, proc } = setupOrchestrator(
-        [
-          svc("a", {
-            restart: "no",
-            healthCheck: {
-              probe: { _tag: "Exec", command: "check", args: [] },
-              periodSeconds: 0.01,
-              failureThreshold: 1,
-            },
-          }),
-        ],
-        {
-          exitDelay: "5 seconds",
-          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
-        },
-      );
-
-      return Effect.gen(function* () {
-        const orc = yield* Orchestrator;
-        yield* orc.start();
-        const state = yield* waitForState(
-          orc,
-          "a",
-          (candidate) => candidate.status === "Unhealthy",
-          "Unhealthy",
-        );
-        expect(state.pid).not.toBeNull();
-        expect(state.exitCode).toBeNull();
-        expect(proc.spawned.filter((spawn) => spawn.command === "a")).toHaveLength(1);
-      }).pipe(Effect.provide(layer), Effect.scoped);
-    });
-  });
-
-  it.live("finalizes the child before publishing a healthy-hook failure", () => {
-    const { layer, proc } = setupOrchestrator(
-      [
-        svc("a", {
-          hooks: [{ on: "healthy", run: () => Effect.fail(new Error("warmup failed")) }],
-        }),
-      ],
-      { exitDelay: "5 seconds" },
-    );
-
-    return Effect.gen(function* () {
-      const orc = yield* Orchestrator;
-      yield* orc.start();
-      const state = yield* waitForFailed(orc, "a");
-      expect(proc.killed.some((record) => record.command === "a")).toBe(true);
-      expect(state.pid).toBeNull();
-      expect(state.exitCode).toBeNull();
-      expect(state.error).toContain("on:healthy");
-    }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
   describe("readiness", () => {

@@ -113,8 +113,8 @@ function legacyCredentialsMock(accessToken?: string) {
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyServicesCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function makeProjectWithConfig(config: string): string {

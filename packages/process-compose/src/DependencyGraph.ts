@@ -33,6 +33,7 @@ export const buildGraph = (
     // Edge direction: FROM dependency TO dependent
     // This ensures topo sort yields dependencies before their dependents
     const nodeByName = new Map<string, Graph.NodeIndex>();
+    const serviceByNode = new Map<Graph.NodeIndex, ServiceDef>();
 
     let missingDepError: MissingDependencyError | undefined;
 
@@ -41,6 +42,7 @@ export const buildGraph = (
       for (const svc of enabled) {
         const idx = Graph.addNode(mutable, svc);
         nodeByName.set(svc.name, idx);
+        serviceByNode.set(idx, svc);
       }
 
       // Add edges: dependency -> dependent
@@ -70,7 +72,7 @@ export const buildGraph = (
     if (!Graph.isAcyclic(graph)) {
       // Find nodes involved in cycle for the error message
       const cycleNodes: Array<string> = [];
-      for (const [, svc] of graph.nodes) {
+      for (const [, svc] of Graph.nodes(graph)) {
         cycleNodes.push(svc.name);
       }
       yield* Effect.fail(new CyclicDependencyError({ cycle: cycleNodes.join(" -> ") }));
@@ -100,14 +102,8 @@ export const buildGraph = (
         if (reachable.has(current)) continue;
         reachable.add(current);
 
-        // Follow incoming edges: adjacency is dep->dependent, so reverseAdjacency[node] gives dep indices
-        const incomingEdgeIndices = graph.reverseAdjacency.get(current) ?? [];
-        for (const edgeIdx of incomingEdgeIndices) {
-          const edge = graph.edges.get(edgeIdx);
-          if (edge !== undefined) {
-            stack.push(edge.source);
-          }
-        }
+        // Edges point from dependency to dependent, so predecessors are dependencies.
+        stack.push(...Graph.predecessors(graph, current));
       }
 
       // Return the nodes in the reachable set, in start order
@@ -125,15 +121,11 @@ export const buildGraph = (
 
       // Direct dependencies: follow incoming edges from this node
       const result: Array<{ def: ServiceDef; condition: DependencyCondition }> = [];
-      const incomingEdgeIndices = graph.reverseAdjacency.get(nodeIdx) ?? [];
-
-      for (const edgeIdx of incomingEdgeIndices) {
-        const edge = graph.edges.get(edgeIdx);
-        if (edge !== undefined) {
-          const depDef = graph.nodes.get(edge.source);
-          if (depDef !== undefined) {
-            result.push({ def: depDef, condition: edge.data });
-          }
+      for (const [, edge] of Graph.edges(graph)) {
+        if (edge.target !== nodeIdx) continue;
+        const depDef = serviceByNode.get(edge.source);
+        if (depDef !== undefined) {
+          result.push({ def: depDef, condition: edge.data });
         }
       }
 
@@ -145,17 +137,12 @@ export const buildGraph = (
       if (nodeIdx === undefined) return [];
 
       // Direct dependents: follow outgoing edges from this node
-      // Edges point FROM dependency TO dependent, so adjacency[node] gives dependent indices
+      // Edges point FROM dependency TO dependent.
       const result: Array<ServiceDef> = [];
-      const outgoingEdgeIndices = graph.adjacency.get(nodeIdx) ?? [];
-
-      for (const edgeIdx of outgoingEdgeIndices) {
-        const edge = graph.edges.get(edgeIdx);
-        if (edge !== undefined) {
-          const depDef = graph.nodes.get(edge.target);
-          if (depDef !== undefined) {
-            result.push(depDef);
-          }
+      for (const dependentIdx of Graph.successors(graph, nodeIdx)) {
+        const dependent = serviceByNode.get(dependentIdx);
+        if (dependent !== undefined) {
+          result.push(dependent);
         }
       }
 
