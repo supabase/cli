@@ -11,6 +11,8 @@ export type ServiceStatus =
   | "Failed"
   | "Restarting";
 
+export type ServiceDesiredState = "inactive" | "running" | "stopped";
+
 export class ServiceState extends Data.Class<{
   readonly name: string;
   readonly status: ServiceStatus;
@@ -19,9 +21,11 @@ export class ServiceState extends Data.Class<{
   readonly restartCount: number;
   readonly startedAt: number | null;
   readonly error: string | null;
+  /** Caller-owned intent, independent of the current process transition. */
+  readonly desired: ServiceDesiredState;
 }> {}
 
-export const initial = (name: string): ServiceState =>
+export const initial = (name: string, desired: ServiceDesiredState = "inactive"): ServiceState =>
   new ServiceState({
     name,
     status: "Pending",
@@ -30,4 +34,5 @@ export const initial = (name: string): ServiceState =>
     restartCount: 0,
     startedAt: null,
     error: null,
+    desired,
   });

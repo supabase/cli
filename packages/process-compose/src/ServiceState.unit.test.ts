@@ -11,6 +11,7 @@ describe("ServiceState", () => {
     expect(state.restartCount).toBe(0);
     expect(state.startedAt).toBeNull();
     expect(state.error).toBeNull();
+    expect(state.desired).toBe("inactive");
   });
 
   it("supports structural equality", () => {

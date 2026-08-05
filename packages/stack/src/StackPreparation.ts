@@ -4,6 +4,7 @@ import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ChecksumMismatchError } from "./errors.ts";
 import { DockerPullError } from "./errors.ts";
 import type { ServiceResolution } from "./resolve.ts";
+import { isDockerOnlyService } from "./ServiceArtifacts.ts";
 import {
   DEFAULT_VERSIONS,
   SERVICE_NAMES,
@@ -38,19 +39,6 @@ type StackPreparationEvent =
   | ServiceDownloadStarted
   | ServiceDownloadFinished
   | PreparationCompleted;
-
-const dockerOnlyServices = new Set<ServiceName>([
-  "edge-runtime",
-  "realtime",
-  "storage",
-  "imgproxy",
-  "mailpit",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "vector",
-  "pooler",
-]);
 
 const DOCKER_PULL_RETRY_DELAYS_MS = [500] as const;
 const RETRYABLE_PULL_PATTERNS = [
@@ -120,7 +108,7 @@ export const prepareAssetsWithDependencies = (
         );
       }
 
-      if (dockerOnlyServices.has(service)) {
+      if (isDockerOnlyService(service)) {
         return resolveDockerImageForService(spawner, service, versions[service], {
           onDownloadStart: markDownloadStart(),
         }).pipe(

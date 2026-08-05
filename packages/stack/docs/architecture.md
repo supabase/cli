@@ -239,12 +239,12 @@ flowchart LR
 
 **File:** `src/BinaryResolver.ts`
 
-`BinaryResolver` is the most complex piece of the package. Given a service name and version, it locates or downloads the correct binary for the current platform, verifies its integrity, and returns a path to the extracted directory.
+Given a service name and version, `BinaryResolver` asks the artifact catalog for a supported native release, reuses or downloads the corresponding binary for the current platform, verifies its integrity, and returns a path to the extracted directory.
 
 #### Service interface
 
 ```ts
-class BinaryResolver extends ServiceMap.Service<
+class BinaryResolver extends Context.Service<
   BinaryResolver,
   {
     readonly resolve: (
@@ -254,7 +254,7 @@ class BinaryResolver extends ServiceMap.Service<
 >()("local/BinaryResolver") {}
 
 interface BinarySpec {
-  readonly service: ServiceName; // "postgres" | "postgrest" | "auth"
+  readonly service: ServiceName;
   readonly version: string;
   readonly cacheDir?: string; // defaults to ~/.supabase/bin
 }
@@ -265,59 +265,63 @@ interface BinarySpec {
 ```mermaid
 flowchart TD
     A["resolve(spec)"] --> B["detectPlatform"]
-    B --> C{"assetName?"}
-    C -->|"null"| D["BinaryNotFoundError"]
-    C -->|"string"| E["construct cacheDir"]
-    E --> F2["sweep stale cacheDir.tmp-* siblings (best-effort, always runs)"]
-    F2 --> F{"fs.exists(cacheDir/.supabase-cache-complete)?"}
-    F -->|"yes"| G["return cacheDir (cache hit)"]
-    F -->|"no"| H["HttpClient.get tarball from GitHub"]
-    H -->|"network error"| I["DownloadError"]
-    H -->|"ok"| J{"checksumUrl?"}
-    J -->|"null"| L["skip verification"]
-    J -->|"string"| K["HttpClient.get .sha256 file"]
-    K --> M["verifyChecksum (SHA-256)"]
-    M -->|"mismatch"| N["ChecksumMismatchError"]
-    M -->|"ok"| L
-    L --> O["fs.makeDirectory tmpDir = cacheDir.tmp-«uuid»"]
-    O --> P["write _download-«uuid».tar/.zip into tmpDir"]
-    P --> Q["tar/unzip extract into tmpDir"]
-    Q -->|"exitCode != 0"| R["DownloadError"]
-    Q -->|"ok"| T["chmod +x, (macOS) codesign, write completion marker — all in tmpDir"]
-    T --> U["fs.rename(tmpDir, cacheDir)"]
-    U -->|"ok"| G
-    U -->|"rename fails, cacheDir has marker"| V["another process won — discard tmpDir, return cacheDir"]
-    U -->|"rename fails, no marker, attempts remain"| W["reclaim: remove broken/legacy cacheDir, retry rename"]
-    U -->|"rename fails, no marker, attempts exhausted"| X["DownloadError"]
-    W --> U
-    V --> G
+    B --> C{"native release in artifact catalog?"}
+    C -->|"no"| D["BinaryNotFoundError"]
+    C -->|"yes"| E["construct provider-scoped cacheDir"]
+    E --> F["sweep stale .partial-* siblings (best-effort)"]
+    F --> G{"cacheDir has .complete marker and payload?"}
+    G -->|"yes"| H["return cacheDir"]
+    G -->|"no"| I{"compatible legacy cache has expected executable?"}
+    I -->|"yes"| J["return legacy cacheDir"]
+    I -->|"no"| M["HttpClient.get release archive"]
+    M -->|"network error"| N["DownloadError"]
+    M -->|"ok"| O{"checksum URL?"}
+    O -->|"no"| Q["skip verification"]
+    O -->|"yes"| P["download and verify SHA-256"]
+    P -->|"mismatch"| R["ChecksumMismatchError"]
+    P -->|"ok"| Q
+    Q --> S["extract into unique .partial-* staging directory"]
+    S -->|"exitCode != 0"| T["DownloadError"]
+    S -->|"ok"| U["chmod, macOS codesign, write .complete marker"]
+    U --> V{"atomically rename staging to cacheDir"}
+    V -->|"won publication"| H
+    V -->|"destination exists"| W{"destination complete?"}
+    W -->|"yes"| H
+    W -->|"no"| N
 ```
 
-Note that a markerless `cacheDir` (e.g. a legacy binary from before this marker existed) is never removed upfront on the miss check — only `W`, at publish time, ever removes one, and only once a fully-staged replacement (`tmpDir`) is ready to take its place.
+A markerless provider-scoped `cacheDir` is not removed on the initial miss. It is replaced only after a complete artifact has been staged, so a failed download does not destroy the previous files.
 
 #### Cache layout
 
-The cache directory mirrors the logical identity of each binary: `<cacheDir>/<service>/<version>/<assetName>/`. Two versions of the same service coexist without conflict. The check is for a version-agnostic completion marker file (`.supabase-cache-complete`) inside `cacheDir`, not mere directory existence. A `cacheDir` that exists but lacks the marker can only be a broken or legacy leftover (e.g. from an older, pre-staging CLI version) — but it is left in place rather than removed on the miss check. Deleting it eagerly, before even attempting a download, would destroy a plausibly-still-usable binary before knowing whether a replacement can be produced (an offline machine or a GitHub outage would otherwise turn a would-have-been cache hit into both a failure and a lost cache). It's reclaimed later, only at publish time, once a fully-staged replacement is ready to atomically take its place.
+The cache identity is `<cacheDir>/<service>/<provider>/<version>/<assetName>/`. Including the provider prevents artifacts from different release sources from colliding when the catalog changes. A current cache entry is reusable only when it contains both the version-agnostic `.complete` marker and a payload file.
+
+The resolver also recognizes the previous `<cacheDir>/<service>/<version>/<assetName>/` layout for the four release providers supported by the old resolver. It reuses such an entry only when the service's expected executable exists. This keeps upgrades working offline without allowing a future provider change to inherit an artifact from an unrelated source.
 
 ```
 ~/.supabase/bin/
   postgres/
-    17.6.1.081-cli/
-      darwin-arm64/       <- extracted binary tree
-        start.sh
-        bin/
-          postgres
+    github.com_supabase_postgres/
+      17.6.1.081/
+        darwin-arm64/       <- extracted binary tree
+          .complete
+          bin/
+            postgres
   postgrest/
-    14.5/
-      macos-aarch64/
-        postgrest
+    github.com_PostgREST_postgrest/
+      14.5/
+        macos-aarch64/
+          .complete
+          postgrest
   auth/
-    2.187.0/
-      arm64/
-        auth
+    github.com_supabase_auth/
+      2.187.0/
+        arm64/
+          .complete
+          auth
 ```
 
-The cache path components — `<service>/<version>/<assetName>` — are exposed as static methods (`BinaryResolver.downloadUrl`, `BinaryResolver.checksumUrl`, `BinaryResolver.cachePath`) so they can be tested without constructing the full Effect service. These static helpers are the pure core; the Effect service wraps them with the actual I/O.
+`BinaryResolver.cachePath` exposes this path calculation for focused unit tests. Release URLs, archive formats, checksums, and provider identities come from `ServiceArtifacts` rather than resolver-specific static helpers.
 
 #### Checksum verification
 
@@ -325,22 +329,15 @@ Only postgres publishes SHA-256 checksums alongside its tarballs (as `<tarball-u
 
 #### Archive extraction
 
-To avoid corrupting `cacheDir` under concurrent invocations of the same spec, the download and extraction are staged in a per-invocation-unique sibling directory, `<cacheDir>.tmp-<uuid>`, never inside `cacheDir` itself. The archive is downloaded to a uniquely-named temp file inside that staging directory. For tarballs (`.tar.gz`, `.tar.xz`), `tar` is used with `--strip-components=1` to remove the top-level directory. For zip archives (PostgREST on Windows), `unzip` is used on Unix or `tar xf` on Windows. The `tar`/`unzip` subprocess is spawned via `ChildProcessSpawner` from `effect/unstable/process`.
+Each resolver extracts into a per-invocation-unique sibling directory named `.<assetName>.partial-*`, never inside `cacheDir` itself. For tarballs (`.tar.gz`, `.tar.xz`), `tar` is used and catalog metadata decides whether to strip the top-level directory. For zip archives, `unzip` is used on Unix or `tar xf` on Windows. The subprocess is spawned through `ChildProcessSpawner`.
 
-After extraction, permissions are restored (`chmod`) and, on macOS, executables are ad-hoc code-signed — all still scoped to the staging directory. A completion marker file (`.supabase-cache-complete`) is written into the staging directory last, so it travels with the payload.
+After extraction, permissions are restored (`chmod`) and, on macOS, executables are ad-hoc code-signed. The `.complete` marker is written last and records the provider, service, version, asset, and source URL. Publication is a single atomic rename into `cacheDir`: one concurrent resolver wins, while losers reuse the winner's complete entry. Existing incomplete destinations are preserved rather than destructively replaced.
 
-The staging directory is then published by an atomic `fs.rename` into `cacheDir`:
-
-- If another process already published a complete `cacheDir` first (detected via the marker, not mere existence), the losing process discards its own staged copy and resolves to the winner's `cacheDir` instead of failing.
-- If `cacheDir` exists but isn't a complete, marker-carrying entry — a broken/legacy leftover (this is the only place such a leftover is ever removed — see "Cache layout" above), or the rename failing for an unrelated reason — the current process treats it as reclaimable: it removes the leftover and retries the rename, up to a small bounded number of attempts. If a legitimate winner lands in the narrow gap between that reclaim and the retry, the retry's failure is re-checked against the marker on every attempt (including the last) and the winner is adopted immediately, regardless of how many reclaim attempts remain. Only the destructive reclaim-and-retry path is bounded: a rename that keeps failing for a reason unrelated to a competing destination (permissions, a read-only filesystem, disk I/O) can never succeed no matter how many times it's retried, so once attempts are exhausted the real rename error is surfaced as a `DownloadError` instead of retrying forever.
-
-The whole stage-and-publish sequence runs under a single `Effect.ensuring` finalizer that force-removes the staging directory on any exit path (success, failure, or interruption), and a best-effort sweep opportunistically reaps stale `.tmp-*` siblings older than 24 hours left behind by prior hard-killed processes. That sweep runs unconditionally before the cache-hit check, since once `cacheDir` becomes a complete cache hit, a sweep placed after the check would never run again for that entry's siblings.
+An `Effect.ensuring` finalizer force-removes the staging directory on success, failure, or interruption. A best-effort sweep also reaps `.partial-*` siblings older than 24 hours. The sweep runs before the cache-hit check so abandoned staging directories are eventually removed even when the final cache is already complete.
 
 #### Layer wiring
 
-`BinaryResolver` requires `FileSystem | Path | HttpClient.HttpClient | ChildProcessSpawner.ChildProcessSpawner` from the environment. The HOME directory is read via `Config.string("HOME")` rather than `process.env["HOME"]` directly.
-
-`BinaryResolver.layer` requires all four platform services from the environment. There is no `defaultLayer` — platform layers are provided at the entry point level (`bun.ts` / `node.ts`), not baked into `BinaryResolver`.
+`BinaryResolver.make(cacheRoot)` requires `FileSystem | Path | HttpClient.HttpClient | ChildProcessSpawner.ChildProcessSpawner` from the environment. Entry-point layers provide those platform services and use `defaultCacheRoot()` when the caller does not configure a cache root.
 
 ---
 
@@ -414,7 +411,7 @@ These opaque keys (`publishableKey` / `secretKey`) are what callers and SDKs use
 #### Service interface
 
 ```ts
-class JwtGenerator extends ServiceMap.Service<
+class JwtGenerator extends Context.Service<
   JwtGenerator,
   {
     readonly generate: (secret: string, role: string) => Effect.Effect<string>;
@@ -434,7 +431,7 @@ class JwtGenerator extends ServiceMap.Service<
 
 **File:** `src/PortAllocator.ts`
 
-`PortAllocator` resolves all port numbers before the stack starts. It supports two strategies: an explicit port requested by the caller, or a randomly assigned port from the OS.
+`PortAllocator` resolves all port numbers before the stack starts. It supports explicit caller ports and random OS-assigned ports. `createStack()` uses leased allocation: each selected port remains bound until the API proxy or corresponding service dependency closure is ready to bind it.
 
 #### Interface
 
@@ -461,16 +458,20 @@ export interface AllocatedPorts {
 export const allocatePorts = (
   input: PortInput,
 ): Effect.Effect<AllocatedPorts, PortAllocationError>;
+
+export const reservePorts = (
+  input: PortInput,
+): Effect.Effect<PortLease, PortAllocationError>;
 ```
 
 #### Two strategies
 
-- **Explicit port** (`input.apiPort !== undefined`) → `probeExactPort(port)`: binds the specific port on `127.0.0.1` to confirm it is available. Fails with `PortAllocationError` if the port is already in use.
-- **Omitted** → `probeRandomPort(exclude)`: binds port `0` on `127.0.0.1` so the OS assigns a free port, then closes the server immediately and returns the assigned port number.
+- **Explicit port** (`input.apiPort !== undefined`) binds the specific port on `127.0.0.1` and fails with `PortAllocationError` if it is already in use.
+- **Omitted** binds port `0` on `127.0.0.1`, allowing the OS to assign a free port.
 
 #### Collision avoidance
 
-Allocated ports are tracked in a `Set<number>`. When `probeRandomPort` returns a port already in the set (rare but possible under concurrent allocation), it retries automatically. This prevents two services from racing to the same port.
+Allocated ports are tracked in a `Set<number>` and OS listeners prevent concurrent stacks from receiving the same assignment. The API lease is released immediately before the central proxy binds. Backend leases remain active in lazy mode and are released only for the graph dependency closure being started. Any remaining listeners are closed during stack disposal. `allocatePorts()` remains available as a probe-only low-level API; stack construction uses `reservePorts()`.
 
 ---
 
@@ -545,7 +546,7 @@ export interface ProxyConfig {
   readonly serviceRoleJwt: string; // internal HS256 JWT passed to GoTrue/PostgREST
 }
 
-class ApiProxy extends ServiceMap.Service<
+class ApiProxy extends Context.Service<
   ApiProxy,
   {
     readonly address: HttpServer.Address;
@@ -687,7 +688,7 @@ complete `ServiceDef[]` list, and passes it to `buildGraph()` from `@supabase/pr
 #### Service interface
 
 ```ts
-class StackBuilder extends ServiceMap.Service<
+class StackBuilder extends Context.Service<
   StackBuilder,
   {
     readonly build: (
@@ -708,6 +709,7 @@ public service projection metadata, and exact cleanup targets.
 
 ```ts
 interface ResolvedStackConfig {
+  readonly startupMode: "eager" | "lazy";
   readonly jwtSecret: string;
   readonly apiPort: number;
   readonly dbPort: number;
@@ -750,7 +752,7 @@ and exposes the unified public state stream used by both in-process and daemon-b
 #### Service interface
 
 ```ts
-class StackLifecycleCoordinator extends ServiceMap.Service<
+class StackLifecycleCoordinator extends Context.Service<
   StackLifecycleCoordinator,
   {
     readonly getInfo: () => Effect.Effect<StackInfo>;
@@ -799,6 +801,30 @@ Internally, the coordinator owns these lifecycle phases:
 Before the orchestrator exists, it publishes synthetic service states derived from config. That is
 why `getAllStates()` and `allStateChanges()` can surface `Downloading` during cold-cache startup
 even though no process has been spawned yet.
+
+`ServiceActivation.ts` is the declarative policy for startup and lifecycle ownership. It marks
+services as eager or lazy, declares activation companions, and declares owned companions. Storage
+activates and owns imgproxy; Analytics activates and owns Vector; Studio activates Analytics but
+does not own it. Process dependencies remain the responsibility of the process graph.
+
+The package defaults to `startupMode: "eager"`. In `"lazy"` mode, `start()` starts and waits only
+for direct listeners, Realtime, and Studio. Each HTTP proxy route activates its target service
+before it forwards the request, and concurrent activation remains single-flight in the
+orchestrator. Proxy
+requests made before startup or after shutdown receive `503 Service Unavailable`. `waitAllReady()`
+waits for services whose orchestrator desired state is `running`, rather than blocking on
+intentionally dormant ones. The public projection maps unrequested services to the explicit
+`Dormant` status. Readiness includes the process graph's dependency closure and fails immediately
+for dormant or explicitly stopped services. An explicit service stop remains `Stopped` across a
+whole-stack stop/start until that service is explicitly started again.
+
+Detached mode preserves these semantics instead of reconstructing readiness from status snapshots.
+The daemon exposes `/ready` and `/services/:name/ready`, both of which delegate to the lifecycle
+coordinator. Typed error discriminants preserve service-not-found, service-readiness, and stack-build
+failures across the HTTP boundary.
+
+Realtime starts eagerly because the HTTP proxy only owns ordinary request forwarding; WebSocket
+transport is not duplicated in platform-specific stack adapters.
 
 #### StackInfo
 
@@ -868,7 +894,7 @@ metadata persisted separately for crash recovery.
 
 **File:** `src/createStack.ts`
 
-`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function `(apiPort: number) => PlatformLayer` — so the platform-specific HTTP server (Bun or Node.js) can be bound to the already-resolved port. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
+`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function receiving `{ apiPort, releaseApiPort }` — so the platform-specific HTTP server (Bun or Node.js) can release the reserved API port immediately before binding it. Platform-specific HTTP layers (`BunHttpServer` and `NodeHttpServer`) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
 
 `createStack` also owns `resolveConfig()`, the internal async function that turns a raw
 `StackConfig` into a `ResolvedStackConfig`: it allocates ports via `PortAllocator`, generates JWTs
@@ -1054,7 +1080,7 @@ graph TB
     subgraph "5. Orchestrator startup"
         OL["Orchestrator.layer(graph) + shared LogBuffer"]
         FM["FiberMap — one fiber per service"]
-        DEP["Await dependency Deferreds<br/><i>postgres healthy before postgrest/auth</i>"]
+        DEP["Await dependency state streams<br/><i>postgres healthy before postgrest/auth</i>"]
         SP["ChildProcessSpawner.spawn()"]
         HC["HealthProbe running"]
     end
@@ -1097,18 +1123,19 @@ graph TB
 
 ### Test file table
 
-| File                                 | Type        | What it tests                                                                                                                |
-| ------------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `src/Platform.unit.test.ts`          | Unit        | `detectPlatform`, all three asset-name mapping functions                                                                     |
-| `src/BinaryResolver.unit.test.ts`    | Unit        | Static helpers: `downloadUrl`, `checksumUrl`, `cachePath`                                                                    |
-| `src/services/services.unit.test.ts` | Unit        | `makePostgresService`, `makePostgresServiceDocker`, `makePostgrestService`, `makeAuthServiceNative`, `makeAuthServiceDocker` |
-| `src/ApiProxy.unit.test.ts`          | Unit        | `transformAuthorization` key translation logic, CORS headers, route routing                                                  |
-| `src/StackBuilder.unit.test.ts`      | Unit        | `StackBuilder.build()` with prepared artifacts and mocked platform services                                                  |
-| `src/prefetch.unit.test.ts`          | Unit        | `StackPreparation` / `prefetch` cache hits, Docker fallback order, and pull behavior                                         |
-| `src/Stack.unit.test.ts`             | Integration | Public `Stack` facade over `StackLifecycleCoordinator`, including pre-start `Downloading` state publication                  |
-| `src/createStack.unit.test.ts`       | Unit        | Type shape assertions + missing `stackConfig` error                                                                          |
-| `tests/createStack.e2e.test.ts`      | E2e         | Full stack lifecycle: health checks, auth sign up/in/out, PostgREST CRUD                                                     |
-| `tests/parallelStacks.e2e.test.ts`   | E2e         | Concurrent stacks: port uniqueness, health check validation                                                                  |
+| File                                     | Type        | What it tests                                                                                                                |
+| ---------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `src/Platform.unit.test.ts`              | Unit        | `detectPlatform`, all three asset-name mapping functions                                                                     |
+| `src/BinaryResolver.unit.test.ts`        | Unit        | Native release descriptors and provider-scoped `cachePath`                                                                   |
+| `src/BinaryResolver.integration.test.ts` | Integration | Concurrent atomic cache publication, legacy-cache reuse, failed replacement preservation, and stale staging cleanup          |
+| `src/services/services.unit.test.ts`     | Unit        | `makePostgresService`, `makePostgresServiceDocker`, `makePostgrestService`, `makeAuthServiceNative`, `makeAuthServiceDocker` |
+| `src/ApiProxy.unit.test.ts`              | Unit        | `transformAuthorization` key translation logic, CORS headers, route routing                                                  |
+| `src/StackBuilder.unit.test.ts`          | Unit        | `StackBuilder.build()` with prepared artifacts and mocked platform services                                                  |
+| `src/prefetch.unit.test.ts`              | Unit        | `StackPreparation` / `prefetch` cache hits, Docker fallback order, and pull behavior                                         |
+| `src/Stack.unit.test.ts`                 | Integration | Public `Stack` facade over `StackLifecycleCoordinator`, including pre-start `Downloading` state publication                  |
+| `src/createStack.unit.test.ts`           | Unit        | Type shape assertions + missing `stackConfig` error                                                                          |
+| `tests/createStack.e2e.test.ts`          | E2e         | Full stack lifecycle: health checks, auth sign up/in/out, PostgREST CRUD                                                     |
+| `tests/parallelStacks.e2e.test.ts`       | E2e         | Concurrent stacks: port uniqueness, health check validation                                                                  |
 
 ### Mock patterns
 
@@ -1185,12 +1212,18 @@ spawner; the key idea is that tests compose `Stack.layer(config)` on top of a re
 function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   const resolver = mockBinaryResolver();
   const spawner = mockChildProcessSpawner(); // from @supabase/process-compose mocks
+  const portLease: PortLease = {
+    ports: config.ports,
+    reserve: () => Effect.void,
+    release: () => Effect.void,
+    releaseAll: Effect.void,
+  };
 
   const preparationLayer = StackPreparation.layer.pipe(
     Layer.provide(resolver.layer),
     Layer.provide(spawner.layer),
   );
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(preparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
@@ -1200,6 +1233,9 @@ function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   return { layer, resolver, spawner };
 }
 ```
+
+Production setup passes the real reserved `PortLease`; tests use the no-op lease above because
+their mocked processes do not bind the configured ports.
 
 The `mockChildProcessSpawner` is reused from `@supabase/process-compose`'s test helpers — it
 stubs process spawning without forking real OS processes, making `Stack` / coordinator tests fast

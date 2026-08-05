@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createServer } from "node:net";
 import type { Server } from "node:net";
 import { Effect } from "effect";
-import { allocatePorts, DEFAULT_PORTS, PortAllocationError } from "./PortAllocator.ts";
+import {
+  allocatePorts,
+  DEFAULT_PORTS,
+  PortAllocationError,
+  reservePorts,
+} from "./PortAllocator.ts";
 
 const listen = (port: number) =>
   Effect.callback<Server, Error>((resume) => {
@@ -123,6 +128,59 @@ describe("allocatePorts", () => {
     if (exit._tag === "Failure") {
       expect(JSON.stringify(exit.cause)).toContain("is not available");
     }
+  });
+
+  it("keeps allocated ports unavailable until their lease is released", async () => {
+    const lease = await Effect.runPromise(reservePorts({}));
+
+    try {
+      const occupied = await Effect.runPromise(
+        allocatePorts({ apiPort: lease.ports.apiPort }).pipe(Effect.exit),
+      );
+      expect(occupied._tag).toBe("Failure");
+
+      await Effect.runPromise(lease.release(["apiPort"]));
+      const available = await Effect.runPromise(allocatePorts({ apiPort: lease.ports.apiPort }));
+      expect(available.apiPort).toBe(lease.ports.apiPort);
+
+      await Effect.runPromise(lease.reserve(["apiPort"]));
+      const reservedAgain = await Effect.runPromise(
+        allocatePorts({ apiPort: lease.ports.apiPort }).pipe(Effect.exit),
+      );
+      expect(reservedAgain._tag).toBe("Failure");
+    } finally {
+      await Effect.runPromise(lease.releaseAll);
+    }
+  });
+
+  it("keeps concurrent port leases disjoint", async () => {
+    const [first, second] = await Promise.all([
+      Effect.runPromise(reservePorts({})),
+      Effect.runPromise(reservePorts({})),
+    ]);
+
+    try {
+      const firstPorts = new Set(Object.values(first.ports));
+      expect(Object.values(second.ports).every((port) => !firstPorts.has(port))).toBe(true);
+    } finally {
+      await Promise.all([
+        Effect.runPromise(first.releaseAll),
+        Effect.runPromise(second.releaseAll),
+      ]);
+    }
+  });
+
+  it("releases partial reservations when lease allocation fails", async () => {
+    const port = await Effect.runPromise(
+      Effect.scoped(Effect.map(occupyFreePort(), (occupied) => occupied.port)),
+    );
+    const failed = await Effect.runPromise(
+      reservePorts({ apiPort: port, dbPort: port }).pipe(Effect.exit),
+    );
+    expect(failed._tag).toBe("Failure");
+
+    const available = await Effect.runPromise(allocatePorts({ apiPort: port }));
+    expect(available.apiPort).toBe(port);
   });
 
   it("preferred ports are reused when available", async () => {

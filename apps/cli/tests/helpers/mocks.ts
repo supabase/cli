@@ -692,15 +692,18 @@ export function mockStack(
           }),
         ),
       getAllStates: () => {
-        const serviceNames = opts.stateChanges
-          ? [...new Set(opts.stateChanges.map((s) => s.name))]
-          : ["postgres"];
+        const latestStates = new Map(
+          (stateHistory.length > 0
+            ? stateHistory
+            : [{ name: "postgres", status: "Pending" as const }]
+          ).map((state) => [state.name, state] as const),
+        );
         return Effect.succeed(
-          serviceNames.map(
-            (name) =>
+          [...latestStates.values()].map(
+            (state) =>
               new StackServiceState({
-                name,
-                status: "Pending",
+                name: state.name,
+                status: state.status,
                 pid: null,
                 exitCode: null,
                 restartCount: 0,
@@ -899,10 +902,13 @@ export function mockStateManager(
     stackDir: (name: string) => `/test/project/.supabase/stacks/${name}`,
     dataDir: (name: string) => `/test/project/.supabase/stacks/${name}/data`,
     runtimeDir: (name: string) => `/tmp/supabase/${name}`,
-    socketPath: (name: string) => `/tmp/supabase/${name}/daemon.sock`,
     metadataFile: (name: string) => `/test/project/.supabase/stacks/${name}/stack.json`,
     stackExists: (name: string) => Effect.succeed(states.has(name) || metadata.has(name)),
     write: (state: StackState) =>
+      Effect.sync(() => {
+        states.set(state.name, state);
+      }),
+    claim: (state: StackState) =>
       Effect.sync(() => {
         states.set(state.name, state);
       }),

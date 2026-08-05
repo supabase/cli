@@ -41,17 +41,24 @@ export {
   JwtGenerator,
 } from "./JwtGenerator.ts";
 
-export type { AllocatedPorts, PortInput } from "./PortAllocator.ts";
+export type {
+  AllocatedPorts,
+  PortField,
+  PortInput,
+  PortLease,
+  PortSelectionOptions,
+} from "./PortAllocator.ts";
 export {
   allocatePorts,
   DEFAULT_API_PORT,
   DEFAULT_DB_PORT,
   PortAllocationError,
+  reserveAllocatedPorts,
+  reservePorts,
 } from "./PortAllocator.ts";
 
 export type { ProxyConfig } from "./ApiProxy.ts";
 export { ApiProxy } from "./ApiProxy.ts";
-
 export type {
   AnalyticsConfig,
   AuthConfig,
@@ -154,6 +161,7 @@ export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
 export type {
   PlatformFactory,
+  PlatformFactoryOptions,
   PlatformLayer,
   PlatformServices,
   ReadyOptions,
