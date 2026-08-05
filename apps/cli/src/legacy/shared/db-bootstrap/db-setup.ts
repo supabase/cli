@@ -67,7 +67,7 @@
  * here would widen `legacyStartDatabase`'s (and both `db start`'s and `supabase start`'s
  * own) environment requirements across their entire call graph and every test that
  * exercises the fresh-volume setup path. Deliberately deferred to a dedicated follow-up
- * rather than folded into this hoist — see CLI-1954's PR review thread.
+ * rather than folded into this hoist — tracked as CLI-2043.
  *
  * This module also duplicates ONE config-load pass: `legacyCheckDbToml` is called
  * internally (not threaded in from the caller) to resolve `[db.vault]`, `[db.seed]`,
