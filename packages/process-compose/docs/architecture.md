@@ -219,9 +219,11 @@ In-process cleanup and orphan supervision solve different failure modes:
   managed child exits while cleanup is configured.
 
 `ExternalCleanupAction` supports a shell-free `RunCommand` with an executable, argument array, and
-optional timeout, plus `RemovePath` for filesystem cleanup. The supervisor rejects a malformed
-decoded cleanup contract before spawning the child, while individual execution failures remain
-best-effort. Callers must choose idempotent commands because owner-loss signals can race.
+optional timeout (default 5 seconds), plus `RemovePath` for filesystem cleanup. Cleanup commands
+receive the managed child's sanitized environment, without the supervisor self-dispatch protocol
+variables. The supervisor rejects a malformed decoded cleanup contract before spawning the child,
+while individual execution failures remain best-effort. Callers must choose idempotent commands
+because owner-loss signals can race.
 
 ## Supervisor runtime
 
