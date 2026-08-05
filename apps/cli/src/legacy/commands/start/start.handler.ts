@@ -32,6 +32,7 @@ import {
   legacyResolveApiTlsPath,
   legacyResolveEmailTemplateContentPath,
 } from "../../shared/legacy-config-validate.ts";
+import { legacyIsContainerNotFoundMessage } from "../../shared/legacy-container-cli.ts";
 import { legacyCheckDbToml } from "../../shared/legacy-db-config.toml-read.ts";
 import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
 import {
@@ -193,20 +194,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-/**
- * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect`: "No such
- * container" or "No such object" depending on daemon version/CLI path — the same pair already
- * handled in `shared/functions/serve.ts`/`legacy-db-bootstrap.seam.layer.ts`/`legacy-pgdelta.seam.
- * layer.ts`.
- */
-function isContainerNotFoundMessage(message: string): boolean {
-  return (
-    /no such container/iu.test(message) ||
-    /no such object/iu.test(message) ||
-    /no container with name or id/iu.test(message)
-  );
 }
 
 /**
@@ -682,7 +669,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // makes removing the Postgres container destructive.
     const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
+        legacyIsContainerNotFoundMessage(error.message)
+          ? Effect.succeed(undefined)
+          : Effect.fail(error),
       ),
     );
     const dbState = yield* inspectDbState;

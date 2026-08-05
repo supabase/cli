@@ -3775,9 +3775,9 @@ content_path = "./templates/custom_notice.html"
       "brings up the stack when the DB container's inspect reports 'No such object' instead of 'No such container'",
       () => {
         // Docker/Podman report a missing container as either "No such container" or "No such
-        // object" depending on daemon version/CLI path — `isContainerNotFoundMessage` must
-        // recognize both, or `legacyStart`'s "not running, bring up the stack" branch never
-        // fires and the inspect failure propagates instead.
+        // object" depending on daemon version/CLI path — `legacyIsContainerNotFoundMessage`
+        // must recognize both, or `legacyStart`'s "not running, bring up the stack" branch
+        // never fires and the inspect failure propagates instead.
         const created = new Set<string>();
         const route = (args: ReadonlyArray<string>): RouteResult => {
           if (args[0] === "container" && args[1] === "inspect") {
