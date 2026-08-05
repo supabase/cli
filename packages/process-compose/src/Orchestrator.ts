@@ -234,9 +234,16 @@ export class Orchestrator extends Context.Service<
                   const completed = yield* waitForState(
                     dependency,
                     (state) =>
-                      state.exitCode !== null &&
-                      (state.status === "Stopped" || state.status === "Failed"),
+                      state.status === "Failed" ||
+                      (state.status === "Stopped" && state.exitCode !== null),
                   );
+                  if (completed.status === "Failed") {
+                    yield* sendEvent(def.name, {
+                      _tag: "DependencyFailed",
+                      error: `Dependency ${depDef.name} failed: ${completed.error ?? "unknown failure"}`,
+                    });
+                    return;
+                  }
                   if (completed.exitCode !== 0) {
                     yield* sendEvent(def.name, {
                       _tag: "DependencyFailed",
@@ -384,7 +391,7 @@ export class Orchestrator extends Context.Service<
                           const service = services.get(def.name);
                           if (service === undefined) return;
                           const current = SubscriptionRef.getUnsafe(service.state);
-                          if (current.status === "Running") {
+                          if (current.status === "Running" || current.status === "Unhealthy") {
                             const healthyHookError = yield* runHooks(def, "healthy");
                             if (healthyHookError !== null) {
                               yield* Deferred.succeed(generationResult, {
