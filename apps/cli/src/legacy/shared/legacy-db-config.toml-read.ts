@@ -297,6 +297,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.seed.sql_paths",
   "auth.enabled",
   "edge_runtime.deno_version",
+  "experimental.webhooks.enabled",
   "experimental.pgdelta.enabled",
   "experimental.pgdelta.declarative_schema_path",
   "experimental.pgdelta.format_options",

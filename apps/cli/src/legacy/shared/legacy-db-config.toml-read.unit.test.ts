@@ -602,6 +602,78 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
+    () => {
+      // Same v.Set-above-AutomaticEnv precedence as auth.enabled/pgdelta.enabled
+      // (config.go:635-637): a matched remote block's experimental.webhooks.enabled must win
+      // over SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED. Without the fix, the suppressed env value
+      // (false) would win instead, and the merged [experimental.webhooks] section (present via
+      // the remote block) would then fail validation ("Webhooks cannot be deactivated").
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.webhooks]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED still wins when the remote block omits webhooks",
+    () => {
+      // Control: the env override is suppressed only for keys the matched block explicitly
+      // set; a block that omits experimental.webhooks leaves the env override in force — a
+      // base [experimental.webhooks] section (present, default true) flipped off by the env
+      // var still fails Go's "cannot be deactivated" validation.
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[experimental.webhooks]",
+          "enabled = true",
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("Webhooks cannot be deactivated");
+            }
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
     // even with no TOML project_id (here it lifts major_version 15 over the base default).
