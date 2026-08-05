@@ -13,9 +13,6 @@ export type RestartDecision =
     }
   | { readonly _tag: "KeepRunningUnhealthy" };
 
-export const UNHEALTHY_RESTART_EXHAUSTED_ERROR =
-  "Health check failed and restart budget was exhausted";
-
 export function decideRestart(options: {
   readonly cause: LifecycleCause;
   readonly policy: RestartPolicy;

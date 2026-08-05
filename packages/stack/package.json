@@ -56,8 +56,7 @@
       "oxlint-tsgolint"
     ],
     "ignoreBinaries": [
-      "nx",
-      "ps"
+      "nx"
     ]
   }
 }
