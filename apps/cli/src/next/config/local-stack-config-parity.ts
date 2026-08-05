@@ -9,26 +9,34 @@ import type { ProjectConfig } from "@supabase/config";
  * explicitly configured default value, which matters when unsupported fields
  * must be rejected or warned about without rejecting untouched defaults.
  */
+type LocalStackConfigParityPresence =
+  | "decoded-value"
+  | "effective-global-secret"
+  | "effective-secret"
+  | "enabled-subtree"
+  | "non-default-value"
+  | "raw-document";
+
 export type LocalStackConfigParityDecision =
   | {
       readonly _tag: "mapped";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly mappedBy: "start" | "functions-dev" | "stack-functions-runtime";
       readonly rationale: string;
     }
   | {
       readonly _tag: "not-applicable";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly rationale: string;
     }
   | {
       readonly _tag: "unsupported-blocking";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly rationale: string;
     }
   | {
       readonly _tag: "unsupported-warning";
-      readonly presence: "decoded-value" | "raw-document";
+      readonly presence: LocalStackConfigParityPresence;
       readonly rationale: string;
     };
 
@@ -62,9 +70,23 @@ const unsupportedOptionalRuntimeField: LocalStackConfigParityDecision = {
 
 const unsupportedSecretRuntimeField: LocalStackConfigParityDecision = {
   _tag: "unsupported-blocking",
-  presence: "decoded-value",
+  presence: "effective-secret",
   rationale:
-    "An explicitly configured secret changes local runtime credentials but the next stack launch Adapter does not translate it yet.",
+    "A concrete resolved secret in an enabled runtime subtree changes local credentials but the next stack launch Adapter does not translate it yet; unresolved generated env placeholders do not count.",
+};
+
+const unsupportedNonDefaultRuntimeField: LocalStackConfigParityDecision = {
+  _tag: "unsupported-blocking",
+  presence: "non-default-value",
+  rationale:
+    "Only a value that differs from the generated project-config default changes local runtime behavior.",
+};
+
+const unsupportedEnabledProviderField: LocalStackConfigParityDecision = {
+  _tag: "unsupported-blocking",
+  presence: "enabled-subtree",
+  rationale:
+    "This setting changes local authentication behavior only when its provider is effectively enabled; generated disabled provider stubs do not count.",
 };
 
 const mappedAutoExposeNewTables: LocalStackConfigParityDecision = {
@@ -254,6 +276,14 @@ const authExternalParity = {
   zoom: authExternalProviderParity,
 } satisfies Record<keyof ProjectConfig["auth"]["external"], Node>;
 
+const authExternalWithCustomParity = {
+  ...authExternalParity,
+  "*": {
+    decision: unsupportedEnabledProviderField,
+    children: authExternalProviderParity,
+  },
+} satisfies LocalStackConfigParitySection;
+
 const authHooksParity = {
   mfa_verification_attempt: authHookParity,
   password_verification_attempt: authHookParity,
@@ -379,7 +409,7 @@ const authParity = {
     },
   } satisfies Record<keyof ProjectConfig["auth"]["email"], Node>,
   sms: authSmsParity,
-  external: authExternalParity,
+  external: authExternalWithCustomParity,
   web3: {
     solana: {
       enabled: unsupportedRuntimeField,
@@ -389,32 +419,32 @@ const authParity = {
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["ethereum"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["web3"], Node>,
   oauth_server: {
-    enabled: unsupportedRuntimeField,
-    authorization_url_path: unsupportedRuntimeField,
-    allow_dynamic_registration: unsupportedRuntimeField,
+    enabled: unsupportedEnabledProviderField,
+    authorization_url_path: unsupportedEnabledProviderField,
+    allow_dynamic_registration: unsupportedEnabledProviderField,
   } satisfies Record<keyof ProjectConfig["auth"]["oauth_server"], Node>,
   third_party: {
     firebase: {
-      enabled: unsupportedRuntimeField,
-      project_id: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      project_id: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["firebase"], Node>,
     auth0: {
-      enabled: unsupportedRuntimeField,
-      tenant: unsupportedOptionalRuntimeField,
-      tenant_region: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      tenant: unsupportedEnabledProviderField,
+      tenant_region: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["auth0"], Node>,
     aws_cognito: {
-      enabled: unsupportedRuntimeField,
-      user_pool_id: unsupportedOptionalRuntimeField,
-      user_pool_region: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      user_pool_id: unsupportedEnabledProviderField,
+      user_pool_region: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["aws_cognito"], Node>,
     clerk: {
-      enabled: unsupportedRuntimeField,
-      domain: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      domain: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["clerk"], Node>,
     workos: {
-      enabled: unsupportedRuntimeField,
-      issuer_url: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      issuer_url: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["workos"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["third_party"], Node>,
 } satisfies Record<keyof ProjectConfig["auth"], Node>;
@@ -474,9 +504,9 @@ const localStackConfigParity = {
     max_rows: mappedCoreTopologyField,
     auto_expose_new_tables: mappedAutoExposeNewTables,
     tls: {
-      enabled: unsupportedRuntimeField,
-      cert_path: unsupportedOptionalRuntimeField,
-      key_path: unsupportedOptionalRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      cert_path: unsupportedEnabledProviderField,
+      key_path: unsupportedEnabledProviderField,
     } satisfies Record<keyof ProjectConfig["api"]["tls"], Node>,
     external_url: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof ProjectConfig["api"], Node>,
@@ -516,7 +546,7 @@ const localStackConfigParity = {
     enabled: mappedCoreTopologyField,
     policy: mappedCoreTopologyField,
     inspector_port: ordinaryStartInspectorField,
-    deno_version: unsupportedRuntimeField,
+    deno_version: unsupportedNonDefaultRuntimeField,
     secrets: mappedStartFunctionsEnvironment,
   } satisfies Record<keyof ProjectConfig["edge_runtime"], Node>,
   functions: {
@@ -556,17 +586,33 @@ const localStackConfigParity = {
       enabled: mappedCoreTopologyField,
     } satisfies Record<keyof ProjectConfig["storage"]["s3_protocol"], Node>,
     analytics: {
-      enabled: unsupportedRuntimeField,
-      max_namespaces: unsupportedRuntimeField,
-      max_tables: unsupportedRuntimeField,
-      max_catalogs: unsupportedRuntimeField,
-      buckets: unsupportedRuntimeField,
+      enabled: unsupportedEnabledProviderField,
+      max_namespaces: unsupportedEnabledProviderField,
+      max_tables: unsupportedEnabledProviderField,
+      max_catalogs: unsupportedEnabledProviderField,
+      buckets: {
+        "*": {
+          decision: unsupportedEnabledProviderField,
+          children: {} satisfies Record<
+            keyof ProjectConfig["storage"]["analytics"]["buckets"][string],
+            Node
+          >,
+        },
+      },
     } satisfies Record<keyof ProjectConfig["storage"]["analytics"], Node>,
     vector: {
       enabled: mappedDataPlaneRuntimeField,
-      max_buckets: unsupportedRuntimeField,
-      max_indexes: unsupportedRuntimeField,
-      buckets: unsupportedRuntimeField,
+      max_buckets: unsupportedEnabledProviderField,
+      max_indexes: unsupportedEnabledProviderField,
+      buckets: {
+        "*": {
+          decision: unsupportedEnabledProviderField,
+          children: {} satisfies Record<
+            keyof ProjectConfig["storage"]["vector"]["buckets"][string],
+            Node
+          >,
+        },
+      },
     } satisfies Record<keyof ProjectConfig["storage"]["vector"], Node>,
   } satisfies Record<keyof ProjectConfig["storage"], Node>,
   studio: {

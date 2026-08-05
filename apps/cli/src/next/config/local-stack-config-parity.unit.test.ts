@@ -7,7 +7,7 @@ describe("localStackConfigParity", () => {
   it("classifies every fixed project-config leaf exactly once", () => {
     const paths = entries.map(({ path }) => path);
 
-    expect(paths).toHaveLength(362);
+    expect(paths).toHaveLength(373);
     expect(new Set(paths).size).toBe(paths.length);
     expect(
       Object.fromEntries(
@@ -19,7 +19,7 @@ describe("localStackConfigParity", () => {
     ).toEqual({
       mapped: 255,
       "not-applicable": 11,
-      "unsupported-blocking": 90,
+      "unsupported-blocking": 101,
       "unsupported-warning": 6,
     });
   });
@@ -107,7 +107,17 @@ describe("localStackConfigParity", () => {
     expect(byPath.get("auth.external.github.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("auth.hook.send_email.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("auth.sms.twilio.enabled")?.presence).toBe("raw-document");
+    expect(byPath.get("auth.oauth_server.enabled")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.third_party.firebase.project_id")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("api.tls.cert_path")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("storage.analytics.max_tables")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("edge_runtime.deno_version")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.jwt_secret")?.presence).toBe("decoded-value");
+    expect(byPath.get("auth.external.*")?.presence).toBe("enabled-subtree");
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");
+    expect(byPath.get("storage.buckets.*")?.presence).toBe("raw-document");
+    expect(byPath.get("storage.analytics.buckets.*")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("storage.vector.buckets.*")?.presence).toBe("enabled-subtree");
     expect(byPath.get("experimental.webhooks.enabled")?.presence).toBe("raw-document");
   });
 
