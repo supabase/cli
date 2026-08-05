@@ -178,7 +178,9 @@ path has no confirmation prompt.
   unconditionally, exactly as on the migrations branch. The best-effort pg-delta
   catalog-cache warning (`down.go:58-59`, gated on `SUPABASE_EXPERIMENTAL_PG_DELTA`)
   is not ported (no output impact) — same known gap as the migrations branch.
-  `encrypted:` vault secrets are skipped on the remote path (both branches).
+  `encrypted:` vault secrets are NOT skipped on the remote path — `legacyCheckDbToml`
+  decrypts them into `toml.vault`, and `legacyUpsertVaultSecrets` upserts the decrypted
+  values unconditionally, before either branch (schema-files or migrations) runs.
 - The local path's own `--experimental` schema-files branch is still handled by the
   Go child behind the `db __db-bootstrap` seam (CLI-1955 scope) — this command's
   handler forwards `--experimental` to that seam but does not implement the branch
