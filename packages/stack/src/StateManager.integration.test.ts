@@ -76,6 +76,7 @@ describe("StateManager claim", () => {
 
       const error = yield* manager.claim(state(200)).pipe(Effect.flip);
       expect(error).toBeInstanceOf(StateClaimError);
+      expect(error.reason).toBe("already-claimed");
       expect((yield* manager.read("claim-test")).pid).toBe(100);
     }).pipe(Effect.provide(layer));
   });

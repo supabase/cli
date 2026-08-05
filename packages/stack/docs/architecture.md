@@ -411,7 +411,7 @@ These opaque keys (`publishableKey` / `secretKey`) are what callers and SDKs use
 #### Service interface
 
 ```ts
-class JwtGenerator extends ServiceMap.Service<
+class JwtGenerator extends Context.Service<
   JwtGenerator,
   {
     readonly generate: (secret: string, role: string) => Effect.Effect<string>;
@@ -546,7 +546,7 @@ export interface ProxyConfig {
   readonly serviceRoleJwt: string; // internal HS256 JWT passed to GoTrue/PostgREST
 }
 
-class ApiProxy extends ServiceMap.Service<
+class ApiProxy extends Context.Service<
   ApiProxy,
   {
     readonly address: HttpServer.Address;
@@ -688,7 +688,7 @@ complete `ServiceDef[]` list, and passes it to `buildGraph()` from `@supabase/pr
 #### Service interface
 
 ```ts
-class StackBuilder extends ServiceMap.Service<
+class StackBuilder extends Context.Service<
   StackBuilder,
   {
     readonly build: (
@@ -752,7 +752,7 @@ and exposes the unified public state stream used by both in-process and daemon-b
 #### Service interface
 
 ```ts
-class StackLifecycleCoordinator extends ServiceMap.Service<
+class StackLifecycleCoordinator extends Context.Service<
   StackLifecycleCoordinator,
   {
     readonly getInfo: () => Effect.Effect<StackInfo>;
@@ -1080,7 +1080,7 @@ graph TB
     subgraph "5. Orchestrator startup"
         OL["Orchestrator.layer(graph) + shared LogBuffer"]
         FM["FiberMap — one fiber per service"]
-        DEP["Await dependency Deferreds<br/><i>postgres healthy before postgrest/auth</i>"]
+        DEP["Await dependency state streams<br/><i>postgres healthy before postgrest/auth</i>"]
         SP["ChildProcessSpawner.spawn()"]
         HC["HealthProbe running"]
     end

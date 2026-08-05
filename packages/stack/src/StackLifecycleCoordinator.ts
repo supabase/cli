@@ -602,13 +602,31 @@ export class StackLifecycleCoordinator extends Context.Service<
                 ),
             { concurrency: "unbounded", discard: true },
           );
-        const startTargets = (
-          root: ServiceName,
-          allowExplicitlyStopped: ReadonlySet<ServiceName>,
-        ) =>
+        const inspectStartedTargets = (root: ServiceName) =>
           Effect.gen(function* () {
-            const started = yield* beginStartTargets(root, allowExplicitlyStopped);
-            yield* waitForTargets(started);
+            const runtime = yield* ensureRuntime;
+            const targets = activationTargetsForService(enabledServices, root);
+            const states = yield* Effect.forEach(targets, (target) =>
+              runtime.orchestrator
+                .getState(target)
+                .pipe(
+                  Effect.catchTag("ServiceNotFoundError", (cause) =>
+                    Effect.fail(knownServiceError(target, cause)),
+                  ),
+                ),
+            );
+            if (states.some((state) => state.desired !== "running")) {
+              return undefined;
+            }
+            return {
+              runtime,
+              targets,
+              ready: states.every(
+                (state) =>
+                  state.status === "Healthy" ||
+                  (state.status === "Stopped" && state.exitCode === 0),
+              ),
+            };
           });
         const requireRunningPhase = Effect.gen(function* () {
           const phase = yield* Ref.get(phaseRef);
@@ -647,12 +665,8 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* configureFunctions(config);
 
               if (config.startupMode === "lazy") {
-                for (const service of eagerServices(enabledServices)) {
-                  yield* startTargets(
-                    service,
-                    new Set(lifecycleTargetsForService(enabledServices, service)),
-                  );
-                }
+                const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> =
+                  [];
                 if (
                   runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
                 ) {
@@ -663,14 +677,24 @@ export class StackLifecycleCoordinator extends Context.Service<
                         Effect.fail(knownServiceError("postgres-init", cause)),
                       ),
                     );
-                  yield* runtime.orchestrator
-                    .waitReady("postgres-init")
-                    .pipe(
-                      Effect.catchTag("ServiceNotFoundError", (cause) =>
-                        Effect.fail(knownServiceError("postgres-init", cause)),
+                  readiness.push(
+                    runtime.orchestrator
+                      .waitReady("postgres-init")
+                      .pipe(
+                        Effect.catchTag("ServiceNotFoundError", (cause) =>
+                          Effect.fail(knownServiceError("postgres-init", cause)),
+                        ),
                       ),
-                    );
+                  );
                 }
+                for (const service of eagerServices(enabledServices)) {
+                  const started = yield* beginStartTargets(
+                    service,
+                    new Set(lifecycleTargetsForService(enabledServices, service)),
+                  );
+                  readiness.push(waitForTargets(started));
+                }
+                yield* Effect.all(readiness, { concurrency: "unbounded", discard: true });
               } else {
                 yield* runtime.orchestrator.start(serviceStartOptions);
                 yield* runtime.orchestrator.waitAllReady();
@@ -693,17 +717,34 @@ export class StackLifecycleCoordinator extends Context.Service<
           dispose: disposeOnce,
           startService: (name) =>
             Effect.gen(function* () {
-              const service = yield* requireKnownServiceName(name);
-              yield* startTargets(
-                service,
-                new Set(lifecycleTargetsForService(enabledServices, service)),
-              );
-            }).pipe(withLifecycleLock),
+              const started = yield* Effect.gen(function* () {
+                const service = yield* requireKnownServiceName(name);
+                return yield* beginStartTargets(
+                  service,
+                  new Set(lifecycleTargetsForService(enabledServices, service)),
+                );
+              }).pipe(withLifecycleLock);
+              yield* waitForTargets(started);
+            }),
           activateService: (name) =>
             Effect.gen(function* () {
+              yield* requireRunningPhase;
+              const service = yield* requireKnownServiceName(name);
+              const existing = yield* inspectStartedTargets(service);
+              if (existing?.ready === true) {
+                // Close the race with a concurrent stack stop before taking
+                // the lock-free healthy-request fast path.
+                yield* requireRunningPhase;
+                return;
+              }
+              if (existing !== undefined) {
+                yield* waitForTargets(existing);
+                return;
+              }
               const started = yield* Effect.gen(function* () {
                 yield* requireRunningPhase;
-                const service = yield* requireKnownServiceName(name);
+                const concurrentlyStarted = yield* inspectStartedTargets(service);
+                if (concurrentlyStarted !== undefined) return concurrentlyStarted;
                 return yield* beginStartTargets(service, new Set());
               }).pipe(withLifecycleLock);
               yield* waitForTargets(started);
@@ -721,61 +762,66 @@ export class StackLifecycleCoordinator extends Context.Service<
             }).pipe(withLifecycleLock),
           restartService: (name) =>
             Effect.gen(function* () {
-              const service = yield* requireKnownServiceName(name);
-              const runtime = yield* ensureRuntime;
-              yield* runtime.orchestrator.restartService(service, serviceStartOptions);
-              yield* runtime.orchestrator.waitReady(service);
-            }).pipe(withLifecycleLock),
+              const started = yield* Effect.gen(function* () {
+                const service = yield* requireKnownServiceName(name);
+                const runtime = yield* ensureRuntime;
+                yield* runtime.orchestrator.restartService(service, serviceStartOptions);
+                return { runtime, targets: [service] };
+              }).pipe(withLifecycleLock);
+              yield* waitForTargets(started);
+            }),
           reloadFunctions: (opts) =>
             Effect.gen(function* () {
-              yield* requireKnownService("edge-runtime");
-              yield* configureFunctions(configWithFunctionOptions(opts));
-              const runtime = yield* ensureRuntime;
-              const state = yield* runtime.orchestrator.getState("edge-runtime");
-              if (state.desired !== "running") {
-                yield* startTargets("edge-runtime", new Set(["edge-runtime"]));
-                return;
-              }
-              yield* runtime.orchestrator
-                .restartService("edge-runtime", serviceStartOptions)
-                .pipe(Effect.andThen(runtime.orchestrator.waitReady("edge-runtime")));
-            }).pipe(withLifecycleLock),
+              const started = yield* Effect.gen(function* () {
+                yield* requireKnownService("edge-runtime");
+                yield* configureFunctions(configWithFunctionOptions(opts));
+                const runtime = yield* ensureRuntime;
+                const state = yield* runtime.orchestrator.getState("edge-runtime");
+                if (state.desired !== "running") {
+                  return yield* beginStartTargets("edge-runtime", new Set(["edge-runtime"]));
+                }
+                yield* runtime.orchestrator.restartService("edge-runtime", serviceStartOptions);
+                return { runtime, targets: ["edge-runtime"] as const };
+              }).pipe(withLifecycleLock);
+              yield* waitForTargets(started);
+            }),
           reloadEdgeRuntime: (opts) =>
             Effect.gen(function* () {
-              yield* requireKnownService("edge-runtime");
-              const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
-              const prepared = yield* ensurePrepared;
-              const runtime = yield* ensureRuntime;
-              const buildResult = yield* builder.build(nextConfig, prepared);
-              const edgeRuntimeDef = buildResult.graph.startOrder.find(
-                (def) => def.name === "edge-runtime",
-              );
-
-              if (edgeRuntimeDef === undefined) {
-                return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
-              }
-
-              yield* configureFunctions(nextConfig);
-              yield* runtime.orchestrator
-                .updateServiceDefinition("edge-runtime", edgeRuntimeDef)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new StackBuildError({
-                        detail: "Failed to update edge-runtime service definition",
-                        cause,
-                      }),
-                  ),
+              const started = yield* Effect.gen(function* () {
+                yield* requireKnownService("edge-runtime");
+                const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
+                const prepared = yield* ensurePrepared;
+                const runtime = yield* ensureRuntime;
+                const buildResult = yield* builder.build(nextConfig, prepared);
+                const edgeRuntimeDef = buildResult.graph.startOrder.find(
+                  (def) => def.name === "edge-runtime",
                 );
-              const state = yield* runtime.orchestrator.getState("edge-runtime");
-              if (state.desired !== "running") {
-                yield* startTargets("edge-runtime", new Set(["edge-runtime"]));
-                return;
-              }
-              yield* runtime.orchestrator
-                .restartService("edge-runtime", serviceStartOptions)
-                .pipe(Effect.andThen(runtime.orchestrator.waitReady("edge-runtime")));
-            }).pipe(withLifecycleLock),
+
+                if (edgeRuntimeDef === undefined) {
+                  return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+                }
+
+                yield* configureFunctions(nextConfig);
+                yield* runtime.orchestrator
+                  .updateServiceDefinition("edge-runtime", edgeRuntimeDef)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new StackBuildError({
+                          detail: "Failed to update edge-runtime service definition",
+                          cause,
+                        }),
+                    ),
+                  );
+                const state = yield* runtime.orchestrator.getState("edge-runtime");
+                if (state.desired !== "running") {
+                  return yield* beginStartTargets("edge-runtime", new Set(["edge-runtime"]));
+                }
+                yield* runtime.orchestrator.restartService("edge-runtime", serviceStartOptions);
+                return { runtime, targets: ["edge-runtime"] as const };
+              }).pipe(withLifecycleLock);
+              yield* waitForTargets(started);
+            }),
           getState: (name) =>
             Effect.gen(function* () {
               const currentStates = SubscriptionRef.getUnsafe(stateRef);

@@ -131,6 +131,8 @@ export class StackAlreadyRunningError extends Data.TaggedError("StackAlreadyRunn
 export class StateClaimError extends Data.TaggedError("StateClaimError")<{
   readonly name: string;
   readonly path: string;
+  readonly reason: "already-claimed" | "io-error";
+  readonly cause: unknown;
 }> {}
 
 interface StateManagerPaths {
@@ -353,11 +355,27 @@ function makeClaim(deps: StateManagerDeps) {
             await unlink(temporaryPath).catch(() => undefined);
           }
         },
-        catch: () => new StateClaimError({ name: state.name, path: statePath }),
+        catch: (cause) =>
+          new StateClaimError({
+            name: state.name,
+            path: statePath,
+            reason:
+              cause instanceof Error && "code" in cause && cause.code === "EEXIST"
+                ? "already-claimed"
+                : "io-error",
+            cause,
+          }),
       });
     }).pipe(
-      Effect.catchTag("PlatformError", () =>
-        Effect.fail(new StateClaimError({ name: state.name, path: deps.stateFile(state.name) })),
+      Effect.catchTag("PlatformError", (cause) =>
+        Effect.fail(
+          new StateClaimError({
+            name: state.name,
+            path: deps.stateFile(state.name),
+            reason: "io-error",
+            cause,
+          }),
+        ),
       ),
     );
 }

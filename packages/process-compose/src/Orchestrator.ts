@@ -7,6 +7,7 @@ import {
   FiberMap,
   Layer,
   Context,
+  Option,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -106,28 +107,16 @@ export class Orchestrator extends Context.Service<
             }
           });
 
-        interface ServiceSignals {
+        interface ServiceRuntime {
           readonly state: SubscriptionRef.SubscriptionRef<ServiceState>;
-          started: Deferred.Deferred<void>;
-          healthy: Deferred.Deferred<void>;
-          completed: Deferred.Deferred<number>;
-          stopped: Deferred.Deferred<void>;
-          readonly readinessWaiters: Set<Deferred.Deferred<void>>;
-          readonly completionWaiters: Set<Deferred.Deferred<number>>;
         }
-        const services = new Map<string, ServiceSignals>();
+        const services = new Map<string, ServiceRuntime>();
 
-        // Initialize all signal maps for all services in the graph
+        // Each service has one stable state stream for its entire lifetime.
         for (const def of graph.startOrder) {
           const stateRef = yield* SubscriptionRef.make(initial(def.name));
           services.set(def.name, {
             state: stateRef,
-            started: Deferred.makeUnsafe<void>(),
-            healthy: Deferred.makeUnsafe<void>(),
-            completed: Deferred.makeUnsafe<number>(),
-            stopped: Deferred.makeUnsafe<void>(),
-            readinessWaiters: new Set(),
-            completionWaiters: new Set(),
           });
         }
 
@@ -153,11 +142,15 @@ export class Orchestrator extends Context.Service<
           );
         };
 
-        const signalHealthy = (svc: ServiceSignals): Effect.Effect<void> =>
-          Effect.forEach(
-            [svc.healthy, ...svc.readinessWaiters],
-            (waiter) => Deferred.succeed(waiter, void 0),
-            { discard: true },
+        const waitForState = (
+          service: ServiceRuntime,
+          predicate: (state: ServiceState) => boolean,
+        ): Effect.Effect<ServiceState> =>
+          SubscriptionRef.changes(service.state).pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
           );
 
         // Helper: run all hooks for a given trigger in sequence
@@ -212,40 +205,42 @@ export class Orchestrator extends Context.Service<
 
             yield* prepareStart();
 
-            // Re-create signals on each run (needed for restarts)
-            const resetSignals = Effect.sync(() => {
-              const svc = services.get(def.name);
-              if (svc) {
-                svc.started = Deferred.makeUnsafe<void>();
-                svc.healthy = Deferred.makeUnsafe<void>();
-                svc.completed = Deferred.makeUnsafe<number>();
-                svc.stopped = Deferred.makeUnsafe<void>();
-              }
-            });
-
             // Wait for all dependencies to reach their required conditions
             const timeoutSeconds =
               def.dependencyTimeoutSeconds ?? defaults.dependencyTimeoutSeconds;
             const awaitDependenciesCore = Effect.gen(function* () {
               const deps = graph.dependenciesOf(def.name);
               for (const { def: depDef, condition } of deps) {
+                const dependency = services.get(depDef.name);
+                if (dependency === undefined) continue;
                 if (condition === "started") {
-                  const sig = services.get(depDef.name)?.started;
-                  if (sig) yield* Deferred.await(sig);
+                  yield* waitForState(
+                    dependency,
+                    (state) =>
+                      state.desired === "running" &&
+                      (state.status === "Running" ||
+                        state.status === "Healthy" ||
+                        state.status === "Unhealthy" ||
+                        (state.status === "Stopped" && state.exitCode === 0)),
+                  );
                 } else if (condition === "healthy") {
-                  const sig = services.get(depDef.name)?.healthy;
-                  if (sig) yield* Deferred.await(sig);
+                  yield* waitForState(
+                    dependency,
+                    (state) => state.desired === "running" && state.status === "Healthy",
+                  );
                 } else if (condition === "completed") {
-                  const sig = services.get(depDef.name)?.completed;
-                  if (sig) {
-                    const code = yield* Deferred.await(sig);
-                    if (code !== 0) {
-                      yield* sendEvent(def.name, {
-                        _tag: "DependencyFailed",
-                        error: `Dependency ${depDef.name} exited with code ${code}`,
-                      });
-                      return;
-                    }
+                  const completed = yield* waitForState(
+                    dependency,
+                    (state) =>
+                      state.exitCode !== null &&
+                      (state.status === "Stopped" || state.status === "Failed"),
+                  );
+                  if (completed.exitCode !== 0) {
+                    yield* sendEvent(def.name, {
+                      _tag: "DependencyFailed",
+                      error: `Dependency ${depDef.name} exited with code ${completed.exitCode}`,
+                    });
+                    return;
                   }
                 }
               }
@@ -280,6 +275,10 @@ export class Orchestrator extends Context.Service<
 
                   // Release external resources such as port reservations only
                   // once dependencies are satisfied and spawning is imminent.
+                  // For supervised Docker services, this still leaves a wider
+                  // spawn-to-bind window because the supervisor starts before
+                  // the container binds its published ports. Closing that gap
+                  // would require an explicit supervisor/container handshake.
                   yield* options?.beforeSpawn?.(def.name) ?? Effect.void;
 
                   // Spawn the process
@@ -337,25 +336,20 @@ export class Orchestrator extends Context.Service<
                     ),
                   );
 
-                  // Transition to Running
-                  yield* sendEvent(def.name, {
-                    _tag: "ProcessSpawned",
-                    pid: handle.pid,
-                    startedAt: Date.now(),
-                  });
-
-                  // Run "started" hooks before signaling dependents
+                  // Keep the service in Starting until its started hooks pass,
+                  // so Running is the stable dependency signal.
                   yield* runHooks(def, "started");
-                  // Check if hooks failed the service
                   const stateAfterStartedHooks = SubscriptionRef.getUnsafe(
                     services.get(def.name)!.state,
                   );
                   if (stateAfterStartedHooks.status === "Failed") {
                     return { _tag: "Exited", exitCode: 1 } as SpawnResult;
                   }
-                  // Signal "started" Deferred
-                  const svcStartedSig = services.get(def.name);
-                  if (svcStartedSig) yield* Deferred.succeed(svcStartedSig.started, void 0);
+                  yield* sendEvent(def.name, {
+                    _tag: "ProcessSpawned",
+                    pid: handle.pid,
+                    startedAt: Date.now(),
+                  });
 
                   // Fork log streaming (stdout + stderr) — decode binary to text lines
                   yield* handle.stdout
@@ -385,19 +379,16 @@ export class Orchestrator extends Context.Service<
                     const callbacks: HealthProbeCallbacks = {
                       onHealthy: () =>
                         Effect.gen(function* () {
-                          yield* sendEvent(def.name, { _tag: "HealthCheckPassed" });
-                          // Only run hooks and signal on first transition to Healthy
-                          const svcSig = services.get(def.name);
-                          if (svcSig) {
-                            const alreadyHealthy = yield* Deferred.isDone(svcSig.healthy);
-                            if (!alreadyHealthy) {
-                              yield* runHooks(def, "healthy");
-                              const current = SubscriptionRef.getUnsafe(svcSig.state);
-                              if (current.status !== "Failed") {
-                                yield* signalHealthy(svcSig);
-                              }
+                          const service = services.get(def.name);
+                          if (service === undefined) return;
+                          const current = SubscriptionRef.getUnsafe(service.state);
+                          if (current.status === "Running") {
+                            yield* runHooks(def, "healthy");
+                            if (SubscriptionRef.getUnsafe(service.state).status === "Failed") {
+                              return;
                             }
                           }
+                          yield* sendEvent(def.name, { _tag: "HealthCheckPassed" });
                         }).pipe(Effect.asVoid),
                       onUnhealthy: () =>
                         Effect.gen(function* () {
@@ -421,14 +412,13 @@ export class Orchestrator extends Context.Service<
                       Effect.forkChild,
                     );
                   } else {
-                    yield* sendEvent(def.name, { _tag: "HealthCheckPassed" });
                     yield* runHooks(def, "healthy");
-                    const svcSig = services.get(def.name);
-                    if (svcSig) {
-                      const current = SubscriptionRef.getUnsafe(svcSig.state);
-                      if (current.status !== "Failed") {
-                        yield* signalHealthy(svcSig);
-                      }
+                    const service = services.get(def.name);
+                    if (
+                      service !== undefined &&
+                      SubscriptionRef.getUnsafe(service.state).status !== "Failed"
+                    ) {
+                      yield* sendEvent(def.name, { _tag: "HealthCheckPassed" });
                     }
                   }
 
@@ -475,7 +465,7 @@ export class Orchestrator extends Context.Service<
 
             // Check if we should even start (dependency might have set us Failed)
             const currentState = SubscriptionRef.getUnsafe(services.get(def.name)!.state);
-            if (currentState.status === "Failed") return;
+            if (currentState.status === "Failed" || currentState.desired !== "running") return;
 
             // Transition Pending → Starting
             yield* sendEvent(def.name, { _tag: "DependenciesSatisfied" });
@@ -486,14 +476,6 @@ export class Orchestrator extends Context.Service<
             const handleResult = (r: SpawnResult) =>
               Effect.gen(function* () {
                 if (r._tag === "Exited") {
-                  const service = services.get(def.name);
-                  if (service !== undefined) {
-                    yield* Effect.forEach(
-                      [service.completed, ...service.completionWaiters],
-                      (waiter) => Deferred.succeed(waiter, r.exitCode),
-                      { discard: true },
-                    );
-                  }
                   if (r.exitCode !== 0 && r.exitCode !== 143) {
                     yield* appendRecentServiceLogs(
                       def.name,
@@ -542,8 +524,8 @@ export class Orchestrator extends Context.Service<
               const backoffSeconds = Math.min(30, Math.pow(2, restartCount - 1));
               yield* Effect.sleep(Duration.seconds(backoffSeconds));
 
-              // Reset signals and transition Restarting → Starting
-              yield* resetSignals;
+              // Transition Restarting → Starting. State subscribers remain
+              // attached across every restart generation.
               yield* sendEvent(def.name, { _tag: "BackoffElapsed" });
 
               result = yield* spawnOnce();
@@ -570,10 +552,6 @@ export class Orchestrator extends Context.Service<
             if (svc) {
               const desired = SubscriptionRef.getUnsafe(svc.state).desired;
               yield* SubscriptionRef.set(svc.state, initial(name, desired));
-              svc.started = Deferred.makeUnsafe<void>();
-              svc.healthy = Deferred.makeUnsafe<void>();
-              svc.completed = Deferred.makeUnsafe<number>();
-              svc.stopped = Deferred.makeUnsafe<void>();
             }
           });
 
@@ -614,6 +592,13 @@ export class Orchestrator extends Context.Service<
             const svc = services.get(def.name);
             if (!svc) return Effect.void;
             const restartPolicy = def.restart ?? defaults.restart;
+            const maxRestarts = def.maxRestarts ?? defaults.maxRestarts;
+            const willRestartAfterExit = (state: ServiceState): boolean => {
+              if (state.desired !== "running" || state.exitCode === null) return false;
+              if (maxRestarts !== 0 && state.restartCount >= maxRestarts) return false;
+              if (restartPolicy === "always" || restartPolicy === "unless-stopped") return true;
+              return restartPolicy === "on-failure" && state.exitCode !== 0;
+            };
 
             const current = SubscriptionRef.getUnsafe(svc.state);
             if (current.desired !== "running") {
@@ -627,7 +612,7 @@ export class Orchestrator extends Context.Service<
                 }),
               );
             }
-            if (current.status === "Failed") {
+            if (current.status === "Failed" && !willRestartAfterExit(current)) {
               return Effect.fail(
                 new ServiceReadyError({
                   name: def.name,
@@ -637,80 +622,46 @@ export class Orchestrator extends Context.Service<
             }
 
             if (restartPolicy === "no") {
-              const completion = Deferred.makeUnsafe<number>();
-              svc.completionWaiters.add(completion);
-              return Deferred.isDone(svc.completed).pipe(
-                Effect.flatMap((alreadyCompleted) =>
-                  alreadyCompleted
-                    ? Deferred.await(svc.completed).pipe(
-                        Effect.flatMap((exitCode) => Deferred.succeed(completion, exitCode)),
-                      )
-                    : Effect.void,
-                ),
-                Effect.andThen(Deferred.await(completion)),
-                Effect.flatMap((exitCode) =>
-                  exitCode === 0
+              return waitForState(
+                svc,
+                (state) => state.status === "Failed" || state.status === "Stopped",
+              ).pipe(
+                Effect.flatMap((terminal) =>
+                  terminal.status === "Stopped" && terminal.exitCode === 0
                     ? Effect.void
                     : Effect.fail(
                         new ServiceReadyError({
                           name: def.name,
-                          reason: `One-shot service exited with code ${exitCode}`,
-                          exitCode,
+                          reason:
+                            terminal.exitCode === null
+                              ? (terminal.error ?? "Service entered Failed state")
+                              : `One-shot service exited with code ${terminal.exitCode}`,
+                          ...(terminal.exitCode === null ? {} : { exitCode: terminal.exitCode }),
                         }),
                       ),
                 ),
-                Effect.ensuring(Effect.sync(() => svc.completionWaiters.delete(completion))),
               );
             }
 
-            if (current.status === "Stopped") {
-              return Effect.fail(
-                new ServiceReadyError({
-                  name: def.name,
-                  reason: "Service stopped before becoming ready",
-                }),
-              );
-            }
-
-            // A waiter belongs to the readiness request, not to one service signal
-            // generation. Dependency retries may replace svc.healthy while this
-            // request is pending, so signal the stable waiter from any generation.
-            const readiness = Deferred.makeUnsafe<void>();
-            svc.readinessWaiters.add(readiness);
-            return Deferred.isDone(svc.healthy).pipe(
-              Effect.flatMap((alreadyHealthy) =>
-                alreadyHealthy ? Deferred.succeed(readiness, void 0) : Effect.void,
-              ),
-              Effect.andThen(
-                Effect.race(
-                  Deferred.await(readiness),
-                  SubscriptionRef.changes(svc.state).pipe(
-                    Stream.filter(
-                      (state) => state.status === "Failed" || state.status === "Stopped",
-                    ),
-                    Stream.take(1),
-                    Stream.runDrain,
-                    Effect.andThen(
-                      Deferred.isDone(readiness).pipe(
-                        Effect.flatMap((ready) => {
-                          if (ready) return Effect.void;
-                          const terminal = SubscriptionRef.getUnsafe(svc.state);
-                          return Effect.fail(
-                            new ServiceReadyError({
-                              name: def.name,
-                              reason:
-                                terminal.status === "Stopped"
-                                  ? "Service stopped before becoming ready"
-                                  : (terminal.error ?? "Service entered Failed state"),
-                            }),
-                          );
-                        }),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Effect.ensuring(Effect.sync(() => svc.readinessWaiters.delete(readiness))),
+            return waitForState(
+              svc,
+              (state) =>
+                state.status === "Healthy" ||
+                ((state.status === "Failed" || state.status === "Stopped") &&
+                  !willRestartAfterExit(state)),
+            ).pipe(
+              Effect.flatMap((ready) => {
+                if (ready.status === "Healthy") return Effect.void;
+                return Effect.fail(
+                  new ServiceReadyError({
+                    name: def.name,
+                    reason:
+                      ready.status === "Stopped"
+                        ? "Service stopped before becoming ready"
+                        : (ready.error ?? "Service entered Failed state"),
+                  }),
+                );
+              }),
             );
           });
 
@@ -730,9 +681,6 @@ export class Orchestrator extends Context.Service<
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
               const order = graph.startOrderFor(name);
-              const orderNames = new Set(order.map((service) => service.name));
-              const resetNames = new Set<string>();
-              let dependencySignalsReset = false;
               for (const d of order) {
                 const service = services.get(d.name);
                 const state = service?.state;
@@ -755,50 +703,17 @@ export class Orchestrator extends Context.Service<
 
                 if (status === "Failed") {
                   // The failed fiber may still be unwinding its process scope.
-                  // Remove it before replacing the signals used by the retry.
+                  // Remove it before resetting the state used by the retry.
                   yield* FiberMap.remove(fibers, d.name);
                   yield* resetService(d.name);
-                  resetNames.add(d.name);
-                  dependencySignalsReset = true;
                 } else if (status === "Stopped") {
                   yield* FiberMap.remove(fibers, d.name);
                   yield* resetService(d.name);
-                  resetNames.add(d.name);
-                  dependencySignalsReset = true;
-                } else if (dependencySignalsReset && status === "Pending") {
-                  // This fiber may be waiting on Deferreds replaced by a retried dependency.
-                  // Relaunch it so it observes the dependency's new signal generation.
-                  yield* FiberMap.remove(fibers, d.name);
-                  yield* resetService(d.name);
-                  resetNames.add(d.name);
                 }
                 yield* setDesired(d.name, "running");
                 yield* FiberMap.run(fibers, d.name, runServiceSafe(d, options), {
                   onlyIfMissing: true,
                 });
-              }
-
-              // A caller may retry a dependency directly while dependents started by an
-              // earlier request are still waiting on its old Deferred generation.
-              for (const d of graph.startOrder) {
-                if (orderNames.has(d.name)) continue;
-                const dependsOnResetService = graph
-                  .startOrderFor(d.name)
-                  .some((dependency) => resetNames.has(dependency.name));
-                const service = services.get(d.name);
-                if (
-                  dependsOnResetService &&
-                  service !== undefined &&
-                  FiberMap.hasUnsafe(fibers, d.name) &&
-                  SubscriptionRef.getUnsafe(service.state).status === "Pending"
-                ) {
-                  yield* FiberMap.remove(fibers, d.name);
-                  yield* resetService(d.name);
-                  yield* setDesired(d.name, "running");
-                  yield* FiberMap.run(fibers, d.name, runServiceSafe(d, options), {
-                    onlyIfMissing: true,
-                  });
-                }
               }
             }).pipe(startServiceLock.withPermit),
 
@@ -822,18 +737,24 @@ export class Orchestrator extends Context.Service<
               );
 
               const stopAll = Effect.gen(function* () {
+                const waitUntilStopped = (name: string) => {
+                  const service = services.get(name);
+                  return service === undefined
+                    ? Effect.void
+                    : waitForState(
+                        service,
+                        (state) => state.desired === "inactive" || state.status === "Stopped",
+                      ).pipe(Effect.asVoid);
+                };
                 const stopOne = (def: ServiceDef) =>
                   Effect.gen(function* () {
                     if (desiredBeforeStop.get(def.name) === "inactive") {
-                      const inactiveSignal = services.get(def.name)?.stopped;
-                      if (inactiveSignal) yield* Deferred.succeed(inactiveSignal, void 0);
                       return;
                     }
                     // Wait for all dependents to be stopped first
                     const dependents = graph.dependentsOf(def.name);
                     for (const dep of dependents) {
-                      const sig = services.get(dep.name)?.stopped;
-                      if (sig) yield* Deferred.await(sig);
+                      yield* waitUntilStopped(dep.name);
                     }
 
                     // Now safe to stop this service
@@ -841,10 +762,6 @@ export class Orchestrator extends Context.Service<
                     yield* FiberMap.remove(fibers, def.name);
                     // Force Stopped if still in Stopping (fiber was interrupted before ProcessExited)
                     yield* sendEvent(def.name, { _tag: "ProcessExited", exitCode: 143 });
-
-                    // Signal that this service is stopped
-                    const sig = services.get(def.name)?.stopped;
-                    if (sig) yield* Deferred.succeed(sig, void 0);
                   });
 
                 // Fork all stop effects in parallel

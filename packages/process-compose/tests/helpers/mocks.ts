@@ -1,5 +1,4 @@
 import { Deferred, Effect, Layer, Sink, Stream } from "effect";
-import { writeFileSync } from "node:fs";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 interface SpawnRecord {
@@ -9,22 +8,23 @@ interface SpawnRecord {
 
 const encoder = new TextEncoder();
 
-const signalSupervisorSpawnGate = (args: ReadonlyArray<string>): void => {
+const isOneShotSupervisor = (args: ReadonlyArray<string>): boolean => {
   const encoded = args.at(-1);
-  if (encoded === undefined) return;
+  if (encoded === undefined) return false;
   try {
     const config: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-    if (typeof config !== "object" || config === null || !("spawnGate" in config)) return;
-    const gate = config.spawnGate;
-    if (
-      typeof gate === "object" &&
-      gate !== null &&
-      "requestPath" in gate &&
-      typeof gate.requestPath === "string"
-    ) {
-      writeFileSync(gate.requestPath, "ready", { flag: "wx" });
-    }
-  } catch {}
+    return (
+      typeof config === "object" &&
+      config !== null &&
+      "command" in config &&
+      config.command === "bash" &&
+      "args" in config &&
+      Array.isArray(config.args) &&
+      config.args[0] === "-c"
+    );
+  } catch {
+    return false;
+  }
 };
 
 export function mockChildProcessSpawner(
@@ -47,7 +47,6 @@ export function mockChildProcessSpawner(
           const cmd = command._tag === "StandardCommand" ? command.command : "";
           const args = command._tag === "StandardCommand" ? command.args : [];
           const record: SpawnRecord = { command: cmd, args };
-          signalSupervisorSpawnGate(args);
           yield* opts.beforeSpawn?.(record) ?? Effect.void;
           spawned.push(record);
           opts.onSpawn?.(record);
@@ -57,7 +56,12 @@ export function mockChildProcessSpawner(
 
           yield* Effect.forkDetach(
             Effect.gen(function* () {
-              yield* Effect.sleep("10 millis");
+              // Supervisor processes model long-running services. Direct
+              // commands model probes and one-shot helpers, which should
+              // complete promptly.
+              yield* Effect.sleep(
+                cmd === process.execPath && !isOneShotSupervisor(args) ? "30 seconds" : "10 millis",
+              );
               running = false;
               yield* Deferred.succeed(
                 exitDeferred,
@@ -78,9 +82,10 @@ export function mockChildProcessSpawner(
             isRunning: Effect.sync(() => running),
             stdin: Sink.drain,
             kill: (killOpts) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 killed.push(killOpts?.killSignal ?? "SIGTERM");
                 running = false;
+                yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(143));
               }),
             unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,

@@ -138,6 +138,10 @@ export class DaemonServer extends Context.Service<
               yield* stack.stop();
               yield* beforeShutdown.pipe(
                 Effect.ensuring(
+                  // The HTTP module has no response-flushed hook. Delay the
+                  // process shutdown signal long enough for this small JSON
+                  // response to leave the socket; stopDaemon also tolerates a
+                  // dropped response and confirms termination by polling PID.
                   Deferred.succeed(shutdownDeferred, void 0).pipe(
                     Effect.delay("25 millis"),
                     Effect.forkDetach,

@@ -514,6 +514,95 @@ describe("Stack", () => {
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
 
+  it.live(
+    "healthy activation stays available while a manual service start waits for readiness",
+    () =>
+      Effect.gen(function* () {
+        const authSpawnStarted = yield* Deferred.make<void>();
+        const spawner = mockChildProcessSpawner({
+          beforeSpawn: (record) =>
+            record.args.some((arg) =>
+              Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+            )
+              ? Deferred.succeed(authSpawnStarted, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+        });
+        const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+        const { coordinatorLayer } = setupLayer(config, noopPortLease(config.ports), spawner);
+
+        yield* Effect.gen(function* () {
+          const coordinator = yield* StackLifecycleCoordinator;
+          yield* coordinator.start();
+          const manualStart = yield* coordinator
+            .startService("auth")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(authSpawnStarted);
+
+          const activationCompleted = yield* Effect.race(
+            coordinator.activateService("postgres").pipe(Effect.as(true)),
+            Effect.sleep("200 millis").pipe(Effect.as(false)),
+          );
+
+          yield* Fiber.interrupt(manualStart);
+          expect(activationCompleted).toBe(true);
+          yield* coordinator.stop();
+        }).pipe(Effect.provide(coordinatorLayer));
+      }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live("begins independent eager services before waiting for their readiness", () =>
+    Effect.gen(function* () {
+      const postgresReleaseStarted = yield* Deferred.make<void>();
+      const allowPostgresRelease = yield* Deferred.make<void>();
+      const mailpitReleaseStarted = yield* Deferred.make<void>();
+      const config = {
+        ...defaultConfig,
+        mode: "auto",
+        startupMode: "lazy",
+        mailpit: {
+          port: defaultPorts.mailpitPort,
+          smtpPort: defaultPorts.mailpitSmtpPort,
+          pop3Port: defaultPorts.mailpitPop3Port,
+          version: DEFAULT_VERSIONS.mailpit,
+          adminEmail: "admin@example.com",
+          senderName: "Admin",
+        },
+      } satisfies ResolvedStackConfig;
+      const lease: PortLease = {
+        ports: config.ports,
+        reserve: () => Effect.void,
+        release: (fields) =>
+          fields.includes("dbPort")
+            ? Deferred.succeed(postgresReleaseStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowPostgresRelease)),
+              )
+            : fields.includes("mailpitPort")
+              ? Deferred.succeed(mailpitReleaseStarted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        releaseAll: Effect.void,
+      };
+      const { coordinatorLayer } = setupLayer(config, lease);
+
+      yield* Effect.gen(function* () {
+        const coordinator = yield* StackLifecycleCoordinator;
+        const starting = yield* coordinator
+          .start()
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(postgresReleaseStarted);
+
+        const mailpitBeganConcurrently = yield* Effect.race(
+          Deferred.await(mailpitReleaseStarted).pipe(Effect.as(true)),
+          Effect.sleep("200 millis").pipe(Effect.as(false)),
+        );
+        yield* Deferred.succeed(allowPostgresRelease, undefined);
+        yield* Fiber.interrupt(starting);
+
+        expect(mailpitBeganConcurrently).toBe(true);
+        yield* coordinator.stop();
+      }).pipe(Effect.provide(coordinatorLayer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
   it.live("dispose cancels an in-flight lazy activation", () =>
     Effect.gen(function* () {
       const spawnStarted = yield* Deferred.make<void>();

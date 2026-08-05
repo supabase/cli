@@ -162,6 +162,30 @@ describe("BinaryResolver cache publication", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("replaces an incomplete provider cache after staging succeeds", () => {
+    const root = makeTempRoot();
+    const archive = makeArchive(root);
+    const layer = makeResolverLayer(root, archive, () => {});
+
+    return Effect.gen(function* () {
+      const resolver = yield* BinaryResolver;
+      const cacheDir = yield* authCachePath(root);
+      mkdirSync(cacheDir, { recursive: true });
+      writeFileSync(join(cacheDir, ".complete"), "orphaned marker");
+
+      const result = yield* resolver.resolveWithMetadata({
+        service: "auth",
+        version: DEFAULT_VERSIONS.auth,
+      });
+
+      expect(result).toEqual({ path: cacheDir, downloaded: true });
+      expect(readFileSync(join(cacheDir, "auth"), "utf8")).toContain("echo auth");
+      expect(readFileSync(join(cacheDir, ".complete"), "utf8")).toContain(
+        "github.com/supabase/auth",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reaps stale staging directories even when the artifact is cached", () => {
     const root = makeTempRoot();
     const archive = makeArchive(root);

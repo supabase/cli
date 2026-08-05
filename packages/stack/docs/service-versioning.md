@@ -49,9 +49,10 @@ Docker-only. Other services remain Docker-only until a supported native release 
 to the catalog.
 
 Native artifacts are cached by service, provider, version, platform, and architecture. Downloads
-are extracted into a staging directory under a cross-process lock and published with an atomic
-rename. A cache entry is reusable only after its completion marker has been written, so interrupted
-downloads and extractions cannot be mistaken for valid installations.
+are extracted into a private staging directory and published with an atomic rename. Concurrent
+downloaders race to publish; losers reuse the complete winner. A cache entry is reusable only after
+its completion marker has been written, so interrupted downloads and extractions cannot be mistaken
+for valid installations.
 
 This provider boundary is where the future `supabase/slim-services` GHCR images and native release
 artifacts will be connected. That source change should not require changes to Stack lifecycle or

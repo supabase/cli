@@ -178,7 +178,7 @@ service process exists. During that phase, `getStatus()` / `statusChanges()` can
 ### Per-Service Lifecycle
 
 ```typescript
-await stack.stopService("auth"); // Stop a single service
+await stack.stopService("auth"); // Stop a service and its active dependents
 await stack.startService("auth"); // Restart it (blocks until ready)
 await stack.restartService("auth"); // Stop + start in one call
 ```

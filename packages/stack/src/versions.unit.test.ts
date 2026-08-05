@@ -10,10 +10,10 @@ import {
   dockerImageForService,
   fillServiceVersionManifest,
   normalizeServiceVersion,
+  SERVICE_NAMES,
   type VersionManifest,
 } from "./versions.ts";
 import { SERVICE_ARTIFACTS } from "./ServiceArtifacts.ts";
-import { SERVICE_NAMES } from "./versions.ts";
 
 const sampleDockerfile = `
 FROM supabase/postgres:17.0.0.1 AS pg

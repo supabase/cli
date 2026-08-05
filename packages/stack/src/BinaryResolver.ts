@@ -391,7 +391,20 @@ export class BinaryResolver extends Context.Service<
               if (yield* isCompleteCache(cacheDir)) {
                 return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
               }
-              return yield* Effect.fail(publication.failure);
+
+              // A fully staged replacement is now available, so an incomplete
+              // destination can be reclaimed without risking the last usable
+              // cache entry. Retry publication once; persistent filesystem
+              // failures still surface instead of looping forever.
+              yield* fs.remove(cacheDir, { recursive: true, force: true });
+              const retry = yield* fs.rename(stagingDir, cacheDir).pipe(Effect.result);
+              if (Result.isSuccess(retry)) {
+                return { path: cacheDir, downloaded: true } satisfies ResolveBinaryResult;
+              }
+              if (yield* isCompleteCache(cacheDir)) {
+                return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
+              }
+              return yield* Effect.fail(retry.failure);
             }).pipe(
               Effect.ensuring(
                 fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),

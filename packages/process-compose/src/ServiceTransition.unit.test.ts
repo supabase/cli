@@ -334,6 +334,14 @@ describe("ServiceTransition", () => {
       expect(next!.error).toBe("seed failed");
     });
 
+    it("Starting + HookFailed → Failed with error", () => {
+      const state = make("db", { status: "Starting" });
+      const next = applyEvent(state, { _tag: "HookFailed", error: "startup failed" });
+      expect(next).not.toBeNull();
+      expect(next!.status).toBe("Failed");
+      expect(next!.error).toBe("startup failed");
+    });
+
     it("Pending + HookFailed → null (ignored)", () => {
       const state = make("db");
       expect(applyEvent(state, { _tag: "HookFailed", error: "x" })).toBeNull();
