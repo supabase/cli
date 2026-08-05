@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Redacted, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
@@ -187,6 +187,7 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: cache.layer,
       analytics,
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
     }),
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
@@ -1684,6 +1685,15 @@ describe("legacy sso update integration", () => {
     const first = writeProfileYaml("first-notoken.yml", "http://first.example");
     const second = writeProfileYaml("second-notoken.yml", "http://second.example");
     const restoreEnv = withProfileEnv(undefined);
+    const previousNoKeyring = process.env["SUPABASE_NO_KEYRING"];
+    process.env["SUPABASE_NO_KEYRING"] = "1";
+    const restoreNoKeyring = Effect.sync(() => {
+      if (previousNoKeyring === undefined) {
+        delete process.env["SUPABASE_NO_KEYRING"];
+      } else {
+        process.env["SUPABASE_NO_KEYRING"] = previousNoKeyring;
+      }
+    });
     const { layer, api } = setup({
       accessToken: Option.none(),
       cliArgs: [
@@ -1710,7 +1720,7 @@ describe("legacy sso update integration", () => {
         expect(dump).toContain("Access token not provided. Supply an access token by running");
       }
       expect(api.requests).toHaveLength(0);
-    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    }).pipe(Effect.ensuring(restoreNoKeyring), Effect.ensuring(restoreEnv), Effect.provide(layer));
   });
 
   it.live("profile emulation: the missing-token gate fires AFTER the mutex check, like Go", () => {
