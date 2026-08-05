@@ -18,9 +18,9 @@ describe("resolveReadinessPolicy", () => {
     expect(
       resolveReadinessPolicy({
         readyOptions: { mode: "inherit" },
-        stackPolicy: finite(120_000),
+        stackPolicy: finite(180_000),
       }),
-    ).toEqual(finite(120_000));
+    ).toEqual(finite(180_000));
     expect(
       resolveReadinessPolicy({
         readyOptions: { mode: "inherit" },
@@ -33,13 +33,13 @@ describe("resolveReadinessPolicy", () => {
     expect(
       resolveReadinessPolicy({
         readyOptions: finite(5_000),
-        stackPolicy: finite(120_000),
+        stackPolicy: finite(180_000),
       }),
     ).toEqual(finite(5_000));
     expect(
       resolveReadinessPolicy({
         readyOptions: finite(300_000),
-        stackPolicy: finite(120_000),
+        stackPolicy: finite(180_000),
       }),
     ).toEqual(finite(300_000));
   });
@@ -48,7 +48,7 @@ describe("resolveReadinessPolicy", () => {
     expect(
       resolveReadinessPolicy({
         readyOptions: { mode: "infinite" },
-        stackPolicy: finite(120_000),
+        stackPolicy: finite(180_000),
       }),
     ).toEqual({ mode: "infinite" });
     expect(

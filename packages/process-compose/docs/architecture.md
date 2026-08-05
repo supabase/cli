@@ -208,8 +208,9 @@ interrupts its lifecycle fiber. The generation finalizer:
 
 Whole-graph stop sets desired state first and then stops dependents before dependencies. The global
 shutdown budget defaults to 60 seconds. If that budget expires, the orchestrator logs the timeout
-and clears all fibers. Services that were running are forced to terminal `Stopped` state with
-`pid: null` and exit code `143`.
+and force-terminates active children before waiting for teardown to finish. Services that were
+running reach terminal `Stopped` state with `pid: null` and exit code `143`; stop does not fail with
+`ShutdownTimeoutError`.
 
 In-process cleanup and orphan supervision solve different failure modes:
 
