@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
