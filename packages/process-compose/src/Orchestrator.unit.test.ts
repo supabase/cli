@@ -1124,6 +1124,39 @@ describe("Orchestrator", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
+    it.live("healthy dependency fails immediately when health restarts are exhausted", () => {
+      const { layer } = setupOrchestrator(
+        [
+          svc("db", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              failureThreshold: 1,
+            },
+          }),
+          svc("api", {
+            restart: "no",
+            dependencies: [{ service: "db", condition: "healthy" }],
+            dependencyTimeoutSeconds: 5,
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        const state = yield* waitForFailed(orc, "api");
+        expect(state.error).toContain("Dependency db failed");
+        expect(state.error).not.toContain("Timed out");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
     it.live("no timeout when dependency resolves before deadline", () => {
       const { layer } = setupOrchestrator(
         [

@@ -226,10 +226,19 @@ export class Orchestrator extends Context.Service<
                         (state.status === "Stopped" && state.exitCode === 0)),
                   );
                 } else if (condition === "healthy") {
-                  yield* waitForState(
+                  const ready = yield* waitForState(
                     dependency,
-                    (state) => state.desired === "running" && state.status === "Healthy",
+                    (state) =>
+                      state.desired === "running" &&
+                      (state.status === "Healthy" || state.status === "Failed"),
                   );
+                  if (ready.status === "Failed") {
+                    yield* sendEvent(def.name, {
+                      _tag: "DependencyFailed",
+                      error: `Dependency ${depDef.name} failed: ${ready.error ?? "unknown failure"}`,
+                    });
+                    return;
+                  }
                 } else if (condition === "completed") {
                   const completed = yield* waitForState(
                     dependency,
