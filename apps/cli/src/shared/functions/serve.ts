@@ -1340,7 +1340,8 @@ const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   // Bare `kong reload`, exactly Go's `restartEdgeRuntime`
   // (`internal/functions/serve/serve.go:129`). The `--nginx-conf
   // /home/kong/custom_nginx.template` argument belongs to `start`'s Kong
-  // bring-up entrypoint (`internal/start/start.go:589-592`, mirrored by
+  // bring-up entrypoint (formerly `internal/start/start.go:589-592`, deleted as
+  // unreachable in CLI-1966, last present at commit a253ccba2; mirrored by
   // `legacy/commands/start/services/kong.service.ts`) — `kong reload` reuses
   // the prefix configuration that bring-up already prepared, so passing the
   // template again here is not part of Go's serve path.
@@ -1415,7 +1416,8 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
  * `serve.PopulatePerFunctionConfigs` (`internal/functions/serve/serve.go:
  * 277-318`), called both from Edge Runtime bring-up below (as part of its
  * own loop) and, standalone, from `start`'s Studio container spec
- * (`internal/start/start.go:1149-1159`), which needs only the bind mounts,
+ * (formerly `internal/start/start.go:1149-1159`, deleted as unreachable in
+ * CLI-1966; last present at commit a253ccba2), which needs only the bind mounts,
  * unconditionally of whether Edge Runtime itself is enabled or excluded.
  * `PopulatePerFunctionConfigs` logs `Skipped serving Function: <slug>`
  * unconditionally for every disabled function, regardless of which of its
@@ -1487,7 +1489,9 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
  * `ServeFunctions` (`internal/functions/serve/serve.go:135-252`), called both
  * by standalone `functions serve` (indirectly, via `startEdgeRuntime` below,
  * mirroring Go's `restartEdgeRuntime` wrapper) and directly by `start`'s own
- * bring-up (`internal/start/start.go:1101-1108`, no wrapper step in between).
+ * bring-up (formerly `internal/start/start.go:1101-1108`, no wrapper step in
+ * between; `internal/start` was deleted as unreachable in CLI-1966, last
+ * present at commit a253ccba2).
  * Deliberately excludes everything `ServeFunctions` itself excludes too: no
  * config-loading (caller resolves {@link StartEdgeRuntimeContainerInput.config}/
  * {@link StartEdgeRuntimeContainerInput.authArtifacts} itself, matching how

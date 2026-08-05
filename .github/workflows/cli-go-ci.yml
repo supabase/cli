@@ -35,6 +35,19 @@ jobs:
           go tool gotestsum -- -race -v -count=1 ./... \
           -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out
 
+      # internal/start (docker-compose/v2, buildx, moby/buildkit, k8s client-go,
+      # aws-sdk-go-v2, notary, secret-detector) was deleted outright as
+      # unreachable (CLI-1966) -- this guards against silently reintroducing
+      # that dependency tree via some other package, since nothing else checks
+      # the shipped binary's size on every change.
+      - name: Verify the heavy orchestration dependency tree stays out of the module
+        run: |
+          set -euo pipefail
+          go list -deps . > /tmp/deps.txt
+          ! grep -Eq \
+            'docker/compose|docker/buildx|moby/buildkit|k8s\.io/client-go|aws-sdk-go-v2' \
+            /tmp/deps.txt
+
       - name: Check existing coverage cache
         id: coverage-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -92,66 +105,6 @@ jobs:
           install-mode: none
           only-new-issues: true
           working-directory: apps/cli-go
-
-  start:
-    name: Start
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache: true
-      - run: go build main.go
-      # The bundled/release build excludes internal/start -- see
-      # apps/cli/docs/binary-distribution.md § Bundled build tag (CLI-1966).
-      # These steps verify that build alongside the untagged tree below,
-      # which remains the migration's parity oracle for Go's `start`.
-      - run: go build -tags bundled -o main-bundled .
-      - name: Verify bundled build excludes internal/start's dependency tree
-        run: |
-          set -euo pipefail
-          go list -tags bundled -deps . > /tmp/bundled-deps.txt
-          ! grep -Eq \
-            'docker/compose|docker/buildx|moby/buildkit|k8s\.io/client-go|aws-sdk-go-v2' \
-            /tmp/bundled-deps.txt
-      - name: Verify bundled build keeps start's command/flag/completion surface
-        run: |
-          set -euo pipefail
-          diff <(./main start --help) <(./main-bundled start --help)
-          diff <(./main __complete start --) <(./main-bundled __complete start --)
-      - name: Verify bundled build stubs start
-        run: |
-          set -euo pipefail
-          set +e
-          output="$(./main-bundled start 2>&1)"
-          exit_code=$?
-          set -e
-          if [ "$exit_code" -eq 0 ]; then
-            echo "expected the bundled build's \`start\` to exit non-zero, got 0:" >&2
-            echo "$output" >&2
-            exit 1
-          fi
-          if ! grep -q "not available in supabase-go" <<<"$output"; then
-            echo "expected the bundled build's \`start\` to fail with the CLI-1966 stub message; got:" >&2
-            echo "$output" >&2
-            exit 1
-          fi
-          echo "bundled build correctly stubs \`start\` (exit $exit_code)"
-          ./main-bundled --help >/dev/null
-      - run: ./main init
-      - run: sed -i '/\[db.pooler\]/{n;s/.*/enabled = true/}' supabase/config.toml
-      - run: ./main start --workdir tests
-        env:
-          SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
-      - name: Install websocat
-        run: |
-          sudo wget -qO /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
-          sudo chmod a+x /usr/local/bin/websocat
-          websocat --version
-      - run: ./e2e-test.sh ./main
 
   link:
     name: Link

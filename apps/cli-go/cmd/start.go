@@ -1,13 +1,27 @@
 package cmd
 
-// The "start" command's registration, flags, and validation are tag-neutral
-// and shared by both the full and bundled builds so its command/flag surface
-// can never drift between them -- only runStart's implementation differs
-// (see cmd/start_full.go, cmd/start_bundled.go, and
-// apps/cli/docs/binary-distribution.md § Bundled build tag for the full
-// CLI-1966 rationale).
+// internal/start (Go's own `supabase start` implementation) was deleted
+// outright (CLI-1966): it is unreachable from the TypeScript CLI, which
+// talks to Docker directly for `start` and never delegates to this binary
+// for it, and no other still-live TS->Go delegation seam (db test, db
+// branch/remote, db diff --use-pgadmin/--use-pg-schema, db pull
+// --experimental, the hidden db __db-bootstrap/__shadow/__catalog seams,
+// etc.) ever called into internal/start either -- see
+// apps/cli/docs/binary-distribution.md § Removed commands for the full
+// rationale. This command's registration and flags are kept only so this
+// binary's cobra tree / `--help` / `__complete` output stays stable for
+// anyone invoking supabase-go directly; RunE is a permanent stub. There is
+// no `--exclude` validation here anymore (that lived in the now-deleted
+// internal/start.validateExcludedContainers) -- the TS port owns that
+// warning now (`legacy/commands/start/start.exclude.ts`).
+//
+// TODO(CLI-1965): once shell completion is ported to TypeScript and no
+// longer needs the `__complete` passthrough into this binary, delete this
+// file (and the `startCmd` registration) entirely.
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,10 +30,8 @@ import (
 )
 
 // excludableContainers lists the container names valid for the --exclude
-// flag. Duplicated from internal/start.ExcludableContainers (rather than
-// calling it) because this file must stay importable without pulling in
-// internal/start's dependency tree in the bundled build. Keep in sync with
-// internal/start/start.go.
+// flag, matching the removed internal/start.ExcludableContainers so the
+// flag's help text is unaffected by the deletion.
 func excludableContainers() []string {
 	names := []string{}
 	for _, image := range config.Images.Services() {
@@ -28,28 +40,31 @@ func excludableContainers() []string {
 	return names
 }
 
-var (
-	allowedContainers  = excludableContainers()
-	excludedContainers []string
-	ignoreHealthCheck  bool
-	preview            bool
-
-	startCmd = &cobra.Command{
-		GroupID: groupLocalDev,
-		Use:     "start",
-		Short:   "Start containers for Supabase local development",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStart(cmd, excludedContainers, ignoreHealthCheck)
-		},
-	}
-)
+// startCmd's flags are declared without bound vars (StringSliceP/Bool, not
+// StringSliceVarP/BoolVar): RunE never reads a real value for any of them --
+// it always fails -- so a bound var would just be a write-only sink left
+// over from the deleted internal/start implementation that used to read
+// them. The flags still parse and appear in --help/__complete identically.
+var startCmd = &cobra.Command{
+	GroupID: groupLocalDev,
+	Use:     "start",
+	Short:   "Start containers for Supabase local development",
+	// The error text is asserted verbatim by TestStartIsUnavailable
+	// (start_test.go) -- update both together.
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Suppress root's default "--debug to troubleshoot" suggestion:
+		// this always fails, so --debug can't help.
+		utils.CmdSuggestion = fmt.Sprintf("Run %s from the Supabase CLI instead of invoking this binary directly.", utils.Aqua("supabase start"))
+		return errors.New("start is not available in supabase-go; the Supabase CLI's start command talks to Docker directly and does not use this binary")
+	},
+}
 
 func init() {
 	flags := startCmd.Flags()
-	names := strings.Join(allowedContainers, ",")
-	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+names+"]")
-	flags.BoolVar(&ignoreHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
-	flags.BoolVar(&preview, "preview", false, "Connect to feature preview branch")
+	names := strings.Join(excludableContainers(), ",")
+	flags.StringSliceP("exclude", "x", nil, "Names of containers to not start. ["+names+"]")
+	flags.Bool("ignore-health-check", false, "Ignore unhealthy services and exit 0")
+	flags.Bool("preview", false, "Connect to feature preview branch")
 	cobra.CheckErr(flags.MarkHidden("preview"))
 	rootCmd.AddCommand(startCmd)
 }

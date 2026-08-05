@@ -187,7 +187,8 @@ export function resolveThirdPartyIssuerUrl(
  * `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
  * {@link resolveThirdPartyIssuerUrl} above performs) only runs inside `Config.Validate`'s `if
  * c.Auth.Enabled` block (`config.go:1087-1153`), but `ResolveJWKS`/`IssuerURL()` is called
- * unconditionally (`internal/start/start.go:274`) regardless of `auth.enabled`. So when auth is
+ * unconditionally (formerly `internal/start/start.go:274`, deleted as unreachable in CLI-1966;
+ * last present at commit a253ccba2) regardless of `auth.enabled`. So when auth is
  * disabled, only this unchecked, fixed-priority string builder applies: the first enabled
  * provider (firebase, auth0, aws_cognito, clerk, workos, in that order) wins, with no "more than
  * one enabled" rejection and no required-field check — a missing required field for the winning
@@ -222,7 +223,8 @@ export function thirdPartyIssuerUrlUnchecked(
  * (`apps/cli-go/pkg/config/config.go:1730-1774`): resolves `<issuerUrl>/.well-known/
  * openid-configuration`'s `jwks_uri`, then fetches that URI's `keys` array. Throws/rejects on any
  * failure rather than swallowing it — Go's `start` treats a failure here as a hard,
- * command-failing error (`internal/start/start.go:274-277`); `shared/functions/serve.ts`'s own
+ * command-failing error (formerly `internal/start/start.go:274-277`, deleted as unreachable in
+ * CLI-1966; last present at commit a253ccba2); `shared/functions/serve.ts`'s own
  * caller-side leniency (continuing with zero remote keys) is a `functions serve`-only choice made
  * at the call site, not part of this function's contract.
  */
