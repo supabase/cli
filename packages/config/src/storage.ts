@@ -37,7 +37,7 @@ const defaultVectorBuckets = {};
  * byte count (`5000000`), matching Go's `sizeInBytes` decoder
  * (apps/cli-go/pkg/config/config_test.go:TestFileSizeLimitConfigParsing). A
  * numeric value is normalized to its decimal string so the decoded type stays a
- * `string` for all consumers (`ramInBytes` parses either form identically).
+ * `string` for all consumers (`parseStorageSizeBytes` parses either form identically).
  */
 const fileSizeLimit = Schema.Union([Schema.String, Schema.Number]).pipe(
   Schema.decodeTo(Schema.String, {

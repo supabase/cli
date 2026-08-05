@@ -89,7 +89,7 @@ import {
   legacyExecSqlFile,
 } from "../../../shared/legacy-migration-apply.ts";
 import type { LegacyMigrationSeedError } from "../../../shared/legacy-seed.ts";
-import { ramInBytes } from "../../../shared/legacy-size-units.ts";
+import { parseStorageSizeBytes } from "@supabase/config";
 import {
   LegacyMigrationVaultError,
   legacyUpsertVaultSecrets,
@@ -344,7 +344,7 @@ function legacyStartStorageMigrateEnv(input: {
       input.dbHost,
       input.dbPassword,
     ),
-    FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
+    FILE_SIZE_LIMIT: String(parseStorageSizeBytes(input.fileSizeLimit)),
     STORAGE_BACKEND: "file",
     STORAGE_FILE_BACKEND_PATH: "/mnt",
     TENANT_ID: "stub",
@@ -417,7 +417,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
   }
   if (input.config.storage.enabled) {
     // `legacyStartStorageMigrateEnv` parses `storage.file_size_limit` via
-    // `ramInBytes`, which throws on a malformed value — a plain synchronous
+    // the canonical Storage size parser, which throws on a malformed value — a plain synchronous
     // throw here would become an uncaught Effect defect (`Effect.tapError`'s
     // rollback trigger below only fires on typed `Fail` causes, never `Die`
     // ones), leaking Postgres's already-created container/network/volume.

@@ -1,6 +1,7 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
+import type { AnalyticsGcpConfig } from "../StackConfig.ts";
 
 interface DockerAnalyticsOptions {
   readonly image: string;
@@ -12,6 +13,7 @@ interface DockerAnalyticsOptions {
   readonly dbPort: number;
   readonly apiKey: string;
   readonly backend: "postgres" | "bigquery";
+  readonly gcp?: AnalyticsGcpConfig;
   readonly networkArgs: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
@@ -63,8 +65,8 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     env.POSTGRES_BACKEND_SCHEMA = "_analytics";
   } else {
     env.GOOGLE_DATASET_ID_APPEND = "_prod";
-    env.GOOGLE_PROJECT_ID = "local";
-    env.GOOGLE_PROJECT_NUMBER = "0";
+    env.GOOGLE_PROJECT_ID = opts.gcp?.projectId ?? "local";
+    env.GOOGLE_PROJECT_NUMBER = opts.gcp?.projectNumber ?? "0";
   }
 
   return dockerRunService({
@@ -72,6 +74,10 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     containerName: `supabase-analytics-${opts.apiPort}`,
     image: opts.image,
     networkArgs: opts.networkArgs,
+    volumes:
+      opts.backend === "bigquery" && opts.gcp !== undefined
+        ? [`${opts.gcp.credentialsPath}:/opt/app/rel/logflare/bin/gcloud.json:ro`]
+        : [],
     entrypoint: "sh",
     cmd: [
       "-c",

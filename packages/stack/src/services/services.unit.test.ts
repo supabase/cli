@@ -16,7 +16,12 @@ import {
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
-import { LOCAL_S3_PROTOCOL_ACCESS_KEY_ID, LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET } from "./storage.ts";
+import { makeRealtimeServiceDocker } from "./realtime.ts";
+import {
+  LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+  LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+  makeStorageServiceDocker,
+} from "./storage.ts";
 import { makeStudioServiceDocker } from "./studio.ts";
 import { makeVectorServiceDocker } from "./vector.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
@@ -263,6 +268,115 @@ describe("analyticsDockerRuntimeNetwork", () => {
       listenPort: 4000,
       nodeHost: "0.0.0.0",
     });
+  });
+});
+
+describe("data-plane service factories", () => {
+  it("selects the IPv6 Erlang transport for Realtime", () => {
+    const def = makeRealtimeServiceDocker({
+      image: dockerImageForService("realtime", DEFAULT_VERSIONS.realtime),
+      port: 54324,
+      apiPort: API_PORT,
+      dbHost: "127.0.0.1",
+      dbPort: DB_PORT,
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "{}",
+      tenantId: "realtime-dev",
+      encryptionKey: "supabaserealtime",
+      secretKeyBase: "secret-key-base",
+      maxHeaderLength: 8192,
+      ipVersion: "IPv6",
+      networkArgs: [],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
+    expect(def.args).toContain("ERL_AFLAGS=-proto_dist inet6_tcp");
+    expect(def.args).toContain("MAX_HEADER_LENGTH=8192");
+  });
+
+  it("adds Storage vector runtime env only when configured", () => {
+    const common = {
+      image: dockerImageForService("storage", DEFAULT_VERSIONS.storage),
+      port: 54325,
+      apiPort: API_PORT,
+      dbHost: "127.0.0.1",
+      dbPort: DB_PORT,
+      dataDir: "/tmp/storage",
+      anonKey: "anon",
+      serviceKey: "service",
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "{}",
+      fileSizeLimit: "5242880",
+      enableImageTransformation: false,
+      imgproxyUrl: "http://127.0.0.1:54326",
+      s3ProtocolEnabled: true,
+      networkArgs: [],
+      dependencies: [{ service: "postgres", condition: "healthy" }] as const,
+    };
+    const disabled = makeStorageServiceDocker(common);
+    const enabled = makeStorageServiceDocker({
+      ...common,
+      vectorRuntime: {
+        enabled: "true",
+        provider: "pgvector",
+        migrationsEnabled: "true",
+      },
+    });
+
+    expect(disabled.args).not.toContain("VECTOR_ENABLED=true");
+    expect(enabled.args).toContain("VECTOR_ENABLED=true");
+    expect(enabled.args).toContain("VECTOR_BUCKET_PROVIDER=pgvector");
+    expect(enabled.args).toContain(
+      `VECTOR_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:${DB_PORT}/postgres`,
+    );
+  });
+
+  it("binds BigQuery credentials and passes Studio's OpenAI key", () => {
+    const analytics = makeAnalyticsServiceDocker({
+      image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
+      apiPort: API_PORT,
+      hostPort: 54328,
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
+      dbHost: "127.0.0.1",
+      dbPort: DB_PORT,
+      apiKey: "test-api-key",
+      backend: "bigquery",
+      gcp: {
+        projectId: "project-id",
+        projectNumber: "123",
+        credentialsPath: "/project/supabase/gcp.json",
+      },
+      networkArgs: [],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+    expect(analytics.args).toContain("GOOGLE_PROJECT_ID=project-id");
+    expect(analytics.args).toContain("GOOGLE_PROJECT_NUMBER=123");
+    expect(analytics.args).toContain(
+      "/project/supabase/gcp.json:/opt/app/rel/logflare/bin/gcloud.json:ro",
+    );
+
+    const studio = makeStudioServiceDocker({
+      image: dockerImageForService("studio", DEFAULT_VERSIONS.studio),
+      apiPort: API_PORT,
+      port: 54323,
+      apiUrl: "http://host.docker.internal:54321",
+      publicApiUrl: "http://127.0.0.1:54321",
+      pgmetaUrl: "http://host.docker.internal:54322",
+      publishableKey: "publishable",
+      secretKey: "secret",
+      s3ProtocolAccessKeyId: "local",
+      s3ProtocolAccessKeySecret: "local-secret",
+      jwtSecret: JWT_SECRET,
+      analyticsEnabled: true,
+      analyticsBackend: "bigquery",
+      analyticsUrl: "http://host.docker.internal:54327",
+      analyticsApiKey: "api-key",
+      openAiApiKey: "openai-secret",
+      networkArgs: [],
+      dependencies: [{ service: "pgmeta", condition: "healthy" }],
+    });
+    expect(studio.args).toContain("OPENAI_API_KEY=openai-secret");
   });
 });
 

@@ -222,4 +222,112 @@ describe("local stack launch config", () => {
       await rm(projectRoot, { recursive: true, force: true });
     }
   });
+
+  it("translates data-plane config and environment overrides into runtime inputs", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "supabase-data-plane-launch-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(supabaseDir, { recursive: true });
+      await writeFile(
+        join(supabaseDir, ".env.local"),
+        [
+          "OPENAI_API_KEY=private-openai-key",
+          "SUPABASE_REALTIME_IP_VERSION=IPv6",
+          "SUPABASE_REALTIME_MAX_HEADER_LENGTH=8192",
+          "SUPABASE_STORAGE_FILE_SIZE_LIMIT=5MiB",
+          "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED=false",
+          "VECTOR_BUCKET_PROVIDER=custom-provider",
+          "SUPABASE_ANALYTICS_GCP_PROJECT_ID=environment-project",
+          "SUPABASE_DB_POOLER_POOL_MODE=session",
+          "SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE=32",
+          "SUPABASE_DB_POOLER_MAX_CLIENT_CONN=128",
+          "",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(supabaseDir, "config.toml"),
+        [
+          "[realtime]",
+          'ip_version = "IPv4"',
+          "max_header_length = 4096",
+          "",
+          "[storage]",
+          'file_size_limit = "50MiB"',
+          "",
+          "[storage.s3_protocol]",
+          "enabled = true",
+          "",
+          "[storage.vector]",
+          "enabled = true",
+          "",
+          "[analytics]",
+          "enabled = true",
+          'backend = "bigquery"',
+          'gcp_project_id = "config-project"',
+          'gcp_project_number = "123"',
+          'gcp_jwt_path = "gcp.json"',
+          "",
+          "[studio]",
+          'openai_api_key = "env(OPENAI_API_KEY)"',
+          "",
+          "[db.pooler]",
+          "enabled = true",
+          'pool_mode = "transaction"',
+          "default_pool_size = 20",
+          "max_client_conn = 100",
+          "",
+        ].join("\n"),
+      );
+
+      const projectEnvironment = await loadProjectEnvironmentFor({ cwd: projectRoot, baseEnv: {} });
+      expect(projectEnvironment).not.toBeNull();
+      if (projectEnvironment === null) return;
+      const loadedProjectConfig = await loadProjectConfig(projectRoot, {
+        projectEnv: projectEnvironment,
+      });
+      const result = await Effect.runPromise(
+        resolveLocalStackLaunch({
+          loadedProjectConfig,
+          projectEnvironment,
+          projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
+          mode: "docker",
+          exclude: ["imgproxy"],
+          runtimeVersions: {},
+        }),
+      );
+
+      expect(result.stackConfig.realtime).toMatchObject({
+        ipVersion: "IPv6",
+        maxHeaderLength: 8192,
+      });
+      expect(result.stackConfig.storage).toMatchObject({
+        fileSizeLimit: "5242880",
+        s3ProtocolEnabled: false,
+        vectorRuntime: { provider: "custom-provider" },
+      });
+      expect(result.stackConfig.imgproxy).toBe(false);
+      expect(result.stackConfig.analytics).toMatchObject({
+        backend: "bigquery",
+        gcp: {
+          projectId: "environment-project",
+          projectNumber: "123",
+          credentialsPath: join(supabaseDir, "gcp.json"),
+        },
+      });
+      expect(result.stackConfig.studio).toMatchObject({ openAiApiKey: "private-openai-key" });
+      expect(result.stackConfig.pooler).toMatchObject({
+        mode: "session",
+        defaultPoolSize: 32,
+        maxClientConn: 128,
+      });
+      expect(result.warnings).toEqual([
+        expect.objectContaining({
+          code: "unmatched-seed-pattern",
+          paths: ["db.seed.sql_paths"],
+        }),
+      ]);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
 });

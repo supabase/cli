@@ -49,6 +49,15 @@ functions options, and per-service configuration. `false` disables an optional s
 4. applies per-service defaults and current `DEFAULT_VERSIONS`;
 5. records auto-managed paths for scoped cleanup.
 
+Project-file translation remains outside this package. The CLI's data-plane launch module resolves
+legacy environment overrides and then supplies typed Realtime, Storage, Analytics, Studio, and
+Pooler inputs through `StackConfig`. Storage sizes are normalized by the config package's canonical
+parser before entering the stack, keeping `StackConfig` focused on runtime-ready values.
+Factories consume the resulting values directly: Realtime selects its IP transport, Storage adds
+vector-bucket environment only when enabled, Analytics mounts BigQuery credentials, and Studio
+receives its optional OpenAI key. Credential contents and configured path values are never included
+in validation diagnostics.
+
 Readiness policy is part of the resolved configuration. The package default is a finite two-minute
 deadline; callers can choose a different finite deadline or explicit infinite waiting. Per-call
 `ReadyOptions` take precedence over the stack policy, while `inherit` delegates to the stack

@@ -91,6 +91,19 @@ const mappedCoreTopologyField: LocalStackConfigParityDecision = {
     "The launch Adapter applies project values, legacy environment overrides, and CLI exclusions before constructing StackConfig.",
 };
 
+const mappedDataPlaneRuntimeField: LocalStackConfigParityDecision = {
+  _tag: "mapped",
+  presence: "raw-document",
+  mappedBy: "start",
+  rationale:
+    "The data-plane launch module applies the project value and legacy environment override to the service factory runtime.",
+};
+
+const mappedOptionalDataPlaneRuntimeField: LocalStackConfigParityDecision = {
+  ...mappedDataPlaneRuntimeField,
+  presence: "decoded-value",
+};
+
 const mappedAuthRuntimeField: LocalStackConfigParityDecision = {
   _tag: "mapped",
   presence: "raw-document",
@@ -110,7 +123,6 @@ const mappedAuthSecretRuntimeField: LocalStackConfigParityDecision = {
   rationale:
     "The Auth launch translator passes this credential to the stack without retaining it in diagnostics.",
 };
-
 const projectIdentityField: LocalStackConfigParityDecision = {
   _tag: "not-applicable",
   presence: "raw-document",
@@ -420,9 +432,9 @@ const localStackConfigParity = {
     port: mappedCoreTopologyField,
     backend: mappedCoreTopologyField,
     vector_port: unsupportedOptionalRuntimeField,
-    gcp_project_id: unsupportedOptionalRuntimeField,
-    gcp_project_number: unsupportedOptionalRuntimeField,
-    gcp_jwt_path: unsupportedOptionalRuntimeField,
+    gcp_project_id: mappedOptionalDataPlaneRuntimeField,
+    gcp_project_number: mappedOptionalDataPlaneRuntimeField,
+    gcp_jwt_path: mappedOptionalDataPlaneRuntimeField,
   } satisfies Record<keyof ProjectConfig["analytics"], Node>,
   api: {
     enabled: mappedCoreTopologyField,
@@ -490,7 +502,7 @@ const localStackConfigParity = {
   } satisfies Record<keyof ProjectConfig["local_smtp"], Node>,
   realtime: {
     enabled: mappedCoreTopologyField,
-    ip_version: unsupportedRuntimeField,
+    ip_version: mappedDataPlaneRuntimeField,
     max_header_length: mappedCoreTopologyField,
   } satisfies Record<keyof ProjectConfig["realtime"], Node>,
   storage: {
@@ -518,7 +530,7 @@ const localStackConfigParity = {
       buckets: unsupportedRuntimeField,
     } satisfies Record<keyof ProjectConfig["storage"]["analytics"], Node>,
     vector: {
-      enabled: unsupportedRuntimeField,
+      enabled: mappedDataPlaneRuntimeField,
       max_buckets: unsupportedRuntimeField,
       max_indexes: unsupportedRuntimeField,
       buckets: unsupportedRuntimeField,
@@ -528,7 +540,7 @@ const localStackConfigParity = {
     enabled: mappedCoreTopologyField,
     port: mappedCoreTopologyField,
     api_url: mappedCoreTopologyField,
-    openai_api_key: unsupportedSecretRuntimeField,
+    openai_api_key: mappedOptionalDataPlaneRuntimeField,
   } satisfies Record<keyof ProjectConfig["studio"], Node>,
   experimental: {
     orioledb_version: unsupportedFutureRuntimeField,

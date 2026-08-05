@@ -299,6 +299,7 @@ function resolveRealtimeConfig(
     secretKeyBase:
       cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
     maxHeaderLength: cfg.maxHeaderLength ?? 4096,
+    ipVersion: cfg.ipVersion ?? "IPv4",
   };
 }
 
@@ -339,8 +340,9 @@ function resolveStorageConfig(
     port: ports.storagePort,
     version: cfg.version ?? DEFAULT_VERSIONS.storage,
     dataDir: resolveDataDir(cfg.dataDir, opts.stackRoot!, "storage"),
-    fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
+    fileSizeLimit: cfg.fileSizeLimit ?? "52428800",
     s3ProtocolEnabled: cfg.s3ProtocolEnabled ?? true,
+    vectorRuntime: cfg.vectorRuntime,
   };
 }
 
@@ -400,6 +402,7 @@ function resolveStudioConfig(
     port: ports.studioPort,
     version: cfg.version ?? DEFAULT_VERSIONS.studio,
     apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
+    openAiApiKey: cfg.openAiApiKey,
   };
 }
 
@@ -415,6 +418,7 @@ function resolveAnalyticsConfig(
     version: cfg.version ?? DEFAULT_VERSIONS.analytics,
     backend: cfg.backend ?? "postgres",
     apiKey: cfg.apiKey ?? "api-key",
+    gcp: cfg.gcp,
   };
 }
 

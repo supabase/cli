@@ -481,6 +481,7 @@ export class StackBuilder extends Context.Service<
               encryptionKey: config.realtime.encryptionKey,
               secretKeyBase: config.realtime.secretKeyBase,
               maxHeaderLength: config.realtime.maxHeaderLength,
+              ipVersion: config.realtime.ipVersion,
               networkArgs: dockerNetworkArgs(platform.os, [config.realtime.port]),
               dependencies: postgresDeps,
             }),
@@ -507,6 +508,7 @@ export class StackBuilder extends Context.Service<
               imgproxyUrl:
                 config.imgproxy !== false ? `http://${serviceHost}:${config.imgproxy.port}` : "",
               s3ProtocolEnabled: config.storage.s3ProtocolEnabled,
+              vectorRuntime: config.storage.vectorRuntime,
               networkArgs: dockerNetworkArgs(platform.os, [config.storage.port]),
               dependencies: postgresDeps,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
@@ -565,6 +567,7 @@ export class StackBuilder extends Context.Service<
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,
               backend: config.analytics.backend,
+              gcp: config.analytics.gcp,
               networkArgs: dockerPortMapArgs(platform.os, [
                 { host: config.analytics.port, container: 4000 },
               ]),
@@ -647,6 +650,7 @@ export class StackBuilder extends Context.Service<
               analyticsUrl:
                 config.analytics !== false ? `http://${serviceHost}:${config.analytics.port}` : "",
               analyticsApiKey: config.analytics !== false ? config.analytics.apiKey : "api-key",
+              openAiApiKey: config.studio.openAiApiKey,
               networkArgs: dockerNetworkArgs(platform.os, [config.studio.port]),
               dependencies:
                 config.analytics === false

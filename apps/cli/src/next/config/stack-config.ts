@@ -17,6 +17,8 @@ import {
   type ExcludedStackService,
 } from "./core-stack-config.ts";
 import { translateDatabaseBootstrapConfig } from "./database-bootstrap-config.ts";
+import { DataPlaneStackConfigError } from "./data-plane-stack-config-values.ts";
+import { resolveDataPlaneStackConfig } from "./data-plane-stack-config.ts";
 import {
   flattenLocalStackConfigParity,
   type LocalStackConfigParityDecision,
@@ -367,10 +369,30 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
             message: deprecationWarning,
           },
         ];
+  const dataPlaneConfig = yield* Effect.try({
+    try: () =>
+      resolveDataPlaneStackConfig({
+        projectConfig,
+        projectEnvironment: input.projectEnvironment,
+        configDir:
+          input.loadedProjectConfig === null
+            ? join(input.projectPaths.projectRoot, "supabase")
+            : dirname(input.loadedProjectConfig.path),
+        base: coreConfig,
+      }),
+    catch: (cause) =>
+      cause instanceof DataPlaneStackConfigError
+        ? cause
+        : new DataPlaneStackConfigError({
+            detail: "Invalid data-plane service configuration.",
+            suggestion: "Review the configured data-plane service values.",
+            paths: [],
+          }),
+  });
 
   return {
     stackConfig: {
-      ...coreConfig,
+      ...dataPlaneConfig,
       projectDir: input.projectPaths.projectRoot,
       readiness,
       credentials: translatedAuth.credentials,
@@ -383,7 +405,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
               version: versionedConfig.auth === false ? undefined : versionedConfig.auth?.version,
             },
       postgres: {
-        ...coreConfig.postgres,
+        ...dataPlaneConfig.postgres,
         autoExposeNewTables,
         startupHealthTimeoutMs: postgresStartupTimeoutMs,
       },

@@ -102,6 +102,7 @@ export interface RealtimeConfig {
   readonly encryptionKey?: string;
   readonly secretKeyBase?: string;
   readonly maxHeaderLength?: number;
+  readonly ipVersion?: "IPv4" | "IPv6";
 }
 
 export interface EdgeRuntimeConfig {
@@ -118,7 +119,15 @@ export interface StorageConfig {
   readonly dataDir?: string;
   readonly fileSizeLimit?: string;
   readonly s3ProtocolEnabled?: boolean;
+  readonly vectorRuntime?: StorageVectorRuntimeConfig;
   readonly version?: string;
+}
+
+export interface StorageVectorRuntimeConfig {
+  readonly enabled: string;
+  readonly provider: string;
+  readonly migrationsEnabled: string;
+  readonly databaseUrl?: string;
 }
 
 export interface ImgproxyConfig {
@@ -145,6 +154,7 @@ export interface PgmetaConfig {
 export interface StudioConfig {
   readonly port?: number;
   readonly apiUrl?: string;
+  readonly openAiApiKey?: string;
   readonly version?: string;
 }
 
@@ -153,6 +163,13 @@ export interface AnalyticsConfig {
   readonly version?: string;
   readonly backend?: "postgres" | "bigquery";
   readonly apiKey?: string;
+  readonly gcp?: AnalyticsGcpConfig;
+}
+
+export interface AnalyticsGcpConfig {
+  readonly projectId: string;
+  readonly projectNumber: string;
+  readonly credentialsPath: string;
 }
 
 export interface VectorConfig {
@@ -230,6 +247,7 @@ export interface ResolvedRealtimeConfig {
   readonly encryptionKey: string;
   readonly secretKeyBase: string;
   readonly maxHeaderLength: number;
+  readonly ipVersion: "IPv4" | "IPv6";
 }
 
 export interface ResolvedEdgeRuntimeConfig {
@@ -247,6 +265,7 @@ export interface ResolvedStorageConfig {
   readonly dataDir: string;
   readonly fileSizeLimit: string;
   readonly s3ProtocolEnabled: boolean;
+  readonly vectorRuntime?: StorageVectorRuntimeConfig;
 }
 
 export interface ResolvedImgproxyConfig {
@@ -275,6 +294,7 @@ export interface ResolvedStudioConfig {
   readonly port: number;
   readonly version: string;
   readonly apiUrl: string;
+  readonly openAiApiKey?: string;
 }
 
 export interface ResolvedAnalyticsConfig {
@@ -282,6 +302,7 @@ export interface ResolvedAnalyticsConfig {
   readonly version: string;
   readonly backend: "postgres" | "bigquery";
   readonly apiKey: string;
+  readonly gcp?: AnalyticsGcpConfig;
 }
 
 export interface ResolvedVectorConfig {

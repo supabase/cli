@@ -18,6 +18,7 @@ interface DockerStudioOptions {
   readonly analyticsBackend: "postgres" | "bigquery";
   readonly analyticsUrl: string;
   readonly analyticsApiKey: string;
+  readonly openAiApiKey?: string;
   readonly networkArgs: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
@@ -59,7 +60,7 @@ export const makeStudioServiceDocker = (opts: DockerStudioOptions): ServiceDef =
       NEXT_ANALYTICS_BACKEND_PROVIDER: opts.analyticsBackend,
       HOSTNAME: "0.0.0.0",
       POSTGRES_USER_READ_WRITE: "postgres",
-      OPENAI_API_KEY: "",
+      OPENAI_API_KEY: opts.openAiApiKey ?? "",
       PGRST_DB_SCHEMAS: "public,graphql_public",
       PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
       PGRST_DB_MAX_ROWS: "1000",

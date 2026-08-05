@@ -1,3 +1,4 @@
+import { parseStorageSizeBytes } from "@supabase/config";
 import { Effect, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
@@ -24,7 +25,6 @@ import {
 import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 import { legacyStrToArr } from "./legacy-local-config-values.ts";
-import { ramInBytes } from "./legacy-size-units.ts";
 import {
   legacyCollectDotenvPrivateKeys,
   legacyDecryptSecret,
@@ -1335,7 +1335,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       const limitString =
         typeof rawLimit === "number" ? String(rawLimit) : legacyExpandEnv(rawLimit, lookup);
       try {
-        ramInBytes(limitString);
+        parseStorageSizeBytes(limitString);
       } catch {
         return yield* Effect.fail(
           new LegacyDbConfigLoadError({

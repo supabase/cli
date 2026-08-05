@@ -941,7 +941,7 @@ describe("legacyReadDbToml", () => {
   it.effect("accepts a bare-number [storage.buckets.<name>].file_size_limit", () => {
     // `@supabase/config`'s schema allows file_size_limit as either a quoted
     // human-readable string or a bare byte count; the numeric form must normalize to
-    // a string before `ramInBytes` parses it rather than being rejected outright.
+    // a string before the canonical size parser sees it rather than being rejected outright.
     const dir = withConfig("[storage.buckets.avatars]\nfile_size_limit = 5242880\n");
     return read(dir).pipe(
       Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),

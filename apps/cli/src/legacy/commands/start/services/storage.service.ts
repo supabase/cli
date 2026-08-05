@@ -40,10 +40,9 @@
  * before passing `s3ProtocolEnabled`/`vectorBucketsEnabled` in.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import { parseStorageSizeBytes, type ProjectConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import {
@@ -118,7 +117,7 @@ export interface LegacyStorageEnvInput {
   readonly dbHost: string;
   /** See `legacyStartInternalDbPassword` (`../lib/internal-db-connection.ts`). */
   readonly dbPassword: string;
-  /** `config.storage.file_size_limit`, e.g. `"50MiB"` — converted to a byte count via `ramInBytes`. */
+  /** `config.storage.file_size_limit`, e.g. `"50MiB"` — converted to a byte count. */
   readonly fileSizeLimit: ProjectConfig["storage"]["file_size_limit"];
   /** `LegacyLocalConfigValues.storageS3Region`. */
   readonly s3Region: string;
@@ -155,7 +154,7 @@ export function legacyBuildStorageEnv(input: LegacyStorageEnvInput): Record<stri
       input.dbHost,
       input.dbPassword,
     ),
-    FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
+    FILE_SIZE_LIMIT: String(parseStorageSizeBytes(input.fileSizeLimit)),
     STORAGE_BACKEND: "file",
     FILE_STORAGE_BACKEND_PATH: LEGACY_STORAGE_DOCKER_PATH,
     TENANT_ID: "stub",

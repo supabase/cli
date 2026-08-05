@@ -631,6 +631,7 @@ describe("StackBuilder", () => {
           encryptionKey: "supabaserealtime",
           secretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
           maxHeaderLength: 4096,
+          ipVersion: "IPv4",
         },
       });
 

@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 250,
+      mapped: 256,
       "not-applicable": 10,
-      "unsupported-blocking": 95,
+      "unsupported-blocking": 89,
       "unsupported-warning": 6,
     });
   });
@@ -32,6 +32,9 @@ describe("localStackConfigParity", () => {
     expect(mappedPaths.filter((path) => !path.startsWith("auth.")).sort()).toEqual([
       "analytics.backend",
       "analytics.enabled",
+      "analytics.gcp_jwt_path",
+      "analytics.gcp_project_id",
+      "analytics.gcp_project_number",
       "analytics.port",
       "api.auto_expose_new_tables",
       "api.enabled",
@@ -66,13 +69,16 @@ describe("localStackConfigParity", () => {
       "local_smtp.sender_name",
       "local_smtp.smtp_port",
       "realtime.enabled",
+      "realtime.ip_version",
       "realtime.max_header_length",
       "storage.enabled",
       "storage.file_size_limit",
       "storage.image_transformation.enabled",
       "storage.s3_protocol.enabled",
+      "storage.vector.enabled",
       "studio.api_url",
       "studio.enabled",
+      "studio.openai_api_key",
       "studio.port",
     ]);
     expect(mappedPaths.filter((path) => path.startsWith("auth."))).toHaveLength(206);
@@ -124,5 +130,17 @@ describe("localStackConfigParity", () => {
       "project_id",
       "remotes",
     ]);
+  });
+
+  it("keeps bucket seeding and unconsumed quotas blocking", () => {
+    const byPath = new Map(entries.map(({ path, decision }) => [path, decision]));
+    for (const path of [
+      "storage.buckets.*.objects_path",
+      "storage.buckets.*.public",
+      "storage.analytics.max_namespaces",
+      "storage.vector.max_buckets",
+    ]) {
+      expect(byPath.get(path)?._tag).toBe("unsupported-blocking");
+    }
   });
 });

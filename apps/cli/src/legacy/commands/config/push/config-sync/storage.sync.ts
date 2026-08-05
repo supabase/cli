@@ -1,8 +1,8 @@
-import type { ProjectConfig } from "@supabase/config";
+import { parseStorageSizeBytes, type ProjectConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.ts";
-import { bytesSize, intToUint, ramInBytes } from "../../../../shared/legacy-size-units.ts";
+import { bytesSize, intToUint } from "../../../../shared/legacy-size-units.ts";
 
 /**
  * Push-subset of Go's `storage` struct (`pkg/config/storage.go`). `toml:"-"`
@@ -144,7 +144,7 @@ export function storageSubsetFromConfig(
             name,
             {
               public: b.public,
-              file_size_limit: ramInBytes(b.file_size_limit),
+              file_size_limit: parseStorageSizeBytes(b.file_size_limit),
               allowed_mime_types: b.allowed_mime_types,
               objects_path: b.objects_path,
             } satisfies BucketSubset,
@@ -152,7 +152,7 @@ export function storageSubsetFromConfig(
         );
   return {
     enabled: s.enabled,
-    file_size_limit: ramInBytes(s.file_size_limit),
+    file_size_limit: parseStorageSizeBytes(s.file_size_limit),
     image_transformation: presence.imageTransformation
       ? { enabled: s.image_transformation?.enabled ?? false }
       : undefined,

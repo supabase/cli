@@ -42,3 +42,4 @@ export { ProjectConfigStore } from "./project-config.service.ts";
 export { PROJECT_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export { KONG_LOCAL_CA_CERT } from "./tls.ts";
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export { InvalidStorageSizeError, parseStorageSizeBytes } from "./storage-size.ts";

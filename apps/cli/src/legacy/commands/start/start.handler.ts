@@ -1,5 +1,6 @@
 import {
   inferFunctionsManifest,
+  parseStorageSizeBytes,
   resolveProjectSubtree,
   type ProjectConfig,
 } from "@supabase/config";
@@ -46,7 +47,6 @@ import {
   legacyDecryptSecret,
   legacyIsEncryptedSecret,
 } from "../../shared/legacy-vault-decrypt.ts";
-import { ramInBytes } from "../../shared/legacy-size-units.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyParseGoDuration } from "../../../shared/config/go-duration.ts";
 import {
@@ -1415,13 +1415,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ) ?? config.storage.file_size_limit;
     // `@supabase/config`'s schema accepts `file_size_limit` as a plain string — it does not parse
     // the size grammar itself, so a malformed value (e.g. "foobar") would otherwise only surface
-    // when `storage.service.ts`'s `ramInBytes` call builds the container env, well after
+    // when Storage's byte-size parser builds the container env, well after
     // network/image/Postgres work, and never at all when Storage is excluded/disabled. Go's
     // `sizeInBytes.UnmarshalText` (`pkg/config/config.go:39-49`) decodes this unconditionally in
     // the same `Config.Load` pass as everything else (`config.go:749-756,775-784`), before `start`
     // touches Docker or looks at `--exclude` — validate eagerly here to match, discarding the
     // parsed byte count since every consumer re-parses `storageFileSizeLimit` itself.
-    yield* wrapConfigOverride("storage.file_size_limit", () => ramInBytes(storageFileSizeLimit));
+    yield* wrapConfigOverride("storage.file_size_limit", () =>
+      parseStorageSizeBytes(storageFileSizeLimit),
+    );
     // Same gap for `storage.vector.enabled` — both the long-running Storage
     // container AND `legacySeedBucketsRun`'s `effectiveLocalStorageConfig`
     // splice further down must see the same already-overridden value (Go's

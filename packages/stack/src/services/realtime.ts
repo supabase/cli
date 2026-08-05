@@ -14,6 +14,7 @@ interface DockerRealtimeOptions {
   readonly encryptionKey: string;
   readonly secretKeyBase: string;
   readonly maxHeaderLength: number;
+  readonly ipVersion: "IPv4" | "IPv6";
   readonly networkArgs: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
@@ -55,7 +56,7 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
       METRICS_JWT_SECRET: opts.jwtSecret,
       APP_NAME: "realtime",
       SECRET_KEY_BASE: opts.secretKeyBase,
-      ERL_AFLAGS: "-proto_dist inet_tcp",
+      ERL_AFLAGS: opts.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
       DNS_NODES: "",
       RLIMIT_NOFILE: "",
       SEED_SELF_HOST: "true",

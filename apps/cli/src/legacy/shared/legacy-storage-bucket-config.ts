@@ -1,4 +1,4 @@
-import { ramInBytes } from "./legacy-size-units.ts";
+import { parseStorageSizeBytes } from "@supabase/config";
 import type { LegacyUpsertBucketProps } from "./legacy-storage-gateway.ts";
 
 /**
@@ -20,7 +20,7 @@ import type { LegacyUpsertBucketProps } from "./legacy-storage-gateway.ts";
  * maps to a config-load error.
  */
 export function legacyParseFileSizeLimit(sizeStr: string): number {
-  return ramInBytes(sizeStr);
+  return parseStorageSizeBytes(sizeStr);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

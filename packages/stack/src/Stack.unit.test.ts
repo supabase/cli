@@ -469,7 +469,7 @@ describe("Stack", () => {
       storage: {
         port: defaultPorts.storagePort,
         dataDir: "/tmp/supabase/storage",
-        fileSizeLimit: "50MiB",
+        fileSizeLimit: "52428800",
         s3ProtocolEnabled: true,
         version: DEFAULT_VERSIONS.storage,
       },
