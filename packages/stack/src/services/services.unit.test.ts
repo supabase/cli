@@ -65,6 +65,37 @@ describe("makePostgresService", () => {
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toBeDefined();
   });
+
+  it("applies a configured startup budget without relaxing liveness", () => {
+    const def = makePostgresService({
+      binPath: POSTGRES_BIN_PATH,
+      dataDir: "/tmp/supabase/data",
+      port: DB_PORT,
+      startupHealthTimeoutMs: 120_000,
+    });
+
+    expect(def.healthCheck).toMatchObject({
+      startupFailureThreshold: 240,
+      failureThreshold: 30,
+    });
+  });
+
+  it("runs an immediate native probe for zero and sub-period startup budgets", () => {
+    for (const startupHealthTimeoutMs of [0, 250]) {
+      const def = makePostgresService({
+        binPath: POSTGRES_BIN_PATH,
+        dataDir: "/tmp/supabase/data",
+        port: DB_PORT,
+        startupHealthTimeoutMs,
+      });
+
+      expect(def.healthCheck).toMatchObject({
+        initialDelaySeconds: 0,
+        startupFailureThreshold: 1,
+        failureThreshold: 30,
+      });
+    }
+  });
 });
 
 describe("analyticsDockerRuntimeNetwork", () => {
@@ -201,6 +232,49 @@ describe("makePostgresServiceDocker", () => {
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toEqual({
       orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-postgres-${API_PORT}` }],
+    });
+  });
+
+  it("accounts for Docker's initial delay in a configured startup budget", () => {
+    const def = makePostgresServiceDocker({
+      image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
+      dataDir: "/tmp/supabase/data",
+      port: DB_PORT,
+      networkArgs: [],
+      jwtSecret: "test-jwt-secret-with-at-least-32-characters",
+      jwtExpiry: 3600,
+      apiPort: API_PORT,
+      startupHealthTimeoutMs: 120_000,
+    });
+
+    expect(def.healthCheck).toMatchObject({
+      startupFailureThreshold: 238,
+      failureThreshold: 30,
+    });
+  });
+
+  it("does not let Docker's default delay exceed zero or sub-delay budgets", () => {
+    const make = (startupHealthTimeoutMs: number) =>
+      makePostgresServiceDocker({
+        image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
+        dataDir: "/tmp/supabase/data",
+        port: DB_PORT,
+        networkArgs: [],
+        jwtSecret: "test-jwt-secret-with-at-least-32-characters",
+        jwtExpiry: 3600,
+        apiPort: API_PORT,
+        startupHealthTimeoutMs,
+      });
+
+    expect(make(0).healthCheck).toMatchObject({
+      initialDelaySeconds: 0,
+      startupFailureThreshold: 1,
+      failureThreshold: 30,
+    });
+    expect(make(500).healthCheck).toMatchObject({
+      initialDelaySeconds: 0.5,
+      startupFailureThreshold: 1,
+      failureThreshold: 30,
     });
   });
 

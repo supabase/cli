@@ -16,8 +16,6 @@ describe("local stack launch config", () => {
       await writeFile(
         join(supabaseDir, "config.toml"),
         [
-          'project_id = "launch-test"',
-          "",
           "[api]",
           "auto_expose_new_tables = false",
           "",
@@ -55,8 +53,8 @@ describe("local stack launch config", () => {
         studio: false,
         postgres: { version: "17.6.1.090", autoExposeNewTables: false },
       });
-      expect(result.postgresStartupTimeoutMs).toBe(7_000);
-      expect(result.readiness).toEqual({ mode: "finite", timeoutMs: 37_000 });
+      expect(result.stackConfig.postgres?.startupHealthTimeoutMs).toBe(7_000);
+      expect(result.stackConfig.readiness).toEqual({ mode: "finite", timeoutMs: 37_000 });
       expect(result.warnings).toEqual([
         expect.objectContaining({
           code: "unsupported",

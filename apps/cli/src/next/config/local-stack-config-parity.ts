@@ -67,6 +67,14 @@ const mappedAutoExposeNewTables: LocalStackConfigParityDecision = {
     "The start command resolves the tri-state value, emits its deprecation warning, and passes it to PostgreSQL initialization.",
 };
 
+const mappedDatabaseHealthTimeout: LocalStackConfigParityDecision = {
+  _tag: "mapped",
+  presence: "raw-document",
+  mappedBy: "start",
+  rationale:
+    "The launch Adapter resolves the legacy environment override, applies the duration to PostgreSQL startup health, and derives the stack readiness deadline from it.",
+};
+
 const mappedFunctionManifest: LocalStackConfigParityDecision = {
   _tag: "mapped",
   presence: "raw-document",
@@ -391,7 +399,7 @@ const localStackConfigParity = {
   db: {
     port: unsupportedRuntimeField,
     shadow_port: commandOnlyDatabaseField,
-    health_timeout: unsupportedRuntimeField,
+    health_timeout: mappedDatabaseHealthTimeout,
     major_version: unsupportedRuntimeField,
     pooler: {
       enabled: unsupportedRuntimeField,

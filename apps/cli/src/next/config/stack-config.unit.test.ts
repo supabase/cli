@@ -132,10 +132,9 @@ describe("resolveLocalStackLaunch", () => {
       postgres: { autoExposeNewTables: true, version: "17.6.1.090" },
     });
     expect(result.projectPaths.projectStateRoot).toBe("/project/.supabase");
-    expect(result.postgresStartupTimeoutMs).toBe(120_000);
-    expect(result.readiness).toEqual({ mode: "finite", timeoutMs: 150_000 });
+    expect(result.stackConfig.postgres?.startupHealthTimeoutMs).toBe(120_000);
+    expect(result.stackConfig.readiness).toEqual({ mode: "finite", timeoutMs: 150_000 });
     expect(result.warnings.map(({ code }) => code)).toEqual(["unsupported", "deprecated"]);
-    expect(result.unsupported.map(({ path }) => path)).toContain("db.health_timeout");
   });
 
   it("uses the resolved project environment for the database health timeout", async () => {
@@ -157,8 +156,8 @@ describe("resolveLocalStackLaunch", () => {
       }),
     );
 
-    expect(result.postgresStartupTimeoutMs).toBe(5_000);
-    expect(result.readiness).toEqual({ mode: "finite", timeoutMs: 35_000 });
+    expect(result.stackConfig.postgres?.startupHealthTimeoutMs).toBe(5_000);
+    expect(result.stackConfig.readiness).toEqual({ mode: "finite", timeoutMs: 35_000 });
   });
 
   it("supports an explicit infinite debugging policy while retaining startup health", async () => {
@@ -166,8 +165,8 @@ describe("resolveLocalStackLaunch", () => {
       resolveLocalStackLaunch({ ...baseLaunchInput, readiness: "infinite" }),
     );
 
-    expect(result.postgresStartupTimeoutMs).toBe(120_000);
-    expect(result.readiness).toEqual({ mode: "infinite" });
+    expect(result.stackConfig.postgres?.startupHealthTimeoutMs).toBe(120_000);
+    expect(result.stackConfig.readiness).toEqual({ mode: "infinite" });
   });
 
   it("fails before stack construction when the health timeout is invalid", async () => {
@@ -179,5 +178,39 @@ describe("resolveLocalStackLaunch", () => {
     );
 
     expect(exit._tag).toBe("Failure");
+  });
+
+  it("fails on explicit blocking fields and reports paths without values", async () => {
+    const exit = await Effect.runPromise(
+      resolveLocalStackLaunch({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({
+          auth: { jwt_secret: "do-not-leak" },
+          storage: { file_size_limit: "another-private-value" },
+        }),
+      }).pipe(Effect.exit),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain("auth.jwt_secret");
+    expect(JSON.stringify(exit)).toContain("storage.file_size_limit");
+    expect(JSON.stringify(exit)).not.toContain("do-not-leak");
+    expect(JSON.stringify(exit)).not.toContain("another-private-value");
+  });
+
+  it("warns on explicit warning fields using paths only", async () => {
+    const result = await Effect.runPromise(
+      resolveLocalStackLaunch({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({
+          experimental: { s3_secret_key: "do-not-leak" },
+        }),
+      }),
+    );
+
+    expect(result.warnings).toEqual([
+      expect.objectContaining({ code: "unsupported", paths: ["experimental.s3_secret_key"] }),
+    ]);
+    expect(JSON.stringify(result.warnings)).not.toContain("do-not-leak");
   });
 });

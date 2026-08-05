@@ -80,6 +80,7 @@ await stack.dispose();
 | ---------------- | -------------------------------- | -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"`  | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
 | `startupMode`    | `"eager" \| "lazy"`              | No       | `"eager"` | In lazy mode, proxied HTTP services start on first use. Direct listeners and Realtime start with the stack.                                                     |
+| `readiness`      | finite or infinite policy        | No       | `120s`    | Stack-wide readiness deadline. Per-call readiness options take precedence.                                                                                      |
 | `jwtSecret`      | `string`                         | No       |           | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
 | `port`           | `number`                         | No       |           | API proxy port (auto-allocated if omitted)                                                                                                                      |
 | `publishableKey` | `string`                         | No       |           | Custom opaque publishable key                                                                                                                                   |
@@ -89,11 +90,13 @@ await stack.dispose();
 
 Optional. When omitted, uses all defaults (ephemeral temp data directory, auto-allocated port).
 
-| Field     | Type     | Required | Description                                                                                 |
-| --------- | -------- | -------- | ------------------------------------------------------------------------------------------- |
-| `dataDir` | `string` | No       | Directory for Postgres data (PGDATA). Ephemeral temp dir if omitted (cleaned up on dispose) |
-| `port`    | `number` | No       | Postgres port (auto-allocated if omitted)                                                   |
-| `version` | `string` | No       | Override the current pinned Postgres version                                                |
+| Field                    | Type      | Required | Description                                                                                                           |
+| ------------------------ | --------- | -------- | --------------------------------------------------------------------------------------------------------------------- |
+| `dataDir`                | `string`  | No       | Directory for Postgres data (PGDATA). Ephemeral temp dir if omitted (cleaned up on dispose)                           |
+| `port`                   | `number`  | No       | Postgres port (auto-allocated if omitted)                                                                             |
+| `version`                | `string`  | No       | Override the current pinned Postgres version                                                                          |
+| `autoExposeNewTables`    | `boolean` | No       | Whether bootstrap SQL preserves default Data API grants                                                               |
+| `startupHealthTimeoutMs` | `number`  | No       | Startup probe scheduling budget; does not relax liveness, and the final probe may finish after this scheduling budget |
 
 ### `postgrest`
 

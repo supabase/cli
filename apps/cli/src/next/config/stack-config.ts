@@ -4,7 +4,7 @@ import {
   type ProjectConfig,
   type ProjectEnvironment,
 } from "@supabase/config";
-import type { StackConfig, VersionManifest } from "@supabase/stack/effect";
+import type { ReadinessPolicy, StackConfig, VersionManifest } from "@supabase/stack/effect";
 import { Data, Effect, Schema } from "effect";
 import { legacyParseGoDuration } from "../../shared/config/go-duration.ts";
 import {
@@ -34,10 +34,6 @@ const LEGACY_NON_DATABASE_READINESS_BUDGET_MS = 30_000;
 const decodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const defaultProjectConfig = decodeDefaultProjectConfig({});
 
-type LocalStackReadinessIntent =
-  | { readonly mode: "finite"; readonly timeoutMs: number }
-  | { readonly mode: "infinite" };
-
 interface LocalStackProjectPaths {
   readonly projectRoot: string;
   readonly projectStateRoot: string;
@@ -60,29 +56,16 @@ export interface LocalStackWarning {
   readonly message: string;
 }
 
-export interface LocalStackUnsupportedConfig {
-  readonly path: string;
-  readonly rationale: string;
-}
-
 interface ResolvedLocalStackLaunch {
   readonly stackConfig: StackConfig;
   readonly projectPaths: LocalStackProjectPaths;
-  readonly readiness: LocalStackReadinessIntent;
-  readonly postgresStartupTimeoutMs: number;
   readonly warnings: ReadonlyArray<LocalStackWarning>;
-  /**
-   * Explicit unsupported fields are retained as structured diagnostics during
-   * the staged parity migration. A vertical slice promotes its fields to
-   * mapped behavior and enforcement together; ordinary generated configs are
-   * not rejected merely because later slices have not landed yet.
-   */
-  readonly unsupported: ReadonlyArray<LocalStackUnsupportedConfig>;
 }
 
 export class LocalStackConfigError extends Data.TaggedError("LocalStackConfigError")<{
   readonly detail: string;
   readonly suggestion: string;
+  readonly paths: ReadonlyArray<string>;
 }> {}
 
 interface PresentConfigValue {
@@ -160,16 +143,17 @@ function diagnosticsFor(input: {
   readonly rawDocument?: Readonly<Record<string, unknown>>;
 }): {
   readonly warnings: ReadonlyArray<LocalStackWarning>;
-  readonly unsupported: ReadonlyArray<LocalStackUnsupportedConfig>;
+  readonly blockingPaths: ReadonlyArray<string>;
 } {
   const entries = explicitLocalStackConfigEntries(input);
   const warningPaths = entries
     .filter(({ decision }) => decision._tag === "unsupported-warning")
     .map(({ path }) => path)
     .sort();
-  const unsupported = entries.flatMap(({ path, decision }) =>
-    decision._tag === "unsupported-blocking" ? [{ path, rationale: decision.rationale }] : [],
-  );
+  const blockingPaths = entries
+    .filter(({ decision }) => decision._tag === "unsupported-blocking")
+    .map(({ path }) => path)
+    .sort();
 
   return {
     warnings:
@@ -182,7 +166,7 @@ function diagnosticsFor(input: {
               message: `The next local stack does not yet apply these experimental settings: ${warningPaths.join(", ")}.`,
             },
           ],
-    unsupported,
+    blockingPaths,
   };
 }
 
@@ -299,6 +283,7 @@ function resolvePostgresStartupTimeout(input: {
       new LocalStackConfigError({
         detail: `Invalid db.health_timeout '${configured}': ${cause instanceof Error ? cause.message : String(cause)}`,
         suggestion: "Use a non-negative Go duration such as 2m or 30s.",
+        paths: ["db.health_timeout"],
       }),
   });
 }
@@ -309,7 +294,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
     projectConfig,
     projectEnvironment: input.projectEnvironment,
   });
-  const readiness: LocalStackReadinessIntent =
+  const readiness: ReadinessPolicy =
     input.readiness === "infinite"
       ? { mode: "infinite" }
       : {
@@ -323,6 +308,16 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
     projectConfig,
     rawDocument: input.loadedProjectConfig?.document,
   });
+  if (diagnostics.blockingPaths.length > 0) {
+    return yield* Effect.fail(
+      new LocalStackConfigError({
+        detail: `The next local stack does not yet support these explicitly configured settings: ${diagnostics.blockingPaths.join(", ")}.`,
+        suggestion:
+          "Remove these settings for now, or use the legacy local stack until their parity slice is available.",
+        paths: diagnostics.blockingPaths,
+      }),
+    );
+  }
   const versionedConfig = resolveStoredStackLaunch({
     exclude: input.exclude,
     mode: input.mode,
@@ -333,11 +328,14 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
     stackConfig: {
       ...versionedConfig,
       projectDir: input.projectPaths.projectRoot,
-      postgres: { ...versionedConfig.postgres, autoExposeNewTables },
+      readiness,
+      postgres: {
+        ...versionedConfig.postgres,
+        autoExposeNewTables,
+        startupHealthTimeoutMs: postgresStartupTimeoutMs,
+      },
     },
     projectPaths: input.projectPaths,
-    readiness,
-    postgresStartupTimeoutMs,
     warnings:
       deprecationWarning === undefined
         ? diagnostics.warnings
@@ -349,7 +347,6 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
               message: deprecationWarning,
             },
           ],
-    unsupported: diagnostics.unsupported,
   } satisfies ResolvedLocalStackLaunch;
 });
 

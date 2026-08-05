@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 11,
+      mapped: 12,
       "not-applicable": 9,
-      "unsupported-blocking": 335,
+      "unsupported-blocking": 334,
       "unsupported-warning": 6,
     });
   });
@@ -32,6 +32,7 @@ describe("localStackConfigParity", () => {
         .sort(),
     ).toEqual([
       "api.auto_expose_new_tables",
+      "db.health_timeout",
       "edge_runtime.enabled",
       "edge_runtime.inspector_port",
       "edge_runtime.policy",

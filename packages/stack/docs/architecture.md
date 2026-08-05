@@ -56,6 +56,11 @@ reload, and explicit readiness waits. A finite deadline fails with `StackReadine
 the same scoped cleanup used by disposal. Promise and remote Adapters pass `ReadyOptions` through
 to that Implementation instead of layering a second timeout rule around it.
 
+PostgreSQL also accepts a startup-health scheduling budget independently of stack readiness.
+The native and Docker factories translate that duration into their own probe cadence and cap their
+initial delay accordingly; the post-healthy liveness threshold is unchanged. The final failing
+probe can finish after the scheduling budget because probe execution has its own timeout.
+
 The current zero-config stack enables PostgreSQL, PostgREST, Auth, and Edge Runtime. Realtime,
 Storage, imgproxy, Mailpit, Postgres Meta, Studio, Analytics, Vector, and Supavisor are enabled only
 when their corresponding configuration object is present. In `native` mode, Edge Runtime is also

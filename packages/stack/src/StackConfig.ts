@@ -47,6 +47,13 @@ export interface PostgresConfig {
   readonly dataDir?: string;
   readonly version?: string;
   /**
+   * Startup-health scheduling budget. Factories translate this duration into
+   * their probe cadence without changing the post-healthy liveness threshold.
+   * A zero value permits one immediate startup probe. A failing probe may
+   * finish after the budget because its own execution timeout is independent.
+   */
+  readonly startupHealthTimeoutMs?: number;
+  /**
    * When true (default), the bundled initial schema GRANTs that expose new tables, views,
    * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
    * `service_role`) are kept in place. When false, those default privileges are revoked so the
@@ -179,6 +186,7 @@ export interface ResolvedPostgresConfig {
   readonly port: number;
   readonly dataDir: string;
   readonly version: string;
+  readonly startupHealthTimeoutMs?: number;
   readonly autoExposeNewTables: boolean;
 }
 

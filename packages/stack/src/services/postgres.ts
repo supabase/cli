@@ -5,11 +5,12 @@ import {
   dockerServiceOrphanCleanup,
   removePathOnOrphanCleanup,
 } from "./docker-cleanup.ts";
-import { stackHealthBudgets } from "./health-budgets.ts";
+import { stackHealthBudgets, withStartupHealthTimeout } from "./health-budgets.ts";
 
 interface PostgresServiceOptions {
   readonly dataDir: string;
   readonly port: number;
+  readonly startupHealthTimeoutMs?: number;
   readonly cleanupDataDirOnExit?: boolean;
 }
 
@@ -80,7 +81,11 @@ const dockerPostgresEntrypoint = (port: number) =>
 ${DOCKER_POSTGRES_SCHEMA_SQL}
 EOF`;
 
-const postgresHealthCheck = (binPath: string, port: number) => ({
+const postgresHealthCheck = (
+  binPath: string,
+  port: number,
+  startupHealthTimeoutMs: number | undefined,
+) => ({
   probe: {
     _tag: "Exec" as const,
     command: `${binPath}/bin/pg_isready`,
@@ -90,7 +95,7 @@ const postgresHealthCheck = (binPath: string, port: number) => ({
       LD_LIBRARY_PATH: `${binPath}/lib`,
     },
   },
-  ...stackHealthBudgets.postgresNative,
+  ...withStartupHealthTimeout(stackHealthBudgets.postgresNative, startupHealthTimeoutMs),
 });
 
 /**
@@ -101,13 +106,17 @@ const postgresHealthCheck = (binPath: string, port: number) => ({
  * queries with "unexpected EOF". We use `docker exec` to run pg_isready
  * inside the container, which verifies postgres is accepting commands.
  */
-const postgresDockerHealthCheck = (containerName: string, port: number) => ({
+const postgresDockerHealthCheck = (
+  containerName: string,
+  port: number,
+  startupHealthTimeoutMs: number | undefined,
+) => ({
   probe: {
     _tag: "Exec" as const,
     command: "docker",
     args: ["exec", containerName, "pg_isready", "-p", String(port), "-U", "postgres"],
   },
-  ...stackHealthBudgets.postgresDocker,
+  ...withStartupHealthTimeout(stackHealthBudgets.postgresDocker, startupHealthTimeoutMs),
 });
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
@@ -146,7 +155,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
         `hba_file=${customHbaPath}`,
       ],
       env: postgresEnv(opts),
-      healthCheck: postgresHealthCheck(opts.binPath, opts.port),
+      healthCheck: postgresHealthCheck(opts.binPath, opts.port, opts.startupHealthTimeoutMs),
       shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
       supervision: {
         orphanCleanup: [
@@ -163,7 +172,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
     command: "bash",
     args: [initScript, "-p", String(opts.port), ...NATIVE_POSTGRES_RUNTIME_ARGS],
     env: postgresEnv(opts),
-    healthCheck: postgresHealthCheck(opts.binPath, opts.port),
+    healthCheck: postgresHealthCheck(opts.binPath, opts.port, opts.startupHealthTimeoutMs),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
     supervision: { orphanCleanup: orphanCleanup(opts) },
     restart: "unless-stopped",
@@ -193,7 +202,7 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
     name: "postgres",
     command: "docker",
     args: dockerArgs,
-    healthCheck: postgresDockerHealthCheck(containerName, opts.port),
+    healthCheck: postgresDockerHealthCheck(containerName, opts.port, opts.startupHealthTimeoutMs),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
     cleanup: dockerServiceCleanup(containerName),
     supervision: {

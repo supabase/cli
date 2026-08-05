@@ -1,7 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { stackHealthBudgets } from "./health-budgets.ts";
+import { stackHealthBudgets, withStartupHealthTimeout } from "./health-budgets.ts";
 
 describe("stack health budgets", () => {
+  it("translates wall-clock startup budgets without changing liveness", () => {
+    expect(withStartupHealthTimeout(stackHealthBudgets.postgresNative, 120_000)).toEqual({
+      ...stackHealthBudgets.postgresNative,
+      startupFailureThreshold: 240,
+    });
+    expect(withStartupHealthTimeout(stackHealthBudgets.postgresDocker, 120_000)).toEqual({
+      ...stackHealthBudgets.postgresDocker,
+      startupFailureThreshold: 238,
+    });
+    expect(withStartupHealthTimeout(stackHealthBudgets.postgresNative, 0)).toEqual({
+      ...stackHealthBudgets.postgresNative,
+      initialDelaySeconds: 0,
+      startupFailureThreshold: 1,
+    });
+    expect(withStartupHealthTimeout(stackHealthBudgets.postgresNative, 250)).toEqual({
+      ...stackHealthBudgets.postgresNative,
+      initialDelaySeconds: 0,
+      startupFailureThreshold: 1,
+    });
+    expect(withStartupHealthTimeout(stackHealthBudgets.postgresDocker, 0)).toEqual({
+      ...stackHealthBudgets.postgresDocker,
+      initialDelaySeconds: 0,
+      startupFailureThreshold: 1,
+    });
+    expect(withStartupHealthTimeout(stackHealthBudgets.postgresDocker, 500)).toEqual({
+      ...stackHealthBudgets.postgresDocker,
+      initialDelaySeconds: 0.5,
+      startupFailureThreshold: 1,
+    });
+    expect(withStartupHealthTimeout(stackHealthBudgets.postgresNative, undefined)).toBe(
+      stackHealthBudgets.postgresNative,
+    );
+  });
+
   it("records startup and liveness policy for every health-checked service", () => {
     const summarized = Object.fromEntries(
       Object.entries(stackHealthBudgets).map(([name, budget]) => [

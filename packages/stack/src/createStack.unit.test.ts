@@ -269,3 +269,10 @@ describe("resolveConfig readiness policy", () => {
     expect(config.readiness).toEqual({ mode: "infinite" });
   });
 });
+
+describe("resolveConfig postgres startup health", () => {
+  it("preserves a caller-provided startup timeout for the service factory", async () => {
+    const config = await resolveConfig({ postgres: { startupHealthTimeoutMs: 75_000 } });
+    expect(config.postgres.startupHealthTimeoutMs).toBe(75_000);
+  });
+});

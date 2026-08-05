@@ -246,6 +246,7 @@ export class StackBuilder extends Context.Service<
                   binPath: postgresResolution.path,
                   dataDir: config.postgres.dataDir,
                   port: config.dbPort,
+                  startupHealthTimeoutMs: config.postgres.startupHealthTimeoutMs,
                   dockerAccessible: needsDockerAccess,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
                 })
@@ -253,6 +254,7 @@ export class StackBuilder extends Context.Service<
                   image: postgresResolution.image,
                   dataDir: config.postgres.dataDir,
                   port: config.dbPort,
+                  startupHealthTimeoutMs: config.postgres.startupHealthTimeoutMs,
                   networkArgs: dockerNetworkArgs(platform.os, [config.dbPort]),
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
