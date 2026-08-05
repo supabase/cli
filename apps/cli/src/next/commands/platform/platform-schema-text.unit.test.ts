@@ -198,6 +198,17 @@ describe("platform schema text rendering", () => {
     expect(rendered).not.toContain("id: string (optional)");
   });
 
+  it("bounds recursive JSON response schemas", () => {
+    const payload = buildPlatformSchemaPayload(
+      findPlatformOperationDescriptor("v1GetHostnameConfig"),
+    );
+    const rendered = renderPlatformSchemaPayload(payload);
+
+    expect(rendered).toContain("GET /v1/projects/{ref}/custom-hostname");
+    expect(rendered).toContain("errors?:");
+    expect(rendered.length).toBeLessThan(10_000);
+  });
+
   it("renders multipart guidance without dumping nested renderer state", () => {
     const payload = buildPlatformSchemaPayload(
       findPlatformOperationDescriptor("v1DeployAFunction"),
@@ -208,7 +219,7 @@ describe("platform schema text rendering", () => {
     expect(rendered).toContain("  --json");
     expect(rendered).toContain("  --upload");
     expect(rendered).toContain("metadata: object");
-    expect(rendered).toContain("file?: binary[]");
+    expect(rendered).toContain("file: binary[]");
     expect(rendered).toContain(
       "note: Use repeated `--upload field=path` flags for binary multipart fields, including array-valued fields.",
     );

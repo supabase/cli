@@ -5,6 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
+import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 import { legacyResolveEdgeRuntimeImage } from "./legacy-edge-runtime-image.ts";
 
 const resolve = (workdir: string, denoVersion: number) =>
@@ -15,12 +16,12 @@ const resolve = (workdir: string, denoVersion: number) =>
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("legacyResolveEdgeRuntimeImage", () => {
-  it.effect("returns the default v1.74.2 image when nothing is pinned", () => {
+  it.effect("returns the edge-runtime image from the Dockerfile when nothing is pinned", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-edge-img-"));
     return resolve(dir, 2).pipe(
       Effect.tap((image) =>
         Effect.sync(() => {
-          expect(image).toBe("supabase/edge-runtime:v1.74.2");
+          expect(image).toBe(dockerfileServiceImage("edgeruntime"));
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
