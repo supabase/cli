@@ -1,13 +1,163 @@
 import * as Schema from "effect/Schema";
 
 // non-recursive definitions
+export const SupavisorConfigResponse = Schema.Struct({
+  identifier: Schema.String,
+  database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
+  is_using_scram_auth: Schema.Boolean,
+  db_user: Schema.String,
+  db_host: Schema.String,
+  db_port: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
+  db_name: Schema.String,
+  connection_string: Schema.String,
+  connectionString: Schema.String.annotate({ description: "Use connection_string instead" }),
+  default_pool_size: Schema.Union([
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  max_client_conn: Schema.Union([
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  pool_mode: Schema.Literals(["transaction", "session"]),
+}).annotate({ identifier: "SupavisorConfigResponse" });
+export const ApiKeyResponse = Schema.Struct({
+  api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  type: Schema.optionalKey(
+    Schema.Union([
+      Schema.Literal("legacy"),
+      Schema.Literal("publishable"),
+      Schema.Literal("secret"),
+      Schema.Null,
+    ]),
+  ),
+  prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  name: Schema.String,
+  description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
+        Schema.isPropertyNames(Schema.String).annotate({
+          expected: "an object with property names matching the schema",
+        }),
+      ),
+      Schema.Null,
+    ]),
+  ),
+  inserted_at: Schema.optionalKey(
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
+      ),
+      Schema.Null,
+    ]),
+  ),
+  updated_at: Schema.optionalKey(
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
+      ),
+      Schema.Null,
+    ]),
+  ),
+}).annotate({ identifier: "ApiKeyResponse" });
+export const V1ServiceHealthResponse = Schema.Struct({
+  name: Schema.Literals([
+    "auth",
+    "db",
+    "db_postgres_user",
+    "pooler",
+    "realtime",
+    "rest",
+    "storage",
+    "pg_bouncer",
+  ]),
+  healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
+  status: Schema.Literals(["COMING_UP", "ACTIVE_HEALTHY", "UNHEALTHY"]),
+  info: Schema.optionalKey(
+    Schema.Union([
+      Schema.Struct({
+        name: Schema.Literal("GoTrue"),
+        version: Schema.String,
+        description: Schema.String,
+      }),
+      Schema.Struct({
+        healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
+        db_connected: Schema.Boolean,
+        replication_connected: Schema.Boolean,
+        connected_cluster: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+      }),
+      Schema.Struct({ db_schema: Schema.String }),
+    ]),
+  ),
+  error: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: "V1ServiceHealthResponse" });
 export const BranchResponse = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   name: Schema.String,
   project_ref: Schema.String,
@@ -16,14 +166,22 @@ export const BranchResponse = Schema.Struct({
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
     Schema.Number.annotate({ format: "int32" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
-    }).check(Schema.isFinite()),
+    }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
   status: Schema.Literals([
@@ -41,14 +199,20 @@ export const BranchResponse = Schema.Struct({
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   review_requested_at: Schema.optionalKey(
     Schema.String.annotate({ format: "date-time" }).check(
@@ -56,7 +220,10 @@ export const BranchResponse = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   with_data: Schema.Boolean,
@@ -67,7 +234,10 @@ export const BranchResponse = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   preview_project_status: Schema.optionalKey(
@@ -89,18 +259,87 @@ export const BranchResponse = Schema.Struct({
       "RESIZING",
     ]),
   ),
-});
+}).annotate({ identifier: "BranchResponse" });
+export const V1StorageBucketResponse = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  owner: Schema.String,
+  created_at: Schema.String,
+  updated_at: Schema.String,
+  public: Schema.Boolean,
+}).annotate({ identifier: "V1StorageBucketResponse" });
+export const FunctionResponse = Schema.Struct({
+  id: Schema.String,
+  slug: Schema.String,
+  name: Schema.String,
+  status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
+  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
+  created_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
+  updated_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
+  verify_jwt: Schema.optionalKey(Schema.Boolean),
+  import_map: Schema.optionalKey(Schema.Boolean),
+  entrypoint_path: Schema.optionalKey(Schema.String),
+  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  ezbr_sha256: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: "FunctionResponse" });
+export const OrganizationResponseV1 = Schema.Struct({
+  id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
+  slug: Schema.String.annotate({ description: "Organization slug" }).check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  name: Schema.String,
+}).annotate({ identifier: "OrganizationResponseV1" });
 export const V1ProjectWithDatabaseResponse = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   organization_id: Schema.String.annotate({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")),
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
   ),
   name: Schema.String.annotate({ description: "Name of your project" }),
   region: Schema.String.annotate({ description: "Region of your project" }),
@@ -128,169 +367,12 @@ export const V1ProjectWithDatabaseResponse = Schema.Struct({
     postgres_engine: Schema.String.annotate({ description: "Database engine" }),
     release_channel: Schema.String.annotate({ description: "Release channel" }),
   }),
-});
-export const OrganizationResponseV1 = Schema.Struct({
-  id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
-  slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")),
-  ),
-  name: Schema.String,
-});
-export const ApiKeyResponse = Schema.Struct({
-  api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literals(["legacy", "publishable", "secret"]),
-      Schema.Union([Schema.Null]),
-    ]),
-  ),
-  prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  name: Schema.String,
-  description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(
-    Schema.Union([
-      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
-      Schema.Null,
-    ]),
-  ),
-  inserted_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ),
-      ),
-      Schema.Null,
-    ]),
-  ),
-  updated_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ),
-      ),
-      Schema.Null,
-    ]),
-  ),
-});
+}).annotate({ identifier: "V1ProjectWithDatabaseResponse" });
 export const SecretResponse = Schema.Struct({
   name: Schema.String,
   value: Schema.String,
   updated_at: Schema.optionalKey(Schema.String),
-});
-export const V1ServiceHealthResponse = Schema.Struct({
-  name: Schema.Literals([
-    "auth",
-    "db",
-    "db_postgres_user",
-    "pooler",
-    "realtime",
-    "rest",
-    "storage",
-    "pg_bouncer",
-  ]),
-  healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
-  status: Schema.Literals(["COMING_UP", "ACTIVE_HEALTHY", "UNHEALTHY"]),
-  info: Schema.optionalKey(
-    Schema.Union([
-      Schema.Struct({
-        name: Schema.Literal("GoTrue"),
-        version: Schema.String,
-        description: Schema.String,
-      }),
-      Schema.Struct({
-        healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
-        db_connected: Schema.Boolean,
-        replication_connected: Schema.Boolean,
-        connected_cluster: Schema.Number.check(Schema.isInt())
-          .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-          .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-      }),
-      Schema.Struct({ db_schema: Schema.String }),
-    ]),
-  ),
-  error: Schema.optionalKey(Schema.String),
-});
-export const ThirdPartyAuth = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-      ),
-    ),
-  ),
-  type: Schema.String,
-  oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  resolved_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  inserted_at: Schema.String,
-  updated_at: Schema.String,
-  resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-});
-export const FunctionResponse = Schema.Struct({
-  id: Schema.String,
-  slug: Schema.String,
-  name: Schema.String,
-  status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-  created_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-  updated_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-  verify_jwt: Schema.optionalKey(Schema.Boolean),
-  import_map: Schema.optionalKey(Schema.Boolean),
-  entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  ezbr_sha256: Schema.optionalKey(Schema.String),
-});
-export const V1StorageBucketResponse = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  owner: Schema.String,
-  created_at: Schema.String,
-  updated_at: Schema.String,
-  public: Schema.Boolean,
-});
-export const SupavisorConfigResponse = Schema.Struct({
-  identifier: Schema.String,
-  database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
-  is_using_scram_auth: Schema.Boolean,
-  db_user: Schema.String,
-  db_host: Schema.String,
-  db_port: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-  db_name: Schema.String,
-  connection_string: Schema.String,
-  connectionString: Schema.String.annotate({ description: "Use connection_string instead" }),
-  default_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-    Schema.Null,
-  ]),
-  max_client_conn: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-    Schema.Null,
-  ]),
-  pool_mode: Schema.Literals(["transaction", "session"]),
-});
+}).annotate({ identifier: "SecretResponse" });
 export const V1OrganizationMemberResponse = Schema.Struct({
   user_id: Schema.String,
   user_name: Schema.String,
@@ -298,7 +380,31 @@ export const V1OrganizationMemberResponse = Schema.Struct({
   role_name: Schema.String,
   mfa_enabled: Schema.Boolean,
   avatar_url: Schema.Union([Schema.String, Schema.Null]),
-});
+}).annotate({ identifier: "V1OrganizationMemberResponse" });
+export const ThirdPartyAuth = Schema.Struct({
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  type: Schema.String,
+  oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  custom_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
+  resolved_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
+  inserted_at: Schema.String,
+  updated_at: Schema.String,
+  resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+}).annotate({ identifier: "ThirdPartyAuth" });
 // recursive definitions
 export type UpdateCustomHostnameResponseJsonValue =
   | string
@@ -309,7 +415,11 @@ export type UpdateCustomHostnameResponseJsonValue =
   | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
 export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
   Schema.Union([
-    Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite()), Schema.Boolean]),
+    Schema.Union([
+      Schema.String,
+      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      Schema.Boolean,
+    ]),
     Schema.Null,
   ]),
   Schema.Array(
@@ -325,7 +435,10 @@ export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
         UpdateCustomHostnameResponseJsonValue,
     ),
   ),
-]).annotate({ description: "Any JSON-serializable value" });
+]).annotate({
+  description: "Any JSON-serializable value",
+  identifier: "UpdateCustomHostnameResponseJsonValue",
+});
 export type ListProjectAddonsResponseJsonValue =
   | string
   | number
@@ -335,7 +448,11 @@ export type ListProjectAddonsResponseJsonValue =
   | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
 export const ListProjectAddonsResponseJsonValue = Schema.Union([
   Schema.Union([
-    Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite()), Schema.Boolean]),
+    Schema.Union([
+      Schema.String,
+      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      Schema.Boolean,
+    ]),
     Schema.Null,
   ]),
   Schema.Array(
@@ -349,7 +466,10 @@ export const ListProjectAddonsResponseJsonValue = Schema.Union([
       (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
     ),
   ),
-]).annotate({ description: "Any JSON-serializable value" });
+]).annotate({
+  description: "Any JSON-serializable value",
+  identifier: "ListProjectAddonsResponseJsonValue",
+});
 // binary input helpers
 export const BinaryInput = Schema.Union([
   Schema.Uint8Array,
@@ -358,19 +478,30 @@ export const BinaryInput = Schema.Union([
 ]);
 // operation schemas
 export const V1AcceptInviteExternalJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   email: Schema.String.annotate({ format: "email" })
-    .check(Schema.isMinLength(1))
+    .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
     .check(
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      }),
     ),
-  token: Schema.String.check(Schema.isMinLength(1)),
+  token: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
 });
 export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
   user_id: Schema.optionalKey(
@@ -379,13 +510,20 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+      role: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      expires_at: Schema.optionalKey(
+        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
           allowed_cidrs: Schema.optionalKey(
@@ -396,7 +534,10 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                  }),
                 ),
               }),
             ),
@@ -409,7 +550,10 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                  }),
                 ),
               }),
             ),
@@ -421,9 +565,15 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
   ),
 });
 export const V1ActivateCustomHostnameInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ActivateCustomHostnameOutput = Schema.Struct({
   status: Schema.optionalKey(
@@ -462,27 +612,49 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
   }),
 });
 export const V1ActivateVanitySubdomainConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  vanity_subdomain: Schema.String.check(Schema.isMaxLength(63)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  vanity_subdomain: Schema.String.check(
+    Schema.isMaxLength(63).annotate({ expected: "a value with a length of at most 63" }),
+  ),
 });
 export const V1ActivateVanitySubdomainConfigOutput = Schema.Struct({
   custom_domain: Schema.String,
 });
 export const V1ApplyAMigrationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   "Idempotency-Key": Schema.optionalKey(Schema.String),
-  query: Schema.String.check(Schema.isMinLength(1)),
+  query: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
   name: Schema.optionalKey(Schema.String),
   rollback: Schema.optionalKey(Schema.String),
 });
 export const V1ApplyProjectAddonInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   addon_variant: Schema.Union([
     Schema.Literals([
       "ci_micro",
@@ -520,24 +692,38 @@ export const V1ApplyProjectAddonInput = Schema.Struct({
   ]),
 });
 export const V1AuthorizeJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  role: Schema.String.check(Schema.isMinLength(1)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  role: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
   rhost: Schema.Union([
     Schema.String.annotate({ format: "ipv4" }).check(
       Schema.isPattern(
         new RegExp(
           "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+      }),
     ),
     Schema.String.annotate({ format: "ipv6" }).check(
       Schema.isPattern(
         new RegExp(
           "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+      }),
     ),
   ]),
 });
@@ -547,11 +733,18 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   user_role: Schema.Struct({
-    role: Schema.String.check(Schema.isMinLength(1)),
-    expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+    role: Schema.String.check(
+      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+    ),
+    expires_at: Schema.optionalKey(
+      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    ),
     allowed_networks: Schema.optionalKey(
       Schema.Struct({
         allowed_cidrs: Schema.optionalKey(
@@ -562,7 +755,10 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
                   new RegExp(
                     "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                   ),
-                ),
+                ).annotate({
+                  expected:
+                    "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                }),
               ),
             }),
           ),
@@ -575,7 +771,10 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
                   new RegExp(
                     "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                   ),
-                ),
+                ).annotate({
+                  expected:
+                    "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                }),
               ),
             }),
           ),
@@ -591,7 +790,10 @@ export const V1AuthorizeUserInput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
   redirect_uri: Schema.String,
@@ -601,50 +803,100 @@ export const V1AuthorizeUserInput = Schema.Struct({
   code_challenge: Schema.optionalKey(Schema.String),
   code_challenge_method: Schema.optionalKey(Schema.Literals(["plain", "sha256", "S256"])),
   organization_slug: Schema.optionalKey(
-    Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+        expected: "a string matching the RegExp ^[\\w-]+$",
+      }),
+    ),
   ),
   target_flow: Schema.optionalKey(Schema.String),
   resource: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
 });
 export const V1BulkCreateSecretsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   body: Schema.Array(
     Schema.Struct({
       name: Schema.String.annotate({
         description: "Secret name must not start with the SUPABASE_ prefix.",
       })
-        .check(Schema.isMaxLength(256))
-        .check(Schema.isPattern(new RegExp("^(?!SUPABASE_).*"))),
-      value: Schema.String.check(Schema.isMaxLength(24576)),
+        .check(
+          Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^(?!SUPABASE_).*")).annotate({
+            expected: "a string matching the RegExp ^(?!SUPABASE_).*",
+          }),
+        ),
+      value: Schema.String.check(
+        Schema.isMaxLength(24576).annotate({ expected: "a value with a length of at most 24576" }),
+      ),
     }),
-  ).check(Schema.isMaxLength(100)),
+  ).check(Schema.isMaxLength(100).annotate({ expected: "a value with a length of at most 100" })),
 });
 export const V1BulkDeleteSecretsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   body: Schema.Array(Schema.String),
 });
 export const V1BulkUpdateFunctionsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   body: Schema.Array(
     Schema.Struct({
       id: Schema.String,
-      slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$"))),
+      slug: Schema.String.check(
+        Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$")).annotate({
+          expected: "a string matching the RegExp ^[A-Za-z][A-Za-z0-9_-]*$",
+        }),
+      ),
       name: Schema.String,
       status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-      version: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
       created_at: Schema.optionalKey(
         Schema.Number.annotate({ format: "int64" })
-          .check(Schema.isInt())
-          .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-          .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
       ),
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       import_map: Schema.optionalKey(Schema.Boolean),
@@ -661,17 +913,41 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
       slug: Schema.String,
       name: Schema.String,
       status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-      version: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
       created_at: Schema.Number.annotate({ format: "int64" })
-        .check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
       updated_at: Schema.Number.annotate({ format: "int64" })
-        .check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       import_map: Schema.optionalKey(Schema.Boolean),
       entrypoint_path: Schema.optionalKey(Schema.String),
@@ -681,33 +957,65 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
   ),
 });
 export const V1CancelAProjectRestorationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1CheckVanitySubdomainAvailabilityInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  vanity_subdomain: Schema.String.check(Schema.isMaxLength(63)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  vanity_subdomain: Schema.String.check(
+    Schema.isMaxLength(63).annotate({ expected: "a value with a length of at most 63" }),
+  ),
 });
 export const V1CheckVanitySubdomainAvailabilityOutput = Schema.Struct({
   available: Schema.Boolean,
 });
 export const V1ClaimProjectForOrganizationInput = Schema.Struct({
-  slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
   token: Schema.String,
 });
 export const V1CountActionRunsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1CreateABranchInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  branch_name: Schema.String.check(Schema.isMinLength(1)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  branch_name: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
   git_branch: Schema.optionalKey(Schema.String),
   is_default: Schema.optionalKey(Schema.Boolean),
   persistent: Schema.optionalKey(Schema.Boolean),
@@ -761,7 +1069,10 @@ export const V1CreateABranchOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   name: Schema.String,
   project_ref: Schema.String,
@@ -770,14 +1081,22 @@ export const V1CreateABranchOutput = Schema.Struct({
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
     Schema.Number.annotate({ format: "int32" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
-    }).check(Schema.isFinite()),
+    }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
   status: Schema.Literals([
@@ -795,14 +1114,20 @@ export const V1CreateABranchOutput = Schema.Struct({
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   review_requested_at: Schema.optionalKey(
     Schema.String.annotate({ format: "date-time" }).check(
@@ -810,7 +1135,10 @@ export const V1CreateABranchOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   with_data: Schema.Boolean,
@@ -821,7 +1149,10 @@ export const V1CreateABranchOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   preview_project_status: Schema.optionalKey(
@@ -845,10 +1176,22 @@ export const V1CreateABranchOutput = Schema.Struct({
   ),
 });
 export const V1CreateAFunctionInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  slug: Schema.optionalKey(Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  slug: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+        expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
+      }),
+    ),
+  ),
   name: Schema.optionalKey(Schema.String),
   verify_jwt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   import_map: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
@@ -862,17 +1205,41 @@ export const V1CreateAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   created_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   updated_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -882,13 +1249,15 @@ export const V1CreateAFunctionOutput = Schema.Struct({
 export const V1CreateAProjectInput = Schema.Struct({
   db_pass: Schema.String.annotate({ description: "Database password" }),
   name: Schema.String.annotate({ description: "Name of your project" }).check(
-    Schema.isMaxLength(256),
+    Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
   ),
   organization_id: Schema.optionalKey(
     Schema.String.annotate({ description: "Deprecated: Use `organization_slug` instead." }),
   ),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")),
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
   ),
   plan: Schema.optionalKey(
     Schema.Literals(["free", "pro"]).annotate({
@@ -1010,14 +1379,20 @@ export const V1CreateAProjectInput = Schema.Struct({
 export const V1CreateAProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   organization_id: Schema.String.annotate({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")),
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
   ),
   name: Schema.String.annotate({ description: "Name of your project" }),
   region: Schema.String.annotate({ description: "Region of your project" }),
@@ -1041,9 +1416,15 @@ export const V1CreateAProjectOutput = Schema.Struct({
   ]),
 });
 export const V1CreateASsoProviderInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   type: Schema.Literal("saml").annotate({ description: "What type of provider will be created" }),
   metadata_xml: Schema.optionalKey(Schema.String),
   metadata_url: Schema.optionalKey(Schema.String),
@@ -1058,7 +1439,7 @@ export const V1CreateASsoProviderInput = Schema.Struct({
           default: Schema.optionalKey(
             Schema.Union([
               Schema.Struct({}),
-              Schema.Number.check(Schema.isFinite()),
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
               Schema.String,
               Schema.Boolean,
             ]),
@@ -1095,7 +1476,9 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
                 default: Schema.optionalKey(
                   Schema.Union([
                     Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
+                    Schema.Number.check(
+                      Schema.isFinite().annotate({ expected: "a finite number" }),
+                    ),
                     Schema.String,
                     Schema.Boolean,
                   ]),
@@ -1129,19 +1512,29 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
   updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1CreateAnOrganizationInput = Schema.Struct({
-  name: Schema.String.check(Schema.isMaxLength(256)),
+  name: Schema.String.check(
+    Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+  ),
 });
 export const V1CreateAnOrganizationOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
   slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")),
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
   ),
   name: Schema.String,
 });
 export const V1CreateLegacySigningKeyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1CreateLegacySigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
@@ -1149,53 +1542,94 @@ export const V1CreateLegacySigningKeyOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
   created_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
 });
 export const V1CreateLoginRoleInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   read_only: Schema.Boolean,
 });
 export const V1CreateLoginRoleOutput = Schema.Struct({
-  role: Schema.String.check(Schema.isMinLength(1)),
-  password: Schema.String.check(Schema.isMinLength(1)),
+  role: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
+  password: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
   ttl_seconds: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(1))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(1).annotate({ expected: "a value greater than or equal to 1" }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
 });
 export const V1CreateProjectApiKeyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   type: Schema.Literals(["publishable", "secret"]),
-  name: Schema.String.check(Schema.isMinLength(4))
-    .check(Schema.isMaxLength(64))
-    .check(Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$"))),
+  name: Schema.String.check(
+    Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+  )
+    .check(Schema.isMaxLength(64).annotate({ expected: "a value with a length of at most 64" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z_][a-z0-9_]+$",
+      }),
+    ),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
+        Schema.isPropertyNames(Schema.String).annotate({
+          expected: "an object with property names matching the schema",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
@@ -1205,8 +1639,10 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literals(["legacy", "publishable", "secret"]),
-      Schema.Union([Schema.Null]),
+      Schema.Literal("legacy"),
+      Schema.Literal("publishable"),
+      Schema.Literal("secret"),
+      Schema.Null,
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -1215,7 +1651,11 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
+        Schema.isPropertyNames(Schema.String).annotate({
+          expected: "an object with property names matching the schema",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
@@ -1226,7 +1666,10 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
@@ -1238,16 +1681,25 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
   ),
 });
 export const V1CreateProjectClaimTokenInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1CreateProjectClaimTokenOutput = Schema.Struct({
   token: Schema.String,
@@ -1259,13 +1711,22 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1CreateProjectSigningKeyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.optionalKey(Schema.Literals(["in_use", "standby"])),
   private_jwk: Schema.optionalKey(
@@ -1278,14 +1739,21 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
-              ),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              }),
             ),
           ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
-              .check(Schema.isMinLength(2))
-              .check(Schema.isMaxLength(2)),
+              .check(
+                Schema.isMinLength(2).annotate({ expected: "a value with a length of at least 2" }),
+              )
+              .check(
+                Schema.isMaxLength(2).annotate({ expected: "a value with a length of at most 2" }),
+              ),
           ),
           ext: Schema.optionalKey(Schema.Literal(true)),
           kty: Schema.Literal("RSA"),
@@ -1306,14 +1774,21 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
-              ),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              }),
             ),
           ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
-              .check(Schema.isMinLength(2))
-              .check(Schema.isMaxLength(2)),
+              .check(
+                Schema.isMinLength(2).annotate({ expected: "a value with a length of at least 2" }),
+              )
+              .check(
+                Schema.isMaxLength(2).annotate({ expected: "a value with a length of at most 2" }),
+              ),
           ),
           ext: Schema.optionalKey(Schema.Literal(true)),
           kty: Schema.Literal("EC"),
@@ -1330,14 +1805,21 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
-              ),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              }),
             ),
           ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
-              .check(Schema.isMinLength(2))
-              .check(Schema.isMaxLength(2)),
+              .check(
+                Schema.isMinLength(2).annotate({ expected: "a value with a length of at least 2" }),
+              )
+              .check(
+                Schema.isMaxLength(2).annotate({ expected: "a value with a length of at most 2" }),
+              ),
           ),
           ext: Schema.optionalKey(Schema.Literal(true)),
           kty: Schema.Literal("OKP"),
@@ -1353,19 +1835,28 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
-              ),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              }),
             ),
           ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
-              .check(Schema.isMinLength(2))
-              .check(Schema.isMaxLength(2)),
+              .check(
+                Schema.isMinLength(2).annotate({ expected: "a value with a length of at least 2" }),
+              )
+              .check(
+                Schema.isMaxLength(2).annotate({ expected: "a value with a length of at most 2" }),
+              ),
           ),
           ext: Schema.optionalKey(Schema.Literal(true)),
           kty: Schema.Literal("oct"),
           alg: Schema.optionalKey(Schema.Literal("HS256")),
-          k: Schema.String.check(Schema.isMinLength(16)),
+          k: Schema.String.check(
+            Schema.isMinLength(16).annotate({ expected: "a value with a length of at least 16" }),
+          ),
         }),
       ],
       { mode: "oneOf" },
@@ -1378,33 +1869,48 @@ export const V1CreateProjectSigningKeyOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
   created_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
 });
 export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   oidc_issuer_url: Schema.optionalKey(Schema.String),
   jwks_url: Schema.optionalKey(Schema.String),
-  custom_jwks: Schema.optionalKey(Schema.Json),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
 });
 export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
@@ -1412,22 +1918,37 @@ export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  resolved_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
+  custom_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
+  resolved_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 });
 export const V1CreateRestorePointInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  name: Schema.String.check(Schema.isMaxLength(20)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+  ),
 });
 export const V1CreateRestorePointOutput = Schema.Struct({
   name: Schema.String,
@@ -1438,67 +1959,122 @@ export const V1CreateRestorePointOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
     Schema.Null,
   ]),
 });
 export const V1DeactivateVanitySubdomainConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1DeleteHostnameConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   remove_addon: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1DeleteABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
   force: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1DeleteABranchOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteAFunctionInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  function_slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  function_slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
+    }),
+  ),
 });
 export const V1DeleteAProjectInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1DeleteAProjectOutput = Schema.Struct({
-  id: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   ref: Schema.String,
   name: Schema.String,
 });
 export const V1DeleteASsoProviderInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   provider_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1DeleteASsoProviderOutput = Schema.Struct({
@@ -1519,7 +2095,9 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
                 default: Schema.optionalKey(
                   Schema.Union([
                     Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
+                    Schema.Number.check(
+                      Schema.isFinite().annotate({ expected: "a finite number" }),
+                    ),
                     Schema.String,
                     Schema.Boolean,
                   ]),
@@ -1553,39 +2131,69 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
   updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   invite_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1DeleteJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   user_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1DeleteLoginRolesInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1DeleteLoginRolesOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteNetworkBansInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   ipv4_addresses: Schema.Array(Schema.String).annotate({
     description: "List of IP addresses to unban.",
   }),
@@ -1597,15 +2205,24 @@ export const V1DeleteNetworkBansInput = Schema.Struct({
   identifier: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteProjectApiKeyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   was_compromised: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
@@ -1616,8 +2233,10 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literals(["legacy", "publishable", "secret"]),
-      Schema.Union([Schema.Null]),
+      Schema.Literal("legacy"),
+      Schema.Literal("publishable"),
+      Schema.Literal("secret"),
+      Schema.Null,
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -1626,7 +2245,11 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
+        Schema.isPropertyNames(Schema.String).annotate({
+          expected: "an object with property names matching the schema",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
@@ -1637,7 +2260,10 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
@@ -1649,27 +2275,45 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
   ),
 });
 export const V1DeleteProjectClaimTokenInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   tpa_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
@@ -1678,23 +2322,40 @@ export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  resolved_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
+  custom_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
+  resolved_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 });
 export const V1DeployAFunctionInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   slug: Schema.optionalKey(
-    Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$"))),
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$")).annotate({
+        expected: "a string matching the RegExp ^[A-Za-z][A-Za-z0-9_-]*$",
+      }),
+    ),
   ),
   bundleOnly: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   body: Schema.Struct({
@@ -1713,20 +2374,44 @@ export const V1DeployAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   created_at: Schema.optionalKey(
     Schema.Number.annotate({ format: "int64" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   updated_at: Schema.optionalKey(
     Schema.Number.annotate({ format: "int64" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
@@ -1737,15 +2422,22 @@ export const V1DeployAFunctionOutput = Schema.Struct({
 export const V1DiffABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
   included_schemas: Schema.optionalKey(Schema.String),
@@ -1753,19 +2445,37 @@ export const V1DiffABranchInput = Schema.Struct({
 });
 export const V1DiffABranchOutput = Schema.String;
 export const V1DisablePreviewBranchingInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1DisableReadonlyModeTemporarilyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1EnableDatabaseWebhookInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ExchangeOauthTokenInput = Schema.Struct({
   body: Schema.Struct({
@@ -1782,7 +2492,10 @@ export const V1ExchangeOauthTokenInput = Schema.Struct({
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
       ),
     ),
     client_secret: Schema.optionalKey(Schema.String),
@@ -1813,22 +2526,42 @@ export const V1ExchangeOauthTokenOutput = Schema.Struct({
         "The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`.",
     }),
   ),
-  expires_in: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  expires_in: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   token_type: Schema.Literal("Bearer"),
 });
 export const V1GenerateTypescriptTypesInput = Schema.Struct({
   included_schemas: Schema.optionalKey(Schema.String),
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GenerateTypescriptTypesOutput = Schema.Struct({ types: Schema.String });
 export const V1GetABranchInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   name: Schema.String,
 });
 export const V1GetABranchOutput = Schema.Struct({
@@ -1837,7 +2570,10 @@ export const V1GetABranchOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   name: Schema.String,
   project_ref: Schema.String,
@@ -1846,14 +2582,22 @@ export const V1GetABranchOutput = Schema.Struct({
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
     Schema.Number.annotate({ format: "int32" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
-    }).check(Schema.isFinite()),
+    }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
   status: Schema.Literals([
@@ -1871,14 +2615,20 @@ export const V1GetABranchOutput = Schema.Struct({
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   review_requested_at: Schema.optionalKey(
     Schema.String.annotate({ format: "date-time" }).check(
@@ -1886,7 +2636,10 @@ export const V1GetABranchOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   with_data: Schema.Boolean,
@@ -1897,7 +2650,10 @@ export const V1GetABranchOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   preview_project_status: Schema.optionalKey(
@@ -1923,15 +2679,22 @@ export const V1GetABranchOutput = Schema.Struct({
 export const V1GetABranchConfigInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
 });
@@ -1958,35 +2721,73 @@ export const V1GetABranchConfigOutput = Schema.Struct({
     "RESIZING",
   ]),
   db_host: Schema.String,
-  db_port: Schema.Number.check(Schema.isInt())
-    .check(Schema.isLessThanOrEqualTo(9007199254740991))
-    .check(Schema.isGreaterThan(0)),
+  db_port: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    )
+    .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
   db_user: Schema.optionalKey(Schema.String),
   db_pass: Schema.optionalKey(Schema.String),
   jwt_secret: Schema.optionalKey(Schema.String),
 });
 export const V1GetAFunctionInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  function_slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  function_slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
+    }),
+  ),
 });
 export const V1GetAFunctionOutput = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   created_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   updated_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -1994,20 +2795,42 @@ export const V1GetAFunctionOutput = Schema.Struct({
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1GetAFunctionBodyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  function_slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  function_slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
+    }),
+  ),
 });
 export const V1GetAFunctionBodyOutput = Schema.Struct({});
 export const V1GetAMigrationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  version: Schema.String.check(Schema.isPattern(new RegExp("^\\d+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  version: Schema.String.check(
+    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+      expected: "a string matching the RegExp ^\\d+$",
+    }),
+  ),
 });
 export const V1GetAMigrationOutput = Schema.Struct({
-  version: Schema.String.check(Schema.isMinLength(1)),
+  version: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
   name: Schema.optionalKey(Schema.String),
   statements: Schema.optionalKey(Schema.Array(Schema.String)),
   rollback: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -2020,7 +2843,10 @@ export const V1GetASnippetInput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1GetASnippetOutput = Schema.Struct({
@@ -2031,10 +2857,16 @@ export const V1GetASnippetOutput = Schema.Struct({
   visibility: Schema.Literals(["user", "project", "org", "public"]),
   name: Schema.String,
   description: Schema.Union([Schema.String, Schema.Null]),
-  project: Schema.Struct({ id: Schema.Number.check(Schema.isFinite()), name: Schema.String }),
-  owner: Schema.Struct({ id: Schema.Number.check(Schema.isFinite()), username: Schema.String }),
+  project: Schema.Struct({
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    name: Schema.String,
+  }),
+  owner: Schema.Struct({
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    username: Schema.String,
+  }),
   updated_by: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite()),
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     username: Schema.String,
   }),
   favorite: Schema.Boolean,
@@ -2049,15 +2881,24 @@ export const V1GetASnippetOutput = Schema.Struct({
   }),
 });
 export const V1GetASsoProviderInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   provider_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1GetASsoProviderOutput = Schema.Struct({
@@ -2078,7 +2919,9 @@ export const V1GetASsoProviderOutput = Schema.Struct({
                 default: Schema.optionalKey(
                   Schema.Union([
                     Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
+                    Schema.Number.check(
+                      Schema.isFinite().annotate({ expected: "a finite number" }),
+                    ),
                     Schema.String,
                     Schema.Boolean,
                   ]),
@@ -2112,9 +2955,15 @@ export const V1GetASsoProviderOutput = Schema.Struct({
   updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1GetActionRunInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   run_id: Schema.String,
 });
 export const V1GetActionRunOutput = Schema.Struct({
@@ -2136,30 +2985,59 @@ export const V1GetActionRunOutput = Schema.Struct({
       updated_at: Schema.String,
     }),
   ),
-  git_config: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
+  git_config: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
   workdir: Schema.Union([Schema.String, Schema.Null]),
-  check_run_id: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
+  check_run_id: Schema.Union([
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Null,
+  ]),
   created_at: Schema.String,
   updated_at: Schema.String,
 });
 export const V1GetActionRunLogsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   run_id: Schema.String,
 });
 export const V1GetActionRunLogsOutput = Schema.String;
 export const V1GetAllProjectsForOrganizationInput = Schema.Struct({
-  slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
   offset: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   limit: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(100)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(100).annotate({ expected: "a value less than or equal to 100" }),
+      ),
   ),
   search: Schema.optionalKey(Schema.String),
   sort: Schema.optionalKey(
@@ -2237,9 +3115,13 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
           cloud_provider: Schema.String,
           identifier: Schema.String,
           type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
-          disk_volume_size_gb: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+          disk_volume_size_gb: Schema.optionalKey(
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ),
           disk_type: Schema.optionalKey(Schema.Literals(["gp3", "io2"])),
-          disk_throughput_mbps: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+          disk_throughput_mbps: Schema.optionalKey(
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ),
           disk_last_modified_at: Schema.optionalKey(Schema.String),
         }),
       ),
@@ -2248,17 +3130,21 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
   pagination: Schema.Struct({
     count: Schema.Number.annotate({
       description: "Total number of projects. Use this to calculate the total number of pages.",
-    }).check(Schema.isFinite()),
+    }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
     limit: Schema.Number.annotate({ description: "Maximum number of projects per page" }).check(
-      Schema.isFinite(),
+      Schema.isFinite().annotate({ expected: "a finite number" }),
     ),
     offset: Schema.Number.annotate({
       description: "Number of projects skipped in this response",
-    }).check(Schema.isFinite()),
+    }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   }),
 });
 export const V1GetAnOrganizationInput = Schema.Struct({
-  slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
 });
 export const V1GetAnOrganizationOutput = Schema.Struct({
   id: Schema.String,
@@ -2276,26 +3162,49 @@ export const V1GetAnOrganizationOutput = Schema.Struct({
   ),
 });
 export const V1GetAuthServiceConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetAuthServiceConfigOutput = Schema.Struct({
   api_max_request_duration: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   db_max_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   db_max_pool_size_unit: Schema.Union([
-    Schema.Literals(["connections", "percent"]),
-    Schema.Union([Schema.Null]),
+    Schema.Literal("connections"),
+    Schema.Literal("percent"),
+    Schema.Null,
   ]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -2415,20 +3324,44 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   hook_after_user_created_uri: Schema.Union([Schema.String, Schema.Null]),
   hook_after_user_created_secrets: Schema.Union([Schema.String, Schema.Null]),
   jwt_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   mailer_allow_unverified_email_sign_ins: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  mailer_otp_exp: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  mailer_otp_exp: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   mailer_otp_length: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   mailer_secure_email_change_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -2478,9 +3411,17 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   mailer_notifications_identity_linked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_unlinked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_max_enrolled_factors: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   mfa_totp_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -2493,14 +3434,30 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_otp_length: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  mfa_phone_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   nimbus_oauth_client_id: Schema.Union([Schema.String, Schema.Null]),
@@ -2508,60 +3465,124 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literals([
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
+    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
+    Schema.Literal(
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-      "",
-    ]),
-    Schema.Union([Schema.Null]),
+    ),
+    Schema.Literal(""),
+    Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_email_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_sms_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_token_refresh: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_verify: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_otp: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_web3: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   refresh_token_rotation_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -2571,44 +3592,87 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literals(["turnstile", "hcaptcha"]),
-    Schema.Union([Schema.Null]),
+    Schema.Literal("turnstile"),
+    Schema.Literal("hcaptcha"),
+    Schema.Null,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_refresh_token_reuse_interval: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
-  sessions_inactivity_timeout: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
+  sessions_inactivity_timeout: Schema.Union([
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Null,
+  ]),
   sessions_single_per_user: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_tags: Schema.Union([Schema.String, Schema.Null]),
-  sessions_timebox: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
+  sessions_timebox: Schema.Union([
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Null,
+  ]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
   sms_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   sms_messagebird_access_key: Schema.Union([Schema.String, Schema.Null]),
   sms_messagebird_originator: Schema.Union([Schema.String, Schema.Null]),
   sms_otp_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
-  sms_otp_length: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  sms_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   sms_provider: Schema.Union([
-    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
-    Schema.Union([Schema.Null]),
+    Schema.Literal("messagebird"),
+    Schema.Literal("textlocal"),
+    Schema.Literal("twilio"),
+    Schema.Literal("twilio_verify"),
+    Schema.Literal("vonage"),
+    Schema.Null,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
@@ -2618,7 +3682,10 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+      }),
     ),
     Schema.Null,
   ]),
@@ -2640,15 +3707,26 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      }),
     ),
     Schema.Null,
   ]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
   smtp_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   smtp_pass: Schema.Union([Schema.String, Schema.Null]),
@@ -2660,9 +3738,19 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   oauth_server_allow_dynamic_registration: Schema.Boolean,
   oauth_server_authorization_path: Schema.Union([Schema.String, Schema.Null]),
   custom_oauth_enabled: Schema.Boolean,
-  custom_oauth_max_providers: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  custom_oauth_max_providers: Schema.Number.check(
+    Schema.isInt().annotate({ expected: "an integer" }),
+  )
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
 });
 export const V1GetAvailableRegionsInput = Schema.Struct({
   organization_slug: Schema.String,
@@ -2766,14 +3854,27 @@ export const V1GetAvailableRegionsOutput = Schema.Struct({
   }),
 });
 export const V1GetBackupScheduleInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetBackupScheduleOutput = Schema.Struct({
   schedule_for: Schema.String.annotate({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
-  }).check(Schema.isPattern(new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"))),
+  }).check(
+    Schema.isPattern(
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
+    }),
+  ),
   updated_at: Schema.String.annotate({
     description: "Timestamp of when the backup schedule was last updated.",
     format: "date-time",
@@ -2782,46 +3883,81 @@ export const V1GetBackupScheduleOutput = Schema.Struct({
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+    }),
   ),
 });
 export const V1GetDatabaseDiskInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetDatabaseDiskOutput = Schema.Struct({
   attributes: Schema.Union([
     Schema.Struct({
-      iops: Schema.Number.check(Schema.isInt())
-        .check(Schema.isLessThanOrEqualTo(9007199254740991))
-        .check(Schema.isGreaterThan(0)),
-      size_gb: Schema.Number.check(Schema.isInt())
-        .check(Schema.isLessThanOrEqualTo(9007199254740991))
-        .check(Schema.isGreaterThan(0)),
+      iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        )
+        .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+      size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        )
+        .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
       throughput_mibps: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt())
-          .check(Schema.isLessThanOrEqualTo(9007199254740991))
-          .check(Schema.isGreaterThan(0)),
+        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          )
+          .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
       ),
       type: Schema.Literal("gp3"),
     }),
     Schema.Struct({
-      iops: Schema.Number.check(Schema.isInt())
-        .check(Schema.isLessThanOrEqualTo(9007199254740991))
-        .check(Schema.isGreaterThan(0)),
-      size_gb: Schema.Number.check(Schema.isInt())
-        .check(Schema.isLessThanOrEqualTo(9007199254740991))
-        .check(Schema.isGreaterThan(0)),
+      iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        )
+        .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+      size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        )
+        .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
       type: Schema.Literal("io2"),
     }),
   ]),
   last_modified_at: Schema.optionalKey(Schema.String),
 });
 export const V1GetDatabaseMetadataInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetDatabaseMetadataOutput = Schema.Struct({
   databases: Schema.Array(
@@ -2830,38 +3966,58 @@ export const V1GetDatabaseMetadataOutput = Schema.Struct({
         name: Schema.String,
         schemas: Schema.Array(
           Schema.StructWithRest(Schema.Struct({ name: Schema.String }), [
-            Schema.Record(Schema.String, Schema.Json),
+            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
           ]),
         ),
       }),
-      [Schema.Record(Schema.String, Schema.Json)],
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
     ),
   ),
 });
 export const V1GetDatabaseOpenapiInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   schema: Schema.optionalKey(Schema.String),
 });
 export const V1GetDatabaseOpenapiOutput = Schema.Struct({});
 export const V1GetDiskUtilizationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetDiskUtilizationOutput = Schema.Struct({
   timestamp: Schema.String,
   metrics: Schema.Struct({
-    fs_size_bytes: Schema.Number.check(Schema.isFinite()),
-    fs_avail_bytes: Schema.Number.check(Schema.isFinite()),
-    fs_used_bytes: Schema.Number.check(Schema.isFinite()),
+    fs_size_bytes: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    fs_avail_bytes: Schema.Number.check(
+      Schema.isFinite().annotate({ expected: "a finite number" }),
+    ),
+    fs_used_bytes: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
   }),
 });
 export const V1GetHostnameConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetHostnameConfigOutput = Schema.Struct({
   status: Schema.optionalKey(
@@ -2900,9 +4056,15 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
   }),
 });
 export const V1GetJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetJitAccessOutput = Schema.Struct({
   user_id: Schema.optionalKey(
@@ -2911,13 +4073,20 @@ export const V1GetJitAccessOutput = Schema.Struct({
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+      role: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      expires_at: Schema.optionalKey(
+        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
           allowed_cidrs: Schema.optionalKey(
@@ -2928,7 +4097,10 @@ export const V1GetJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                  }),
                 ),
               }),
             ),
@@ -2941,7 +4113,10 @@ export const V1GetJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                  }),
                 ),
               }),
             ),
@@ -2953,9 +4128,15 @@ export const V1GetJitAccessOutput = Schema.Struct({
   ),
 });
 export const V1GetJitAccessConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetJitAccessConfigOutput = Schema.Union(
   [
@@ -2975,9 +4156,15 @@ export const V1GetJitAccessConfigOutput = Schema.Union(
   { mode: "oneOf" },
 );
 export const V1GetLegacySigningKeyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetLegacySigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
@@ -2985,30 +4172,45 @@ export const V1GetLegacySigningKeyOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
   created_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
 });
 export const V1GetNetworkRestrictionsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetNetworkRestrictionsOutput = Schema.Struct({
   entitlement: Schema.Literals(["disallowed", "allowed"]),
@@ -3035,7 +4237,10 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   applied_at: Schema.optionalKey(
@@ -3044,12 +4249,19 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
 });
 export const V1GetOrganizationEntitlementsInput = Schema.Struct({
-  slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
 });
 export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
   entitlements: Schema.Array(
@@ -3128,7 +4340,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
         Schema.Struct({ enabled: Schema.Boolean }),
         Schema.Struct({
           enabled: Schema.Boolean,
-          value: Schema.Number.check(Schema.isFinite()),
+          value: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           unlimited: Schema.Boolean,
           unit: Schema.String,
         }),
@@ -3138,7 +4350,11 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
   ),
 });
 export const V1GetOrganizationProjectClaimInput = Schema.Struct({
-  slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
   token: Schema.String,
 });
 export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
@@ -3149,12 +4365,19 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
     errors: Schema.Array(Schema.Struct({ key: Schema.String, message: Schema.String })),
     info: Schema.Array(Schema.Struct({ key: Schema.String, message: Schema.String })),
     members_exceeding_free_project_limit: Schema.Array(
-      Schema.Struct({ name: Schema.String, limit: Schema.Number.check(Schema.isFinite()) }),
+      Schema.Struct({
+        name: Schema.String,
+        limit: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      }),
     ),
     source_subscription_plan: Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
     target_subscription_plan: Schema.Union([
-      Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
-      Schema.Union([Schema.Null]),
+      Schema.Literal("free"),
+      Schema.Literal("pro"),
+      Schema.Literal("team"),
+      Schema.Literal("enterprise"),
+      Schema.Literal("platform"),
+      Schema.Null,
     ]),
   }),
   expires_at: Schema.String,
@@ -3164,13 +4387,22 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1GetPerformanceAdvisorsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
@@ -3222,7 +4454,11 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
             Schema.Literals(["table", "view", "auth", "function", "extension", "compliance"]),
           ),
           fkey_name: Schema.optionalKey(Schema.String),
-          fkey_columns: Schema.optionalKey(Schema.Array(Schema.Number.check(Schema.isFinite()))),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
         }),
       ),
       cache_key: Schema.String,
@@ -3230,9 +4466,15 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
   ),
 });
 export const V1GetPgsodiumConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetPgsodiumConfigOutput = Schema.Struct({
   root_key: Schema.String.annotate({
@@ -3240,15 +4482,27 @@ export const V1GetPgsodiumConfigOutput = Schema.Struct({
   }),
 });
 export const V1GetPoolerConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse);
 export const V1GetPostgresConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetPostgresConfigOutput = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
@@ -3256,7 +4510,9 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   log_checkpoints: Schema.optionalKey(Schema.Boolean),
@@ -3268,92 +4524,186 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   log_temp_files: Schema.optionalKey(Schema.String),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_locks_per_transaction: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(10))
-      .check(Schema.isLessThanOrEqualTo(2147483640)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(10).annotate({
+          expected: "a value greater than or equal to 10",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483640).annotate({
+          expected: "a value less than or equal to 2147483640",
+        }),
+      ),
   ),
   max_logical_replication_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_parallel_maintenance_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_parallel_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_parallel_workers_per_gather: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_replication_slots: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_sync_workers_per_subscription: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   max_worker_processes: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   session_replication_role: Schema.optionalKey(Schema.Literals(["origin", "replica", "local"])),
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
 });
 export const V1GetPostgresUpgradeEligibilityInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
   eligible: Schema.Boolean,
@@ -3374,7 +4724,9 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
       app_version: Schema.String,
     }),
   ),
-  duration_estimate_hours: Schema.Number.check(Schema.isFinite()),
+  duration_estimate_hours: Schema.Number.check(
+    Schema.isFinite().annotate({ expected: "a finite number" }),
+  ),
   legacy_auth_custom_roles: Schema.Array(Schema.String),
   objects_to_be_dropped: Schema.Array(Schema.String).annotate({
     description: "Use validation_errors instead.",
@@ -3441,9 +4793,15 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
   ),
 });
 export const V1GetPostgresUpgradeStatusInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   tracking_id: Schema.optionalKey(Schema.String),
 });
 export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
@@ -3451,7 +4809,9 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
     Schema.Struct({
       initiated_at: Schema.String,
       latest_status_at: Schema.String,
-      target_version: Schema.Number.check(Schema.isFinite()),
+      target_version: Schema.Number.check(
+        Schema.isFinite().annotate({ expected: "a finite number" }),
+      ),
       error: Schema.optionalKey(
         Schema.Literals([
           "1_upgraded_instance_launch_failed",
@@ -3480,38 +4840,68 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
           "10_completed_post_physical_backup",
         ]),
       ),
-      status: Schema.Number.check(Schema.isFinite()),
+      status: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     }),
     Schema.Null,
   ]),
 });
 export const V1GetPostgrestServiceConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
-  max_rows: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  max_rows: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   db_extra_search_path: Schema.String,
   db_pool: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   db_pool_acquisition_timeout: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured to 10.",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   jwt_secret: Schema.optionalKey(Schema.String),
@@ -3523,21 +4913,33 @@ export const V1GetProfileOutput = Schema.Struct({
   username: Schema.String,
 });
 export const V1GetProjectInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   organization_id: Schema.String.annotate({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")),
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
   ),
   name: Schema.String.annotate({ description: "Name of your project" }),
   region: Schema.String.annotate({ description: "Region of your project" }),
@@ -3567,15 +4969,24 @@ export const V1GetProjectOutput = Schema.Struct({
   }),
 });
 export const V1GetProjectApiKeyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
@@ -3584,8 +4995,10 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literals(["legacy", "publishable", "secret"]),
-      Schema.Union([Schema.Null]),
+      Schema.Literal("legacy"),
+      Schema.Literal("publishable"),
+      Schema.Literal("secret"),
+      Schema.Null,
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -3594,7 +5007,11 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
+        Schema.isPropertyNames(Schema.String).annotate({
+          expected: "an object with property names matching the schema",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
@@ -3605,7 +5022,10 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
@@ -3617,23 +5037,38 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
   ),
 });
 export const V1GetProjectApiKeysInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse);
 export const V1GetProjectClaimTokenInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectClaimTokenOutput = Schema.Struct({
   token_alias: Schema.String,
@@ -3644,51 +5079,78 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
   growth_percent: Schema.Union([
     Schema.Number.annotate({ description: "Growth percentage for disk autoscaling" })
-      .check(Schema.isInt())
-      .check(Schema.isLessThanOrEqualTo(9007199254740991))
-      .check(Schema.isGreaterThan(0)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      )
+      .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
     Schema.Null,
   ]),
   min_increment_gb: Schema.Union([
     Schema.Number.annotate({ description: "Minimum increment size for disk autoscaling in GB" })
-      .check(Schema.isInt())
-      .check(Schema.isLessThanOrEqualTo(9007199254740991))
-      .check(Schema.isGreaterThan(0)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      )
+      .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
     Schema.Null,
   ]),
   max_size_gb: Schema.Union([
     Schema.Number.annotate({ description: "Maximum limit the disk size will grow to in GB" })
-      .check(Schema.isInt())
-      .check(Schema.isLessThanOrEqualTo(9007199254740991))
-      .check(Schema.isGreaterThan(0)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      )
+      .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
     Schema.Null,
   ]),
 });
 export const V1GetProjectFunctionCombinedStatsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   interval: Schema.Literals(["15min", "1hr", "3hr", "1day"]),
   function_id: Schema.String,
 });
 export const V1GetProjectFunctionCombinedStatsOutput = Schema.Struct({
-  result: Schema.optionalKey(Schema.Array(Schema.Json)),
+  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
   error: Schema.optionalKey(
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite()),
+        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -3705,15 +5167,27 @@ export const V1GetProjectFunctionCombinedStatsOutput = Schema.Struct({
   ),
 });
 export const V1GetProjectLegacyApiKeysInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
 export const V1GetProjectLogsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   sql: Schema.optionalKey(Schema.String),
   iso_timestamp_start: Schema.optionalKey(
     Schema.String.annotate({ format: "date-time" }).check(
@@ -3721,7 +5195,10 @@ export const V1GetProjectLogsInput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   iso_timestamp_end: Schema.optionalKey(
@@ -3730,17 +5207,20 @@ export const V1GetProjectLogsInput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
 });
 export const V1GetProjectLogsOutput = Schema.Struct({
-  result: Schema.optionalKey(Schema.Array(Schema.Json)),
+  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
   error: Schema.optionalKey(
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite()),
+        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -3757,9 +5237,15 @@ export const V1GetProjectLogsOutput = Schema.Struct({
   ),
 });
 export const V1GetProjectLogsAllInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   sql: Schema.optionalKey(Schema.String),
   iso_timestamp_start: Schema.optionalKey(
     Schema.String.annotate({ format: "date-time" }).check(
@@ -3767,7 +5253,10 @@ export const V1GetProjectLogsAllInput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   iso_timestamp_end: Schema.optionalKey(
@@ -3776,17 +5265,20 @@ export const V1GetProjectLogsAllInput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
 });
 export const V1GetProjectLogsAllOutput = Schema.Struct({
-  result: Schema.optionalKey(Schema.Array(Schema.Json)),
+  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
   error: Schema.optionalKey(
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite()),
+        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -3803,43 +5295,97 @@ export const V1GetProjectLogsAllOutput = Schema.Struct({
   ),
 });
 export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
   default_pool_size: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   ignore_startup_parameters: Schema.optionalKey(Schema.String),
   max_client_conn: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   pool_mode: Schema.optionalKey(Schema.Literals(["transaction", "session", "statement"])),
   connection_string: Schema.optionalKey(Schema.String),
   server_idle_timeout: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   server_lifetime: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   query_wait_timeout: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   reserve_pool_size: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
 });
 export const V1GetProjectSigningKeyInput = Schema.Struct({
@@ -3848,11 +5394,20 @@ export const V1GetProjectSigningKeyInput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectSigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
@@ -3860,30 +5415,45 @@ export const V1GetProjectSigningKeyOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
   created_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
 });
 export const V1GetProjectSigningKeysInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectSigningKeysOutput = Schema.Struct({
   keys: Schema.Array(
@@ -3893,38 +5463,56 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
       ),
       algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
       status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-      public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+      public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
       created_at: Schema.String.annotate({ format: "date-time" }).check(
         Schema.isPattern(
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       updated_at: Schema.String.annotate({ format: "date-time" }).check(
         Schema.isPattern(
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
     }),
   ),
 });
 export const V1GetProjectTpaIntegrationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   tpa_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
 });
 export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
@@ -3933,21 +5521,34 @@ export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  resolved_jwks: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
+  custom_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
+  resolved_jwks: Schema.optionalKey(
+    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  ),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 });
 export const V1GetProjectUsageApiCountInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   interval: Schema.optionalKey(
     Schema.Literals(["15min", "30min", "1hr", "3hr", "1day", "3day", "7day"]),
   ),
@@ -3961,12 +5562,23 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
             new RegExp(
               "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|))$",
             ),
-          ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|))$",
+          }),
         ),
-        total_auth_requests: Schema.Number.check(Schema.isFinite()),
-        total_realtime_requests: Schema.Number.check(Schema.isFinite()),
-        total_rest_requests: Schema.Number.check(Schema.isFinite()),
-        total_storage_requests: Schema.Number.check(Schema.isFinite()),
+        total_auth_requests: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        total_realtime_requests: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        total_rest_requests: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        total_storage_requests: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
       }),
     ),
   ),
@@ -3974,7 +5586,7 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite()),
+        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -3991,19 +5603,29 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
   ),
 });
 export const V1GetProjectUsageRequestCountInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetProjectUsageRequestCountOutput = Schema.Struct({
   result: Schema.optionalKey(
-    Schema.Array(Schema.Struct({ count: Schema.Number.check(Schema.isFinite()) })),
+    Schema.Array(
+      Schema.Struct({
+        count: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      }),
+    ),
   ),
   error: Schema.optionalKey(
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite()),
+        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -4020,9 +5642,15 @@ export const V1GetProjectUsageRequestCountOutput = Schema.Struct({
   ),
 });
 export const V1GetReadonlyModeStatusInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetReadonlyModeStatusOutput = Schema.Struct({
   enabled: Schema.Boolean,
@@ -4030,9 +5658,15 @@ export const V1GetReadonlyModeStatusOutput = Schema.Struct({
   override_active_until: Schema.String,
 });
 export const V1GetRealtimeConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetRealtimeConfigOutput = Schema.Struct({
   private_only: Schema.Union([
@@ -4041,64 +5675,126 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
   ]),
   connection_pool: Schema.Union([
     Schema.Number.annotate({ description: "Sets connection pool size for Realtime Authorization" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(100)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(100).annotate({ expected: "a value less than or equal to 100" }),
+      ),
     Schema.Null,
   ]),
   max_concurrent_users: Schema.Union([
     Schema.Number.annotate({ description: "Sets maximum number of concurrent users rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(50000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(50000).annotate({
+          expected: "a value less than or equal to 50000",
+        }),
+      ),
     Schema.Null,
   ]),
   max_events_per_second: Schema.Union([
     Schema.Number.annotate({
       description: "Sets maximum number of events per second rate per channel limit",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(50000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(50000).annotate({
+          expected: "a value less than or equal to 50000",
+        }),
+      ),
     Schema.Null,
   ]),
   max_bytes_per_second: Schema.Union([
     Schema.Number.annotate({
       description: "Sets maximum number of bytes per second rate per channel limit",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(10000000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(10000000).annotate({
+          expected: "a value less than or equal to 10000000",
+        }),
+      ),
     Schema.Null,
   ]),
   max_channels_per_client: Schema.Union([
     Schema.Number.annotate({ description: "Sets maximum number of channels per client rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(10000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(10000).annotate({
+          expected: "a value less than or equal to 10000",
+        }),
+      ),
     Schema.Null,
   ]),
   max_joins_per_second: Schema.Union([
     Schema.Number.annotate({ description: "Sets maximum number of joins per second rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(5000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(5000).annotate({
+          expected: "a value less than or equal to 5000",
+        }),
+      ),
     Schema.Null,
   ]),
   max_presence_events_per_second: Schema.Union([
     Schema.Number.annotate({
       description: "Sets maximum number of presence events per second rate limit",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(5000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(5000).annotate({
+          expected: "a value less than or equal to 5000",
+        }),
+      ),
     Schema.Null,
   ]),
   max_payload_size_in_kb: Schema.Union([
     Schema.Number.annotate({ description: "Sets maximum number of payload size in KB rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(10000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(10000).annotate({
+          expected: "a value less than or equal to 10000",
+        }),
+      ),
     Schema.Null,
   ]),
   suspend: Schema.Union([
@@ -4111,10 +5807,20 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
   presence_enabled: Schema.Boolean.annotate({ description: "Whether to enable presence" }),
 });
 export const V1GetRestorePointInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  name: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(20))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+    ),
+  ),
 });
 export const V1GetRestorePointOutput = Schema.Struct({
   name: Schema.String,
@@ -4125,15 +5831,24 @@ export const V1GetRestorePointOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
     Schema.Null,
   ]),
 });
 export const V1GetSecurityAdvisorsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   lint_type: Schema.optionalKey(Schema.Literal("sql")),
 });
 export const V1GetSecurityAdvisorsOutput = Schema.Struct({
@@ -4186,7 +5901,11 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
             Schema.Literals(["table", "view", "auth", "function", "extension", "compliance"]),
           ),
           fkey_name: Schema.optionalKey(Schema.String),
-          fkey_columns: Schema.optionalKey(Schema.Array(Schema.Number.check(Schema.isFinite()))),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
         }),
       ),
       cache_key: Schema.String,
@@ -4194,9 +5913,15 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
   ),
 });
 export const V1GetServicesHealthInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   services: Schema.Union([
     Schema.String.annotate({
       description:
@@ -4216,55 +5941,123 @@ export const V1GetServicesHealthInput = Schema.Struct({
     ).annotate({ description: "Array of enums." }),
   ]),
   timeout_ms: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(10000)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(10000).annotate({
+          expected: "a value less than or equal to 10000",
+        }),
+      ),
   ),
 });
 export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse);
 export const V1GetSslEnforcementConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetSslEnforcementConfigOutput = Schema.Struct({
   currentConfig: Schema.Struct({ database: Schema.Boolean }),
   appliedSuccessfully: Schema.Boolean,
 });
 export const V1GetStorageConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetStorageConfigOutput = Schema.Struct({
   fileSizeLimit: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   features: Schema.Struct({
     imageTransformation: Schema.Struct({ enabled: Schema.Boolean }),
     s3Protocol: Schema.Struct({ enabled: Schema.Boolean }),
     purgeCache: Schema.Struct({ enabled: Schema.Boolean }),
     icebergCatalog: Schema.Struct({
       enabled: Schema.Boolean,
-      maxNamespaces: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-      maxTables: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-      maxCatalogs: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      maxNamespaces: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
+      maxTables: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
+      maxCatalogs: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
     }),
     vectorBuckets: Schema.Struct({
       enabled: Schema.Boolean,
-      maxBuckets: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-      maxIndexes: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      maxBuckets: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
+      maxIndexes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
     }),
   }),
   capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
@@ -4273,31 +6066,54 @@ export const V1GetStorageConfigOutput = Schema.Struct({
   databasePoolMode: Schema.optionalKey(Schema.String),
 });
 export const V1GetVanitySubdomainConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1GetVanitySubdomainConfigOutput = Schema.Struct({
   status: Schema.Literals(["not-used", "custom-domain-used", "active"]),
-  custom_domain: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))),
+  custom_domain: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+    ),
+  ),
 });
 export const V1InviteExternalJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   email: Schema.String.annotate({ format: "email" })
-    .check(Schema.isMinLength(1))
+    .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
     .check(
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      }),
     ),
   roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+      role: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      expires_at: Schema.optionalKey(
+        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
           allowed_cidrs: Schema.optionalKey(
@@ -4308,7 +6124,10 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                  }),
                 ),
               }),
             ),
@@ -4321,7 +6140,10 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                  }),
                 ),
               }),
             ),
@@ -4338,19 +6160,29 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
       new RegExp(
         "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+    }),
   ),
   invite_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+      role: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      expires_at: Schema.optionalKey(
+        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
           allowed_cidrs: Schema.optionalKey(
@@ -4361,7 +6193,10 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                  }),
                 ),
               }),
             ),
@@ -4374,7 +6209,10 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                  }),
                 ),
               }),
             ),
@@ -4386,14 +6224,26 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
   ),
 });
 export const V1ListActionRunsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   offset: Schema.optionalKey(
-    Schema.Number.check(Schema.isFinite()).check(Schema.isGreaterThanOrEqualTo(0)),
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
   ),
   limit: Schema.optionalKey(
-    Schema.Number.check(Schema.isFinite()).check(Schema.isGreaterThanOrEqualTo(10)),
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+      Schema.isGreaterThanOrEqualTo(10).annotate({
+        expected: "a value greater than or equal to 10",
+      }),
+    ),
   ),
 });
 export const V1ListActionRunsOutput = Schema.Array(
@@ -4424,17 +6274,28 @@ export const V1ListActionRunsOutput = Schema.Array(
         updated_at: Schema.String,
       }),
     ),
-    git_config: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
+    git_config: Schema.optionalKey(
+      Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+    ),
     workdir: Schema.Union([Schema.String, Schema.Null]),
-    check_run_id: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
+    check_run_id: Schema.Union([
+      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      Schema.Null,
+    ]),
     created_at: Schema.String,
     updated_at: Schema.String,
   }),
 );
 export const V1ListAllBackupsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllBackupsOutput = Schema.Struct({
   region: Schema.String,
@@ -4442,9 +6303,17 @@ export const V1ListAllBackupsOutput = Schema.Struct({
   pitr_enabled: Schema.Boolean,
   backups: Schema.Array(
     Schema.Struct({
-      id: Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
       is_physical_backup: Schema.Boolean,
       status: Schema.Literals([
         "COMPLETED",
@@ -4459,47 +6328,93 @@ export const V1ListAllBackupsOutput = Schema.Struct({
   ),
   physical_backup_data: Schema.Struct({
     earliest_physical_backup_date_unix: Schema.optionalKey(
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
     ),
     latest_physical_backup_date_unix: Schema.optionalKey(
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
     ),
   }),
 });
 export const V1ListAllBranchesInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllBranchesOutput = Schema.Array(BranchResponse);
 export const V1ListAllBucketsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse);
 export const V1ListAllFunctionsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse);
 export const V1ListAllNetworkBansInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllNetworkBansOutput = Schema.Struct({
   banned_ipv4_addresses: Schema.Array(Schema.String),
 });
 export const V1ListAllNetworkBansEnrichedInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllNetworkBansEnrichedOutput = Schema.Struct({
   banned_ipv4_addresses: Schema.Array(
@@ -4515,16 +6430,28 @@ export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1)
 export const V1ListAllProjectsInput = Schema.Struct({});
 export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse);
 export const V1ListAllSecretsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllSecretsOutput = Schema.Array(SecretResponse);
 export const V1ListAllSnippetsInput = Schema.Struct({
   project_ref: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.check(
+      Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    )
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
   ),
   cursor: Schema.optionalKey(Schema.String),
   limit: Schema.optionalKey(Schema.String),
@@ -4541,10 +6468,16 @@ export const V1ListAllSnippetsOutput = Schema.Struct({
       visibility: Schema.Literals(["user", "project", "org", "public"]),
       name: Schema.String,
       description: Schema.Union([Schema.String, Schema.Null]),
-      project: Schema.Struct({ id: Schema.Number.check(Schema.isFinite()), name: Schema.String }),
-      owner: Schema.Struct({ id: Schema.Number.check(Schema.isFinite()), username: Schema.String }),
+      project: Schema.Struct({
+        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        name: Schema.String,
+      }),
+      owner: Schema.Struct({
+        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        username: Schema.String,
+      }),
       updated_by: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite()),
+        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         username: Schema.String,
       }),
       favorite: Schema.Boolean,
@@ -4553,9 +6486,15 @@ export const V1ListAllSnippetsOutput = Schema.Struct({
   cursor: Schema.optionalKey(Schema.String),
 });
 export const V1ListAllSsoProviderInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAllSsoProviderOutput = Schema.Struct({
   items: Schema.Array(
@@ -4577,7 +6516,9 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                     default: Schema.optionalKey(
                       Schema.Union([
                         Schema.Struct({}),
-                        Schema.Number.check(Schema.isFinite()),
+                        Schema.Number.check(
+                          Schema.isFinite().annotate({ expected: "a finite number" }),
+                        ),
                         Schema.String,
                         Schema.Boolean,
                       ]),
@@ -4613,9 +6554,15 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
   ),
 });
 export const V1ListAvailableRestoreVersionsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListAvailableRestoreVersionsOutput = Schema.Struct({
   available_versions: Schema.Array(
@@ -4627,9 +6574,15 @@ export const V1ListAvailableRestoreVersionsOutput = Schema.Struct({
   ),
 });
 export const V1ListJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListJitAccessOutput = Schema.Struct({
   items: Schema.Array(
@@ -4640,15 +6593,22 @@ export const V1ListJitAccessOutput = Schema.Struct({
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             ),
-          ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
         ),
         primary_email: Schema.Union([Schema.String, Schema.Null]),
         invite_id: Schema.Null,
         expires_at: Schema.Null,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(Schema.isMinLength(1)),
-            expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+            role: Schema.String.check(
+              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+            ),
+            expires_at: Schema.optionalKey(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
             allowed_networks: Schema.optionalKey(
               Schema.Struct({
                 allowed_cidrs: Schema.optionalKey(
@@ -4659,7 +6619,10 @@ export const V1ListJitAccessOutput = Schema.Struct({
                           new RegExp(
                             "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                           ),
-                        ),
+                        ).annotate({
+                          expected:
+                            "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                        }),
                       ),
                     }),
                   ),
@@ -4672,7 +6635,10 @@ export const V1ListJitAccessOutput = Schema.Struct({
                           new RegExp(
                             "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                           ),
-                        ),
+                        ).annotate({
+                          expected:
+                            "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                        }),
                       ),
                     }),
                   ),
@@ -4691,13 +6657,20 @@ export const V1ListJitAccessOutput = Schema.Struct({
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             ),
-          ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
         ),
         expires_at: Schema.String,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(Schema.isMinLength(1)),
-            expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+            role: Schema.String.check(
+              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+            ),
+            expires_at: Schema.optionalKey(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
             allowed_networks: Schema.optionalKey(
               Schema.Struct({
                 allowed_cidrs: Schema.optionalKey(
@@ -4708,7 +6681,10 @@ export const V1ListJitAccessOutput = Schema.Struct({
                           new RegExp(
                             "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                           ),
-                        ),
+                        ).annotate({
+                          expected:
+                            "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                        }),
                       ),
                     }),
                   ),
@@ -4721,7 +6697,10 @@ export const V1ListJitAccessOutput = Schema.Struct({
                           new RegExp(
                             "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                           ),
-                        ),
+                        ).annotate({
+                          expected:
+                            "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                        }),
                       ),
                     }),
                   ),
@@ -4736,24 +6715,42 @@ export const V1ListJitAccessOutput = Schema.Struct({
   ),
 });
 export const V1ListMigrationHistoryInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListMigrationHistoryOutput = Schema.Array(
   Schema.Struct({
-    version: Schema.String.check(Schema.isMinLength(1)),
+    version: Schema.String.check(
+      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+    ),
     name: Schema.optionalKey(Schema.String),
   }),
 );
 export const V1ListOrganizationMembersInput = Schema.Struct({
-  slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
 });
 export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse);
 export const V1ListProjectAddonsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListProjectAddonsOutput = Schema.Struct({
   selected_addons: Schema.Array(
@@ -4803,7 +6800,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
           description: Schema.String,
           type: Schema.Literals(["fixed", "usage"]),
           interval: Schema.Literals(["monthly", "hourly"]),
-          amount: Schema.Number.check(Schema.isFinite()),
+          amount: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         }),
         meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
       }),
@@ -4858,7 +6855,9 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
             description: Schema.String,
             type: Schema.Literals(["fixed", "usage"]),
             interval: Schema.Literals(["monthly", "hourly"]),
-            amount: Schema.Number.check(Schema.isFinite()),
+            amount: Schema.Number.check(
+              Schema.isFinite().annotate({ expected: "a finite number" }),
+            ),
           }),
           meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
         }),
@@ -4867,23 +6866,36 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
   ),
 });
 export const V1ListProjectTpaIntegrationsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth);
 export const V1MergeABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
   migration_version: Schema.optionalKey(Schema.String),
@@ -4893,32 +6905,58 @@ export const V1MergeABranchOutput = Schema.Struct({
   message: Schema.Literal("ok"),
 });
 export const V1ModifyDatabaseDiskInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   attributes: Schema.Union(
     [
       Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt())
-          .check(Schema.isLessThanOrEqualTo(9007199254740991))
-          .check(Schema.isGreaterThan(0)),
-        size_gb: Schema.Number.check(Schema.isInt())
-          .check(Schema.isLessThanOrEqualTo(9007199254740991))
-          .check(Schema.isGreaterThan(0)),
+        iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          )
+          .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+        size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          )
+          .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
         throughput_mibps: Schema.optionalKey(
-          Schema.Number.check(Schema.isInt())
-            .check(Schema.isLessThanOrEqualTo(9007199254740991))
-            .check(Schema.isGreaterThan(0)),
+          Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
         ),
         type: Schema.Literal("gp3"),
       }),
       Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt())
-          .check(Schema.isLessThanOrEqualTo(9007199254740991))
-          .check(Schema.isGreaterThan(0)),
-        size_gb: Schema.Number.check(Schema.isInt())
-          .check(Schema.isLessThanOrEqualTo(9007199254740991))
-          .check(Schema.isGreaterThan(0)),
+        iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          )
+          .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+        size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          )
+          .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
         type: Schema.Literal("io2"),
       }),
     ],
@@ -4926,15 +6964,24 @@ export const V1ModifyDatabaseDiskInput = Schema.Struct({
   ),
 });
 export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
-  project_ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  project_ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   client_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
   redirect_uri: Schema.String,
@@ -4944,17 +6991,33 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
   code_challenge_method: Schema.optionalKey(Schema.Literals(["plain", "sha256", "S256"])),
 });
 export const V1PatchAMigrationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  version: Schema.String.check(Schema.isPattern(new RegExp("^\\d+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  version: Schema.String.check(
+    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+      expected: "a string matching the RegExp ^\\d+$",
+    }),
+  ),
   name: Schema.optionalKey(Schema.String),
   rollback: Schema.optionalKey(Schema.String),
 });
 export const V1PatchNetworkRestrictionsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   add: Schema.optionalKey(
     Schema.Struct({
       dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -4996,7 +7059,10 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   applied_at: Schema.optionalKey(
@@ -5005,28 +7071,44 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   status: Schema.Literals(["stored", "applied"]),
 });
 export const V1PauseAProjectInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1PushABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
   migration_version: Schema.optionalKey(Schema.String),
@@ -5036,22 +7118,42 @@ export const V1PushABranchOutput = Schema.Struct({
   message: Schema.Literal("ok"),
 });
 export const V1ReadOnlyQueryInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  query: Schema.String.check(Schema.isMinLength(1)),
-  parameters: Schema.optionalKey(Schema.Array(Schema.Json)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  query: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
+  parameters: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
 });
 export const V1RemoveAReadReplicaInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   database_identifier: Schema.String,
 });
 export const V1RemoveProjectAddonInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   addon_variant: Schema.Union([
     Schema.Literals([
       "ci_micro",
@@ -5084,11 +7186,20 @@ export const V1RemoveProjectSigningKeyInput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
@@ -5096,38 +7207,54 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
   created_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
 });
 export const V1ResetABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
   migration_version: Schema.optionalKey(Schema.String),
@@ -5137,22 +7264,35 @@ export const V1ResetABranchOutput = Schema.Struct({
   message: Schema.Literal("ok"),
 });
 export const V1RestartAProjectInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1RestoreABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
 });
@@ -5160,26 +7300,58 @@ export const V1RestoreABranchOutput = Schema.Struct({
   message: Schema.Literal("Branch restoration initiated"),
 });
 export const V1RestoreAProjectInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1RestorePhysicalBackupInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
 });
 export const V1RestorePitrBackupInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   recovery_time_target_unix: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(0))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
 });
 export const V1RevokeTokenInput = Schema.Struct({
   client_id: Schema.String.annotate({ format: "uuid" }).check(
@@ -5187,35 +7359,68 @@ export const V1RevokeTokenInput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   client_secret: Schema.String,
   refresh_token: Schema.String,
 });
 export const V1RollbackMigrationsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  gte: Schema.String.check(Schema.isPattern(new RegExp("^\\d+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  gte: Schema.String.check(
+    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+      expected: "a string matching the RegExp ^\\d+$",
+    }),
+  ),
 });
 export const V1RunAQueryInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  query: Schema.String.check(Schema.isMinLength(1)),
-  parameters: Schema.optionalKey(Schema.Array(Schema.Json)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  query: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
+  parameters: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
   read_only: Schema.optionalKey(Schema.Boolean),
 });
 export const V1ScrapeProjectMetricsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1ScrapeProjectMetricsOutput = Schema.String;
 export const V1SetupAReadReplicaInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   read_replica_region: Schema.Literals([
     "us-east-1",
     "us-east-2",
@@ -5238,28 +7443,49 @@ export const V1SetupAReadReplicaInput = Schema.Struct({
   ]).annotate({ description: "Region you want your read replica to reside in" }),
 });
 export const V1ShutdownRealtimeInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1UndoInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  name: Schema.String.check(Schema.isMaxLength(20)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+  ),
 });
 export const V1UpdateABranchConfigInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20))
-      .check(Schema.isMaxLength(20))
-      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
+      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ]),
   branch_name: Schema.optionalKey(Schema.String),
@@ -5295,7 +7521,10 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   name: Schema.String,
   project_ref: Schema.String,
@@ -5304,14 +7533,22 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
     Schema.Number.annotate({ format: "int32" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
-    }).check(Schema.isFinite()),
+    }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
   status: Schema.Literals([
@@ -5329,14 +7566,20 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   review_requested_at: Schema.optionalKey(
     Schema.String.annotate({ format: "date-time" }).check(
@@ -5344,7 +7587,10 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   with_data: Schema.Boolean,
@@ -5355,7 +7601,10 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   preview_project_status: Schema.optionalKey(
@@ -5379,11 +7628,27 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
   ),
 });
 export const V1UpdateAFunctionInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  function_slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$"))),
-  slug: Schema.optionalKey(Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  function_slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
+    }),
+  ),
+  slug: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+        expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
+      }),
+    ),
+  ),
   name: Schema.optionalKey(Schema.String),
   verify_jwt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   import_map: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
@@ -5397,17 +7662,41 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   created_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   updated_at: Schema.Number.annotate({ format: "int64" })
-    .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -5415,28 +7704,53 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1UpdateAProjectInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  name: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(256)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ).check(Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" })),
 });
 export const V1UpdateAProjectOutput = Schema.Struct({
-  id: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   ref: Schema.String,
   name: Schema.String,
 });
 export const V1UpdateASsoProviderInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   provider_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   metadata_xml: Schema.optionalKey(Schema.String),
   metadata_url: Schema.optionalKey(Schema.String),
@@ -5451,7 +7765,7 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
           default: Schema.optionalKey(
             Schema.Union([
               Schema.Struct({}),
-              Schema.Number.check(Schema.isFinite()),
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
               Schema.String,
               Schema.Boolean,
             ]),
@@ -5488,7 +7802,9 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
                 default: Schema.optionalKey(
                   Schema.Union([
                     Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
+                    Schema.Number.check(
+                      Schema.isFinite().annotate({ expected: "a finite number" }),
+                    ),
                     Schema.String,
                     Schema.Boolean,
                   ]),
@@ -5522,9 +7838,15 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
   updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1UpdateActionRunStatusInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   run_id: Schema.String,
   clone: Schema.optionalKey(
     Schema.Literals(["CREATED", "DEAD", "EXITED", "PAUSED", "REMOVING", "RESTARTING", "RUNNING"]),
@@ -5550,18 +7872,39 @@ export const V1UpdateActionRunStatusInput = Schema.Struct({
 });
 export const V1UpdateActionRunStatusOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1UpdateAuthServiceConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   site_url: Schema.optionalKey(
-    Schema.Union([Schema.String.check(Schema.isPattern(new RegExp("^[^,]+$"))), Schema.Null]),
+    Schema.Union([
+      Schema.String.check(
+        Schema.isPattern(new RegExp("^[^,]+$")).annotate({
+          expected: "a string matching the RegExp ^[^,]+$",
+        }),
+      ),
+      Schema.Null,
+    ]),
   ),
   disable_signup: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   jwt_exp: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(604800)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(604800).annotate({
+            expected: "a value less than or equal to 604800",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -5572,7 +7915,10 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
           new RegExp(
             "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        }),
       ),
       Schema.Null,
     ]),
@@ -5583,9 +7929,17 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   smtp_pass: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   smtp_max_frequency: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(32767)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(32767).annotate({
+            expected: "a value less than or equal to 32767",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -5679,9 +8033,17 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   mfa_max_enrolled_factors: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -5691,88 +8053,163 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   external_phone_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   saml_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   saml_external_url: Schema.optionalKey(
-    Schema.Union([Schema.String.check(Schema.isPattern(new RegExp("^[^,]+$"))), Schema.Null]),
+    Schema.Union([
+      Schema.String.check(
+        Schema.isPattern(new RegExp("^[^,]+$")).annotate({
+          expected: "a string matching the RegExp ^[^,]+$",
+        }),
+      ),
+      Schema.Null,
+    ]),
   ),
   security_sb_forwarded_for_enabled: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
   security_captcha_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   security_captcha_provider: Schema.optionalKey(
-    Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Union([Schema.Null])]),
+    Schema.Union([Schema.Literal("turnstile"), Schema.Literal("hcaptcha"), Schema.Null]),
   ),
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite()).check(Schema.isGreaterThanOrEqualTo(0)),
+      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
   sessions_inactivity_timeout: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite()).check(Schema.isGreaterThanOrEqualTo(0)),
+      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
   sessions_single_per_user: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   sessions_tags: Schema.optionalKey(
     Schema.Union([
-      Schema.String.check(Schema.isPattern(new RegExp("^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$"))),
+      Schema.String.check(
+        Schema.isPattern(new RegExp("^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$")).annotate({
+          expected: "a string matching the RegExp ^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
   rate_limit_anonymous_users: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(1))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(1).annotate({
+            expected: "a value greater than or equal to 1",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   rate_limit_email_sent: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(1))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(1).annotate({
+            expected: "a value greater than or equal to 1",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   rate_limit_sms_sent: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(1))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(1).annotate({
+            expected: "a value greater than or equal to 1",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   rate_limit_verify: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(1))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(1).annotate({
+            expected: "a value greater than or equal to 1",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   rate_limit_token_refresh: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(1))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(1).annotate({
+            expected: "a value greater than or equal to 1",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   rate_limit_otp: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(1))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(1).annotate({
+            expected: "a value greater than or equal to 1",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   rate_limit_web3: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(1))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(1).annotate({
+            expected: "a value greater than or equal to 1",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -5783,21 +8220,29 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   password_hibp_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   password_min_length: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(6))
-        .check(Schema.isLessThanOrEqualTo(32767)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(6).annotate({
+            expected: "a value greater than or equal to 6",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(32767).annotate({
+            expected: "a value less than or equal to 32767",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   password_required_characters: Schema.optionalKey(
     Schema.Union([
-      Schema.Literals([
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+      Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
+      Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
+      Schema.Literal(
         "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-        "",
-      ]),
-      Schema.Union([Schema.Null]),
+      ),
+      Schema.Literal(""),
+      Schema.Null,
     ]),
   ),
   security_manual_linking_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
@@ -5806,58 +8251,112 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   security_refresh_token_reuse_interval: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   mailer_otp_exp: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(2147483647)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483647).annotate({
+          expected: "a value less than or equal to 2147483647",
+        }),
+      ),
   ),
   mailer_otp_length: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(6))
-        .check(Schema.isLessThanOrEqualTo(10)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(6).annotate({
+            expected: "a value greater than or equal to 6",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(10).annotate({ expected: "a value less than or equal to 10" }),
+        ),
       Schema.Null,
     ]),
   ),
   sms_autoconfirm: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   sms_max_frequency: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(32767)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(32767).annotate({
+            expected: "a value less than or equal to 32767",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   sms_otp_exp: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(2147483647)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(2147483647).annotate({
+            expected: "a value less than or equal to 2147483647",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   sms_otp_length: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(32767)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
   ),
   sms_provider: Schema.optionalKey(
     Schema.Union([
-      Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
-      Schema.Union([Schema.Null]),
+      Schema.Literal("messagebird"),
+      Schema.Literal("textlocal"),
+      Schema.Literal("twilio"),
+      Schema.Literal("twilio_verify"),
+      Schema.Literal("vonage"),
+      Schema.Null,
     ]),
   ),
   sms_messagebird_access_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sms_messagebird_originator: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sms_test_otp: Schema.optionalKey(
     Schema.Union([
-      Schema.String.check(Schema.isPattern(new RegExp("^([0-9]{1,15}=[0-9]+,?)*$"))),
+      Schema.String.check(
+        Schema.isPattern(new RegExp("^([0-9]{1,15}=[0-9]+,?)*$")).annotate({
+          expected: "a string matching the RegExp ^([0-9]{1,15}=[0-9]+,?)*$",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
@@ -5868,7 +8367,10 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+        }),
       ),
       Schema.Null,
     ]),
@@ -6023,20 +8525,36 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   external_zoom_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   db_max_pool_size: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   db_max_pool_size_unit: Schema.optionalKey(
-    Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Union([Schema.Null])]),
+    Schema.Union([Schema.Literal("connections"), Schema.Literal("percent"), Schema.Null]),
   ),
   api_max_request_duration: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -6052,17 +8570,33 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   mfa_phone_verify_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_phone_max_frequency: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(32767)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(32767).annotate({
+            expected: "a value less than or equal to 32767",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   mfa_phone_otp_length: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(32767)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(32767).annotate({
+            expected: "a value less than or equal to 32767",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -6078,20 +8612,37 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
 });
 export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   api_max_request_duration: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   db_max_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   db_max_pool_size_unit: Schema.Union([
-    Schema.Literals(["connections", "percent"]),
-    Schema.Union([Schema.Null]),
+    Schema.Literal("connections"),
+    Schema.Literal("percent"),
+    Schema.Null,
   ]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -6211,20 +8762,44 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   hook_after_user_created_uri: Schema.Union([Schema.String, Schema.Null]),
   hook_after_user_created_secrets: Schema.Union([Schema.String, Schema.Null]),
   jwt_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   mailer_allow_unverified_email_sign_ins: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  mailer_otp_exp: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  mailer_otp_exp: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   mailer_otp_length: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   mailer_secure_email_change_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -6274,9 +8849,17 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   mailer_notifications_identity_linked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_unlinked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_max_enrolled_factors: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   mfa_totp_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -6289,14 +8872,30 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_otp_length: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  mfa_phone_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   nimbus_oauth_client_id: Schema.Union([Schema.String, Schema.Null]),
@@ -6304,60 +8903,124 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literals([
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
+    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
+    Schema.Literal(
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-      "",
-    ]),
-    Schema.Union([Schema.Null]),
+    ),
+    Schema.Literal(""),
+    Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_email_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_sms_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_token_refresh: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_verify: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_otp: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   rate_limit_web3: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   refresh_token_rotation_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -6367,44 +9030,87 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literals(["turnstile", "hcaptcha"]),
-    Schema.Union([Schema.Null]),
+    Schema.Literal("turnstile"),
+    Schema.Literal("hcaptcha"),
+    Schema.Null,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_refresh_token_reuse_interval: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
-  sessions_inactivity_timeout: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
+  sessions_inactivity_timeout: Schema.Union([
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Null,
+  ]),
   sessions_single_per_user: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_tags: Schema.Union([Schema.String, Schema.Null]),
-  sessions_timebox: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
+  sessions_timebox: Schema.Union([
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Null,
+  ]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
   sms_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   sms_messagebird_access_key: Schema.Union([Schema.String, Schema.Null]),
   sms_messagebird_originator: Schema.Union([Schema.String, Schema.Null]),
   sms_otp_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
-  sms_otp_length: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  sms_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   sms_provider: Schema.Union([
-    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
-    Schema.Union([Schema.Null]),
+    Schema.Literal("messagebird"),
+    Schema.Literal("textlocal"),
+    Schema.Literal("twilio"),
+    Schema.Literal("twilio_verify"),
+    Schema.Literal("vonage"),
+    Schema.Null,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
@@ -6414,7 +9120,10 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+      }),
     ),
     Schema.Null,
   ]),
@@ -6436,15 +9145,26 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      }),
     ),
     Schema.Null,
   ]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
   smtp_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   smtp_pass: Schema.Union([Schema.String, Schema.Null]),
@@ -6456,22 +9176,52 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   oauth_server_allow_dynamic_registration: Schema.Boolean,
   oauth_server_authorization_path: Schema.Union([Schema.String, Schema.Null]),
   custom_oauth_enabled: Schema.Boolean,
-  custom_oauth_max_providers: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  custom_oauth_max_providers: Schema.Number.check(
+    Schema.isInt().annotate({ expected: "an integer" }),
+  )
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
 });
 export const V1UpdateBackupScheduleInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   schedule_for: Schema.String.annotate({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
-  }).check(Schema.isPattern(new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"))),
+  }).check(
+    Schema.isPattern(
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
+    }),
+  ),
 });
 export const V1UpdateBackupScheduleOutput = Schema.Struct({
   schedule_for: Schema.String.annotate({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
-  }).check(Schema.isPattern(new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"))),
+  }).check(
+    Schema.isPattern(
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
+    }),
+  ),
   updated_at: Schema.String.annotate({
     description: "Timestamp of when the backup schedule was last updated.",
     format: "date-time",
@@ -6480,21 +9230,40 @@ export const V1UpdateBackupScheduleOutput = Schema.Struct({
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+    }),
   ),
 });
 export const V1UpdateDatabasePasswordInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  password: Schema.String.check(Schema.isMinLength(4)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  password: Schema.String.check(
+    Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+  ),
 });
 export const V1UpdateDatabasePasswordOutput = Schema.Struct({ message: Schema.String });
 export const V1UpdateHostnameConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  custom_hostname: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(253)),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  custom_hostname: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ).check(Schema.isMaxLength(253).annotate({ expected: "a value with a length of at most 253" })),
 });
 export const V1UpdateHostnameConfigOutput = Schema.Struct({
   status: Schema.optionalKey(
@@ -6533,22 +9302,35 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
   }),
 });
 export const V1UpdateJitAccessInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   user_id: Schema.String.annotate({ format: "uuid" })
-    .check(Schema.isMinLength(1))
+    .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
     .check(
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+      role: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      expires_at: Schema.optionalKey(
+        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
           allowed_cidrs: Schema.optionalKey(
@@ -6559,7 +9341,10 @@ export const V1UpdateJitAccessInput = Schema.Struct({
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                  }),
                 ),
               }),
             ),
@@ -6572,7 +9357,10 @@ export const V1UpdateJitAccessInput = Schema.Struct({
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                  }),
                 ),
               }),
             ),
@@ -6590,13 +9378,20 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+      role: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      expires_at: Schema.optionalKey(
+        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
           allowed_cidrs: Schema.optionalKey(
@@ -6607,7 +9402,10 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                  }),
                 ),
               }),
             ),
@@ -6620,7 +9418,10 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
                     ),
-                  ),
+                  ).annotate({
+                    expected:
+                      "a string matching the RegExp ^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                  }),
                 ),
               }),
             ),
@@ -6632,9 +9433,15 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
   ),
 });
 export const V1UpdateJitAccessConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   state: Schema.Literals(["enabled", "disabled"]),
 });
 export const V1UpdateJitAccessConfigOutput = Schema.Union(
@@ -6655,9 +9462,15 @@ export const V1UpdateJitAccessConfigOutput = Schema.Union(
   { mode: "oneOf" },
 );
 export const V1UpdateNetworkRestrictionsInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
   dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
 });
@@ -6686,7 +9499,10 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
   applied_at: Schema.optionalKey(
@@ -6695,14 +9511,23 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
         new RegExp(
           "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
         ),
-      ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      }),
     ),
   ),
 });
 export const V1UpdatePgsodiumConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   root_key: Schema.String.annotate({
     description: "The pgsodium root key: 32 bytes, hex-encoded (64 characters).",
   }),
@@ -6713,14 +9538,28 @@ export const V1UpdatePgsodiumConfigOutput = Schema.Struct({
   }),
 });
 export const V1UpdatePoolerConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   default_pool_size: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt())
-        .check(Schema.isGreaterThanOrEqualTo(0))
-        .check(Schema.isLessThanOrEqualTo(3000)),
+      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(3000).annotate({
+            expected: "a value less than or equal to 3000",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -6732,23 +9571,39 @@ export const V1UpdatePoolerConfigInput = Schema.Struct({
 });
 export const V1UpdatePoolerConfigOutput = Schema.Struct({
   default_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   pool_mode: Schema.String,
 });
 export const V1UpdatePostgresConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   log_checkpoints: Schema.optionalKey(Schema.Boolean),
@@ -6760,84 +9615,172 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   log_temp_files: Schema.optionalKey(Schema.String),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_locks_per_transaction: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(10))
-      .check(Schema.isLessThanOrEqualTo(2147483640)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(10).annotate({
+          expected: "a value greater than or equal to 10",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483640).annotate({
+          expected: "a value less than or equal to 2147483640",
+        }),
+      ),
   ),
   max_logical_replication_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_parallel_maintenance_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_parallel_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_parallel_workers_per_gather: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_replication_slots: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_sync_workers_per_subscription: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   max_worker_processes: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   session_replication_role: Schema.optionalKey(Schema.Literals(["origin", "replica", "local"])),
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
@@ -6849,7 +9792,9 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   log_checkpoints: Schema.optionalKey(Schema.Boolean),
@@ -6861,156 +9806,315 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   log_temp_files: Schema.optionalKey(Schema.String),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_locks_per_transaction: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(10))
-      .check(Schema.isLessThanOrEqualTo(2147483640)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(10).annotate({
+          expected: "a value greater than or equal to 10",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483640).annotate({
+          expected: "a value less than or equal to 2147483640",
+        }),
+      ),
   ),
   max_logical_replication_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_parallel_maintenance_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_parallel_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_parallel_workers_per_gather: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1024)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
   ),
   max_replication_slots: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_sync_workers_per_subscription: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
   ),
   max_worker_processes: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(262143)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
   ),
   session_replication_role: Schema.optionalKey(Schema.Literals(["origin", "replica", "local"])),
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
     ),
   ),
   hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
 });
 export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   db_extra_search_path: Schema.optionalKey(Schema.String),
   db_schema: Schema.optionalKey(Schema.String),
   max_rows: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1000000)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1000000).annotate({
+          expected: "a value less than or equal to 1000000",
+        }),
+      ),
   ),
   db_pool: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(1000)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1000).annotate({
+          expected: "a value less than or equal to 1000",
+        }),
+      ),
   ),
   db_pool_acquisition_timeout: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(60)),
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
   ),
 });
 export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
-  max_rows: Schema.Number.check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  max_rows: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+        expected: "a value greater than or equal to -9007199254740991",
+      }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+        expected: "a value less than or equal to 9007199254740991",
+      }),
+    ),
   db_extra_search_path: Schema.String,
   db_pool: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
   db_pool_acquisition_timeout: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured to 10.",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
-      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
     Schema.Null,
   ]),
 });
 export const V1UpdateProjectApiKeyInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   name: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(4))
-      .check(Schema.isMaxLength(64))
-      .check(Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$"))),
+    Schema.String.check(
+      Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+    )
+      .check(Schema.isMaxLength(64).annotate({ expected: "a value with a length of at most 64" }))
+      .check(
+        Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$")).annotate({
+          expected: "a string matching the RegExp ^[a-z_][a-z0-9_]+$",
+        }),
+      ),
   ),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
+        Schema.isPropertyNames(Schema.String).annotate({
+          expected: "an object with property names matching the schema",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
@@ -7020,8 +10124,10 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literals(["legacy", "publishable", "secret"]),
-      Schema.Union([Schema.Null]),
+      Schema.Literal("legacy"),
+      Schema.Literal("publishable"),
+      Schema.Literal("secret"),
+      Schema.Null,
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -7030,7 +10136,11 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
+        Schema.isPropertyNames(Schema.String).annotate({
+          expected: "an object with property names matching the schema",
+        }),
+      ),
       Schema.Null,
     ]),
   ),
@@ -7041,7 +10151,10 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
@@ -7053,16 +10166,25 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
           new RegExp(
             "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
           ),
-        ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        }),
       ),
       Schema.Null,
     ]),
   ),
 });
 export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   enabled: Schema.Union([Schema.String, Schema.Boolean]),
 });
 export const V1UpdateProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
@@ -7072,11 +10194,20 @@ export const V1UpdateProjectSigningKeyInput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
 });
 export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
@@ -7085,86 +10216,163 @@ export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
   created_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
   updated_at: Schema.String.annotate({ format: "date-time" }).check(
     Schema.isPattern(
       new RegExp(
         "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       ),
-    ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+    }),
   ),
 });
 export const V1UpdateRealtimeConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   private_only: Schema.optionalKey(
     Schema.Boolean.annotate({ description: "Whether to only allow private channels" }),
   ),
   connection_pool: Schema.optionalKey(
     Schema.Number.annotate({ description: "Sets connection pool size for Realtime Authorization" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(100)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(100).annotate({ expected: "a value less than or equal to 100" }),
+      ),
   ),
   max_concurrent_users: Schema.optionalKey(
     Schema.Number.annotate({ description: "Sets maximum number of concurrent users rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(50000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(50000).annotate({
+          expected: "a value less than or equal to 50000",
+        }),
+      ),
   ),
   max_events_per_second: Schema.optionalKey(
     Schema.Number.annotate({
       description: "Sets maximum number of events per second rate per channel limit",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(50000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(50000).annotate({
+          expected: "a value less than or equal to 50000",
+        }),
+      ),
   ),
   max_bytes_per_second: Schema.optionalKey(
     Schema.Number.annotate({
       description: "Sets maximum number of bytes per second rate per channel limit",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(10000000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(10000000).annotate({
+          expected: "a value less than or equal to 10000000",
+        }),
+      ),
   ),
   max_channels_per_client: Schema.optionalKey(
     Schema.Number.annotate({ description: "Sets maximum number of channels per client rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(10000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(10000).annotate({
+          expected: "a value less than or equal to 10000",
+        }),
+      ),
   ),
   max_joins_per_second: Schema.optionalKey(
     Schema.Number.annotate({ description: "Sets maximum number of joins per second rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(5000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(5000).annotate({
+          expected: "a value less than or equal to 5000",
+        }),
+      ),
   ),
   max_presence_events_per_second: Schema.optionalKey(
     Schema.Number.annotate({
       description: "Sets maximum number of presence events per second rate limit",
     })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(5000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(5000).annotate({
+          expected: "a value less than or equal to 5000",
+        }),
+      ),
   ),
   max_payload_size_in_kb: Schema.optionalKey(
     Schema.Number.annotate({ description: "Sets maximum number of payload size in KB rate limit" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(1))
-      .check(Schema.isLessThanOrEqualTo(10000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(10000).annotate({
+          expected: "a value less than or equal to 10000",
+        }),
+      ),
   ),
   suspend: Schema.optionalKey(
     Schema.Boolean.annotate({
@@ -7177,9 +10385,15 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
   ),
 });
 export const V1UpdateSslEnforcementConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   requestedConfig: Schema.Struct({ database: Schema.Boolean }),
 });
 export const V1UpdateSslEnforcementConfigOutput = Schema.Struct({
@@ -7187,14 +10401,28 @@ export const V1UpdateSslEnforcementConfigOutput = Schema.Struct({
   appliedSuccessfully: Schema.Boolean,
 });
 export const V1UpdateStorageConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   fileSizeLimit: Schema.optionalKey(
     Schema.Number.annotate({ format: "int64" })
-      .check(Schema.isInt())
-      .check(Schema.isGreaterThanOrEqualTo(0))
-      .check(Schema.isLessThanOrEqualTo(536870912000)),
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(536870912000).annotate({
+          expected: "a value less than or equal to 536870912000",
+        }),
+      ),
   ),
   features: Schema.optionalKey(
     Schema.Struct({
@@ -7204,26 +10432,66 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
       icebergCatalog: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.Boolean,
-          maxNamespaces: Schema.Number.check(Schema.isInt())
-            .check(Schema.isGreaterThanOrEqualTo(0))
-            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-          maxTables: Schema.Number.check(Schema.isInt())
-            .check(Schema.isGreaterThanOrEqualTo(0))
-            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-          maxCatalogs: Schema.Number.check(Schema.isInt())
-            .check(Schema.isGreaterThanOrEqualTo(0))
-            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+          maxNamespaces: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          maxTables: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          maxCatalogs: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
         }),
       ),
       vectorBuckets: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.Boolean,
-          maxBuckets: Schema.Number.check(Schema.isInt())
-            .check(Schema.isGreaterThanOrEqualTo(0))
-            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
-          maxIndexes: Schema.Number.check(Schema.isInt())
-            .check(Schema.isGreaterThanOrEqualTo(0))
-            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+          maxBuckets: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          maxIndexes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
         }),
       ),
     }),
@@ -7233,9 +10501,15 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
   ),
 });
 export const V1UpgradePostgresVersionInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   target_version: Schema.String,
   release_channel: Schema.optionalKey(
     Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
@@ -7243,18 +10517,32 @@ export const V1UpgradePostgresVersionInput = Schema.Struct({
 });
 export const V1UpgradePostgresVersionOutput = Schema.Struct({ tracking_id: Schema.String });
 export const V1UpsertAMigrationInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   "Idempotency-Key": Schema.optionalKey(Schema.String),
-  query: Schema.String.check(Schema.isMinLength(1)),
+  query: Schema.String.check(
+    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  ),
   name: Schema.optionalKey(Schema.String),
   rollback: Schema.optionalKey(Schema.String),
 });
 export const V1VerifyDnsConfigInput = Schema.Struct({
-  ref: Schema.String.check(Schema.isMinLength(20))
-    .check(Schema.isMaxLength(20))
-    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V1VerifyDnsConfigOutput = Schema.Struct({
   status: Schema.optionalKey(

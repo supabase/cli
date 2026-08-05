@@ -1,17 +1,26 @@
+import * as Arr from "effect/Array";
 import * as JsonSchema from "effect/JsonSchema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { describe, expect, test } from "vitest";
 
-import { normalizeNullableJsonSchema, normalizeQueryParameterSchema } from "./generate.ts";
+import {
+  normalizeNullableJsonSchema,
+  normalizeQueryParameterSchema,
+  sanitizeOpenApiSchema,
+} from "./generate.ts";
 
 function renderOpenApiSchema(schema: Parameters<typeof JsonSchema.fromSchemaOpenApi3_0>[0]) {
-  const normalized = normalizeNullableJsonSchema(JsonSchema.fromSchemaOpenApi3_0(schema).schema);
-  const multiDocument = SchemaRepresentation.fromJsonSchemaMultiDocument({
+  const normalized = normalizeNullableJsonSchema(
+    JsonSchema.fromSchemaOpenApi3_0(sanitizeOpenApiSchema(schema)).schema,
+  );
+  const importedSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument({
     dialect: "draft-2020-12",
     definitions: {},
     schemas: [normalized],
   });
-  return SchemaRepresentation.toCodeDocument(multiDocument).codes[0]!.runtime;
+  return SchemaRepresentation.toCodeDocument(
+    SchemaRepresentation.toRepresentations(Arr.map(importedSchemas, (schema) => schema.ast)),
+  ).codes[0]!.runtime;
 }
 
 describe("generate", () => {
@@ -70,5 +79,23 @@ describe("generate", () => {
         { type: "string" },
       ),
     ).toEqual({ type: "string" });
+  });
+
+  test("preserves arbitrary JSON in SSO attribute mapping defaults", () => {
+    expect(
+      renderOpenApiSchema({
+        type: "object",
+        properties: {
+          default: {
+            oneOf: [
+              { type: "object", properties: {} },
+              { type: "number" },
+              { type: "string" },
+              { type: "boolean" },
+            ],
+          },
+        },
+      }),
+    ).toContain('"default": Schema.optionalKey(Schema.Json');
   });
 });

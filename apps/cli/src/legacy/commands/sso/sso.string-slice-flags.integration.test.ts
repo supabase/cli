@@ -29,8 +29,8 @@ import { legacySsoCommand } from "./sso.command.ts";
 const tempRoot = useLegacyTempWorkdir("supabase-sso-string-slice-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacySsoCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {
