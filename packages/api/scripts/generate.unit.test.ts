@@ -51,6 +51,18 @@ describe("generate", () => {
     expect(
       normalizeQueryParameterSchema(
         {
+          name: "remove_addon",
+          in: "query",
+          description: "If true, also removes the custom domain add-on.",
+          schema: { type: "string" },
+        },
+        { type: "string" },
+      ),
+    ).toEqual({ anyOf: [{ type: "string" }, { type: "boolean" }] });
+
+    expect(
+      normalizeQueryParameterSchema(
+        {
           name: "slug",
           in: "query",
           schema: { type: "string", example: "hello-world" },

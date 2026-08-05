@@ -391,7 +391,8 @@ export function normalizeQueryParameterSchema(
   const acceptsBoolean =
     schema.type === "string" &&
     (typeof parameter.schema?.example === "boolean" ||
-      /\bboolean string\b/iu.test(parameter.description ?? ""));
+      /\bboolean string\b/iu.test(parameter.description ?? "") ||
+      /\bif (?:true|false)\b/iu.test(parameter.description ?? ""));
 
   return acceptsBoolean ? { anyOf: [schema, { type: "boolean" }] } : schema;
 }

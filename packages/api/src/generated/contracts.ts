@@ -1452,7 +1452,7 @@ export const V1DeleteHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  remove_addon: Schema.optionalKey(Schema.String),
+  remove_addon: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
 export const V1DeleteABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([

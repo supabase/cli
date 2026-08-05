@@ -161,7 +161,7 @@ function toPlatformSchemaNode(options: {
   const ancestors = new Set(options.ancestors);
   ancestors.add(resolved);
   const objectShape = isRecursive ? undefined : getPlatformOpenApiObjectShape(options.schema);
-  const kind = classifyPlatformSchemaKind(options.schema);
+  const kind = isRecursive ? "unknown" : classifyPlatformSchemaKind(options.schema);
   const enumValues = enumValuesForNode(options.schema);
   const unionVariants = isRecursive ? [] : unionVariantsFor(options.schema);
 
@@ -180,7 +180,7 @@ function toPlatformSchemaNode(options: {
       : undefined;
 
   const items =
-    resolved.type === "array" && resolved.items !== undefined
+    !isRecursive && resolved.type === "array" && resolved.items !== undefined
       ? toPlatformSchemaNode({
           schema: resolved.items,
           label: options.label ? `${options.label} Item` : "Item",
