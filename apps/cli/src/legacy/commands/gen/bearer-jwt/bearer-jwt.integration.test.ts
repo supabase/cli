@@ -63,6 +63,8 @@ interface SetupOptions {
   readonly pipedAnswer?: string;
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly trackTelemetry?: boolean;
+  /** Overrides `cliConfig.workdir` — defaults to `tempRoot.current`. */
+  readonly workdir?: string;
 }
 
 function setup(options: SetupOptions = {}) {
@@ -72,7 +74,10 @@ function setup(options: SetupOptions = {}) {
     promptSelectResponses: options.promptSelectResponses,
   });
   const api = mockLegacyPlatformApi();
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliConfig = mockLegacyCliConfig({
+    workdir: options.workdir ?? tempRoot.current,
+    projectId: Option.none(),
+  });
   const tty = mockTty({
     stdinIsTty: options.stdinIsTty ?? false,
     stdoutIsTty: options.stdinIsTty ?? false,
@@ -98,7 +103,7 @@ async function writeSigningKeys(contents: string) {
 }
 
 const baseFlags: LegacyGenBearerJwtFlags = {
-  role: "anon",
+  role: Option.some("anon"),
   sub: Option.none(),
   exp: Option.none(),
   validFor: 1800,
@@ -172,7 +177,7 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live("sets is_anonymous when role is authenticated and --sub is not given", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyGenBearerJwt({ ...baseFlags, role: "authenticated" });
+      yield* legacyGenBearerJwt({ ...baseFlags, role: Option.some("authenticated") });
       const [, payload] = tokenFrom(out).split(".");
       const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
       expect(claims["is_anonymous"]).toBe(true);
@@ -185,7 +190,7 @@ describe("legacy gen bearer-jwt integration", () => {
     return Effect.gen(function* () {
       yield* legacyGenBearerJwt({
         ...baseFlags,
-        role: "authenticated",
+        role: Option.some("authenticated"),
         sub: Option.some("user-1"),
       });
       const [, payload] = tokenFrom(out).split(".");
@@ -233,7 +238,7 @@ describe("legacy gen bearer-jwt integration", () => {
     return Effect.gen(function* () {
       yield* legacyGenBearerJwt({
         ...baseFlags,
-        role: "postgres",
+        role: Option.some("postgres"),
         payload: '{"role":"override","sb-role":"mgmt-api"}',
       });
       const [, payload] = tokenFrom(out).split(".");
@@ -242,6 +247,71 @@ describe("legacy gen bearer-jwt integration", () => {
       expect(claims["sb-role"]).toBe("mgmt-api");
     }).pipe(Effect.provide(layer));
   });
+
+  // Go marks --role required (`cmd/gen.go:175`) but cobra validates required flags only
+  // AFTER `PersistentPreRunE` (`cobra@v1.10.2/command.go:985,1007`) — which is where Go's
+  // telemetry service is constructed and later flushed to `telemetry.json`. Verified
+  // against the real binary (CLI-1961 e2e parity run): a missing `--role` still writes
+  // `telemetry.json`, so the handler enforces the flag itself (after the telemetry-flushing
+  // wrapper is already active) instead of relying on the framework's parse-time rejection.
+  it.live(
+    "fails with cobra's required-flag error, and still flushes telemetry, when --role is omitted",
+    () => {
+      const { layer, out, telemetry } = setup({ trackTelemetry: true });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt({ ...baseFlags, role: Option.none() }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtRoleRequiredError");
+          expect(json).toContain('required flag(s) \\"role\\" not set');
+        }
+        expect(out.stdoutText).toBe("");
+        expect(telemetry?.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "ignores an ancestor project's signing_keys_path when the resolved workdir has no config.toml of its own (CLI-1961)",
+    () => {
+      // Go's `Config.Load("")` (`pkg/config/utils.go:43-48`) resolves ONLY
+      // `<workdir>/supabase/config.toml` — no ancestor climb (once `cliConfig.workdir`
+      // is already resolved, matching an explicit `--workdir` pointing at a
+      // subdirectory below another project's root — Go's own `ChangeWorkDir` does not
+      // climb when `--workdir`/`SUPABASE_WORKDIR` is explicit either,
+      // `internal/utils/misc.go:246-249`). Verified against the real binary (Codex
+      // review finding, CLI-1961): without `{ tomlOnly: true, search: false }` in
+      // `gen.signing-keys-config.ts`, the TS port picked up the PARENT directory's
+      // `signing_keys_path` and prompted for a kid instead of falling back to the
+      // unconfigured-default branch, like Go does.
+      const nestedWorkdir = join(tempRoot.current, "nested", "deeper");
+      const { layer, out } = setup({ workdir: nestedWorkdir, pipedAnswer: "" });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(nestedWorkdir, { recursive: true }));
+        // `writeConfig`/`writeSigningKeys` target `tempRoot.current` — the ANCESTOR of
+        // `nestedWorkdir` — never `nestedWorkdir` itself.
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([generateEcJwk("ec-kid")])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        // The unconfigured-default branch's prompt was answered blank, so this must be
+        // the built-in default dev key, NOT the ancestor's `ec-kid`.
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          typ: "JWT",
+        });
+        expect(out.stderrText).toContain(
+          "Enter your signing key in JWK format (or leave blank to use local default): ",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "fails with Go's exact wrapping for a malformed --payload, before any signing-key prompt",
@@ -564,7 +634,7 @@ describe("legacy gen bearer-jwt integration", () => {
         );
         yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([ecJwk, rsaJwk])));
 
-        yield* legacyGenBearerJwt({ ...baseFlags, role: "postgres" });
+        yield* legacyGenBearerJwt({ ...baseFlags, role: Option.some("postgres") });
         const token = tokenFrom(out);
         const [header] = token.split(".");
         expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
@@ -632,9 +702,11 @@ describe("legacy gen bearer-jwt integration", () => {
         const token = tokenFrom(out);
         const [header] = token.split(".");
         expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({ type: "info", message: "Selected key ID: rsa-kid" }),
-        );
+        // Go: `fmt.Fprintln(os.Stderr, "Selected key ID:", choice.Summary)` (`bearerjwt.go:82`)
+        // — this command's own stdout is the signed-token payload even in text mode, so the
+        // line must land on stderr (`output.raw(..., "stderr")`), not via `output.info`
+        // (clack's `log.info`, which defaults to stdout — Codex review finding, CLI-1961).
+        expect(out.stderrText).toContain("Selected key ID: rsa-kid");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -656,9 +728,7 @@ describe("legacy gen bearer-jwt integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(out.promptSelectCalls[0]?.options[0]?.label).toBe("");
         expect(out.promptSelectCalls[0]?.options[0]?.hint).toBe(" ()");
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({ type: "info", message: "Selected key ID: " }),
-        );
+        expect(out.stderrText).toContain("Selected key ID: ");
       }).pipe(Effect.provide(layer));
     },
   );

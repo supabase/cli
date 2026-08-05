@@ -12,12 +12,19 @@ import { legacyGenBearerJwt } from "./bearer-jwt.handler.ts";
 import { legacyParseBearerJwtExp, legacyParseBearerJwtValidFor } from "./bearer-jwt.flags.ts";
 
 const config = {
-  // Go: `cobra.CheckErr(genJWTCmd.MarkFlagRequired("role"))` (`cmd/gen.go:175`) — no
-  // `Flag.optional` here, so a missing `--role` fails during argument parsing with
-  // the framework's own Go-parity `required flag(s) "role" not set` rendering
-  // (`shared/output/normalize-error.ts`'s `MissingOption` case), matching Go's
-  // `ValidateRequiredFlags`/`SilenceUsage` behavior (same pattern as `sso add --type`).
-  role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use.")),
+  // Go: `cobra.CheckErr(genJWTCmd.MarkFlagRequired("role"))` (`cmd/gen.go:175`) — but
+  // cobra's `ValidateRequiredFlags` runs AFTER `PersistentPreRunE`
+  // (`cobra@v1.10.2/command.go:985,1007`), which is where Go's telemetry service gets
+  // constructed and later flushed to `telemetry.json` on Execute()'s return path. A
+  // missing `--role` must still flush telemetry (verified against the real binary:
+  // CI-1961 e2e parity run showed `telemetry.json` written on this exact failure).
+  // The framework's own `MissingOption` parse-time rejection (`normalize-error.ts`)
+  // would short-circuit before this command's handler — and its
+  // `Effect.ensuring(telemetryState.flush)` — ever runs, so `role` stays optional at
+  // parse time and presence is enforced in the handler instead, same established
+  // pattern as `vanity-subdomains activate`'s `--desired-subdomain`
+  // (`activate.command.ts`/`activate.handler.ts`).
+  role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
   // Go's `DefValue` is cosmetically overwritten to "anonymous" (`cmd/gen.go:177`) but the
   // bound variable's real default stays "" — verified against the real binary, an
   // omitted `--sub` never puts a `sub` claim in the token at all.

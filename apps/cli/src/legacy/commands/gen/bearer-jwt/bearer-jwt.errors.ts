@@ -13,6 +13,23 @@ export function legacyBearerJwtErrorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/**
+ * Go marks `--role` required (`cmd/gen.go:175`), but cobra's `ValidateRequiredFlags`
+ * runs only AFTER `PersistentPreRunE` — which is where telemetry gets set up and later
+ * flushed (`cobra@v1.10.2/command.go:985,1007`). Enforced in the handler (after the
+ * telemetry-flushing wrapper is already active) rather than at parse time, so this
+ * failure still flushes `telemetry.json` like Go does. Byte-matches cobra's exact
+ * `required flag(s) "role" not set` wording, with no usage block (`SilenceUsage` is
+ * already set by the time `ValidateRequiredFlags` runs) and no `"Error: "` prefix
+ * (`cmd/root.go`'s `SilenceErrors: true` means cobra never prints its own prefix;
+ * `recoverAndExit` prints the bare message) — verified against the real binary.
+ */
+export class LegacyGenBearerJwtRoleRequiredError extends Data.TaggedError(
+  "LegacyGenBearerJwtRoleRequiredError",
+)<{
+  readonly message: string;
+}> {}
+
 /** `supabase/config.toml` itself is malformed. Mirrors `gen signing-key`'s own error shape. */
 export class LegacyGenBearerJwtConfigParseError extends Data.TaggedError(
   "LegacyGenBearerJwtConfigParseError",

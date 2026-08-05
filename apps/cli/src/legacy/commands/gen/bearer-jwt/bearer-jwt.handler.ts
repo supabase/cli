@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacySignJwtWithJwk } from "../../../shared/legacy-go-jwt.ts";
@@ -13,6 +13,7 @@ import {
 import {
   legacyBearerJwtErrorMessage,
   LegacyGenBearerJwtPayloadError,
+  LegacyGenBearerJwtRoleRequiredError,
   LegacyGenBearerJwtSignError,
 } from "./bearer-jwt.errors.ts";
 import { legacyResolveBearerJwtSigningKey } from "./bearer-jwt.signing-key.ts";
@@ -21,6 +22,10 @@ import { legacyResolveBearerJwtSigningKey } from "./bearer-jwt.signing-key.ts";
  * Go's `gen bearer-jwt` (`apps/cli-go/cmd/gen.go:132-143` + `internal/gen/bearerjwt/bearerjwt.go`):
  * fully local, no Docker, no network. Order matches Go exactly:
  *
+ *   0. `ValidateRequiredFlags` (`cobra@v1.10.2/command.go:1007`, ported as the
+ *      `flags.role` check just below) — runs after cobra's `PersistentPreRunE`
+ *      (telemetry setup) but before `RunE`/`parseClaims`, so a missing `--role` still
+ *      flushes `telemetry.json` (see {@link LegacyGenBearerJwtRoleRequiredError}).
  *   1. `parseClaims` (`cmd/gen.go:136-141`, ported as {@link legacyBuildBearerJwtClaims} +
  *      {@link legacyMergeBearerJwtPayload}) — runs entirely BEFORE `bearerjwt.Run` is even
  *      called, so a malformed `--payload` fails before any config load or signing-key
@@ -53,9 +58,18 @@ export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
   const path = yield* Path.Path;
 
   return yield* Effect.gen(function* () {
+    if (Option.isNone(flags.role)) {
+      return yield* Effect.fail(
+        new LegacyGenBearerJwtRoleRequiredError({
+          message: `required flag(s) "role" not set`,
+        }),
+      );
+    }
+    const role = flags.role.value;
+
     const nowSeconds = Math.floor(Date.now() / 1000);
     const baseClaims = legacyBuildBearerJwtClaims({
-      role: flags.role,
+      role,
       sub: flags.sub,
       expiresAt: flags.exp,
       validForSeconds: flags.validFor,
