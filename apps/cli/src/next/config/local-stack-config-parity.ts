@@ -83,6 +83,14 @@ const mappedDatabaseSeedField: LocalStackConfigParityDecision = {
     "The launch Adapter expands ordered seed inputs and the stack executes them as an internal PostgreSQL bootstrap phase with legacy-compatible seed history semantics.",
 };
 
+const mappedDatabaseMigrationsEnabled: LocalStackConfigParityDecision = {
+  _tag: "mapped",
+  presence: "raw-document",
+  mappedBy: "start",
+  rationale:
+    "The launch Adapter consumes this gate before migration discovery; disabled skips discovery, while enabled dynamically blocks only when conventional migration files are present.",
+};
+
 const mappedCoreTopologyField: LocalStackConfigParityDecision = {
   _tag: "mapped",
   presence: "raw-document",
@@ -464,7 +472,7 @@ const localStackConfigParity = {
       max_client_conn: mappedCoreTopologyField,
     } satisfies Record<keyof ProjectConfig["db"]["pooler"], Node>,
     migrations: {
-      enabled: unsupportedRuntimeField,
+      enabled: mappedDatabaseMigrationsEnabled,
       schema_paths: unsupportedRuntimeField,
     } satisfies Record<keyof ProjectConfig["db"]["migrations"], Node>,
     seed: {

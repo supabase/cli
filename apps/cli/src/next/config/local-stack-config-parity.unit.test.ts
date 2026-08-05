@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 255,
+      mapped: 256,
       "not-applicable": 10,
-      "unsupported-blocking": 90,
+      "unsupported-blocking": 89,
       "unsupported-warning": 6,
     });
   });
@@ -43,6 +43,7 @@ describe("localStackConfigParity", () => {
       "api.port",
       "api.schemas",
       "db.health_timeout",
+      "db.migrations.enabled",
       "db.pooler.default_pool_size",
       "db.pooler.enabled",
       "db.pooler.max_client_conn",
@@ -109,6 +110,13 @@ describe("localStackConfigParity", () => {
     expect(byPath.get("auth.sms.twilio.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("experimental.webhooks.enabled")?.presence).toBe("raw-document");
+  });
+
+  it("maps the migration discovery gate while leaving schema execution unsupported", () => {
+    const byPath = new Map(entries.map(({ path, decision }) => [path, decision]));
+
+    expect(byPath.get("db.migrations.enabled")?._tag).toBe("mapped");
+    expect(byPath.get("db.migrations.schema_paths")?._tag).toBe("unsupported-blocking");
   });
 
   it("keeps non-runtime project configuration out of StackConfig", () => {

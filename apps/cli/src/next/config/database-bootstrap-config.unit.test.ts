@@ -103,6 +103,50 @@ describe("translateDatabaseBootstrapConfig", () => {
     }
   });
 
+  it("allows migration discovery to be explicitly disabled", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "stack-database-migrations-disabled-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(join(supabaseDir, "migrations"), { recursive: true });
+      await writeFile(join(supabaseDir, "migrations", "1_existing.sql"), "select 1;");
+
+      const result = await Effect.runPromise(
+        translateDatabaseBootstrapConfig({
+          loadedProjectConfig: loaded(projectRoot, {
+            db: { migrations: { enabled: false }, seed: { enabled: false } },
+          }),
+          projectEnvironment: null,
+          projectRoot,
+        }),
+      );
+
+      expect(result).toEqual({ config: undefined, warnings: [] });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("allows migrations to remain enabled when no conventional files exist", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "stack-database-migrations-empty-"));
+    try {
+      await mkdir(join(projectRoot, "supabase", "migrations"), { recursive: true });
+
+      const result = await Effect.runPromise(
+        translateDatabaseBootstrapConfig({
+          loadedProjectConfig: loaded(projectRoot, {
+            db: { migrations: { enabled: true }, seed: { enabled: false } },
+          }),
+          projectEnvironment: null,
+          projectRoot,
+        }),
+      );
+
+      expect(result).toEqual({ config: undefined, warnings: [] });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("attributes migration discovery failures to db.migrations only", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "stack-database-migration-errors-"));
     const supabaseDir = join(projectRoot, "supabase");

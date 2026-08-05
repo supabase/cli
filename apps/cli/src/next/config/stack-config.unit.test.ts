@@ -297,7 +297,7 @@ describe("resolveLocalStackLaunch", () => {
         loadedProjectConfig: loaded({
           auth: { captcha: { secret: "do-not-leak" } },
           api: { tls: { cert_path: "another-private-value" } },
-          db: { migrations: { enabled: true } },
+          db: { migrations: { schema_paths: ["./private-schema.sql"] } },
           storage: { buckets: { images: { objects_path: "third-private-value" } } },
         }),
       }).pipe(Effect.exit),
@@ -306,7 +306,7 @@ describe("resolveLocalStackLaunch", () => {
     expect(exit._tag).toBe("Failure");
     expect(JSON.stringify(exit)).toContain("auth.captcha.secret");
     expect(JSON.stringify(exit)).toContain("api.tls.cert_path");
-    expect(JSON.stringify(exit)).toContain("db.migrations.enabled");
+    expect(JSON.stringify(exit)).toContain("db.migrations.schema_paths");
     expect(JSON.stringify(exit)).toContain("storage.buckets.images.objects_path");
     expect(JSON.stringify(exit)).not.toContain("do-not-leak");
     expect(JSON.stringify(exit)).not.toContain("another-private-value");
