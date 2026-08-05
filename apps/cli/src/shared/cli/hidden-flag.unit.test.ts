@@ -225,26 +225,46 @@ describe("legacy hidden subcommands", () => {
   });
 
   it("still executes hidden subcommands by exact name", async () => {
+    // `db branch` and `db remote` used to be exercised here too, but both were
+    // dropped from the legacy shell entirely (CLI-1964) — Go itself hides their
+    // parent commands and deprecates every leaf in favor of already-natively-ported
+    // commands, so there is no longer a hidden proxy to route through. See the
+    // "no longer route to a hidden proxy" test below for that coverage.
     const proxy = mockLegacyGoProxy();
 
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "db",
-          "remote",
-          "changes",
-        ]);
       }).pipe(
         Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
       ) as Effect.Effect<void>,
     );
 
-    expect(proxy.calls).toEqual([
-      ["db", "test"],
-      ["db", "branch", "list"],
-      ["db", "remote", "changes"],
-    ]);
+    expect(proxy.calls).toEqual([["db", "test"]]);
+  });
+
+  it("db branch / db remote no longer route to a hidden proxy (CLI-1964)", async () => {
+    const proxy = mockLegacyGoProxy();
+
+    const branchExit = await Effect.runPromise(
+      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "branch"]).pipe(
+        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
+        Effect.exit,
+      ) as Effect.Effect<unknown, never, never>,
+    );
+    const remoteExit = await Effect.runPromise(
+      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "remote"]).pipe(
+        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
+        Effect.exit,
+      ) as Effect.Effect<unknown, never, never>,
+    );
+
+    expect(JSON.stringify(branchExit)).toContain(
+      String.raw`"_tag":"UnknownSubcommand","subcommand":"branch","parent":["supabase","db"]`,
+    );
+    expect(JSON.stringify(remoteExit)).toContain(
+      String.raw`"_tag":"UnknownSubcommand","subcommand":"remote","parent":["supabase","db"]`,
+    );
+    expect(proxy.calls).toEqual([]);
   });
 });

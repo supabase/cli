@@ -522,11 +522,14 @@ const legacyStartApplyApiPrivileges = Effect.fnUntraced(function* (
  * `supabase/.branches/_current_branch` = `"main"` (Go's `CurrBranchPath`,
  * `apps/cli-go/internal/utils/misc.go:99` = `filepath.Join(SupabaseDirPath,
  * ".branches", "_current_branch")`) only if it doesn't already exist. No existing
- * TS constant for this path — `legacy/commands/db/branch/*` are Management-API
- * cloud-branch commands, unrelated to this local file — so it's inlined here,
- * the only current consumer (per "Hoist Before You Duplicate"). Exported (rather
- * than folded into {@link legacyStartSetupLocalDatabase}) because Go calls it
- * unconditionally, not just on a fresh volume — see this module's header.
+ * TS constant for this path — Go's local-container `db branch create|delete|list|switch`
+ * commands also read/wrote `.branches/` (cloning/dropping the branch database, renaming
+ * it into place), but their TS legacy-shell counterparts were thin `LegacyGoProxy`
+ * wrappers with no filesystem logic of their own, and were dropped entirely
+ * (Go-deprecated, CLI-1964) rather than ported, so this remains the only TS consumer
+ * of the path (per "Hoist Before You Duplicate") and it's inlined here.
+ * Exported (rather than folded into {@link legacyStartSetupLocalDatabase}) because Go
+ * calls it unconditionally, not just on a fresh volume — see this module's header.
  */
 export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
