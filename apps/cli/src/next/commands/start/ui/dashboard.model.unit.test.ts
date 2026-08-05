@@ -17,6 +17,15 @@ function state(name: string, status: StackServiceStatus) {
 }
 
 describe("createStartDashboardModel", () => {
+  const stackInfo: StackInfo = {
+    url: "http://127.0.0.1:54321",
+    dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+    publishableKey: "pk",
+    secretKey: "sk",
+    anonJwt: "anon",
+    serviceRoleJwt: "service-role",
+    serviceEndpoints: {},
+  };
   const dashboardStateLayer = Layer.effect(
     StartDashboardState,
     Effect.gen(function* () {
@@ -55,9 +64,12 @@ describe("createStartDashboardModel", () => {
       registry.get(model.displayStatesAtom).find((entry) => entry.name === "postgres")?.status,
     ).toBe("Initializing");
     expect(registry.get(model.allHealthyAtom)).toBe(false);
+    registry.set(model.stackInfoAtom, stackInfo);
+    expect(registry.get(model.showConnectionInfoAtom)).toBe(false);
 
     registry.set(model.phaseAtom, "running");
     expect(registry.get(model.statusLineAtom)).toContain("Interrupt to stop");
+    expect(registry.get(model.showConnectionInfoAtom)).toBe(true);
   });
 
   test("shows the foreground failure message when startup fails", async () => {

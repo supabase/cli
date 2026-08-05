@@ -19666,9 +19666,6 @@
           "saml": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
-              },
               "entity_id": {
                 "type": "string"
               },
@@ -19696,228 +19693,7 @@
                           }
                         },
                         "default": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {}
-                            },
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "boolean"
-                            }
-                          ]
-                        },
-                        "array": {
-                          "type": "boolean"
-                        }
-                      }
-                    }
-                  }
-                },
-                "required": []
-              },
-              "name_id_format": {
-                "type": "string",
-                "enum": [
-                  "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-                  "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-                  "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-                  "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
-                ]
-              }
-            },
-            "required": ["id", "entity_id"]
-          },
-          "domains": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "domain": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "updated_at": {
-                  "type": "string"
-                }
-              },
-              "required": ["id"]
-            }
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
-          }
-        },
-        "required": ["id"]
-      },
-      "ListProvidersResponse": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "saml": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "entity_id": {
-                      "type": "string"
-                    },
-                    "metadata_url": {
-                      "type": "string"
-                    },
-                    "metadata_xml": {
-                      "type": "string"
-                    },
-                    "attribute_mapping": {
-                      "type": "object",
-                      "properties": {
-                        "keys": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string"
-                              },
-                              "names": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                }
-                              },
-                              "default": {
-                                "oneOf": [
-                                  {
-                                    "type": "object",
-                                    "properties": {}
-                                  },
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "boolean"
-                                  }
-                                ]
-                              },
-                              "array": {
-                                "type": "boolean"
-                              }
-                            }
-                          }
-                        }
-                      },
-                      "required": []
-                    },
-                    "name_id_format": {
-                      "type": "string",
-                      "enum": [
-                        "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-                        "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-                        "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-                        "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
-                      ]
-                    }
-                  },
-                  "required": ["entity_id"]
-                },
-                "domains": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "string"
-                      },
-                      "domain": {
-                        "type": "string"
-                      },
-                      "created_at": {
-                        "type": "string"
-                      },
-                      "updated_at": {
-                        "type": "string"
-                      }
-                    },
-                    "required": ["id"]
-                  }
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "updated_at": {
-                  "type": "string"
-                }
-              },
-              "required": ["id"]
-            }
-          }
-        },
-        "required": ["items"]
-      },
-      "GetProviderResponse": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "saml": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "entity_id": {
-                "type": "string"
-              },
-              "metadata_url": {
-                "type": "string"
-              },
-              "metadata_xml": {
-                "type": "string"
-              },
-              "attribute_mapping": {
-                "type": "object",
-                "properties": {
-                  "keys": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "object",
-                      "properties": {
-                        "name": {
-                          "type": "string"
-                        },
-                        "names": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "default": {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {}
@@ -19959,9 +19735,6 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": {
-                  "type": "string"
-                },
                 "domain": {
                   "type": "string"
                 },
@@ -19971,8 +19744,214 @@
                 "updated_at": {
                   "type": "string"
                 }
+              }
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": ["id"]
+      },
+      "ListProvidersResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "saml": {
+                  "type": "object",
+                  "properties": {
+                    "entity_id": {
+                      "type": "string"
+                    },
+                    "metadata_url": {
+                      "type": "string"
+                    },
+                    "metadata_xml": {
+                      "type": "string"
+                    },
+                    "attribute_mapping": {
+                      "type": "object",
+                      "properties": {
+                        "keys": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "names": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "default": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {}
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              },
+                              "array": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "required": []
+                    },
+                    "name_id_format": {
+                      "type": "string",
+                      "enum": [
+                        "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+                        "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+                        "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                        "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+                      ]
+                    }
+                  },
+                  "required": ["entity_id"]
+                },
+                "domains": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "domain": {
+                        "type": "string"
+                      },
+                      "created_at": {
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
               },
               "required": ["id"]
+            }
+          }
+        },
+        "required": ["items"]
+      },
+      "GetProviderResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "saml": {
+            "type": "object",
+            "properties": {
+              "entity_id": {
+                "type": "string"
+              },
+              "metadata_url": {
+                "type": "string"
+              },
+              "metadata_xml": {
+                "type": "string"
+              },
+              "attribute_mapping": {
+                "type": "object",
+                "properties": {
+                  "keys": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "names": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "default": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {}
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "boolean"
+                            }
+                          ]
+                        },
+                        "array": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": []
+              },
+              "name_id_format": {
+                "type": "string",
+                "enum": [
+                  "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+                  "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+                  "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                  "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+                ]
+              }
+            },
+            "required": ["entity_id"]
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "domain": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
             }
           },
           "created_at": {
@@ -20066,9 +20045,6 @@
           "saml": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
-              },
               "entity_id": {
                 "type": "string"
               },
@@ -20096,7 +20072,7 @@
                           }
                         },
                         "default": {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {}
@@ -20131,16 +20107,13 @@
                 ]
               }
             },
-            "required": ["id", "entity_id"]
+            "required": ["entity_id"]
           },
           "domains": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "id": {
-                  "type": "string"
-                },
                 "domain": {
                   "type": "string"
                 },
@@ -20150,8 +20123,7 @@
                 "updated_at": {
                   "type": "string"
                 }
-              },
-              "required": ["id"]
+              }
             }
           },
           "created_at": {
@@ -20172,9 +20144,6 @@
           "saml": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
-              },
               "entity_id": {
                 "type": "string"
               },
@@ -20202,7 +20171,7 @@
                           }
                         },
                         "default": {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {}
@@ -20237,16 +20206,13 @@
                 ]
               }
             },
-            "required": ["id", "entity_id"]
+            "required": ["entity_id"]
           },
           "domains": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "id": {
-                  "type": "string"
-                },
                 "domain": {
                   "type": "string"
                 },
@@ -20256,8 +20222,7 @@
                 "updated_at": {
                   "type": "string"
                 }
-              },
-              "required": ["id"]
+              }
             }
           },
           "created_at": {

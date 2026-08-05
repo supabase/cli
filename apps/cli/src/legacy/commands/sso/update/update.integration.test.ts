@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Redacted, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
@@ -24,17 +24,14 @@ const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 
 const EXISTING_PROVIDER = {
   id: VALID_PROVIDER_ID,
-  saml: { id: "saml-1", entity_id: "https://example.com" },
-  domains: [
-    { id: "d1", domain: "old1.com" },
-    { id: "d2", domain: "old2.com" },
-  ],
+  saml: { entity_id: "https://example.com" },
+  domains: [{ domain: "old1.com" }, { domain: "old2.com" }],
 };
 
 const RESPONSE_PROVIDER = {
   id: VALID_PROVIDER_ID,
-  saml: { id: "saml-1", entity_id: "https://example.com" },
-  domains: [{ id: "d3", domain: "new.com" }],
+  saml: { entity_id: "https://example.com" },
+  domains: [{ domain: "new.com" }],
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-update-int-");
@@ -187,6 +184,7 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: cache.layer,
       analytics,
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
     }),
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
@@ -1332,7 +1330,7 @@ describe("legacy sso update integration", () => {
     const { layer, api } = setup({
       getBody: {
         ...EXISTING_PROVIDER,
-        domains: [{ id: "d1", domain: "" }, { id: "d2", domain: "old1.com" }, { id: "d3" }],
+        domains: [{ domain: "" }, { domain: "old1.com" }, {}],
       },
     });
     return Effect.gen(function* () {
@@ -1568,7 +1566,7 @@ describe("legacy sso update integration", () => {
         // The merge seeds from the reconciled host's GET response.
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
-        expect(api.requests.some((r) => r.url.startsWith("http://first.example"))).toBe(false);
+        expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
         // The raw GET stitches identity through the shared per-command guard,
         // like Go's identityTransport on every Management API response.
         expect(testSetup.stitchedResponses).toBeGreaterThan(0);
@@ -1684,6 +1682,15 @@ describe("legacy sso update integration", () => {
     const first = writeProfileYaml("first-notoken.yml", "http://first.example");
     const second = writeProfileYaml("second-notoken.yml", "http://second.example");
     const restoreEnv = withProfileEnv(undefined);
+    const previousNoKeyring = process.env["SUPABASE_NO_KEYRING"];
+    process.env["SUPABASE_NO_KEYRING"] = "1";
+    const restoreNoKeyring = Effect.sync(() => {
+      if (previousNoKeyring === undefined) {
+        delete process.env["SUPABASE_NO_KEYRING"];
+      } else {
+        process.env["SUPABASE_NO_KEYRING"] = previousNoKeyring;
+      }
+    });
     const { layer, api } = setup({
       accessToken: Option.none(),
       cliArgs: [
@@ -1710,7 +1717,7 @@ describe("legacy sso update integration", () => {
         expect(dump).toContain("Access token not provided. Supply an access token by running");
       }
       expect(api.requests).toHaveLength(0);
-    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    }).pipe(Effect.ensuring(restoreNoKeyring), Effect.ensuring(restoreEnv), Effect.provide(layer));
   });
 
   it.live("profile emulation: the missing-token gate fires AFTER the mutex check, like Go", () => {
@@ -1879,7 +1886,7 @@ describe("legacy sso update integration", () => {
         const entitlements = api.requests.find((r) => r.url.includes("/entitlements"));
         expect(project?.url).toBe(`http://second.example/v1/projects/${LEGACY_VALID_REF}`);
         expect(entitlements?.url).toBe("http://second.example/v1/organizations/acme/entitlements");
-        expect(api.requests.some((r) => r.url.startsWith("http://first.example"))).toBe(false);
+        expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );

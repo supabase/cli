@@ -5,8 +5,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyGetPendingSeeds, legacySeedData } from "./legacy-seed-ops.ts";
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}

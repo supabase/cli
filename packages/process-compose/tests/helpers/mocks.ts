@@ -8,11 +8,31 @@ interface SpawnRecord {
 
 const encoder = new TextEncoder();
 
+const isOneShotSupervisor = (args: ReadonlyArray<string>): boolean => {
+  const encoded = args.at(-1);
+  if (encoded === undefined) return false;
+  try {
+    const config: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    return (
+      typeof config === "object" &&
+      config !== null &&
+      "command" in config &&
+      config.command === "bash" &&
+      "args" in config &&
+      Array.isArray(config.args) &&
+      config.args[0] === "-c"
+    );
+  } catch {
+    return false;
+  }
+};
+
 export function mockChildProcessSpawner(
   opts: {
     exitCode?: number;
     stdout?: string[];
     stderr?: string[];
+    beforeSpawn?: (record: SpawnRecord) => Effect.Effect<void>;
     onSpawn?: (record: SpawnRecord) => void;
   } = {},
 ) {
@@ -27,6 +47,7 @@ export function mockChildProcessSpawner(
           const cmd = command._tag === "StandardCommand" ? command.command : "";
           const args = command._tag === "StandardCommand" ? command.args : [];
           const record: SpawnRecord = { command: cmd, args };
+          yield* opts.beforeSpawn?.(record) ?? Effect.void;
           spawned.push(record);
           opts.onSpawn?.(record);
 
@@ -35,7 +56,12 @@ export function mockChildProcessSpawner(
 
           yield* Effect.forkDetach(
             Effect.gen(function* () {
-              yield* Effect.sleep("10 millis");
+              // Supervisor processes model long-running services. Direct
+              // commands model probes and one-shot helpers, which should
+              // complete promptly.
+              yield* Effect.sleep(
+                cmd === process.execPath && !isOneShotSupervisor(args) ? "30 seconds" : "10 millis",
+              );
               running = false;
               yield* Deferred.succeed(
                 exitDeferred,
@@ -56,9 +82,10 @@ export function mockChildProcessSpawner(
             isRunning: Effect.sync(() => running),
             stdin: Sink.drain,
             kill: (killOpts) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 killed.push(killOpts?.killSignal ?? "SIGTERM");
                 running = false;
+                yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(143));
               }),
             unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,

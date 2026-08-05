@@ -14,6 +14,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { toDockerPath } from "../../../../shared/functions/deploy.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -488,6 +489,9 @@ describe("legacy functions serve integration", () => {
             value.endsWith(":/root/index.ts:ro,Z"),
           ),
         ).toBe(true);
+        expect(extractFlagValues(dockerRun.args, "--workdir")).toEqual([
+          toDockerPath(tempRoot.current),
+        ]);
         expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
           "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
         );

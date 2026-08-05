@@ -51,6 +51,33 @@ describe("ServiceTransition", () => {
       expect(next!.startedAt).toBe(1000);
     });
 
+    it("Starting + SpawnFailed → Failed with error", () => {
+      const result = applyEvent(make("db", { status: "Starting" }), {
+        _tag: "SpawnFailed",
+        error: "spawn gate failed",
+      });
+      expect(result?.status).toBe("Failed");
+      expect(result?.error).toBe("spawn gate failed");
+    });
+
+    it("Pending + SpawnFailed → Failed with error", () => {
+      const result = applyEvent(make("db"), {
+        _tag: "SpawnFailed",
+        error: "pre-start failed",
+      });
+      expect(result?.status).toBe("Failed");
+      expect(result?.error).toBe("pre-start failed");
+    });
+
+    it("Restarting + SpawnFailed → Failed with error", () => {
+      const result = applyEvent(make("db", { status: "Restarting" }), {
+        _tag: "SpawnFailed",
+        error: "restart preparation failed",
+      });
+      expect(result?.status).toBe("Failed");
+      expect(result?.error).toBe("restart preparation failed");
+    });
+
     it("Running + HealthCheckPassed → Healthy", () => {
       const state = make("db", { status: "Running", pid: 1234 });
       const next = applyEvent(state, { _tag: "HealthCheckPassed" });
@@ -305,6 +332,14 @@ describe("ServiceTransition", () => {
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Failed");
       expect(next!.error).toBe("seed failed");
+    });
+
+    it("Starting + HookFailed → Failed with error", () => {
+      const state = make("db", { status: "Starting" });
+      const next = applyEvent(state, { _tag: "HookFailed", error: "startup failed" });
+      expect(next).not.toBeNull();
+      expect(next!.status).toBe("Failed");
+      expect(next!.error).toBe("startup failed");
     });
 
     it("Pending + HookFailed → null (ignored)", () => {

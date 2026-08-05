@@ -211,6 +211,7 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
       denoVersion: ctx.denoVersion,
+      workdir: ctx.cwd,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
   // The template always prints the diff envelope on the success path, even for an
@@ -264,6 +265,7 @@ export const legacyDeclarativeExportPgDelta = Effect.fnUntraced(function* (
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
       denoVersion: ctx.denoVersion,
+      workdir: ctx.cwd,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
 
@@ -312,6 +314,7 @@ export const legacyExportCatalogPgDelta = Effect.fnUntraced(function* (
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
       denoVersion: ctx.denoVersion,
+      workdir: ctx.cwd,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
 

@@ -82,9 +82,9 @@ A lightweight green thread managed by the Effect runtime. While an OS thread cos
 
 Why this matters for process-compose: we run one fiber per managed service. If you're orchestrating 50 services, that's 50 fibers — trivial for the runtime, but 50 OS threads would be wasteful. More importantly, fibers support **structured concurrency**: when a parent fiber is interrupted, all its children are interrupted too. This is how we guarantee no process is ever leaked.
 
-### Layer and ServiceMap.Service
+### Layer and Context.Service
 
-Effect's dependency injection system. A `Layer` is a recipe for building a service and its dependencies. `ServiceMap.Service` is the base class for declaring a service interface (what methods it provides) and its implementation (a `Layer` that creates those methods).
+Effect's dependency injection system. A `Layer` is a recipe for building a service and its dependencies. `Context.Service` is the base class for declaring a service interface (what methods it provides) and its implementation (a `Layer` that creates those methods).
 
 In process-compose, `Orchestrator`, `LogBuffer`, and `Browser` are all services. Tests swap in mock implementations via `Layer.succeed(ServiceTag, mockImpl)` — no monkey-patching globals, no `jest.mock()`.
 
@@ -102,7 +102,7 @@ yield* Deferred.await(gate);   // blocks until resolved
 yield* Deferred.succeed(gate, void 0);  // unblocks A
 ```
 
-process-compose uses one `Deferred` per service per lifecycle condition (`started`, `healthy`, `completed`). When service A depends on service B being "healthy", A's fiber simply `await`s B's `healthy` deferred. No polling, no events, no race conditions.
+process-compose uses `Deferred` for local, one-shot coordination, such as racing a process exit against an unhealthy-restart request. Durable lifecycle coordination uses the service's state stream instead: a `Deferred` cannot represent repeated start/restart generations without replacing the object that existing waiters reference.
 
 ### SubscriptionRef
 
@@ -121,7 +121,7 @@ const value = SubscriptionRef.getUnsafe(ref);  // 42
 const stream = SubscriptionRef.changes(ref);   // Stream of 0, 42, ...
 ```
 
-Each service has a `SubscriptionRef<ServiceState>`. The Orchestrator updates it on state transitions; consumers (like a TUI dashboard) subscribe to the stream of changes.
+Each service has one stable `SubscriptionRef<ServiceState>` for its entire lifetime. The Orchestrator updates it on state transitions; dependencies, readiness waiters, shutdown ordering, and consumers all subscribe to the same stream. `SubscriptionRef.changes` emits the current value first, so a waiter cannot miss a transition that happened just before it subscribed.
 
 ### FiberMap
 
@@ -538,16 +538,19 @@ The Orchestrator is the heart of the library. It ties together every other compo
 #### Service interface
 
 ```ts
-class Orchestrator extends ServiceMap.Service<Orchestrator, {
+class Orchestrator extends Context.Service<Orchestrator, {
   start: ()           => Effect<void>;                              // start all services
   startService: (name) => Effect<void, ServiceNotFoundError>;       // start one + its deps
   stop: ()            => Effect<void>;                              // stop all services
-  stopService: (name) => Effect<void, ServiceNotFoundError>;        // stop one service
+  stopService: (name) => Effect<void, ServiceNotFoundError>;        // stop service + active dependents
   restartService: (name) => Effect<void, ServiceNotFoundError>;     // stop then start
+  updateServiceDefinition: (name, def) => Effect<void, ...>;       // replace definition
   getState: (name)    => Effect<ServiceState, ServiceNotFoundError>;// snapshot
   getAllStates: ()     => Effect<ReadonlyArray<ServiceState>>;      // snapshot of all
   stateChanges: (name) => Effect<Stream<ServiceState>, ServiceNotFoundError>; // live
   allStateChanges: ()  => Stream<ServiceState>;                     // live, all services
+  waitReady: (name)    => Effect<void, ServiceNotFoundError | ServiceReadyError>;
+  waitAllReady: ()     => Effect<void, ServiceReadyError>;
 }>()("process-compose/Orchestrator") { ... }
 ```
 
@@ -558,12 +561,7 @@ class Orchestrator extends ServiceMap.Service<Orchestrator, {
 When the Orchestrator layer is constructed, it:
 
 1. Yields the `ChildProcessSpawner` and `LogBuffer` services from the environment
-2. Creates a `Map<string, ServiceSignals>` where each entry holds:
-   - `state`: a `SubscriptionRef<ServiceState>` (the live state machine)
-   - `started`: a `Deferred<void>` (resolved when the process is spawned)
-   - `healthy`: a `Deferred<void>` (resolved when health check passes)
-   - `completed`: a `Deferred<number>` (resolved with exit code when the process exits)
-   - `stopped`: a `Deferred<void>` (resolved when the service has fully stopped)
+2. Creates a `Map<string, ServiceRuntime>` where each entry holds one stable `SubscriptionRef<ServiceState>`. It is both the live state machine and the synchronization point for lifecycle waiters.
 3. Creates a `FiberMap<string>` to track one fiber per running service
 
 #### FiberMap — the central data structure
@@ -602,15 +600,15 @@ Each service follows this lifecycle. All state mutations go through `sendEvent()
 ```mermaid
 sequenceDiagram
     participant RUN as runService
-    participant DEP as Deferred (deps)
+    participant DEP as Dependency state stream
     participant FSM as sendEvent (FSM)
     participant SPAWN as spawnOnce
     participant CPS as ChildProcessSpawner
     participant LOG as LogBuffer
     participant HP as HealthProbe
 
-    RUN->>DEP: await dependency conditions
-    Note over DEP: blocks until deps signal started/healthy/completed
+    RUN->>DEP: await dependency state predicates
+    Note over DEP: changes emits current state, then future transitions
 
     RUN->>FSM: DependenciesSatisfied → Starting
     RUN->>SPAWN: spawnOnce()
@@ -618,14 +616,16 @@ sequenceDiagram
     CPS-->>SPAWN: handle (pid, stdout, stderr, exitCode)
 
     SPAWN->>SPAWN: register finalizer (SIGTERM → SIGKILL)
-    SPAWN->>FSM: ProcessSpawned → Running + signal "started"
+    SPAWN->>SPAWN: run started hooks
+    SPAWN->>FSM: ProcessSpawned → Running
 
     par Log streaming
         SPAWN->>LOG: fork: stdout → decodeText → splitLines → append
         SPAWN->>LOG: fork: stderr → decodeText → splitLines → append
     and Health checking
         SPAWN->>HP: fork: runHealthProbe(callbacks)
-        HP->>FSM: HealthCheckPassed → Healthy + signal "healthy"
+        HP->>HP: run healthy hooks
+        HP->>FSM: HealthCheckPassed → Healthy
     end
 
     alt Process exits normally
@@ -649,20 +649,22 @@ sequenceDiagram
 
 #### Dependency waiting
 
-When a service has dependencies, its fiber blocks on `Deferred.await` calls before spawning:
+When a service has dependencies, its fiber waits for predicates on the dependency's stable state stream before spawning:
 
 ```ts
 // Service "api" depends on "db" being healthy
-const healthySig = services.get("db")?.healthy;
-if (healthySig) yield * Deferred.await(healthySig);
-// Execution only continues here once "db" signals healthy
+const db = services.get("db");
+if (db) {
+  yield * waitForState(db, (state) => state.status === "Healthy");
+}
+// Execution only continues here once db is healthy
 ```
 
 This is fundamentally different from polling or event-based approaches:
 
 - **No polling**: the fiber is parked with zero CPU cost until the deferred resolves
-- **No race conditions**: `Deferred.await` either returns immediately (already resolved) or suspends
-- **No event ordering bugs**: there's no "what if the event fired before we subscribed" problem
+- **Stable across restarts**: every waiter observes the same `SubscriptionRef`; no lifecycle-generation aliases need replacing
+- **No missed current state**: `SubscriptionRef.changes` emits the current value before future transitions
 
 The entire dependency-wait phase is wrapped in an `Effect.timeout` using `dependencyTimeoutSeconds` (default: 30s). If dependencies don't reach their conditions in time, the service receives a `DependencyFailed` event with a timeout error message and transitions to `Failed` without ever spawning. This prevents services from blocking indefinitely when a dependency is stuck.
 
@@ -687,13 +689,15 @@ Finalizers run in three scenarios:
 
 **Global shutdown timeout.** The entire `stop()` operation is wrapped in a `shutdownTimeoutSeconds` timeout (default: 60 seconds). If the global timeout expires before all services have stopped — for example because a service ignores SIGTERM and its per-service `shutdown.timeoutSeconds` has not yet elapsed — `FiberMap.clear` force-interrupts all remaining fibers and a `[shutdown-timeout]` warning is appended to every service's log buffer. This is a safety net layered on top of the per-service SIGTERM → wait → SIGKILL escalation controlled by `shutdown.timeoutSeconds`: the per-service timeout governs how long a single process gets to exit gracefully; the global timeout bounds the total wall-clock time the entire shutdown can take.
 
-**Shutdown is parallel, not sequential.** Services stop concurrently, but each service waits for its dependents to stop first before stopping itself. This is achieved via the `stopped` Deferred: a service's stop logic awaits `Deferred.await(dependent.stopped)` for each of its dependents before proceeding with its own shutdown. This mirrors the startup pattern — where services start concurrently and each waits for its dependencies' `started`/`healthy` Deferreds — but in reverse. The `dependentsOf(name)` graph query provides the reverse dependency edges needed to look up which services must stop first.
+**Shutdown is parallel, not sequential.** Services stop concurrently, but each service waits for its active dependents to reach `Stopped` before stopping itself. It observes the same stable state streams used during startup, but follows the graph in reverse. The `dependentsOf(name)` graph query provides the reverse dependency edges needed to identify which services must stop first.
 
-The FSM guarantees correct state transitions during shutdown. When `stopService` is called:
+`stopService(name)` stops the named service and its active transitive dependents, in reverse dependency order. This preserves the graph invariant that no managed dependent keeps running after a dependency has been stopped. Never-started dependents are left dormant.
+
+The FSM guarantees correct state transitions during shutdown. For each affected service:
 
 1. `StopRequested` event transitions the service to `Stopping`
 2. `FiberMap.remove` interrupts the fiber, which triggers the finalizer (SIGTERM → wait → SIGKILL)
-3. After `remove` completes (the process is dead), a `ProcessExited` event transitions to `Stopped` and the `stopped` Deferred is resolved
+3. After `remove` completes (the process is dead), a `ProcessExited` event transitions to `Stopped`; shutdown waiters observe that transition on the state stream
 
 This fixes a subtle bug in the pre-FSM design where `Stopped` was set immediately after `FiberMap.remove` returned, before the process had actually exited. The FSM enforces that `Stopping → Stopped` only happens via `ProcessExited`, which is only sent after the fiber (and its finalizer) has completed.
 
@@ -731,16 +735,16 @@ After a process exits **or becomes unhealthy**, the restart policy is evaluated:
 
 **Unhealthy restart flow**: when the health probe transitions a service to `Unhealthy` and the restart policy allows it, the Orchestrator races an `unhealthyRestart` Deferred against `handle.exitCode` inside `spawnOnce()`. When the Deferred wins, the scope closes, triggering the kill finalizer (SIGTERM → timeout → SIGKILL). The service then enters the normal restart loop via `RestartTriggered`. Crash restarts and unhealthy restarts share the same `maxRestarts` counter.
 
-If restarting, exponential backoff is applied: `min(30s, 2^(n-1)s)` where n is the restart count. The Deferred signals (`started`, `healthy`, `completed`) are reset before each new spawn so that dependents can await the new instance.
+If restarting, exponential backoff is applied: `min(30s, 2^(n-1)s)` where n is the restart count. The state stream remains stable across the restart and publishes `Restarting → Starting → Running → Healthy`, so existing waiters stay attached to the new generation.
 
 #### Lifecycle hooks
 
 Services can define hooks that run at specific lifecycle points:
 
-- **`on: "started"`** — runs after `ProcessSpawned`, before signaling the `started` Deferred
-- **`on: "healthy"`** — runs after the first `HealthCheckPassed`, before signaling the `healthy` Deferred
+- **`on: "started"`** — runs after the process is spawned but before `ProcessSpawned` transitions the service to `Running`
+- **`on: "healthy"`** — runs after the first successful health probe but before `HealthCheckPassed` transitions the service to `Healthy`
 
-Hooks run between the state transition and the Deferred signal. This means a service depending on `db` with condition `healthy` will wait until db is Healthy AND db's `on:healthy` hooks complete.
+The stable state is published only after its hooks complete. This means a service depending on `db` with condition `healthy` waits until db's `on:healthy` hooks have succeeded and db has entered `Healthy`.
 
 Each hook receives a `HookLog` callback scoped to the service name, allowing it to write directly to the service's log buffer. Hook output appears in the same log stream as the service's stdout/stderr, so callers subscribed to a service's logs see hook messages inline with process output.
 
@@ -849,7 +853,7 @@ This works for simple cases but accumulates edge cases fast:
 | **Stop a service**             | `proc.kill()` + cleanup bookkeeping                                  | `FiberMap.remove(fibers, name)`                                                |
 | **Stop everything**            | Loop over processes + cleanup handlers                               | Close the scope (automatic)                                                    |
 | **Leaked process guarantee**   | Must manually handle every exit path                                 | Structured concurrency: parent interrupt = children interrupt = finalizers run |
-| **Wait for dependency**        | `EventEmitter` + `Promise` + race-condition handling                 | `Deferred.await(dep.healthy)`                                                  |
+| **Wait for dependency**        | `EventEmitter` + `Promise` + race-condition handling                 | Predicate over `SubscriptionRef.changes(dep.state)`                            |
 | **Observe state changes**      | `EventEmitter` + manual subscriber tracking                          | `SubscriptionRef.changes(ref)` (Stream)                                        |
 | **Stream logs to N consumers** | Custom pub/sub or multiple `.on('data')`                             | `PubSub` with bounded backpressure                                             |
 | **Graceful shutdown**          | `process.on('exit')` + manual per-process cleanup                    | `Effect.addFinalizer(() => kill then wait then SIGKILL)`                       |
@@ -887,12 +891,12 @@ graph TB
 
     subgraph "3. Orchestrator construction"
         OL["Orchestrator.layer(graph)"]
-        SIGS["ServiceSignals map<br/><i>SubscriptionRef + Deferred per service</i>"]
+        SIGS["ServiceRuntime map<br/><i>stable SubscriptionRef per service</i>"]
         FBM["FiberMap&lt;string&gt;"]
     end
 
     subgraph "4. Per-service fiber"
-        DEP["Await dependency<br/>Deferred signals"]
+        DEP["Await dependency<br/>state predicates"]
         SPAWN["spawner.spawn(cmd)"]
         FIN["Effect.addFinalizer<br/><i>SIGTERM → SIGKILL</i>"]
         STDOUT["stdout → decodeText<br/>→ splitLines"]
