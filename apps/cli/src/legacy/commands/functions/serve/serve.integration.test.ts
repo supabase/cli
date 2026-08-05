@@ -14,6 +14,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { toDockerPath } from "../../../../shared/functions/deploy.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -31,7 +32,6 @@ import {
 import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
 
 const deployMockState = vi.hoisted(() => ({
-  isDockerRunning: true,
   runCalls: [] as Array<{
     command: string;
     args: ReadonlyArray<string>;
@@ -59,9 +59,12 @@ const deployMockState = vi.hoisted(() => ({
           }
         // Never resolves — lets a test fork+interrupt while this specific call is in flight,
         // matching Effect's own canonical "forever pending, interruptible" primitive.
-        | { pending: true }),
+        | { pending: true }
+        // Fails the effect itself — models `spawnContainerCli` failing to spawn
+        // any container runtime (neither docker nor podman on PATH), as opposed
+        // to a spawned process exiting non-zero.
+        | { failure: Error }),
   reset() {
-    this.isDockerRunning = true;
     this.runCalls = [];
     this.networkCalls = [];
     this.volumeCalls = [];
@@ -77,7 +80,6 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
 
   return {
     ...actual,
-    isDockerRunning: () => Effect.succeed(deployMockState.isDockerRunning),
     ensureDockerNetwork: (networkMode: string, projectId: string) =>
       Effect.sync(() => {
         deployMockState.networkCalls.push({ networkMode, projectId });
@@ -93,8 +95,8 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
         )[0];
         const multilineEnvDir = args
           .flatMap((value, index) => (args[index - 1] === "-v" ? [value] : []))
-          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro"))
-          ?.slice(0, -":/root/.supabase/multiline-env:ro".length);
+          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
+          ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
         const enrichedOptions =
           envFile === undefined && multilineEnvDir === undefined
             ? options
@@ -126,7 +128,9 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
           stdout: "",
           stderr: "",
         };
-        return "pending" in result ? Effect.never : Effect.succeed(result);
+        if ("pending" in result) return Effect.never;
+        if ("failure" in result) return Effect.fail(result.failure);
+        return Effect.succeed(result);
       }),
   };
 });
@@ -482,9 +486,12 @@ describe("legacy functions serve integration", () => {
         expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.73.13");
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/index.ts:ro"),
+            value.endsWith(":/root/index.ts:ro,Z"),
           ),
         ).toBe(true);
+        expect(extractFlagValues(dockerRun.args, "--workdir")).toEqual([
+          toDockerPath(tempRoot.current),
+        ]);
         expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
           "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
         );
@@ -511,18 +518,17 @@ describe("legacy functions serve integration", () => {
           },
         });
 
+        // Bare `kong reload`, matching Go's `restartEdgeRuntime`
+        // (`internal/functions/serve/serve.go:129`) — the `--nginx-conf`
+        // template argument belongs to `start`'s Kong bring-up, not reload.
         expect(deployMockState.runCalls).toContainEqual({
           command: "docker",
-          args: [
-            "exec",
-            "supabase_kong_test-project",
-            "kong",
-            "reload",
-            "--nginx-conf",
-            "/home/kong/custom_nginx.template",
-          ],
+          args: ["exec", "supabase_kong_test-project", "kong", "reload"],
           options: { stdout: "ignore", stderr: "pipe" },
         });
+        expect(deployMockState.runCalls.some((call) => call.args.includes("--nginx-conf"))).toBe(
+          false,
+        );
 
         expect(childSpawner.spawned).toEqual([
           {
@@ -568,8 +574,8 @@ describe("legacy functions serve integration", () => {
             throw new Error("expected docker run call before docker logs spawn");
           }
           multilineEnvDirWhenLogsStarted = extractFlagValues(dockerRun.args, "-v")
-            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro"))
-            ?.slice(0, -":/root/.supabase/multiline-env:ro".length);
+            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
+            ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
           multilineEnvDirExistedWhenLogsStarted =
             multilineEnvDirWhenLogsStarted !== undefined &&
             existsSync(multilineEnvDirWhenLogsStarted);
@@ -615,7 +621,7 @@ describe("legacy functions serve integration", () => {
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 
       const multilineBind = extractFlagValues(dockerRun.args, "-v").find((value) =>
-        value.endsWith(":/root/.supabase/multiline-env:ro"),
+        value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
       );
       expect(multilineBind).toBeDefined();
       if (multilineBind === undefined) {
@@ -727,7 +733,7 @@ describe("legacy functions serve integration", () => {
         }
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/.supabase/multiline-env:ro"),
+            value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
           ),
         ).toBe(false);
       });
@@ -1107,6 +1113,10 @@ describe("legacy functions serve integration", () => {
           path: join(tempRoot.current, "supabase", "functions", "hello", "index.ts"),
           type: "update",
         },
+        {
+          path: join(tempRoot.current, "supabase", "functions", "hello", "helper.ts"),
+          type: "create",
+        },
       ]);
 
       const error = yield* Fiber.join(fiber).pipe(Effect.flip);
@@ -1120,7 +1130,15 @@ describe("legacy functions serve integration", () => {
           (call) => call.command === "docker" && call.args[0] === "run",
         ),
       ).toHaveLength(2);
-      expect(out.stderrText).toContain("File change detected:");
+      // The file-change line prints the fsnotify op token Go prints
+      // (`event.Op.String()`, `internal/functions/serve/watcher.go:100`) —
+      // WRITE/CREATE/REMOVE — not the internal event-type name.
+      expect(out.stderrText).toContain(
+        `File change detected: ${join(tempRoot.current, "supabase", "functions", "hello", "index.ts")} (WRITE)`,
+      );
+      expect(out.stderrText).toContain(
+        `File change detected: ${join(tempRoot.current, "supabase", "functions", "hello", "helper.ts")} (CREATE)`,
+      );
 
       // `functions serve`'s restart wrapper (`startEdgeRuntime`, Go's
       // `restartEdgeRuntime`) reloads Kong after each successful bring-up —
@@ -1197,12 +1215,27 @@ describe("legacy functions serve integration", () => {
 
   it.live("does not remove the existing runtime when interrupted before startup owns it", () => {
     const processControl = mockQueuedProcessControl();
+    // Block startup at the DB assertion (`container inspect`) — the last
+    // pre-ownership step under Go's ordering (`serve.go:110-120`: config load
+    // → assert DB → only THEN remove the existing container). The remote-JWKS
+    // fetch is post-assertion (`serve.go:141`), so if the ordering ever
+    // regresses to fetch-first, this test hangs at the pending fetch instead
+    // of reaching the inspect and fails on the waitFor timeout.
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { pending: true };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
 
     return Effect.gen(function* () {
       const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
         () =>
           new Promise<Response>(() => {
-            // Intentionally pending to keep startup in pre-removal work.
+            // Intentionally pending — must never be reached before the assertion.
           }),
       );
 
@@ -1235,7 +1268,16 @@ describe("legacy functions serve integration", () => {
         Effect.forkChild({ startImmediately: true }),
       );
 
-      yield* waitFor(() => fetchMock.mock.calls.length > 0, "timed out waiting for JWKS fetch");
+      yield* waitFor(
+        () =>
+          deployMockState.runCalls.some(
+            (call) =>
+              call.command === "docker" &&
+              call.args[0] === "container" &&
+              call.args[1] === "inspect",
+          ),
+        "timed out waiting for the DB inspect",
+      );
       processControl.signal("SIGINT");
 
       const exit = yield* Fiber.await(fiber);
@@ -1249,6 +1291,9 @@ describe("legacy functions serve integration", () => {
             call.args.includes("supabase_edge_runtime_test-project"),
         ),
       ).toBe(false);
+      // No remote JWKS request either — Go resolves JWKS only after the DB
+      // assertion succeeds (`serve.go:141`).
+      expect(fetchMock).not.toHaveBeenCalled();
       expect(out.stdoutText).toContain("Stopped serving");
     });
   });
@@ -1445,7 +1490,7 @@ describe("legacy functions serve integration", () => {
       );
       expect(
         extractFlagValues(dockerRun.args, "-v").some((value) =>
-          value.endsWith(":/root/index.ts:ro"),
+          value.endsWith(":/root/index.ts:ro,Z"),
         ),
       ).toBe(true);
       expect(commandScript).not.toContain("@ts-nocheck");
@@ -1865,6 +1910,80 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live("uppercases config secret names, skipping empty and unresolved values", () => {
+    // Go's config loader uppercases every `[edge_runtime.secrets]` key with
+    // `strings.ToUpper` (`pkg/config/config.go:766-771`, viper #1014
+    // workaround) before `set.ListSecrets` (`internal/secrets/set/set.go:48-52`)
+    // reads the map, and ListSecrets keeps only entries with a non-empty
+    // SHA256, i.e. it skips empty values and still-unresolved `env(VAR)`
+    // literals (`pkg/config/secret.go:94-107`).
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "secrets logs failed" }]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "",
+            "[edge_runtime.secrets]",
+            'my_lower_secret = "keep-me"',
+            'EMPTY_SECRET = ""',
+            'UNRESOLVED_SECRET = "env(SERVE_SECRET_NEVER_SET)"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe({ childSpawner });
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("secrets logs failed");
+      }
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+      expect(envs).toContain("MY_LOWER_SECRET=keep-me");
+      expect(envs.some((entry) => entry.startsWith("my_lower_secret="))).toBe(false);
+      expect(envs.some((entry) => entry.startsWith("EMPTY_SECRET="))).toBe(false);
+      expect(envs.some((entry) => entry.startsWith("UNRESOLVED_SECRET="))).toBe(false);
+    });
+  });
+
   it.live("uses the resolved project_id when deriving docker resource names", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
@@ -2052,8 +2171,6 @@ describe("legacy functions serve integration", () => {
   );
 
   it.live("fails inspect flag conflicts before startup work begins", () => {
-    deployMockState.isDockerRunning = false;
-
     return Effect.gen(function* () {
       const { layer } = setupServe();
       const error = yield* legacyFunctionsServe(
@@ -2127,6 +2244,238 @@ describe("legacy functions serve integration", () => {
       if (error instanceof Error) {
         expect(error.message).toContain("supabase start is not running.");
       }
+    });
+  });
+
+  it.live("surfaces a down docker daemon as the inspect failure with the install hint", () => {
+    // Go has no upfront docker precheck in `functions serve` — a down daemon
+    // surfaces from `AssertSupabaseDbIsRunning`'s container inspect as
+    // `failed to inspect service: <connection error>` with the Docker Desktop
+    // install hint attached as a suggestion (`internal/utils/misc.go:155-166`,
+    // `docker.go:350`), AFTER config load resolved the project id.
+    const daemonDownStderr =
+      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 1, stdout: "", stderr: daemonDownStderr };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe(`failed to inspect service: ${daemonDownStderr}`);
+        // The old TS-only upfront precheck message must never come back.
+        expect(error.message).not.toContain("failed to run docker");
+      }
+      expect(error).toHaveProperty(
+        "suggestion",
+        "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
+      );
+
+      // Config load ran first (the inspect targets the config-resolved project
+      // id) and nothing after the failed assert touched docker.
+      expect(deployMockState.runCalls).toEqual([
+        expect.objectContaining({
+          command: "docker",
+          args: ["container", "inspect", "supabase_db_test-project"],
+        }),
+      ]);
+      expect(deployMockState.volumeCalls).toHaveLength(0);
+      expect(deployMockState.networkCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("keeps the install hint when no container runtime is installed at all", () => {
+    // With no `docker` or `podman` binary on PATH the inspect never spawns —
+    // the shell-out equivalent of Go's missing daemon socket, which
+    // `client.IsErrConnectionFailed` classifies as a connection failure and so
+    // gets the Docker Desktop install hint (`internal/utils/misc.go:155-166`,
+    // `docker.go:350`). The spawn-failure cause must survive into the
+    // `failed to inspect service: …` message instead of being blanked.
+    const runtimeNotFoundMessage =
+      "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { failure: new Error(runtimeNotFoundMessage) };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe(`failed to inspect service: ${runtimeNotFoundMessage}`);
+        // The old TS-only upfront precheck message must never come back.
+        expect(error.message).not.toContain("failed to run docker");
+      }
+      expect(error).toHaveProperty(
+        "suggestion",
+        "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
+      );
+    });
+  });
+
+  it.live("fails with the config error, not a docker error, when both are broken", () => {
+    // Go's `restartEdgeRuntime` sanity-checks in order: `flags.LoadConfig`
+    // first, `AssertSupabaseDbIsRunning` second (`serve.go:107-113`) — a
+    // malformed config wins over a down docker daemon.
+    deployMockState.runHandler = () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig("not valid toml ]["));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toHaveProperty("_tag", "ProjectConfigParseError");
+      expect(deployMockState.runCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("makes no remote JWKS request when docker is down", () => {
+    // Go only fetches third-party JWKS inside `ServeFunctions` (`serve.go:141`,
+    // `ResolveJWKS`), strictly after `AssertSupabaseDbIsRunning`
+    // (`serve.go:110-113`) — with a down daemon the docker error surfaces
+    // immediately, without first waiting on OIDC/JWKS requests (two sequential
+    // 10s-timeout clients, `pkg/config/config.go:1727-1776`).
+    const daemonDownStderr =
+      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 1, stdout: "", stderr: daemonDownStderr };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        throw new Error(`unexpected fetch before the DB assertion: ${url}`);
+      });
+
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          fetchMock.mockRestore();
+        }),
+      );
+
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "",
+            "[auth.third_party.workos]",
+            "enabled = true",
+            'issuer_url = "https://issuer.example"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe(`failed to inspect service: ${daemonDownStderr}`);
+      }
+      // The docker-down error must win without a single external request.
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it.live("fails with the auth config error, not a docker error, when both are broken", () => {
+    // Go's `jwt_secret` ≥16-chars check runs during config load
+    // (`pkg/config/apikeys.go:43-47` via `config.go:1156`), BEFORE
+    // `AssertSupabaseDbIsRunning` — invalid auth config wins over a down
+    // docker daemon, so the local half of auth resolution must stay ahead of
+    // the DB assertion.
+    deployMockState.runHandler = () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          ['project_id = "test-project"', "", "[auth]", 'jwt_secret = "short"', ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe(
+          "Invalid config for auth.jwt_secret. Must be at least 16 characters",
+        );
+      }
+      expect(deployMockState.runCalls).toHaveLength(0);
     });
   });
 

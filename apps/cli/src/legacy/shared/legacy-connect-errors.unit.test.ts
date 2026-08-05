@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   LEGACY_SUGGEST_ENV_VAR,
+  LEGACY_SUGGEST_LOCAL_STACK,
   legacyConnectFailureMessage,
   legacyConnectSuggestion,
   legacyIpv6Suggestion,
@@ -276,6 +277,7 @@ describe("legacyConnectSuggestion", () => {
   const ctx = {
     dashboardUrl: "https://supabase.com/dashboard",
     profileName: "supabase",
+    isLocal: false,
   } as const;
 
   // The @effect/sql SqlError wraps the node driver error on `.cause`; a multi-address
@@ -289,6 +291,13 @@ describe("legacyConnectSuggestion", () => {
     const err = sqlError(systemError("connect ECONNREFUSED 127.0.0.1:54322", "ECONNREFUSED"));
     expect(legacyConnectSuggestion(err, ctx)).toBe(
       "Make sure your local IP is allowed in Network Restrictions and Network Bans.\nhttps://supabase.com/dashboard/project/_/database/settings",
+    );
+  });
+
+  it("maps a refused local connection to the local stack hint", () => {
+    const err = sqlError(systemError("connect ECONNREFUSED 127.0.0.1:54322", "ECONNREFUSED"));
+    expect(legacyConnectSuggestion(err, { ...ctx, isLocal: true })).toBe(
+      LEGACY_SUGGEST_LOCAL_STACK,
     );
   });
 

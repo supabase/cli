@@ -12,6 +12,14 @@ type Spawner = ChildProcessSpawner["Service"];
 
 const DOCKER_PULL_RETRY_DELAYS_MS = [4_000, 8_000] as const;
 
+/**
+ * Distinguishes a deadline-bounded pull attempt expiring from a spawn failure:
+ * the loop below treats a failed `pullImage` EFFECT as "docker itself is
+ * broken" and aborts every remaining candidate, which is exactly wrong for a
+ * timeout — a slow registry is the one failure the next candidate can fix.
+ */
+const PULL_TIMED_OUT = Symbol("PULL_TIMED_OUT");
+
 const spawnError = () =>
   // Never embed the spawn error verbatim: it can leak the full argv and
   // environment of the failed exec (CWE-214/209). Emit a fixed,
@@ -62,7 +70,7 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
 export function legacyMakeDockerImageResolver(
   spawner: Spawner,
   projectEnvValues?: Readonly<Record<string, string>>,
-): (image: string) => Effect.Effect<string, LegacyDockerRunError> {
+): (image: string, deadline?: number) => Effect.Effect<string, LegacyDockerRunError> {
   const hasLocalImage = (image: string): Effect.Effect<boolean, LegacyDockerRunError> =>
     Effect.gen(function* () {
       // `stdout: "ignore"`: `docker image inspect` writes the full image JSON
@@ -101,7 +109,10 @@ export function legacyMakeDockerImageResolver(
 
   const pullImage = (
     image: string,
-  ): Effect.Effect<{ readonly exitCode: number; readonly stderr: string }, Error> =>
+  ): Effect.Effect<
+    { readonly exitCode: number; readonly stderr: string; readonly endedWithNewline: boolean },
+    Error
+  > =>
     Effect.gen(function* () {
       const handle = yield* spawnContainerCli(spawner, ["pull", image], {
         stdin: "inherit",
@@ -117,20 +128,27 @@ export function legacyMakeDockerImageResolver(
       // buffered copies are kept only to report the error message on a
       // non-zero exit. Decode each stream separately so a multi-byte UTF-8
       // sequence is never split across interleaved chunks.
+      // `endedWithNewline` records whether the last byte teed to the parent's
+      // stderr was `\n` (both streams share it — last write wins, which is
+      // what the terminal shows), so the retry loop can start its banner on a
+      // fresh line when the child's final output wasn't newline-terminated.
       const stdoutChunks: Array<Uint8Array> = [];
       const stderrChunks: Array<Uint8Array> = [];
+      let endedWithNewline = true;
       yield* Effect.all(
         [
           Stream.runForEach(handle.stdout, (chunk) =>
             Effect.sync(() => {
               stdoutChunks.push(chunk);
               globalThis.process.stderr.write(chunk);
+              if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
           Stream.runForEach(handle.stderr, (chunk) =>
             Effect.sync(() => {
               stderrChunks.push(chunk);
               globalThis.process.stderr.write(chunk);
+              if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
         ],
@@ -142,10 +160,11 @@ export function legacyMakeDockerImageResolver(
       return {
         exitCode,
         stderr: `${stdout}${stderr}`.trim(),
+        endedWithNewline,
       };
     }).pipe(Effect.scoped);
 
-  return (image: string): Effect.Effect<string, LegacyDockerRunError> =>
+  return (image: string, deadline?: number): Effect.Effect<string, LegacyDockerRunError> =>
     Effect.gen(function* () {
       const candidates = legacyGetRegistryImageUrlCandidates(image, projectEnvValues);
       for (const candidate of candidates) {
@@ -155,22 +174,64 @@ export function legacyMakeDockerImageResolver(
       }
 
       const failures: Array<string> = [];
-      for (const candidate of candidates) {
+      for (const [candidateIndex, candidate] of candidates.entries()) {
+        // `deadline` (epoch ms) is opt-in and no production caller passes one:
+        // a human watching `supabase start` can Ctrl-C a slow pull, CI cannot,
+        // so only the e2e helper (`tests/helpers/docker-image.ts`) bounds the
+        // resolve. Remaining time is split across the candidates still to run
+        // — recomputed per candidate so a fast failure carries its unused
+        // share forward and the last candidate gets all remaining time — and
+        // a stalled registry can never starve the fallbacks behind it.
+        let candidateShareMs: number | undefined;
+        let candidateDeadline: number | undefined;
+        if (deadline !== undefined) {
+          candidateShareMs = Math.max(
+            1,
+            Math.floor((deadline - Date.now()) / (candidates.length - candidateIndex)),
+          );
+          candidateDeadline = Math.min(Date.now() + candidateShareMs, deadline);
+        }
+        // Whether the most recent failed attempt's teed output ended with a
+        // newline — read by the retry banner below, which runs outside the
+        // block the pull result is scoped to.
+        let lastPullEndedWithNewline = true;
         for (
           let attemptIndex = 0;
           attemptIndex <= DOCKER_PULL_RETRY_DELAYS_MS.length;
           attemptIndex += 1
         ) {
           const attempt = attemptIndex + 1;
-          const result = yield* Effect.exit(pullImage(candidate));
+          const remainingMs =
+            candidateDeadline === undefined ? undefined : candidateDeadline - Date.now();
+          if (remainingMs !== undefined && remainingMs <= 0) {
+            failures.push(
+              `${candidate} attempt ${attempt}: candidate budget exhausted (${candidateShareMs}ms share)`,
+            );
+            break;
+          }
+          const result = yield* Effect.exit(
+            remainingMs === undefined
+              ? pullImage(candidate)
+              : Effect.timeoutOrElse(pullImage(candidate), {
+                  duration: `${remainingMs} millis`,
+                  orElse: () => Effect.succeed(PULL_TIMED_OUT),
+                }),
+          );
           if (Exit.isSuccess(result)) {
-            if (result.value.exitCode === 0) {
+            if (result.value === PULL_TIMED_OUT) {
+              failures.push(`${candidate} attempt ${attempt}: timed out after ${remainingMs}ms`);
+              // The share is spent — move straight to the next candidate.
+              break;
+            }
+            const pulled = result.value;
+            lastPullEndedWithNewline = pulled.endedWithNewline;
+            if (pulled.exitCode === 0) {
               return candidate;
             }
             const message =
-              result.value.stderr.length > 0
-                ? result.value.stderr
-                : `docker pull exited with code ${result.value.exitCode}`;
+              pulled.stderr.length > 0
+                ? pulled.stderr
+                : `docker pull exited with code ${pulled.exitCode}`;
             failures.push(`${candidate} attempt ${attempt}: ${message}`);
             if (attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
               break;
@@ -190,6 +251,27 @@ export function legacyMakeDockerImageResolver(
           if (delay === undefined) {
             break;
           }
+          // Never sleep past this candidate's share — the backoff would spend
+          // budget the remaining registries still need.
+          if (candidateDeadline !== undefined && Date.now() + delay >= candidateDeadline) {
+            break;
+          }
+          // Go prints a per-retry banner before sleeping (`docker.go:314`):
+          // `fmt.Fprintf(os.Stderr, "Retrying after %v: %s\n", period, image)`
+          // — `%v` of the 4s/8s backoff `time.Duration` renders as `4s`/`8s`.
+          // Go also `Fprintln`s the failed attempt's error just before the
+          // banner (`docker.go:312`); here the `docker pull` child's own
+          // stderr — already teed live to the parent's stderr above — plays
+          // that role. `Fprintln` always newline-terminates, so when the
+          // child's final output didn't, add the `\n` ourselves — otherwise
+          // the banner would glue onto the error text where Go prints two
+          // lines.
+          yield* Effect.sync(() => {
+            if (!lastPullEndedWithNewline) {
+              globalThis.process.stderr.write("\n");
+            }
+            globalThis.process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);
+          });
           yield* Effect.sleep(`${delay} millis`);
         }
       }

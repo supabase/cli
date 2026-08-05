@@ -53,14 +53,13 @@ validation is performed on the discovered URLs, also matching the Go CLI.
 
 ## Exit Codes
 
-| Code | Condition                                                              |
-| ---- | ---------------------------------------------------------------------- |
-| `0`  | clean shutdown after `SIGINT`, `SIGTERM`, or stdin close               |
-| `1`  | Docker unavailable / `docker info` fails                               |
-| `1`  | local DB container is not running                                      |
-| `1`  | invalid inspect flag combination or invalid project/auth config        |
-| `1`  | env file, signing key, import map, or function bind resolution failure |
-| `1`  | edge-runtime container startup, log streaming, or restart loop failure |
+| Code | Condition                                                                                                                                                                          |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | clean shutdown after `SIGINT`, `SIGTERM`, or stdin close                                                                                                                           |
+| `1`  | local DB container is not running, or the Docker daemon is unreachable (surfaces from the DB inspect as `failed to inspect service: …` plus the Docker Desktop install suggestion) |
+| `1`  | invalid inspect flag combination or invalid project/auth config                                                                                                                    |
+| `1`  | env file, signing key, import map, or function bind resolution failure                                                                                                             |
+| `1`  | edge-runtime container startup, log streaming, or restart loop failure                                                                                                             |
 
 ## Telemetry Events Fired
 

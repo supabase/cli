@@ -40,7 +40,10 @@ interface LegacyDbBootstrapSeamShape {
   /**
    * The PG14/PG15 container-recreate half of local `db reset`
    * (`reset.RecreateLocalDatabase`): recreate the db container/volume, init schema,
-   * migrate + seed up to `version`, and restart the satellite containers. The
+   * migrate + seed up to `version`, restart the satellite containers
+   * (storage/auth/realtime/pooler), and reload Kong so its nginx re-resolves
+   * the restarted containers' addresses — otherwise routes to a container that
+   * moved keep returning 502 after the reset succeeds (issue #6016). The
    * caller has already printed `Resetting local database…`; the seam tees the
    * remaining progress (`Recreating database...`, `Restarting containers...`) to
    * stderr. `version` is the resolved migration version ("" for all migrations);

@@ -7,10 +7,14 @@
  * parsed flag values don't carry a `Changed` bit, so we re-derive it from the
  * raw `process.argv` slice.
  *
- * cobra's `MarkFlagsMutuallyExclusive` sorts the conflicting names before
- * building the error string (`apps/cli-go/.../flag_groups.go:204`), hence the
- * FIXED insertion order ["db-url","linked","local"] — alphabetical — for the
- * `setFlags` array.
+ * cobra's `MarkFlagsMutuallyExclusive` error has TWO bracketed lists: the
+ * group list keeps REGISTRATION order (`strings.Join(flagNames, " ")`,
+ * `flag_groups.go:73`) and is NOT sorted, while the "were all set" list IS
+ * sorted (`sort.Strings(set)`, `flag_groups.go:203-204`). The FIXED insertion
+ * order ["db-url","linked","local"] — alphabetical — for the `setFlags` array
+ * matches only that second, sorted list; each command must hardcode its own
+ * group list in its own Go registration order (e.g. seed `[local linked]`
+ * vs storage `[linked local]`).
  *
  * pflag accepts `--flag value` (space form) for non-boolean flags: the token
  * after a value-consuming flag is its value, not a separate flag. The scan
@@ -62,8 +66,10 @@ export interface LegacyDbTargetSelection {
  * represented here, so a new command that adds a value-consuming flag and
  * forgets to register it fails CI. That scan cannot see flag names built
  * through a helper indirection (`issue.command.ts`'s
- * `legacyIssueOptionalTextFlag`, `status.command.ts`'s `csvStringSliceFlag`)
- * — those flags are listed below by hand and excluded from the scan.
+ * `legacyIssueOptionalTextFlag`, and the shared `legacyStringSliceFlag`
+ * builder used by the sso/postgres-config/start/status/network-bans/
+ * network-restrictions slice flags — CLI-2005) — those flags are listed
+ * below by hand.
  */
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
@@ -143,8 +149,9 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "version",
   // Declared through a name-parameterized helper, invisible to the static
   // scan (see the doc comment above): `issue.command.ts`'s
-  // `legacyIssueOptionalTextFlag` and `status.command.ts`'s
-  // `csvStringSliceFlag`.
+  // `legacyIssueOptionalTextFlag`. (The `legacyStringSliceFlag`-built names —
+  // domains, add-domains, remove-domains, config, exclude, override-name,
+  // db-unban-ip, db-allow-cidr — are already listed in the sections above.)
   "additional-context",
   "area",
   "command",

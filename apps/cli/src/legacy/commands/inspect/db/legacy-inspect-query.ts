@@ -148,9 +148,11 @@ export function legacyInspectStmt(value: unknown): string {
 
 /**
  * A whitespace-collapsed statement cell that Go ALSO wraps in backticks
- * (`calls.go:52` / `outliers.go:50` write the query as `` `%s` ``, unlike
- * `locks`/`blocking` which leave it bare). Same empty-code-span rule as
- * `legacyInspectText`: an empty value surfaces as the two literal backticks.
+ * (`calls.go:52` / `outliers.go:50` write the query as `` `%s` ``, and
+ * `blocking.go:56` does the same for `blocking_statement` — unlike `locks`
+ * and `blocking`'s `blocked_statement`, which stay bare). Same
+ * empty-code-span rule as `legacyInspectText`: an empty value surfaces as the
+ * two literal backticks.
  */
 export function legacyInspectBacktickStmt(value: unknown): string {
   const stmt = legacyInspectStmt(value);

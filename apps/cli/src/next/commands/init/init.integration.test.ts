@@ -82,17 +82,20 @@ function mockContextualAnalytics() {
   return { layer, captured };
 }
 
-function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
+function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string): Record<string, unknown> {
   expect(Exit.isFailure(exit)).toBe(true);
   if (!Exit.isFailure(exit)) {
-    return;
+    return {};
   }
 
   const failure = Cause.findErrorOption(exit.cause);
   expect(Option.isSome(failure)).toBe(true);
-  if (Option.isSome(failure)) {
-    expect((failure.value as { _tag: string })._tag).toBe(tag);
+  if (!Option.isSome(failure)) {
+    return {};
   }
+  const error = failure.value as Record<string, unknown>;
+  expect(error["_tag"]).toBe(tag);
+  return error;
 }
 
 describe("init handler", () => {
@@ -475,6 +478,33 @@ describe("init handler", () => {
     );
   });
 
+  it.live("prepends a line break even when the existing supabase/.gitignore is empty", () => {
+    const tempDir = makeTempDir();
+    const gitignorePath = join(tempDir, "supabase", ".gitignore");
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(tempDir, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => mkdir(join(tempDir, "supabase"), { recursive: true }));
+      yield* Effect.tryPromise(() => writeFile(gitignorePath, ""));
+      const { layer } = buildLayer(tempDir);
+
+      yield* init({
+        interactive: false,
+        experimental: false,
+        useOrioledb: false,
+        force: false,
+      }).pipe(Effect.provide(layer));
+
+      // Go appends `\n` + template to any pre-existing file, even an empty one
+      // (`apps/cli-go/internal/init/init.go:80-96`).
+      expect(yield* Effect.tryPromise(() => readFile(gitignorePath, "utf8"))).toBe(
+        `\n${INIT_GITIGNORE_TEMPLATE}`,
+      );
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("requires --experimental when --use-orioledb is set", () => {
     const tempDir = makeTempDir();
 
@@ -488,7 +518,13 @@ describe("init handler", () => {
         force: false,
       }).pipe(Effect.provide(layer), Effect.exit);
 
-      expectFailureTag(exit, "InitExperimentalRequiredError");
+      // The next shell deliberately keeps this friendlier wording; the legacy
+      // shell matches Go's cobra message instead (CLI-1986).
+      const error = expectFailureTag(exit, "InitExperimentalRequiredError");
+      expect(error["message"]).toBe("The --use-orioledb flag requires --experimental.");
+      expect(error["suggestion"]).toBe(
+        "Rerun the command with `supabase init --experimental --use-orioledb`.",
+      );
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

@@ -72,7 +72,7 @@ YAML document of the sorted secret array.
 
 ### `--output toml`
 
-TOML document wrapping the sorted array as `[[secrets]]`. JSON shape is preserved; leaf order may differ from Go's `BurntSushi/toml` encoder.
+TOML document wrapping the sorted array as `[[secrets]]`, matching Go's `BurntSushi/toml` output byte-for-byte (CLI-1975): PascalCase Go struct field names (`Name`, `UpdatedAt`, `Value`), 2-space indentation, nil pointer fields omitted.
 
 ### `--output env`
 

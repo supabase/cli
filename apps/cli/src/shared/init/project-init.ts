@@ -142,10 +142,20 @@ export interface ProjectInitOptions {
   readonly withIntellijSettings: boolean;
 }
 
+// Go pins every init-scaffolded file to 0644 and every directory to 0755
+// (`internal/init/init.go:89,121,138,151,166` via `utils.WriteFile`/
+// `MkdirIfNotExistFS`, `internal/utils/misc.go:273,281-284`; config.toml at
+// `internal/utils/config.go:234,243`). Node's umask-masked defaults coincide
+// under the common `022`, but pin explicitly to match Go under any umask.
+const INIT_FILE_MODE = 0o644;
+const INIT_DIR_MODE = 0o755;
+
 function writeJsonFile(pathname: string, contents: Record<string, unknown>) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.writeFileString(pathname, `${JSON.stringify(contents, null, 2)}\n`);
+    yield* fs.writeFileString(pathname, `${JSON.stringify(contents, null, 2)}\n`, {
+      mode: INIT_FILE_MODE,
+    });
   });
 }
 
@@ -154,13 +164,13 @@ function updateJsonFile(pathname: string, template: string) {
     const fs = yield* FileSystem.FileSystem;
 
     if (!(yield* fs.exists(pathname))) {
-      yield* fs.writeFileString(pathname, template);
+      yield* fs.writeFileString(pathname, template, { mode: INIT_FILE_MODE });
       return;
     }
 
     const existing = yield* fs.readFileString(pathname);
     if (existing.trim().length === 0) {
-      yield* fs.writeFileString(pathname, template);
+      yield* fs.writeFileString(pathname, template, { mode: INIT_FILE_MODE });
       return;
     }
 
@@ -184,7 +194,7 @@ export const writeVscodeConfig = Effect.fnUntraced(function* (
   const extensionsPath = path.join(vscodeDir, "extensions.json");
   const settingsPath = path.join(vscodeDir, "settings.json");
 
-  yield* fs.makeDirectory(vscodeDir, { recursive: true });
+  yield* fs.makeDirectory(vscodeDir, { recursive: true, mode: INIT_DIR_MODE });
   yield* updateJsonFile(extensionsPath, VSCODE_EXTENSIONS_TEMPLATE);
   yield* updateJsonFile(settingsPath, VSCODE_SETTINGS_TEMPLATE);
 
@@ -207,8 +217,8 @@ export const writeIntelliJConfig = Effect.fnUntraced(function* (
   const intellijDir = path.join(cwd, ".idea");
   const denoPath = path.join(intellijDir, "deno.xml");
 
-  yield* fs.makeDirectory(intellijDir, { recursive: true });
-  yield* fs.writeFileString(denoPath, INTELLIJ_DENO_TEMPLATE);
+  yield* fs.makeDirectory(intellijDir, { recursive: true, mode: INIT_DIR_MODE });
+  yield* fs.writeFileString(denoPath, INTELLIJ_DENO_TEMPLATE, { mode: INIT_FILE_MODE });
 
   if (options?.announce ?? true) {
     yield* output.raw("Generated IntelliJ settings in .idea/deno.xml.\n");
@@ -265,12 +275,17 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
     if (existing.includes(INIT_GITIGNORE_TEMPLATE)) {
       return;
     }
-    const prefix = existing.length > 0 ? "\n" : "";
-    yield* fs.writeFileString(gitignorePath, `${existing}${prefix}${INIT_GITIGNORE_TEMPLATE}`);
+    // Go always prepends a line break when appending to an existing file, even
+    // an empty one (`apps/cli-go/internal/init/init.go:80-96`: the `err == nil`
+    // branch of `FileContainsBytes` covers empty files too).
+    yield* fs.writeFileString(gitignorePath, `${existing}\n${INIT_GITIGNORE_TEMPLATE}`);
     return;
   }
 
-  yield* fs.writeFileString(gitignorePath, INIT_GITIGNORE_TEMPLATE);
+  // The append branch above deliberately passes no mode: the file already
+  // exists there, and `writeFile`'s mode only applies at creation (as does
+  // Go's `OpenFile(..., os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)`).
+  yield* fs.writeFileString(gitignorePath, INIT_GITIGNORE_TEMPLATE, { mode: INIT_FILE_MODE });
 });
 
 /**
@@ -297,10 +312,11 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
 
   const projectId = sanitizeProjectId(path.basename(options.cwd)) || "supabase";
 
-  yield* fs.makeDirectory(supabaseDir, { recursive: true });
+  yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
   yield* fs.writeFileString(
     configTomlPath,
     renderProjectConfigTemplate(projectId, options.useOrioledb),
+    { mode: INIT_FILE_MODE },
   );
   yield* ensureSupabaseGitignore(options.cwd);
 

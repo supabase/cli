@@ -11,6 +11,10 @@ import {
   LegacyWorkdirFlag,
   LegacyYesFlag,
 } from "../../../shared/legacy/global-flags.ts";
+import { normalizeCause } from "../../../shared/output/normalize-error.ts";
+import { textOutputLayer } from "../../../shared/output/output.layer.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
   mockOutput,
   mockRuntimeInfo,
@@ -33,6 +37,7 @@ function setup(
     yes?: boolean;
     /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
     stdinInput?: string;
+    platform?: NodeJS.Platform;
   } = {},
 ) {
   const out = mockOutput({ format: "text", interactive: opts.interactive ?? false });
@@ -41,7 +46,7 @@ function setup(
     layer: Layer.mergeAll(
       BunServices.layer,
       out.layer,
-      mockRuntimeInfo({ cwd }),
+      mockRuntimeInfo({ cwd, platform: opts.platform }),
       mockTty({
         stdinIsTty: opts.stdinIsTty ?? false,
         stdoutIsTty: opts.interactive ?? false,
@@ -55,17 +60,51 @@ function setup(
   };
 }
 
-function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
+function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown> {
   expect(Exit.isFailure(exit)).toBe(true);
   if (!Exit.isFailure(exit)) {
-    return;
+    return {};
   }
 
   const failure = Cause.findErrorOption(exit.cause);
   expect(Option.isSome(failure)).toBe(true);
-  if (Option.isSome(failure)) {
-    expect((failure.value as { _tag: string })._tag).toBe(tag);
-  }
+  return Option.isSome(failure) ? (failure.value as Record<string, unknown>) : {};
+}
+
+/**
+ * Renders a handler failure exactly like the real CLI does — `normalizeCause`
+ * followed by the production text output layer's `fail` — and returns the
+ * captured stderr writes (ANSI-stripped). This locks the composed two-line
+ * stderr contract documented in SIDE_EFFECTS.md, not just the error fields.
+ */
+function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
+  return Effect.gen(function* () {
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) {
+      return [];
+    }
+
+    const writes: Array<string> = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      writes.push(stripAnsi(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)));
+      return true;
+    }) as typeof process.stderr.write;
+
+    yield* Effect.gen(function* () {
+      const out = yield* Output;
+      yield* out.fail(normalizeCause(exit.cause));
+    }).pipe(
+      Effect.provide(textOutputLayer.pipe(Layer.provide(mockTty({})))),
+      Effect.ensuring(
+        Effect.sync(() => {
+          process.stderr.write = originalWrite;
+        }),
+      ),
+    );
+
+    return writes;
+  });
 }
 
 describe("legacy init", () => {
@@ -94,7 +133,7 @@ describe("legacy init", () => {
     );
   });
 
-  it.live("requires --experimental when --use-orioledb is set", () => {
+  it.live("requires --experimental when --use-orioledb is set, with cobra's exact wording", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
@@ -109,7 +148,101 @@ describe("legacy init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer), Effect.exit);
 
-      expectFailureTag(exit, "InitExperimentalRequiredError");
+      // Go marks `experimental` required in PreRun (`cmd/init.go:32-36`), so the
+      // user sees cobra's standard message. No suggestion — the text output
+      // layer appends Go's generic `--debug` troubleshooting hint instead.
+      const error = findFailure(exit);
+      expect(error["_tag"]).toBe("LegacyInitExperimentalRequiredError");
+      expect(error["message"]).toBe(`required flag(s) "experimental" not set`);
+      expect(error["suggestion"]).toBeUndefined();
+
+      // Composed stderr byte-matches Go's `recoverAndExit` output.
+      expect(yield* renderFailureToStderr(exit)).toEqual([
+        `required flag(s) "experimental" not set\n`,
+        "Try rerunning the command with --debug to troubleshoot the error.\n",
+      ]);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("fails with Go's exact error when config.toml already exists", () => {
+    const tempDir = makeTempDir();
+
+    const initFlags = {
+      interactive: false,
+      useOrioledb: false,
+      force: false,
+      withVscodeWorkspace: false,
+      withVscodeSettings: false,
+      withIntellijSettings: false,
+    };
+
+    return Effect.gen(function* () {
+      const { layer } = setup(tempDir);
+
+      yield* legacyInit(initFlags).pipe(Effect.provide(layer));
+      const exit = yield* legacyInit(initFlags).pipe(Effect.provide(layer), Effect.exit);
+
+      // Byte-matches Go: the wrapped `O_EXCL` `*os.PathError` from
+      // `utils.InitConfig` (`config.go:243-246`) plus the CmdSuggestion from
+      // `internal/init/init.go:38-42`.
+      const error = findFailure(exit);
+      expect(error["_tag"]).toBe("LegacyInitConfigExistsError");
+      expect(error["message"]).toBe(
+        "failed to create config file: open supabase/config.toml: file exists",
+      );
+      expect(error["suggestion"]).toBe(
+        "Run supabase init --force to overwrite existing config file.",
+      );
+
+      // Composed stderr byte-matches Go's `recoverAndExit` output (Linux/macOS).
+      expect(yield* renderFailureToStderr(exit)).toEqual([
+        "failed to create config file: open supabase/config.toml: file exists\n",
+        "Run supabase init --force to overwrite existing config file.\n",
+      ]);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("renders the Windows form of the already-exists error on win32", () => {
+    const tempDir = makeTempDir();
+
+    const initFlags = {
+      interactive: false,
+      useOrioledb: false,
+      force: false,
+      withVscodeWorkspace: false,
+      withVscodeSettings: false,
+      withIntellijSettings: false,
+    };
+
+    return Effect.gen(function* () {
+      const { layer } = setup(tempDir, { platform: "win32" });
+
+      yield* legacyInit(initFlags).pipe(Effect.provide(layer));
+      const exit = yield* legacyInit(initFlags).pipe(Effect.provide(layer), Effect.exit);
+
+      // On Windows, Go builds `utils.ConfigPath` with `filepath.Join`
+      // (`utils/misc.go:82`) — backslash separator — and the `O_EXCL` open
+      // fails with `ERROR_FILE_EXISTS`, rendered by `syscall.Errno.Error()` as
+      // `The file exists.`. The suggestion is unchanged because
+      // `errors.Is(err, os.ErrExist)` matches on Windows too (`init.go:38-42`).
+      const error = findFailure(exit);
+      expect(error["_tag"]).toBe("LegacyInitConfigExistsError");
+      expect(error["message"]).toBe(
+        "failed to create config file: open supabase\\config.toml: The file exists.",
+      );
+      expect(error["suggestion"]).toBe(
+        "Run supabase init --force to overwrite existing config file.",
+      );
+
+      // Composed stderr byte-matches Go's `recoverAndExit` output (Windows).
+      expect(yield* renderFailureToStderr(exit)).toEqual([
+        "failed to create config file: open supabase\\config.toml: The file exists.\n",
+        "Run supabase init --force to overwrite existing config file.\n",
+      ]);
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

@@ -1,6 +1,20 @@
 import { Effect, FileSystem } from "effect";
 
 /**
+ * The `--name-id-format` value set, shared by `sso add` and `sso update`
+ * (both commands bind the same Go `ssoNameIDFormat` enum var,
+ * `cmd/sso.go:158,176`). Order matters twice: it drives the CLI help text
+ * and it is joined verbatim into pflag's `invalid argument … must be one of
+ * [ … ]` error (`legacyPflagEnumValue`), which must byte-match Go.
+ */
+export const LEGACY_SSO_NAME_ID_FORMATS = [
+  "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+  "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+  "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+  "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+] as const;
+
+/**
  * Validates that raw bytes decode as strict UTF-8. Mirrors Go's
  * `unicode/utf8.Valid(data)` check inside `saml.ValidateMetadata`. Using
  * `TextDecoder("utf-8", { fatal: true })` makes any malformed surrogate or
