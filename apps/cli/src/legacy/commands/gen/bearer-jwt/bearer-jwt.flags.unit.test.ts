@@ -99,6 +99,20 @@ describe("legacyParseBearerJwtExp", () => {
       '"--exp" flag: invalid time format',
     );
   });
+
+  it("preserves fractional seconds instead of dropping them during parsing (CLI-1961 Codex review finding)", () => {
+    // Go's `time.Parse(time.RFC3339, ...)` accepts (and preserves at full precision)
+    // fractional seconds even though `time.RFC3339`'s own layout has no fractional
+    // directive — verified against the Go standard library. Dropping the `.9` here
+    // (this port's previous behavior) would produce `1893456000` instead.
+    expect(legacyParseBearerJwtExp("2030-01-01T00:00:00.9Z")).toBeCloseTo(1_893_456_000.9, 9);
+  });
+
+  it("preserves a fractional offset the same way for a non-UTC zone", () => {
+    const withFraction = legacyParseBearerJwtExp("2030-01-01T00:00:00.5+05:00");
+    const atZ = legacyParseBearerJwtExp("2030-01-01T00:00:00Z");
+    expect(withFraction).toBeCloseTo(atZ - 5 * 60 * 60 + 0.5, 9);
+  });
 });
 
 describe("legacyParseBearerJwtValidFor", () => {

@@ -20,7 +20,12 @@ import { legacyGoJsonKindName } from "../../../shared/legacy-go-json.ts";
 export interface LegacyBearerJwtClaimsInput {
   readonly role: string;
   readonly sub: Option.Option<string>;
-  /** Unix seconds from `--exp` (RFC3339) — `Option.none()` when the flag was not given. */
+  /**
+   * Unix seconds from `--exp` (RFC3339), WITHOUT flooring — `Option.none()` when the
+   * flag was not given. May carry a sub-second fraction; see
+   * {@link legacyParseBearerJwtExp}'s own doc comment for why that fraction must
+   * survive until the final `exp`/`iat` computation below.
+   */
   readonly expiresAt: Option.Option<number>;
   /**
    * `--valid-for`, parsed from Go-duration syntax into seconds WITHOUT flooring —
@@ -45,6 +50,15 @@ export interface LegacyBearerJwtClaimsInput {
  *     the real binary (CLI-1961): `--exp 2030-01-01T00:00:00Z --valid-for 1.5s` yields
  *     `iat=1893455998` — flooring the 1.5s duration to 1s first (as this port previously
  *     did) would wrongly yield `1893455999`.
+ *   - `expiresAt` itself may ALSO carry a sub-second fraction (see
+ *     {@link legacyParseBearerJwtExp}'s own doc comment for why `--exp`'s fraction
+ *     survives parsing) — the same "floor only the final result" rule applies to it:
+ *     `iat` is computed from the UNFLOORED `expiresAt` minus `validForSeconds`, and
+ *     `exp` is floored separately from that same unfloored value, rather than flooring
+ *     `expiresAt` up front and losing its fraction before either computation runs.
+ *     Verified against the real binary (CLI-1961): `--exp 2030-01-01T00:00:00.9Z
+ *     --valid-for 1.2s` yields `iat=1893455999`, not the `1893455998` that flooring
+ *     `expiresAt` before the subtraction would produce.
  *   - `role` is ALWAYS present (`json:"role"`, no `omitempty`), even `--role ""`.
  *   - `is_anonymous` is set only when `role` case-insensitively equals `"authenticated"`
  *     AND `--sub` was not given (`strings.EqualFold` + `len(claims.Subject) == 0`) — an
@@ -68,8 +82,9 @@ export function legacyBuildBearerJwtClaims(
     iat = input.nowSeconds;
     exp = Math.floor(iat + input.validForSeconds);
   } else {
-    exp = input.expiresAt.value;
-    iat = Math.floor(exp - input.validForSeconds);
+    const rawExp = input.expiresAt.value;
+    exp = Math.floor(rawExp);
+    iat = Math.floor(rawExp - input.validForSeconds);
   }
 
   const claims: Record<string, unknown> = {
@@ -149,6 +164,54 @@ const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/;
 
 /** Go's literal keywords, keyed by their first byte — matched char-by-char below, same as `encoding/json`'s scanner. */
 const GO_JSON_LITERALS: Record<string, string> = { n: "null", t: "true", f: "false" };
+
+/**
+ * Scans an ALREADY syntactically-valid JSON document (this only ever runs after
+ * `JSON.parse` on `value` has itself succeeded, so every string is properly closed
+ * and every number token is well-formed) for the first number literal that overflows
+ * a float64, e.g. `1e309` — returns that literal's exact source text, or `undefined`
+ * if every number in the document is finite.
+ *
+ * `JSON.parse` silently converts an overflowing literal to `Infinity`/`-Infinity`
+ * (verified: `JSON.parse('{"extra":1e309}')` yields `{ extra: Infinity }`, which
+ * {@link legacyEncodeBearerJwtClaims}'s Go-compatible encoder then serializes as
+ * `null`, per `encoding/json`'s own float64-to-JSON-number behavior for non-finite
+ * values) — but Go's `json.Unmarshal` into `jwt.MapClaims` (which decodes every JSON
+ * number as a Go `float64`) fails outright: `strconv.ParseFloat` returns a range
+ * error for the same literal, and `encoding/json` surfaces that as `"json: cannot
+ * unmarshal number 1e309 into Go value of type float64"`. Verified against the real
+ * binary (CLI-1961): `--payload '{"extra":1e309}'` exits 1 with exactly that message
+ * (wrapped by the caller's `"failed to parse payload: %w"`), rather than silently
+ * signing a token with a `null` custom claim.
+ *
+ * A left-to-right scan that skips over string contents (object keys and string
+ * values, via {@link findJsonStringEnd}) and matches a full number token at every
+ * other digit/`-` position reproduces Go's own decode order (a single-pass,
+ * depth-first token scan) closely enough to report the same FIRST offending literal
+ * Go's decoder would stop at, without needing a full recursive-descent parse.
+ */
+function findFirstNonFiniteJsonNumberLiteral(value: string): string | undefined {
+  let i = 0;
+  while (i < value.length) {
+    const ch = value[i]!;
+    if (ch === '"') {
+      // `value` is known-valid JSON, so every string closes; skip over it whole so
+      // digits inside a string value are never mistaken for a number token.
+      i = findJsonStringEnd(value, i)!;
+      continue;
+    }
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      const literal = JSON_NUMBER_PATTERN.exec(value.slice(i))![0];
+      if (!Number.isFinite(Number(literal))) {
+        return literal;
+      }
+      i += literal.length;
+      continue;
+    }
+    i++;
+  }
+  return undefined;
+}
 
 /**
  * Reports Go's exact `"invalid character '<c>' after top-level value"` when
@@ -249,8 +312,16 @@ function legacyGoJsonSyntaxErrorMessage(raw: string): string {
  * leave the destination untouched here in practice). A non-object, non-null,
  * non-array top-level scalar (string/number/bool) or an array raises Go's own
  * `"json: cannot unmarshal <kind> into Go value of type jwt.MapClaims"` runtime
- * type-mismatch text. Throws a bare `Error`; the caller (`bearer-jwt.handler.ts`)
- * wraps it with Go's `"failed to parse payload: %w"` prefix.
+ * type-mismatch text — checked BEFORE any number-overflow scan below, since Go
+ * rejects the top-level kind before ever attempting to decode a number inside it
+ * (verified against the real binary: a top-level overflowing scalar payload like
+ * `--payload '1e309'` still reports "cannot unmarshal number into Go value of type
+ * jwt.MapClaims", WITHOUT the literal). Once the top level genuinely is an object, an
+ * overflowing number ANYWHERE inside it, at any depth (e.g. `{"extra":1e309}` or
+ * `{"a":{"b":[1e309]}}`), raises Go's `"json: cannot unmarshal number <literal> into
+ * Go value of type float64"` instead — see
+ * {@link findFirstNonFiniteJsonNumberLiteral}. Throws a bare `Error`; the caller
+ * (`bearer-jwt.handler.ts`) wraps it with Go's `"failed to parse payload: %w"` prefix.
  */
 export function legacyMergeBearerJwtPayload(
   claims: Record<string, unknown>,
@@ -268,6 +339,21 @@ export function legacyMergeBearerJwtPayload(
   if (Array.isArray(parsed) || typeof parsed !== "object") {
     throw new Error(
       `json: cannot unmarshal ${legacyGoJsonKindName(parsed)} into Go value of type jwt.MapClaims`,
+    );
+  }
+  // Only reachable once the top-level shape is already a map — verified against the
+  // real binary: a top-level scalar/array payload gets the structural mismatch above
+  // even when it overflows (e.g. `--payload '1e309'` still reports "cannot unmarshal
+  // number into Go value of type jwt.MapClaims", WITHOUT the literal, because Go's
+  // decoder rejects the top-level kind before ever attempting to decode the number
+  // itself), whereas `--payload '[1e309]'` reports the array-kind mismatch. Once the
+  // top level genuinely is an object, Go recurses into every value at any depth
+  // (including inside nested arrays/objects) as `interface{}`, which is where an
+  // overflowing number actually gets decoded as `float64` and fails.
+  const overflowingLiteral = findFirstNonFiniteJsonNumberLiteral(payload);
+  if (overflowingLiteral !== undefined) {
+    throw new Error(
+      `json: cannot unmarshal number ${overflowingLiteral} into Go value of type float64`,
     );
   }
   return { ...claims, ...(parsed as Record<string, unknown>) };

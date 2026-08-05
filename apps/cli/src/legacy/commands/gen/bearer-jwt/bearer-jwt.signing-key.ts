@@ -9,6 +9,7 @@ import {
   type LegacyJwk,
 } from "../../../shared/legacy-go-jwt.ts";
 import { legacyGoJsonKindName } from "../../../shared/legacy-go-json.ts";
+import { textOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
@@ -51,19 +52,106 @@ const legacyConsolePromptText = Effect.fnUntraced(function* (label: string) {
   return input;
 });
 
-function readOptionalString(record: Record<string, unknown>, field: string): string | undefined {
-  const value = record[field];
-  return typeof value === "string" ? value : undefined;
+/**
+ * Go's own `legacyGoJsonKindName` (`legacy-go-json.ts`) is deliberately scoped to
+ * scalars only — every one of its existing call sites already excludes null/array/
+ * object before reaching it. This file's per-field JWK checks below DO need to name a
+ * bare JSON object (`key_ops`'s elements, or a nested value under any field, can be an
+ * object — verified against the real binary: `--payload`-style `{}` inside `key_ops`
+ * reports `"...into Go struct field JWK.key_ops of type string"` with kind `object`),
+ * so this is a local superset rather than a change to that shared, narrower contract.
+ */
+function jwkFieldKindName(value: unknown): string {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return "object";
+  }
+  return legacyGoJsonKindName(value);
 }
 
+/**
+ * Go's exact `encoding/json` struct-field type-mismatch text: `"json: cannot unmarshal
+ * <kind> into Go struct field JWK.<field> of type <goType>"` — verified against the
+ * real binary (CLI-1961) for every field this file reads: `kty`/`kid`/`use`/`alg`/`n`/
+ * `e`/`d`/`p`/`q`/`dp`/`dq`/`qi`/`crv`/`x`/`y` (`goType: "string"`), `key_ops` as a
+ * whole (`goType: "[]string"`) vs. one of its elements (`goType: "string"`, the same as
+ * any other string field), and `ext` (`goType: "bool"`).
+ */
+function jwkStructFieldTypeMismatch(field: string, value: unknown, goType: string): string {
+  return `json: cannot unmarshal ${jwkFieldKindName(value)} into Go struct field JWK.${field} of type ${goType}`;
+}
+
+/**
+ * A JSON `null` for any `config.JWK` field is a documented Go `encoding/json` no-op —
+ * same as a `null` for the whole JWK (see `resolveSigningKeyFromStdinJwk`'s own doc
+ * comment) — so `null` must NOT be treated as a type mismatch here, only as "absent".
+ */
+function isAbsentJwkField(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
+/**
+ * Reads an optional STRING field, throwing Go's exact struct-field type-mismatch text
+ * (see {@link jwkStructFieldTypeMismatch}) when the field is PRESENT with a non-string
+ * value — e.g. `{"kid":123}` or `{"ext":"true"}` — rather than silently treating a
+ * malformed field as absent the way this function previously did (Codex review
+ * finding, CLI-1961): Go's `json.Unmarshal` into `config.JWK` fails outright on any
+ * such field, so a mistyped optional field must never let this normalizer still mint a
+ * token as if the field had simply been omitted.
+ */
+function readOptionalString(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  if (isAbsentJwkField(value)) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "string"));
+  }
+  return value;
+}
+
+/**
+ * Reads the optional `key_ops` STRING ARRAY field, throwing Go's exact struct-field
+ * type-mismatch text (see {@link jwkStructFieldTypeMismatch}) when the field is
+ * PRESENT but is not an array (`goType: "[]string"`) or contains a non-string element
+ * (`goType: "string"`, Go decodes each element individually into the slice's element
+ * type) — same "never silently treat malformed as absent" rule as
+ * {@link readOptionalString} (Codex review finding, CLI-1961).
+ */
 function readOptionalStringArray(
   record: Record<string, unknown>,
   field: string,
 ): ReadonlyArray<string> | undefined {
   const value = record[field];
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
-    ? (value as ReadonlyArray<string>)
-    : undefined;
+  if (isAbsentJwkField(value)) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "[]string"));
+  }
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error(jwkStructFieldTypeMismatch(field, entry, "string"));
+    }
+  }
+  return value as ReadonlyArray<string>;
+}
+
+/**
+ * Reads the optional `ext` BOOLEAN field (Go's `*bool`), throwing Go's exact
+ * struct-field type-mismatch text (see {@link jwkStructFieldTypeMismatch}) when the
+ * field is PRESENT with a non-boolean value — e.g. `{"ext":"true"}` or `{"ext":1}` —
+ * same "never silently treat malformed as absent" rule as {@link readOptionalString}
+ * (Codex review finding, CLI-1961).
+ */
+function readOptionalBoolean(record: Record<string, unknown>, field: string): boolean | undefined {
+  const value = record[field];
+  if (isAbsentJwkField(value)) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "bool"));
+  }
+  return value;
 }
 
 /**
@@ -73,6 +161,20 @@ function readOptionalStringArray(
  * same way here. Every downstream consumer in this file works with the resulting
  * typed `LegacyJwk`, not the raw untrusted record, so key/kid/alg lookups stay
  * type-checked instead of re-guarding `Record<string, unknown>` at every call site.
+ *
+ * Throws a bare `Error` (Go's own unwrapped `encoding/json` text) the moment any field
+ * above is present with the wrong JSON type — both call sites below (`normalizeStoredJwk`
+ * itself is synchronous) catch that throw and apply THEIR OWN Go-matching wrap: Branch
+ * A's pasted-JWK path wraps `"failed to parse JWK: %w"`, while the `signing_keys_path`
+ * file path wraps `"failed to decode signing keys: failed to parse response body: %w"`
+ * — the same two wraps this file's sibling checks (the JSON-decode / `alg` allowlist
+ * checks) already use for those exact same two call sites. Go decodes struct fields in
+ * the JSON document's own key order and stops at the FIRST mismatch; this function
+ * instead always checks in a fixed field order, so on a payload with MULTIPLE
+ * simultaneously-malformed fields the reported field may not always match Go's for
+ * that specific multi-error case — accepted gap, no fixture in `bearerjwt_test.go`
+ * covers ordering across more than one bad field at once, and every field is still
+ * correctly rejected either way.
  */
 function normalizeStoredJwk(record: Record<string, unknown>): LegacyJwk {
   const keyOps = readOptionalStringArray(record, "key_ops");
@@ -82,7 +184,7 @@ function normalizeStoredJwk(record: Record<string, unknown>): LegacyJwk {
     use: readOptionalString(record, "use"),
     key_ops: keyOps !== undefined ? [...keyOps] : undefined,
     alg: readOptionalString(record, "alg"),
-    ext: typeof record["ext"] === "boolean" ? record["ext"] : undefined,
+    ext: readOptionalBoolean(record, "ext"),
     n: readOptionalString(record, "n"),
     e: readOptionalString(record, "e"),
     d: readOptionalString(record, "d"),
@@ -148,7 +250,18 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
       }),
     );
   }
-  return normalizeStoredJwk(record);
+  // `normalizeStoredJwk` throws Go's bare `encoding/json` struct-field type-mismatch
+  // text (see its own doc comment) the moment any OTHER field is malformed — e.g.
+  // `{"kty":"oct","alg":"ES256","key_ops":["sign",1]}` — wrapped here with the same
+  // `"failed to parse JWK: %w"` this Branch A path already uses above (Codex review
+  // finding, CLI-1961).
+  return yield* Effect.try({
+    try: () => normalizeStoredJwk(record),
+    catch: (cause) =>
+      new LegacyGenBearerJwtKeyParseError({
+        message: `failed to parse JWK: ${legacyBearerJwtErrorMessage(cause)}`,
+      }),
+  });
 });
 
 /**
@@ -172,6 +285,30 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
  * piped/captured token with picker UI and the "Selected key ID: ..." line for any
  * interactive user with a configured `signing_keys_path` (Codex review finding,
  * CLI-1961).
+ *
+ * The picker tries the AMBIENT `Output` first — this is what every test in this file
+ * mocks, and it's what a real `text` run already uses — and only on the AMBIENT
+ * `output.promptSelect`/`raw` failing with `NonInteractiveError` (the json/stream-json
+ * `Output` layers' unconditional behavior, `output.layer.ts`) does it retry through a
+ * FRESH, locally-provided {@link textOutputLayer} instance. This is the same rationale
+ * as `legacy/commands/migration/migration.prompt.ts`'s `legacyMigrationConfirm`
+ * (CLI-1974): Go's own `PromptChoice` has no concept of an output format at all and
+ * always prompts on a real TTY, and this command's stdout is the raw token
+ * unconditionally in EVERY format (see `bearer-jwt.handler.ts`'s doc comment) — there
+ * is no structured json/stream-json result here for an interactive widget to corrupt,
+ * unlike `legacy-project-ref.layer.ts`'s own `promptSelect` (which DOES stay gated
+ * behind `output.format`, because ITS caller's json/stream-json mode has a real
+ * machine payload an interactive prompt would otherwise interleave with). Verified
+ * against the real binary (CLI-1961, Codex review finding): the ambient
+ * json/stream-json `Output` layers' `promptSelect` unconditionally raises
+ * `NonInteractiveError`, which would abort this command entirely on a real TTY with a
+ * configured `signing_keys_path` and more than one stored key — a regression Go never
+ * had, since it has no `--output-format` flag to trip over. The try-then-fall-back
+ * shape (rather than unconditionally swapping to `textOutputLayer`) is deliberate: it
+ * keeps every existing mock-driven test exercising the SAME ambient `Output` path they
+ * already do, and only reaches the real, un-mockable `@clack/prompts` renderer in the
+ * one combination (`NonInteractiveError` from a genuinely non-text production layer)
+ * that requires it.
  */
 const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
   availableKeys: ReadonlyArray<LegacyJwk>,
@@ -216,13 +353,38 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     label: key.kid ?? "",
     hint: `${key.alg ?? ""} (${(key.key_ops ?? []).join(",")})`,
   }));
-  const chosen = yield* output.promptSelect("Select a signing key:", options, { stream: "stderr" });
-  const chosenKey = availableKeys[Number(chosen)]!;
-  // Go: `fmt.Fprintln(os.Stderr, "Selected key ID:", choice.Summary)` (`bearerjwt.go:82`).
-  // `output.raw(..., "stderr")`, NOT `output.info` — `info` is clack's `log.info`, which
-  // defaults to stdout (see this function's doc comment above).
-  yield* output.raw(`Selected key ID: ${chosenKey.kid ?? ""}\n`, "stderr");
-  return chosenKey;
+  // Try the AMBIENT `Output` first (this is what every test in this file mocks, and
+  // what a real `text` run already uses) — only on `NonInteractiveError` (the
+  // json/stream-json `Output` layers' `promptSelect`/`raw`, `output.layer.ts`) fall
+  // back to a REAL, locally-provided `textOutputLayer` instance so the picker still
+  // renders on a genuine TTY. `textOutputLayer` only needs `Tty` (already in scope),
+  // so this fallback is a purely local override; the token itself is still written
+  // through the AMBIENT `Output` later, in `bearer-jwt.handler.ts`, completely
+  // unaffected by it. See this function's doc comment above for why Go's own picker
+  // needs this at all.
+  const pickSigningKey = (pickerOutput: typeof Output.Service) =>
+    Effect.gen(function* () {
+      const chosen = yield* pickerOutput.promptSelect("Select a signing key:", options, {
+        stream: "stderr",
+      });
+      const chosenKey = availableKeys[Number(chosen)]!;
+      // Go: `fmt.Fprintln(os.Stderr, "Selected key ID:", choice.Summary)` (`bearerjwt.go:82`).
+      // `output.raw(..., "stderr")`, NOT `output.info` — `info` is clack's `log.info`,
+      // which defaults to stdout (see this function's doc comment above).
+      yield* pickerOutput.raw(`Selected key ID: ${chosenKey.kid ?? ""}\n`, "stderr");
+      return chosenKey;
+    });
+  return yield* pickSigningKey(output).pipe(
+    Effect.catchTag("NonInteractiveError", () =>
+      Effect.provide(
+        Effect.gen(function* () {
+          const realOutput = yield* Output;
+          return yield* pickSigningKey(realOutput);
+        }),
+        textOutputLayer,
+      ),
+    ),
+  );
 });
 
 /**
@@ -251,13 +413,29 @@ export const legacyResolveBearerJwtSigningKey = Effect.fnUntraced(function* (wor
     return yield* resolveSigningKeyFromStdinJwk();
   }
 
-  const availableKeys: ReadonlyArray<LegacyJwk> = paths.authEnabled
-    ? (yield* legacyReadSigningKeysFile(
-        paths.signingKeysPath.value.actualPath,
-        (message) => new LegacyGenBearerJwtReadError({ message }),
-        (message) => new LegacyGenBearerJwtDecodeError({ message }),
-      )).map(normalizeStoredJwk)
-    : [LEGACY_DEFAULT_SIGNING_KEY];
+  let availableKeys: ReadonlyArray<LegacyJwk>;
+  if (paths.authEnabled) {
+    const storedKeys = yield* legacyReadSigningKeysFile(
+      paths.signingKeysPath.value.actualPath,
+      (message) => new LegacyGenBearerJwtReadError({ message }),
+      (message) => new LegacyGenBearerJwtDecodeError({ message }),
+    );
+    // `normalizeStoredJwk` throws Go's bare `encoding/json` struct-field type-mismatch
+    // text (see its own doc comment) the moment any stored key entry has a malformed
+    // field — e.g. `[{"kty":"oct","alg":"ES256","ext":"true"}]` — wrapped here with the
+    // SAME `"failed to decode signing keys: failed to parse response body: %w"` this
+    // file's sibling `alg`-allowlist check (inside `legacyReadSigningKeysFile`) already
+    // uses for this exact call site (Codex review finding, CLI-1961).
+    availableKeys = yield* Effect.try({
+      try: () => storedKeys.map(normalizeStoredJwk),
+      catch: (cause) =>
+        new LegacyGenBearerJwtDecodeError({
+          message: `failed to decode signing keys: failed to parse response body: ${legacyBearerJwtErrorMessage(cause)}`,
+        }),
+    });
+  } else {
+    availableKeys = [LEGACY_DEFAULT_SIGNING_KEY];
+  }
 
   return yield* resolveSigningKeyFromConfigured(availableKeys);
 });

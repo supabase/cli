@@ -509,6 +509,118 @@ describe("legacy gen bearer-jwt integration", () => {
   );
 
   it.live(
+    "Branch A: rejects a pasted JWK with a non-string key_ops element (CLI-1961 Codex review finding)",
+    () => {
+      // Verified against the real binary: `{"kty":"oct","alg":"ES256","key_ops":["sign",1]}`
+      // exits 1 with this exact message — Go's `json.Unmarshal` into `config.JWK`'s
+      // `KeyOps []string` field fails outright on a non-string element rather than
+      // silently dropping the field the way this normalizer previously did.
+      const { layer } = setup({
+        pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", key_ops: ["sign", 1] }),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtKeyParseError");
+          expect(json).toContain(
+            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch A: rejects a pasted JWK with ext given as a string instead of a bool (CLI-1961 Codex review finding)",
+    () => {
+      // Verified against the real binary: `{"kty":"oct","alg":"ES256","ext":"true"}`
+      // exits 1 with this exact message — Go's `json.Unmarshal` into `config.JWK`'s
+      // `Extractable *bool` field fails outright rather than silently dropping it.
+      const { layer } = setup({
+        pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", ext: "true" }),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtKeyParseError");
+          expect(json).toContain(
+            "failed to parse JWK: json: cannot unmarshal string into Go struct field JWK.ext of type bool",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("Branch A: rejects a pasted JWK with a non-string kid", () => {
+    const { layer } = setup({
+      pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", kid: 123 }),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "Branch A: a null field value is treated as absent, not a type mismatch (Go's encoding/json no-op)",
+    () => {
+      const { layer, out } = setup({
+        pipedAnswer: JSON.stringify({ ...generateEcJwk("null-ext-kid"), ext: null }),
+      });
+      return Effect.gen(function* () {
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "null-ext-kid",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: rejects a stored signing key with a non-string key_ops element (CLI-1961 Codex review finding)",
+    () => {
+      // Verified against the real binary: a `signing_keys_path` file entry with a
+      // malformed `key_ops` fails during config load with THIS wrap (matching the
+      // sibling `alg`-allowlist check's own wrap for the same call site), not
+      // silently dropping the field.
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeSigningKeys(
+            JSON.stringify([{ kty: "oct", alg: "ES256", kid: "k1", key_ops: ["sign", 1] }]),
+          ),
+        );
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtDecodeError");
+          expect(json).toContain(
+            "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "Branch B: mints a token from the configured signing_keys_path's only key on a blank kid answer",
     () => {
       const jwk = generateEcJwk("ec-kid");

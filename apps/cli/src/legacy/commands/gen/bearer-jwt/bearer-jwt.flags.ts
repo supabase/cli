@@ -2,7 +2,7 @@ import { legacyParseGoDuration } from "../../../shared/legacy-go-duration.ts";
 import { legacyBearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
 const RFC3339_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:(Z)|([+-])(\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:(Z)|([+-])(\d{2}):(\d{2}))$/;
 
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -83,7 +83,19 @@ function rfc3339FlagError(trimmedValue: string): Error {
  *     Reimplements Go's `t.addSec(-zoneOffset)` (`format.go:1392`) directly instead:
  *     the local wall-clock components, interpreted as UTC, minus the signed offset
  *     in seconds.
- * Returns Unix seconds on success.
+ *   - Go's `time.Parse` accepts fractional seconds after the whole-seconds field EVEN
+ *     THOUGH `time.RFC3339`'s own layout has no fractional-seconds directive — this is
+ *     a documented parse-only extension ("in the absence of a fractional second in the
+ *     format, the fractional part will still be parsed if it is present"), verified
+ *     directly against the Go standard library. The parsed instant carries that
+ *     fraction at full (nanosecond) precision into the `iat = exp - validFor`
+ *     arithmetic in `legacyBuildBearerJwtClaims`, which floors only the FINAL `exp`/
+ *     `iat` — so the fraction must survive this function's return value rather than
+ *     being discarded here, matching `legacyParseBearerJwtValidFor`'s own
+ *     no-early-flooring rule below. Verified against the real binary (CLI-1961):
+ *     `--exp 2030-01-01T00:00:00.9Z --valid-for 1.2s` yields `iat=1893455999`, not the
+ *     `1893455998` that dropping the `.9` fraction during parsing would produce.
+ * Returns Unix seconds (as a float that may carry a sub-second fraction) on success.
  */
 export function legacyParseBearerJwtExp(value: string): number {
   const trimmedValue = value.trim();
@@ -99,6 +111,7 @@ export function legacyParseBearerJwtExp(value: string): number {
     hour,
     minute,
     second,
+    fraction,
     isUtc,
     offsetSign,
     offsetHourStr,
@@ -137,7 +150,8 @@ export function legacyParseBearerJwtExp(value: string): number {
       Number(minute),
       Number(second),
     ) / 1000;
-  return localAsUtcSeconds - offsetSeconds;
+  const fractionalSeconds = fraction === undefined ? 0 : Number(`0.${fraction}`);
+  return localAsUtcSeconds + fractionalSeconds - offsetSeconds;
 }
 
 /**
