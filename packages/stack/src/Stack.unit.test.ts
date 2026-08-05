@@ -332,6 +332,37 @@ describe("Stack", () => {
     }).pipe(Effect.provide(providedLayer));
   });
 
+  it.live("starts the readiness deadline after artifact preparation", () => {
+    const resolver = mockBinaryResolver({
+      downloadedServices: ["postgres"],
+      downloadDelayMs: 1_000,
+    });
+    const spawner = mockChildProcessSpawner();
+    const config = {
+      ...defaultConfig,
+      postgrest: false,
+      auth: false,
+      readiness: { mode: "finite", timeoutMs: 250 },
+    } satisfies ResolvedStackConfig;
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
+      Layer.provide(StackBuilder.layer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const startedAt = Date.now();
+      const exit = yield* stack.start().pipe(Effect.exit);
+
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer), Effect.scoped, Effect.timeout("5 seconds"));
+  });
+
   it.effect("getState fails for internal helper services", () => {
     const { layer } = setupLayer();
 
@@ -640,20 +671,12 @@ describe("Stack", () => {
 
   it.live("uses the stack readiness deadline for explicit lazy activation and cleans up", () =>
     Effect.gen(function* () {
-      const spawnStarted = yield* Deferred.make<void>();
-      const spawner = mockChildProcessSpawner({
-        beforeSpawn: (record) =>
-          record.args.some((arg) =>
-            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
-          )
-            ? Deferred.succeed(spawnStarted, undefined).pipe(Effect.andThen(Effect.never))
-            : Effect.void,
-      });
+      const spawner = mockChildProcessSpawner();
       let releasedAll = false;
       const config = {
         ...defaultConfig,
         startupMode: "lazy",
-        readiness: { mode: "finite", timeoutMs: 250 },
+        readiness: { mode: "finite", timeoutMs: 500 },
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),
@@ -673,7 +696,7 @@ describe("Stack", () => {
         expect(error._tag).toBe("StackReadinessError");
         if (error._tag === "StackReadinessError") {
           expect(error.target).toBe("auth");
-          expect(error.timeoutMs).toBe(250);
+          expect(error.timeoutMs).toBe(500);
         }
         expect(releasedAll).toBe(true);
         const spawnCountAfterDisposal = spawner.spawned.length;

@@ -261,7 +261,7 @@ describe("resolveConfig startup mode", () => {
 describe("resolveConfig readiness policy", () => {
   it("uses a finite package default", async () => {
     const config = await resolveConfig();
-    expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 120_000 });
+    expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 180_000 });
   });
 
   it("preserves an explicit infinite policy", async () => {

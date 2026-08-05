@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { ServiceState } from "@supabase/process-compose";
 import {
+  changedProjectedStates,
   projectStackState,
   projectStackStates,
   type StackServiceProjectionCatalog,
@@ -82,5 +83,23 @@ describe("projectStackStates", () => {
     );
 
     expect(projected?.status).toBe("Healthy");
+  });
+
+  test("suppresses structurally equal projected states", () => {
+    const previousStates = projectStackStates(
+      [rawState("postgres", "Healthy"), rawState("auth", "Running")],
+      projectionCatalog,
+    );
+    const nextStates = projectStackStates(
+      [rawState("postgres", "Healthy"), rawState("auth", "Running")],
+      projectionCatalog,
+    );
+
+    expect(
+      changedProjectedStates(
+        new Map(previousStates.map((state) => [state.name, state])),
+        nextStates,
+      ),
+    ).toEqual([]);
   });
 });
