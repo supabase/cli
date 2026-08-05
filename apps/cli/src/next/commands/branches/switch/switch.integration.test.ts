@@ -20,7 +20,7 @@ function makeBranch(
   overrides: Partial<typeof BranchResponse.Type> = {},
 ): typeof BranchResponse.Type {
   return {
-    id: "00000000-0000-0000-0000-000000000001",
+    id: "00000000-0000-4000-8000-000000000001",
     name: "main",
     project_ref: "mainrefghijklmnopqrst",
     parent_project_ref: "parentref1234567890",
@@ -36,7 +36,7 @@ function makeBranch(
 
 const MAIN_BRANCH = makeBranch();
 const DEV_BRANCH = makeBranch({
-  id: "00000000-0000-0000-0000-000000000002",
+  id: "00000000-0000-4000-8000-000000000002",
   name: "dev",
   project_ref: "devrefghijklmnopqrst",
   is_default: false,
