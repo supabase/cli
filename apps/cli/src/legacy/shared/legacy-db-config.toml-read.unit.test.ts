@@ -373,6 +373,79 @@ describe("legacyReadDbToml", () => {
   );
 
   it.effect(
+    "aborts the whole config load on a non-scalar db.migrations.schema_paths element (Go mapstructure UnconvertibleTypeError)",
+    () => {
+      // Unlike a bool/number (weakly coerced above), a nested array/table is
+      // mapstructure's `UnconvertibleTypeError`, which fails `UnmarshalExact` entirely
+      // rather than dropping just that element. Verified empirically against
+      // `apps/cli-go`: `schema_paths = [[]]` fails config load with exactly this
+      // message, never resolving to an empty/partial glob list.
+      const dir = withConfig(["[db.migrations]", "schema_paths = [[]]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "failed to parse config: decoding failed due to the following error(s):\\n\\n'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a table db.migrations.schema_paths element, reporting every bad index (Go mapstructure parity)",
+    () => {
+      // Verified empirically against `apps/cli-go`: a second bad entry is reported
+      // alongside the first (mapstructure aggregates every `UnmarshalExact` error from
+      // the same decode call), and an inline table decodes as `map[string]interface {}`.
+      const dir = withConfig(
+        ["[db.migrations]", 'schema_paths = ["schemas/*.sql", { path = "x.sql" }]', ""].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a non-scalar db.seed.sql_paths element (same UnmarshalExact call as schema_paths)",
+    () => {
+      const dir = withConfig(["[db.seed]", "sql_paths = [[]]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
     () => {
       // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv

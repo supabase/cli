@@ -1860,21 +1860,52 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // converts a bool to `"1"`/`"0"` and a number to its decimal string, THEN the
   // result flows through the same env-expand/resolve pipeline as a real string
   // entry. Verified empirically against `apps/cli-go` (`schema_paths = [42]` resolves
-  // to `supabase/42`, `schema_paths = [true]` to `supabase/1`). A non-scalar element
-  // (nested array/table) is mapstructure's `UnconvertibleTypeError`, which aborts the
-  // ENTIRE config load with `failed to parse config: ...` rather than dropping just
-  // that element — out of scope for a path list nobody nests a table inside, so it is
-  // filtered out like before rather than replicating mapstructure's decode-error text.
+  // to `supabase/42`, `schema_paths = [true]` to `supabase/1`).
   const legacyWeakCoerceGlobEntry = (value: unknown): string | undefined => {
     if (typeof value === "string") return value;
     if (typeof value === "boolean") return value ? "1" : "0";
     if (typeof value === "number") return String(value);
     return undefined;
   };
+  // A non-scalar element (nested array/table, e.g. `schema_paths = [[]]` or
+  // `[{path = "x.sql"}]`) is mapstructure's `UnconvertibleTypeError` instead of a weak
+  // conversion, and mapstructure reports every offending index from the SAME
+  // `UnmarshalExact` call together, joined by its own `Error.Error()` — which is what
+  // aborts the entire config load, not just that one array. Verified empirically
+  // against `apps/cli-go`: `schema_paths = [[]]` / `[{path = "x.sql"}]` both fail with
+  // `failed to parse config: decoding failed due to the following error(s):\n\n'db.
+  // migrations.schema_paths[0]' expected type 'string', got unconvertible type
+  // '[]interface {}'` / `'map[string]interface {}'` respectively — never silently
+  // dropping the element and continuing with an empty/partial glob list.
+  const legacyGoUnconvertibleType = (value: unknown): string | undefined =>
+    Array.isArray(value)
+      ? "[]interface {}"
+      : typeof value === "object" && value !== null
+        ? "map[string]interface {}"
+        : undefined;
+  const legacyFailOnUnconvertibleGlobEntries = (
+    keyPath: string,
+    values: ReadonlyArray<unknown>,
+  ): Effect.Effect<void, LegacyDbConfigLoadError> => {
+    const issues = values.flatMap((value, index) => {
+      const goType = legacyGoUnconvertibleType(value);
+      return goType === undefined
+        ? []
+        : [`'${keyPath}[${index}]' expected type 'string', got unconvertible type '${goType}'`];
+    });
+    return issues.length === 0
+      ? Effect.void
+      : fail(
+          `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`,
+        );
+  };
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathsOverride = remoteOverrideKeys.has("db.seed.sql_paths")
     ? undefined
     : envOverride("SUPABASE_DB_SEED_SQL_PATHS");
+  if (sqlPathsOverride === undefined && Array.isArray(rawSqlPaths)) {
+    yield* legacyFailOnUnconvertibleGlobEntries("db.seed.sql_paths", rawSqlPaths);
+  }
   const sqlPathPatterns =
     sqlPathsOverride !== undefined
       ? splitGoSeedPaths(sqlPathsOverride)
@@ -1899,6 +1930,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const schemaPathsOverride = remoteOverrideKeys.has("db.migrations.schema_paths")
     ? undefined
     : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS");
+  if (schemaPathsOverride === undefined && Array.isArray(rawSchemaPaths)) {
+    yield* legacyFailOnUnconvertibleGlobEntries("db.migrations.schema_paths", rawSchemaPaths);
+  }
   const schemaPathPatterns =
     schemaPathsOverride !== undefined
       ? splitGoSeedPaths(schemaPathsOverride)
