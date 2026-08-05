@@ -215,6 +215,42 @@ describe("legacySqlFilesGlob", () => {
   );
 
   it.effect(
+    "reports the raw backslash pattern in a 'no files matched' warning on Windows, not the slashed form used for matching (Go filepath.ToSlash parity)",
+    () => {
+      // Go passes `filepath.ToSlash(pattern)` only as an ARGUMENT to `fs.Glob`
+      // (`config.go:145`) — the loop's own `pattern` variable (Go's range variable) is
+      // never reassigned, so the "no files matched pattern: %s" warning (`config.go:155`)
+      // still reports the ORIGINAL backslash form. An absolute Windows pattern with
+      // backslashes that matches nothing must therefore warn with that backslash form,
+      // not the slashed one used internally to glob. Force win32 path semantics
+      // (`BunPath.layerWin32`) and this module's own `process.platform` gate, same as
+      // the drive-root test above.
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-win-warn-"));
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacySqlFilesGlob(fs, path, ["C:\\schemas\\*.sql"], dir);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layerWin32)),
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual([]);
+            expect(result.warnings).toEqual(["no files matched pattern: C:\\schemas\\*.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            Object.defineProperty(process, "platform", { value: originalPlatform });
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "normalizes a doubled slash when the matched directory itself has a trailing slash (Go path.Join parity)",
     () => {
       // Go's `fs.WalkDir` builds each child path via `path.Join(dirname, name)`

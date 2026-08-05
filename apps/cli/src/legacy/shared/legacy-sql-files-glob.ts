@@ -361,6 +361,13 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
   const skipped: Array<string> = [];
 
   for (const rawPattern of patterns) {
+    // Go's `filepath.ToSlash(pattern)` (`config.go:145`) is passed only as an ARGUMENT
+    // to `fs.Glob` — the loop's own `pattern` variable (Go's range variable) is never
+    // reassigned, so every later reference to it in THIS iteration (`hasGlobMeta`, the
+    // skipped-pattern list, and the "no files matched pattern" warning, all below)
+    // still reports the ORIGINAL, un-slashed pattern. On Windows, an absolute pattern
+    // with backslashes (`C:\schemas\*.sql`) must therefore warn with that raw backslash
+    // form, even though matching itself runs against the slashed form.
     const pattern = toSlash(rawPattern);
     // Go's `fs.Glob` validates the whole pattern up front (`Match(pattern, "")`); a
     // malformed glob is reported as `failed to glob files: <ErrBadPattern>` and
@@ -371,10 +378,10 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
     }
     const matches = yield* globOne(fs, path, workdir, pattern);
     if (matches.length === 0) {
-      if (skipEmptyGlobs && GLOB_META_CHARS.test(pattern)) {
-        skipped.push(pattern);
+      if (skipEmptyGlobs && GLOB_META_CHARS.test(rawPattern)) {
+        skipped.push(rawPattern);
       } else {
-        warnings.push(`no files matched pattern: ${pattern}`);
+        warnings.push(`no files matched pattern: ${rawPattern}`);
       }
       continue;
     }
