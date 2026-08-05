@@ -1,103 +1,51 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
-import { parse as parseYaml } from "yaml";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { hasExplicitLongFlag } from "../../shared/cli/cobra-flag-groups.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import {
-  legacyApiUrl,
-  legacyDashboardUrl,
-  legacyIsBuiltinProfileName,
-  legacyPoolerHost,
-  legacyProjectHost,
-} from "../shared/legacy-profile.ts";
+  legacyLoadProfile,
+  type LegacyLoadedProfile,
+  type LegacyProfileLoadError,
+} from "../shared/legacy-profile-load.ts";
 import {
   LegacyDebugLogger,
   type LegacyDebugLoggerShape,
 } from "../shared/legacy-debug-logger.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliConfig, type LegacyProfileName } from "./legacy-cli-config.service.ts";
+import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import { legacyProfileFilePath } from "./legacy-profile-file.ts";
-
-interface ResolvedProfile {
-  readonly name: string;
-  readonly apiUrl: string;
-  readonly projectHost: string;
-  readonly poolerHost: string;
-  readonly dashboardUrl: string;
-}
-
-// All per-profile endpoints are sourced from `legacy-profile.ts` (the single
-// source of truth that mirrors Go's `allProfiles` table and is also consumed
-// by `branches get` and the sso pflag-profile reconciliation), so no mapping
-// is duplicated here.
-function resolvedBuiltin(name: LegacyProfileName): ResolvedProfile {
-  return {
-    name,
-    apiUrl: legacyApiUrl(name),
-    projectHost: legacyProjectHost(name),
-    poolerHost: legacyPoolerHost(name),
-    dashboardUrl: legacyDashboardUrl(name),
-  };
-}
-
-function safeParseYaml(text: string):
-  | {
-      name?: unknown;
-      api_url?: unknown;
-      project_host?: unknown;
-      pooler_host?: unknown;
-      dashboard_url?: unknown;
-    }
-  | undefined {
-  try {
-    const value = parseYaml(text);
-    return value !== null && typeof value === "object"
-      ? (value as {
-          name?: unknown;
-          api_url?: unknown;
-          project_host?: unknown;
-          pooler_host?: unknown;
-          dashboard_url?: unknown;
-        })
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function unknownMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * Resolves the profile that produces the API URL. Mirrors Go's `LoadProfile`
- * (`apps/cli-go/internal/utils/profile.go:96-118`):
+ * Mirrors Go's `getProfileName` precedence (`profile.go:121-136`) — explicit
+ * `--profile` flag → `SUPABASE_PROFILE` env → persisted `~/.supabase/profile`
+ * file → `supabase` — then loads the token via `legacyLoadProfile`, failing
+ * like Go's `LoadProfile` (`profile.go:94-118`) instead of falling back to
+ * the built-in `supabase` profile, which silently targeted the wrong keyring
+ * token and API (supabase/cli#6091).
  *
- * Profile-name precedence mirrors Go's `getProfileName` (`profile.go:121-136`):
- * `--profile` flag (when not the default) → `SUPABASE_PROFILE` env → the
- * persisted `~/.supabase/profile` file → `supabase`. The resolved token is then:
- *
- * 1. If the token matches a built-in profile name, use that.
- * 2. Otherwise treat the token as a path to a YAML config file with `api_url:`.
- * 3. Fall back to the `supabase` built-in if the file is missing or malformed.
- *
- * The cli-e2e harness depends on (2) — it writes a per-test YAML profile and
- * sets `SUPABASE_PROFILE=<that-path>` so both the Go and ts-legacy binaries
- * route requests to the local replay server. YAML profiles may also carry a
- * `project_host:` key (Go's `Profile.ProjectHost`; defaults to `supabase.co`) and
- * a `pooler_host:` key (Go's `Profile.PoolerHost`; `omitempty`, defaults to empty
- * which disables the linked pooler MITM domain assertion).
+ * `flagExplicit` mirrors pflag's `Changed`: an explicitly passed `--profile
+ * supabase` shadows env and file even at the default value, which the parsed
+ * value alone cannot detect. The persisted file's content is trimmed — a
+ * deliberate divergence from Go's raw bytes, compensated by the sso pflag
+ * reconciliation (`legacy-pflag-reconcile.ts`).
  */
 function resolveProfile(
   flagValue: string,
+  flagExplicit: boolean,
   envValue: string | undefined,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   homeDir: string,
   debugLogger: LegacyDebugLoggerShape,
-): Effect.Effect<ResolvedProfile> {
+): Effect.Effect<LegacyLoadedProfile, LegacyProfileLoadError> {
   return Effect.gen(function* () {
     let token: string;
-    if (flagValue !== "supabase") {
+    if (flagValue !== "supabase" || flagExplicit) {
       yield* debugLogger.debug(`Loading profile from flag: ${flagValue}`);
       token = flagValue;
     } else if (envValue !== undefined && envValue.length > 0) {
@@ -125,36 +73,7 @@ function resolveProfile(
       });
     }
 
-    if (legacyIsBuiltinProfileName(token)) {
-      return resolvedBuiltin(token);
-    }
-
-    const content = yield* fs.readFileString(token).pipe(Effect.option);
-    if (Option.isNone(content)) return resolvedBuiltin("supabase");
-
-    const parsed = safeParseYaml(content.value);
-    if (parsed === undefined || typeof parsed.api_url !== "string") {
-      return resolvedBuiltin("supabase");
-    }
-    return {
-      name: typeof parsed.name === "string" ? parsed.name : "supabase",
-      apiUrl: parsed.api_url,
-      projectHost:
-        typeof parsed.project_host === "string"
-          ? parsed.project_host
-          : legacyProjectHost("supabase"),
-      // Go's `Profile.PoolerHost` is `omitempty` (`profile.go:23`): a YAML profile
-      // that omits `pooler_host:` yields an empty host, which disables the MITM
-      // domain assertion — it must NOT fall back to the production `supabase.com`.
-      poolerHost: typeof parsed.pooler_host === "string" ? parsed.pooler_host : "",
-      // Go's `Profile.DashboardURL` is `required` (`profile.go:20`); a YAML profile
-      // that omits it falls back to the built-in `supabase` dashboard here rather
-      // than erroring, since it only feeds the connect-failure suggestion text.
-      dashboardUrl:
-        typeof parsed.dashboard_url === "string"
-          ? parsed.dashboard_url
-          : legacyDashboardUrl("supabase"),
-    };
+    return yield* legacyLoadProfile(token, fs);
   });
 }
 
@@ -218,6 +137,14 @@ export const legacyCliConfigLayer = Layer.unwrap(
         const runtimeInfo = yield* RuntimeInfo;
         const env = process.env;
 
+        // `serviceOption`: tests without argv default to "not explicit". The
+        // empty command path scans all of argv up to `--`, like pflag.
+        const cliArgs = yield* Effect.serviceOption(CliArgs);
+        const profileFlagExplicit = Option.match(cliArgs, {
+          onNone: () => false,
+          onSome: ({ args }) => hasExplicitLongFlag(args, [], "profile"),
+        });
+
         const {
           name: profile,
           apiUrl,
@@ -226,6 +153,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           dashboardUrl,
         } = yield* resolveProfile(
           profileFlag,
+          profileFlagExplicit,
           env["SUPABASE_PROFILE"],
           fs,
           path,

@@ -191,8 +191,9 @@ export const legacyValidatePflagWorkdir = Effect.fnUntraced(function* (
  * - otherwise the Effect-parsed value covers pre-command-path placement
  *   (`supabase --profile x sso add …`) the anchored scan cannot see. The
  *   parsed flag cannot distinguish an explicit `--profile supabase` from the
- *   flag's default, so that value is treated as unset — the same proxy the
- *   config layer uses (`legacy-cli-config.layer.ts`).
+ *   flag's default, so that value is treated as unset (the config layer
+ *   closes the same gap with its own argv scan,
+ *   `legacy-cli-config.layer.ts`).
  */
 export function legacyPflagProfileValue(
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
@@ -241,9 +242,12 @@ export function legacyPflagProfileValue(
  * flag-shaped values, repeat resolution, explicit `--profile supabase`
  * shadowing the env, an untrimmed persisted-file token) — or when the token
  * is empty, which Go deterministically rejects. Where the two agree (every
- * normal invocation), the layer's resolution stands unchanged, including its
- * pre-existing lenient missing/malformed-file fallback, which predates this
- * PR and applies shell-wide (tracked separately from CLI-1982).
+ * normal invocation), the layer's resolution stands unchanged — it uses the
+ * same strict `legacyLoadProfile` and explicit-flag detection
+ * (supabase/cli#6091). Argv shapes where pflag's token consumption diverges
+ * from the Effect parser can still fail the layer build before this
+ * reconcile runs; those fail-closed on both sides, possibly with different
+ * detail text.
  *
  * `serviceOption` throughout: outside the real CLI tree (handler-level tests
  * provide argv via `Stdio.layerTest`) the flag settings and `RuntimeInfo`
