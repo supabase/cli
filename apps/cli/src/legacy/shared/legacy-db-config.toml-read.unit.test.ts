@@ -373,6 +373,28 @@ describe("legacyReadDbToml", () => {
   );
 
   it.effect(
+    "formats a large numeric db.migrations.schema_paths entry as fixed decimal, not scientific notation (Go strconv.FormatFloat parity)",
+    () => {
+      // Go's `decodeString` renders a weakly-converted float via
+      // `strconv.FormatFloat(v, 'f', -1, 64)` — format `'f'` is ALWAYS fixed decimal,
+      // never scientific, regardless of magnitude. JS's bare `String(1e21)` switches to
+      // exponential notation ("1e+21") once the magnitude crosses 1e21, which would
+      // record (and later search for) the wrong file path. Verified empirically against
+      // Go's stdlib: `strconv.FormatFloat(1e21, 'f', -1, 64)` returns
+      // `"1000000000000000000000"`, not `"1e+21"`.
+      const dir = withConfig(["[db.migrations]", "schema_paths = [1e21]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/1000000000000000000000"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "weakly coerces a TOP-LEVEL scalar db.migrations.schema_paths (Go mapstructure weak-decode of a []string field)",
     () => {
       // Go's `decodeSlice` wraps a non-array/non-string value into a synthetic

@@ -1851,6 +1851,28 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const expanded = legacyExpandEnv(value, lookup);
     return expanded.length === 0 ? [] : expanded.split(",");
   };
+  // Go's `decodeString` renders a weakly-converted float via `strconv.FormatFloat(v,
+  // 'f', -1, 64)` (`mapstructure.go:747-748`, format `'f'`) — ALWAYS fixed decimal
+  // notation, never scientific, regardless of magnitude. JS's `String(value)` agrees
+  // for ordinary magnitudes (both use the same shortest-round-trip digit sequence —
+  // `String()` just chooses "e" notation once `|value| >= 1e21` or `< 1e-6`, which
+  // `FormatFloat('f', …)` never does). Verified empirically: `strconv.FormatFloat(1e21,
+  // 'f', -1, 64)` returns `"1000000000000000000000"`, not `"1e+21"`. Expand JS's own
+  // exponential notation back into fixed notation instead of re-deriving the digits,
+  // since `Number.prototype.toString()`/`toExponential()` already computed the same
+  // shortest round-tripping digit sequence Go's algorithm would — only the notation
+  // differs.
+  const legacyFormatGoWeakFloat = (value: number): string => {
+    const str = value.toString();
+    const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(str);
+    if (match === null) return str;
+    const [, sign = "", intPart = "", fracPart = "", expStr = "0"] = match;
+    const digits = intPart + fracPart;
+    const pointPos = intPart.length + Number(expStr);
+    if (pointPos <= 0) return `${sign}0.${"0".repeat(-pointPos)}${digits}`;
+    if (pointPos >= digits.length) return `${sign}${digits}${"0".repeat(pointPos - digits.length)}`;
+    return `${sign}${digits.slice(0, pointPos)}.${digits.slice(pointPos)}`;
+  };
   // Go decodes both `[db.seed].sql_paths` and `[db.migrations].schema_paths` as
   // `config.Glob` (`[]string`) through the SAME mapstructure `UnmarshalExact` call
   // (`config.go:749-756`), whose decoder config never sets `WeaklyTypedInput: false`
@@ -1864,7 +1886,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const legacyWeakCoerceGlobEntry = (value: unknown): string | undefined => {
     if (typeof value === "string") return value;
     if (typeof value === "boolean") return value ? "1" : "0";
-    if (typeof value === "number") return String(value);
+    if (typeof value === "number") return legacyFormatGoWeakFloat(value);
     return undefined;
   };
   // A non-scalar element (nested array/table, e.g. `schema_paths = [[]]` or
