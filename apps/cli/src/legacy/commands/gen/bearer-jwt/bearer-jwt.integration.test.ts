@@ -102,6 +102,18 @@ async function writeSigningKeys(contents: string) {
   await writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), contents);
 }
 
+/**
+ * Writes `supabase/.env.development` — a file Go's `loadNestedEnv` reads (selected by
+ * `SUPABASE_ENV`, defaulting to `"development"`) but `@supabase/config`'s OWN default
+ * env resolution does NOT (`legacyResolveSigningKeysConfigPaths` must resolve a
+ * Go-accurate `ProjectEnvironment` and thread it through explicitly — CLI-1961 Codex
+ * review finding).
+ */
+async function writeSupabaseEnvDevelopment(contents: string) {
+  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
+  await writeFile(join(tempRoot.current, "supabase", ".env.development"), contents);
+}
+
 const baseFlags: LegacyGenBearerJwtFlags = {
   role: Option.some("anon"),
   sub: Option.none(),
@@ -574,6 +586,76 @@ describe("legacy gen bearer-jwt integration", () => {
   });
 
   it.live(
+    "Branch A: rejects a pasted JWK with a duplicate kid where the earlier occurrence is malformed (CLI-1961 Codex review finding)",
+    () => {
+      // Verified against the real binary: `json.Unmarshal` into `config.JWK` decodes
+      // struct fields in the object's OWN source order and errors on the FIRST
+      // type-mismatch it finds — even though `JSON.parse` alone would silently keep
+      // only the LAST occurrence (a valid `"k1"`) and never see the earlier `1` at all.
+      const { layer } = setup({
+        pipedAnswer: '{"kty":"oct","alg":"ES256","kid":1,"kid":"k1"}',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch A: rejects a pasted JWK with a duplicate alg where the earlier occurrence fails the allowlist, even though the later one is allowed (CLI-1961 Codex review finding)",
+    () => {
+      // Verified against the real binary: `config.Algorithm`'s `UnmarshalText` (the
+      // RS256/ES256 allowlist) returning an error for the FIRST `alg` occurrence
+      // ("HS256") stops Go's decoder from ever attempting the second ("ES256") — the
+      // overall `json.Unmarshal` still fails with the allowlist error, even though
+      // `JSON.parse` alone would keep only the later, individually-valid "ES256".
+      const { layer } = setup({
+        pipedAnswer: '{"kty":"oct","alg":"HS256","alg":"ES256"}',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "failed to parse JWK: must be one of [RS256 ES256]",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch A: accepts a pasted JWK with a duplicate alg where EVERY occurrence is individually valid and allowed",
+    () => {
+      // Contrast with the previous test: Go's decoder only stops attempting later
+      // occurrences once an EARLIER one fails — when every occurrence independently
+      // succeeds, the LAST one wins normally, same as any other duplicated field.
+      const { layer, out } = setup({
+        pipedAnswer: JSON.stringify({ ...generateEcJwk("dup-alg-kid"), alg: "ES256" }).replace(
+          '"alg":"ES256"',
+          '"alg":"RS256","alg":"ES256"',
+        ),
+      });
+      return Effect.gen(function* () {
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "dup-alg-kid",
+          typ: "JWT",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "Branch A: a null field value is treated as absent, not a type mismatch (Go's encoding/json no-op)",
     () => {
       const { layer, out } = setup({
@@ -624,6 +706,60 @@ describe("legacy gen bearer-jwt integration", () => {
   );
 
   it.live(
+    "Branch B: rejects a stored signing key with a duplicate kid where the earlier occurrence is malformed (CLI-1961 Codex review finding)",
+    () => {
+      // Same gap as Branch A's pasted-JWK duplicate-kid test, but for a
+      // `signing_keys_path` file entry: `legacyReadSigningKeysFile` must check each
+      // element's OWN raw source text, not the already-`JSON.parse`d (duplicate-key
+      // collapsed) record.
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeSigningKeys('[{"kty":"oct","alg":"ES256","kid":1,"kid":"k1"}]'),
+        );
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtDecodeError");
+          expect(json).toContain(
+            "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: rejects a stored signing key with a duplicate alg where the earlier occurrence fails the allowlist (CLI-1961 Codex review finding)",
+    () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeSigningKeys('[{"kty":"oct","kid":"k1","alg":"HS256","alg":"ES256"}]'),
+        );
+
+        const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyGenBearerJwtDecodeError");
+          expect(json).toContain(
+            "failed to decode signing keys: failed to parse response body: must be one of [RS256 ES256]",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "Branch B: mints a token from the configured signing_keys_path's only key on a blank kid answer",
     () => {
       const jwk = generateEcJwk("ec-kid");
@@ -641,6 +777,36 @@ describe("legacy gen bearer-jwt integration", () => {
         expect(out.stderrText).toContain(
           "Enter the kid of your signing key (or leave blank to use the first one): ",
         );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "Branch B: resolves signing_keys_path = env(KEYS_PATH) from supabase/.env.development, a file @supabase/config's own default env resolution doesn't read (CLI-1961 Codex review finding)",
+    () => {
+      // Go's `Config.Load` runs `loadNestedEnv` (which selects `.env.<SUPABASE_ENV>`,
+      // defaulting to "development") BEFORE its TOML decoder ever resolves `env(...)`
+      // references — so a `KEYS_PATH` set only in `supabase/.env.development` is visible
+      // to Go's `signing_keys_path = "env(KEYS_PATH)"` resolution. `@supabase/config`'s
+      // own default env loader (used whenever no `projectEnv` is explicitly threaded
+      // through) only reads plain `supabase/.env`/`.env.local` and would otherwise leave
+      // the literal string "env(KEYS_PATH)" unexpanded, and this call would fail trying
+      // to open a file with THAT literal name.
+      const jwk = generateEcJwk("ec-kid");
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "env(KEYS_PATH)"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeSupabaseEnvDevelopment("KEYS_PATH=./signing_keys.json\n"),
+        );
+        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+
+        yield* legacyGenBearerJwt(baseFlags);
+        const token = tokenFrom(out);
+        const [header] = token.split(".");
+        expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
       }).pipe(Effect.provide(layer));
     },
   );
