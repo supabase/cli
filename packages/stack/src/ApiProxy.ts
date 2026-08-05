@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Context, Schedule, Result } from "effect";
+import { Effect, Layer, Option, Context, Duration, Schedule, Result } from "effect";
 import {
   Headers,
   HttpBody,
@@ -14,6 +14,7 @@ import type { ServiceName } from "./versions.ts";
 
 export interface ProxyConfig {
   readonly listenPort: number;
+  readonly activationTimeout?: Duration.Input;
   readonly gotruePort: number;
   readonly postgrestPort: number;
   readonly postgrestAdminPort: number;
@@ -113,6 +114,7 @@ function addCorsHeaders(
 // status does not mean a function is servable yet. Briefly retry transport
 // failures on that route so a user's first call doesn't surface as a 502.
 const COLD_START_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(Schedule.upTo({ times: 8 }));
+const DEFAULT_SERVICE_ACTIVATION_TIMEOUT = Duration.seconds(30);
 
 interface ProxyHandlerOptions {
   readonly service: ServiceName;
@@ -136,7 +138,12 @@ function makeProxyHandler(
 ) {
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
-      const activation = yield* Effect.result(activator.activate(opts.service));
+      const activation = yield* activator
+        .activate(opts.service)
+        .pipe(
+          Effect.timeout(config.activationTimeout ?? DEFAULT_SERVICE_ACTIVATION_TIMEOUT),
+          Effect.result,
+        );
       if (Result.isFailure(activation)) {
         return HttpServerResponse.text("Service unavailable", {
           status: 503,

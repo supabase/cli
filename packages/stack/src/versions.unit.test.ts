@@ -129,14 +129,14 @@ describe("dockerImageForService", () => {
 
   it("does not add fallback registries for third-party images", () => {
     expect(dockerImageCandidatesForService("imgproxy", DEFAULT_VERSIONS.imgproxy)).toEqual([
-      `ghcr.io/imgproxy/imgproxy:${DEFAULT_VERSIONS.imgproxy}`,
+      `darthsim/imgproxy:${DEFAULT_VERSIONS.imgproxy}`,
     ]);
   });
 
   it("keeps non-managed services Docker-only", () => {
     expect(SERVICE_ARTIFACTS.imgproxy).toMatchObject({
       runtimeSupport: "docker-only",
-      docker: { ownership: "upstream", repository: "ghcr.io/imgproxy/imgproxy" },
+      docker: { ownership: "upstream", repository: "darthsim/imgproxy" },
     });
     expect(SERVICE_ARTIFACTS.mailpit).toMatchObject({
       runtimeSupport: "docker-only",

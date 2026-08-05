@@ -141,7 +141,7 @@ export const SERVICE_ARTIFACTS: Record<ServiceName, ServiceArtifactDefinition> =
   },
   imgproxy: {
     runtimeSupport: "docker-only",
-    docker: { ownership: "upstream", repository: "ghcr.io/imgproxy/imgproxy" },
+    docker: { ownership: "upstream", repository: "darthsim/imgproxy" },
   },
   mailpit: {
     runtimeSupport: "docker-only",

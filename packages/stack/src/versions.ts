@@ -58,7 +58,7 @@ export const DEFAULT_VERSIONS: VersionManifest = {
   "edge-runtime": "1.74.2",
   realtime: "2.120.3",
   storage: "1.67.20",
-  imgproxy: "v3.27.2",
+  imgproxy: "v3.8.0",
   mailpit: "v1.30.2",
   pgmeta: "0.96.6",
   studio: "2026.07.27-sha-cbb076d",
