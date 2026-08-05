@@ -1,5 +1,5 @@
 import type { LogEntry } from "@supabase/process-compose";
-import { Duration, Effect, type Layer, ManagedRuntime, Stream } from "effect";
+import { Effect, type Layer, ManagedRuntime, Stream } from "effect";
 import { FileSystem, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -13,7 +13,6 @@ import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
-import { resolveReadinessPolicy } from "./StackConfig.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
@@ -168,28 +167,8 @@ export async function createStack(
         restartService: (name) => run(localStack.restartService(name)),
         reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
         reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
-        ready: (opts) => {
-          const policy = resolveReadinessPolicy({
-            readyOptions: opts,
-            stackPolicy: resolved.readiness,
-          });
-          const effect =
-            policy.mode === "finite"
-              ? localStack.waitAllReady().pipe(Effect.timeout(Duration.millis(policy.timeoutMs)))
-              : localStack.waitAllReady();
-          return run(effect);
-        },
-        serviceReady: (name, opts) => {
-          const policy = resolveReadinessPolicy({
-            readyOptions: opts,
-            stackPolicy: resolved.readiness,
-          });
-          const effect =
-            policy.mode === "finite"
-              ? localStack.waitReady(name).pipe(Effect.timeout(Duration.millis(policy.timeoutMs)))
-              : localStack.waitReady(name);
-          return run(effect);
-        },
+        ready: (opts) => run(localStack.waitAllReady(opts)),
+        serviceReady: (name, opts) => run(localStack.waitReady(name, opts)),
         getStatus: () => run(localStack.getAllStates()),
         getServiceStatus: (name) => run(localStack.getState(name)),
         statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),

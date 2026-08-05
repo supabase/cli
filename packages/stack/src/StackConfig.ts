@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 
@@ -9,6 +10,22 @@ export type ReadinessPolicy =
   | { readonly mode: "infinite" };
 
 export type ReadyOptions = { readonly mode: "inherit" } | ReadinessPolicy;
+
+const ReadinessPolicySchema = Schema.Union([
+  Schema.Struct({
+    mode: Schema.Literal("finite"),
+    timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.Struct({ mode: Schema.Literal("infinite") }),
+]);
+
+/** The single wire representation accepted by Effect, Promise, and daemon Adapters. */
+export const ReadyOptionsSchema = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("inherit") }),
+  ReadinessPolicySchema,
+]);
+
+export const inheritReadyOptions: ReadyOptions = { mode: "inherit" };
 
 /** Standalone stacks wait at most two minutes unless a caller or launch Adapter chooses otherwise. */
 export const DEFAULT_STACK_READINESS_POLICY: ReadinessPolicy = {

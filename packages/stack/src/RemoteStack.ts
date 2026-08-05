@@ -3,8 +3,9 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { DaemonErrorResponseSchema } from "./DaemonProtocol.ts";
-import { StackBuildError } from "./errors.ts";
+import { StackBuildError, StackReadinessError } from "./errors.ts";
 import { Stack, StackInfoSchema } from "./Stack.ts";
+import { inheritReadyOptions } from "./StackConfig.ts";
 import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 import { SERVICE_NAMES } from "./versions.ts";
@@ -105,7 +106,10 @@ function withAbortSignal<A, E, R>(
 const failDaemonResponse = (
   response: HttpClientResponse.HttpClientResponse,
   fallbackName: string,
-): Effect.Effect<never, ServiceNotFoundError | ServiceReadyError | StackBuildError> =>
+): Effect.Effect<
+  never,
+  ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+> =>
   Effect.gen(function* () {
     const body = yield* HttpClientResponse.schemaBodyJson(DaemonErrorResponseSchema)(response).pipe(
       Effect.orDie,
@@ -121,13 +125,22 @@ const failDaemonResponse = (
         });
       case "STACK_BUILD_ERROR":
         return yield* new StackBuildError({ detail: body.error });
+      case "STACK_READINESS_TIMEOUT":
+        return yield* new StackReadinessError({
+          target: body.service ?? fallbackName,
+          timeoutMs: body.timeoutMs ?? 0,
+          detail: body.error,
+        });
     }
   });
 
 const expectDaemonOk = (
   response: HttpClientResponse.HttpClientResponse,
   fallbackName: string,
-): Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError> =>
+): Effect.Effect<
+  void,
+  ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+> =>
   response.status >= 200 && response.status < 300
     ? Effect.void
     : failDaemonResponse(response, fallbackName);
@@ -301,6 +314,7 @@ export const RemoteStack = {
                 });
                 yield* expectDaemonOk(response, name).pipe(
                   Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
+                  Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
                 );
               }),
             ),
@@ -392,7 +406,7 @@ export const RemoteStack = {
               }),
             ),
 
-          waitReady: (name: string) =>
+          waitReady: (name, opts) =>
             withUnixHttpClient(
               withAbortSignal((signal) =>
                 Effect.gen(function* () {
@@ -400,18 +414,28 @@ export const RemoteStack = {
                   const response = yield* unixResponse(
                     socketPath,
                     `/services/${servicePath}/ready`,
-                    { signal },
+                    {
+                      method: "POST",
+                      signal,
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify(opts ?? inheritReadyOptions),
+                    },
                   );
                   yield* expectDaemonOk(response, name);
                 }),
               ),
             ),
 
-          waitAllReady: () =>
+          waitAllReady: (opts) =>
             withUnixHttpClient(
               withAbortSignal((signal) =>
                 Effect.gen(function* () {
-                  const response = yield* unixResponse(socketPath, "/ready", { signal });
+                  const response = yield* unixResponse(socketPath, "/ready", {
+                    method: "POST",
+                    signal,
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify(opts ?? inheritReadyOptions),
+                  });
                   yield* expectDaemonOk(response, "stack").pipe(
                     Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
                   );

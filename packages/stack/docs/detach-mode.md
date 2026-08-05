@@ -114,14 +114,16 @@ metadata and service data remain.
 `DaemonServer` exposes the local `Stack` Interface on the Unix socket. Current routes include:
 
 - `/health`, `/status`, and `/status/stream`;
-- `/start`, `/stop`, and `/ready`;
+- `/start`, `/stop`, and `POST /ready`;
 - per-service start, stop, restart, and readiness;
 - merged and per-service live logs plus buffered history;
 - functions and Edge Runtime reload.
 
-State and log streams use SSE. Ordinary responses and typed failures use validated JSON shapes.
-`RemoteStack` decodes that transport back into the same Effect `Stack` Interface used in
-foreground mode, including `ServiceNotFoundError`, `ServiceReadyError`, and `StackBuildError`.
+State and log streams use SSE. Readiness routes use `POST` with a validated readiness-policy body;
+omitting an override sends the explicit `inherit` representation. Ordinary responses and typed
+failures use validated JSON shapes. `RemoteStack` decodes that transport back into the same Effect
+`Stack` Interface used in foreground mode, including `ServiceNotFoundError`, `ServiceReadyError`,
+`StackBuildError`, and `StackReadinessError`.
 
 The management socket is not the public local API endpoint. `ApiProxy` still owns the configured
 HTTP API port inside the daemon process.
@@ -140,6 +142,10 @@ package. In particular:
 
 On normal `/stop`, the daemon gracefully stops the stack, signals HTTP shutdown after the response
 has had time to flush, disposes both managed runtimes, and removes live state/runtime paths.
+
+A readiness deadline is terminal for that local runtime: the stack disposes its scoped resources,
+the daemon returns the typed timeout response, and then the daemon shuts down. This prevents later
+requests from relaunching processes after cleanup has already run.
 
 If the daemon has died, CLI stop/status detects a stale PID. Stop can use cleanup targets persisted
 in `stack.json` to force-remove known Docker containers before removing the stale state. This
