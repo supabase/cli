@@ -1,6 +1,10 @@
 import { Data, Effect, FileSystem, Option, Path, Result } from "effect";
 
-import type { PflagArgvScan } from "../../shared/cli/cobra-flag-groups.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import {
+  lastExplicitLongFlagValue,
+  type PflagArgvScan,
+} from "../../shared/cli/cobra-flag-groups.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { legacyProfileFilePath } from "../config/legacy-profile-file.ts";
@@ -261,16 +265,27 @@ export const legacyResolvePflagProfile = Effect.fnUntraced(function* (
   const env = process.env["SUPABASE_PROFILE"];
   const envProfile = env !== undefined && env.length > 0 ? env : undefined;
 
-  // viper-effective explicit token vs the config layer's explicit token
-  // (`resolveProfile`, `legacy-cli-config.layer.ts`: parsed flag ≠ default →
-  // env). When both agree on a non-empty explicit token, the layer resolved
-  // the exact same profile the Go binary would target.
+  // viper-effective explicit token vs the config layer's explicit token.
+  // The layer-model MUST mirror `resolveProfile` exactly (raw argv scan →
+  // parsed flag ≠ default → env): the layer's scan treats the last raw
+  // `--profile` occurrence as explicit even when pflag consumed it as another
+  // flag's value, so omitting it here would make the comparison miss a layer
+  // that shadowed the env and silently target the wrong host. When both agree
+  // on a non-empty explicit token, the layer resolved the exact same profile
+  // the Go binary would target.
+  const scanExplicit = Option.match(yield* Effect.serviceOption(CliArgs), {
+    onNone: () => undefined,
+    onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
+  });
   const goExplicit = legacyPflagProfileValue(scan, parsedProfile, envProfile);
-  const layerExplicit = Option.isSome(parsedProfile)
-    ? parsedProfile
-    : envProfile !== undefined
-      ? Option.some(envProfile)
-      : Option.none<string>();
+  const layerExplicit =
+    scanExplicit !== undefined
+      ? Option.some(scanExplicit)
+      : Option.isSome(parsedProfile)
+        ? parsedProfile
+        : envProfile !== undefined
+          ? Option.some(envProfile)
+          : Option.none<string>();
   if (
     Option.isSome(goExplicit) &&
     Option.isSome(layerExplicit) &&
