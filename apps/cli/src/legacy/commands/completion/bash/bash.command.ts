@@ -1,5 +1,8 @@
 import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { LegacyCompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { legacyCompletionBash } from "./bash.handler.ts";
 
@@ -23,5 +26,11 @@ export const legacyCompletionBashCommand = Command.make("bash", config).pipe(
       "You will need to start a new shell for this setup to take effect.",
   ),
   Command.withShortDescription("Generate the autocompletion script for bash"),
-  Command.withHandler((flags) => legacyCompletionBash(flags)),
+  Command.withHandler((flags) =>
+    legacyCompletionBash(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(commandRuntimeLayer(["completion", "bash"])),
 );
