@@ -976,6 +976,28 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
     // ever been wired up for `start` (see its own doc comment). Extending the
     // retry to all three `functions` Docker paths is a shared, cross-cutting
     // follow-up, not something to fix piecemeal for `download` alone.
+    //
+    // No `projectEnvValues` argument either (review round on CLI-1963's
+    // `functions download` port): Go's `flags.LoadConfig` → `loadNestedEnv`
+    // (`pkg/config/config.go:1220-1258`) calls `godotenv.Load` on every
+    // project dotenv file, which `os.Setenv`s each key into the process env
+    // — ambient-wins, but a `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in
+    // `supabase/.env` (not the ambient shell) is visible to `GetRegistry()`'s
+    // later `viper.GetString("INTERNAL_IMAGE_REGISTRY")` read
+    // (`internal/utils/docker.go:221-227`) regardless. `loadProjectConfig`
+    // above only uses its own dotenv read internally, for `env(...)`
+    // interpolation — it doesn't return the values, so this call falls back
+    // to `legacyGetRegistryOverride`'s ambient-only `process.env` read and
+    // misses a project-local registry mirror configured only via dotenv.
+    // Pre-existing and cross-cutting, not introduced by this PR: `deploy.ts`
+    // (`deploy.ts:1287`) and `serve.ts` (`serve.ts:1756`) call the same
+    // `legacyGetRegistryImageUrl` with no `projectEnvValues` either — the
+    // only caller that resolves and threads it today is `start`, via
+    // `legacyLoadLocalProjectContext`/`legacyGetRegistryImageUrlCandidates`.
+    // Loading project dotenv for every native `functions` Docker path belongs
+    // in the shared config-loading layer, not duplicated per call site here
+    // — left open, same treatment as the config-defaults/network-id-env/
+    // Config.Validate gaps above.
     image: legacyGetRegistryImageUrl(
       `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
     ),
