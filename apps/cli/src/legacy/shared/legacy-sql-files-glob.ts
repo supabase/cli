@@ -104,17 +104,33 @@ const globOne = (
  * `failed to walk matched directory: ...` error with zero files, not an empty match).
  */
 // Go's `fs.WalkDir` builds each child path via `path.Join(dirname, name)`
-// (`io/fs/walk.go`), and `path.Join` runs `path.Clean` on the joined result — which
-// collapses a doubled `/` down to one. A bare string-concatenated `${rel}/${name}`
-// does NOT collapse it, so a matched directory whose OWN path already ends in `/`
-// (e.g. a literal `schema_paths = ["/tmp/schemas/"]`/`sql_paths` entry — `fs.Glob`'s
-// no-metacharacter fast path returns that pattern verbatim, trailing slash and all)
-// would otherwise produce `/tmp/schemas//a.sql` here instead of Go's
-// `/tmp/schemas/a.sql`. Verified empirically: an `apps/cli-go` probe importing
-// `pkg/config` directly and calling `Glob{"<dir>/"}.SQLFiles(...)` against a
-// trailing-slash absolute directory returns the single-slash path, not a doubled one.
-const joinRelChild = (rel: string, name: string): string =>
-  rel.endsWith("/") ? `${rel.replace(/\/+$/, "")}/${name}` : `${rel}/${name}`;
+// (`io/fs/walk.go`), and `path.Join` runs `path.Clean` on the joined result, which:
+//
+//  1. Collapses a doubled `/` down to one. A bare string-concatenated `${rel}/${name}`
+//     does NOT collapse it, so a matched directory whose OWN path already ends in `/`
+//     (e.g. a literal `schema_paths = ["/tmp/schemas/"]`/`sql_paths` entry — `fs.Glob`'s
+//     no-metacharacter fast path returns that pattern verbatim, trailing slash and all)
+//     would otherwise produce `/tmp/schemas//a.sql` here instead of Go's
+//     `/tmp/schemas/a.sql`. Verified empirically: an `apps/cli-go` probe importing
+//     `pkg/config` directly and calling `Glob{"<dir>/"}.SQLFiles(...)` against a
+//     trailing-slash absolute directory returns the single-slash path, not a doubled one.
+//  2. Drops a bare `.` root entirely rather than joining it as a prefix. A matched
+//     directory can clean to exactly `.` — e.g. `[db.migrations].schema_paths = [".."]`
+//     or `[db.seed].sql_paths = [".."]`, which `baseConfig.resolve`'s own
+//     `path.Join(builder.SupabaseDirPath, pattern)` collapses to `.`
+//     (`apps/cli-go/pkg/config/config.go:969-980`) — and a bare string-concatenated
+//     `${rel}/${name}` would produce `./foo.sql` there instead of Go's `foo.sql`. This
+//     matters beyond cosmetics: for seeds, the walked path becomes the
+//     `supabase_migrations.seed_files.path` hash key, so a `./`-prefixed TS path would
+//     never match an already-recorded Go-CLI key and would re-run/re-record the seed.
+//     Verified empirically: `path.Join(".", "foo.sql")` and a real `fs.WalkDir` rooted at
+//     `.` both drop the `./` prefix entirely, while `path.Join("..", "foo.sql")` stays
+//     `../foo.sql` — only a bare `.` collapses this way; `..` is not further cleanable
+//     against nothing and joins normally, so it needs no special case here.
+const joinRelChild = (rel: string, name: string): string => {
+  if (rel === ".") return name;
+  return rel.endsWith("/") ? `${rel.replace(/\/+$/, "")}/${name}` : `${rel}/${name}`;
+};
 
 const legacyWalkSqlFiles = (
   fs: FileSystem.FileSystem,

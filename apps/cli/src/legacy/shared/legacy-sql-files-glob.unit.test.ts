@@ -190,6 +190,37 @@ describe("legacySqlFilesGlob", () => {
     },
   );
 
+  it.effect(
+    "drops the './' prefix when the matched directory cleans to '.' (Go path.Join parity)",
+    () => {
+      // Go's `fs.WalkDir` builds each child path via `path.Join(dirname, name)`, and
+      // `path.Join` runs `path.Clean`, which drops a bare `.` root entirely rather than
+      // joining it as a prefix. A matched directory can clean to exactly `.` — e.g.
+      // `[db.migrations].schema_paths = [".."]`/`[db.seed].sql_paths = [".."]`, which
+      // `baseConfig.resolve`'s own `path.Join(builder.SupabaseDirPath, pattern)` collapses
+      // to `.` (`apps/cli-go/pkg/config/config.go:969-980`) — so the walk over its children
+      // must record `a.sql`, not `./a.sql`. This matters beyond cosmetics: for seeds, the
+      // walked path becomes the `supabase_migrations.seed_files.path` hash key, so a
+      // `./`-prefixed path would never match an already-recorded Go-CLI key. Verified
+      // empirically: `path.Join(".", "foo.sql")` and a real `fs.WalkDir` rooted at `.` both
+      // drop the `./` prefix entirely.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-dot-root-"));
+      writeFileSync(join(dir, "a.sql"), "select 1;");
+      const nestedDir = join(dir, "nested");
+      mkdirSync(nestedDir);
+      writeFileSync(join(nestedDir, "b.sql"), "select 2;");
+      return run(["."], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["a.sql", "nested/b.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("still expands a real (non-symlinked) nested directory recursively", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-nested-"));
     const schemasDir = join(dir, "schemas");
