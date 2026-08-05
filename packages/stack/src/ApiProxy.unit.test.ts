@@ -5,7 +5,7 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
-import { StackNotRunningError } from "./errors.ts";
+import { StackNotRunningError, StackReadinessError } from "./errors.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import type { ServiceName } from "./versions.ts";
 
@@ -120,7 +120,11 @@ function buildProxyLayer(
 async function startProxy(
   config: ProxyConfig,
   activatorLayer?: Layer.Layer<StackServiceActivator>,
-): Promise<{ url: string; dispose: () => Promise<void> }> {
+): Promise<{
+  url: string;
+  dispose: () => Promise<void>;
+  awaitTerminalFailure: () => Promise<void>;
+}> {
   const proxyRuntime = ManagedRuntime.make(buildProxyLayer(config, activatorLayer));
   const proxy = await proxyRuntime.runPromise(ApiProxy);
   const addr = proxy.address;
@@ -129,7 +133,11 @@ async function startProxy(
     const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
     url = `http://${host}:${addr.port}`;
   }
-  return { url, dispose: () => proxyRuntime.dispose() };
+  return {
+    url,
+    dispose: () => proxyRuntime.dispose(),
+    awaitTerminalFailure: () => proxyRuntime.runPromise(proxy.awaitTerminalFailure),
+  };
 }
 
 describe("ApiProxy", () => {
@@ -241,6 +249,27 @@ describe("ApiProxy", () => {
       const res = await fetch(`${proxy.url}/rest/v1/users`);
       expect(res.status).toBe(503);
       expect(res.headers.get("retry-after")).toBe("1");
+    } finally {
+      await proxy.dispose();
+    }
+  });
+
+  test("signals daemon teardown after a terminal activation failure", async () => {
+    const activatorLayer = Layer.succeed(StackServiceActivator, {
+      activate: () =>
+        Effect.fail(
+          new StackReadinessError({
+            target: "postgrest",
+            timeoutMs: 30_000,
+            detail: "PostgREST did not become ready",
+          }),
+        ),
+    });
+    const proxy = await startProxy(configForPort(echoServer.port), activatorLayer);
+    try {
+      const res = await fetch(`${proxy.url}/rest/v1/users`);
+      expect(res.status).toBe(503);
+      await expect(proxy.awaitTerminalFailure()).resolves.toBeUndefined();
     } finally {
       await proxy.dispose();
     }
