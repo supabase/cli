@@ -51,19 +51,21 @@ import {
   discoverFunctionSlugs,
   dockerBindContainerPath,
   dockerBindHostPath,
-  dockerProjectLabels,
   dockerWorkdirLabel,
+  rawFunctionConfigRecord,
+  resolveFunctionConfigs,
+  type ResolvedDeployFunctionConfig,
+} from "./deploy.ts";
+import {
+  dockerProjectLabels,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   localDockerId,
   normalizeProjectId,
-  rawFunctionConfigRecord,
   resolveEdgeRuntimeVersion,
-  resolveFunctionConfigs,
   runChildProcess,
   toDockerPath,
-  type ResolvedDeployFunctionConfig,
-} from "./deploy.ts";
+} from "./functions-docker.ts";
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const defaultProjectConfig = decodeProjectConfig({});
 

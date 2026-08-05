@@ -1,3 +1,8 @@
+import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Effect } from "effect";
+
 const functionSlugPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 export const invalidFunctionSlugDetail =
@@ -16,3 +21,20 @@ export const FUNCTIONS_PROJECT_REF_SAFE_FLAGS = ["project-ref"] as const;
 // `MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")`
 // (`cmd/functions.go:158,182`).
 export const FUNCTIONS_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker", "legacy-bundle"] as const;
+
+/**
+ * Go: `Config.EdgeRuntime.Image` reflects `supabase/.temp/edge-runtime-version`
+ * when present (`pkg/config/config.go:847-849`) — shared by every `functions`
+ * command that resolves a Docker edge-runtime image (`deploy`, `download`) in
+ * both shells, so this is the single home for the file-read rather than four
+ * copies of the same `readFile` -> `trim` -> fallback pipeline.
+ */
+export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabaseDir: string) {
+  return yield* Effect.tryPromise(() =>
+    readFile(join(supabaseDir, ".temp", "edge-runtime-version"), "utf8"),
+  ).pipe(
+    Effect.map((version) => version.trim()),
+    Effect.catch(() => Effect.succeed("")),
+    Effect.map((version) => version || DEFAULT_VERSIONS["edge-runtime"]),
+  );
+});

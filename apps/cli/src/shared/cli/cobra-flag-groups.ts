@@ -29,6 +29,31 @@ export function hasExplicitLongFlag(
 }
 
 /**
+ * Raw value of `--<flagName>`/`--<flagName>=value` anywhere in argv
+ * (unscoped — no command-path anchoring), or `undefined` if absent.
+ */
+export function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const token = rawArgs[index];
+    if (token === `--${flagName}`) {
+      return rawArgs[index + 1];
+    }
+    if (token?.startsWith(`--${flagName}=`)) {
+      return token.slice(flagName.length + 3);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether `--<flagName>` (or `--<flagName>=`) appears anywhere in argv,
+ * unscoped.
+ */
+export function hasGlobalLongFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+  return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
+}
+
+/**
  * Value-taking long flags registered persistently on the Go root command
  * (`apps/cli-go/cmd/root.go:324-333`: `--workdir`, `--network-id`,
  * `--profile`, `--output`, `--dns-resolver`, `--agent`), plus the TS-only

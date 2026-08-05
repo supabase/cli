@@ -30,7 +30,7 @@ import {
   LEGACY_CLI_PROJECT_LABEL,
   LEGACY_CLI_WORKDIR_LABEL,
 } from "../../../shared/legacy-docker-ids.ts";
-import { isUserDefinedDockerNetwork } from "../../../../shared/functions/deploy.ts";
+import { isUserDefinedDockerNetwork } from "../../../../shared/functions/functions-docker.ts";
 import {
   legacyBuildStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
@@ -54,9 +54,10 @@ type Spawner = ChildProcessSpawner["Service"];
  * otherwise silently stop recognizing the local stack's containers.
  *
  * A same-value private constant already exists at
- * `shared/functions/deploy.ts` (`dockerComposeProjectLabel`, for the unrelated
- * `functions deploy` Docker Desktop extension gateway) but is neither exported
- * nor in the same Docker-usage domain as `start` — not hoisted from there.
+ * `shared/functions/functions-docker.ts` (`dockerComposeProjectLabel`, for the
+ * unrelated `functions deploy`/`functions serve` Docker Desktop extension
+ * gateway) but is neither exported nor in the same Docker-usage domain as
+ * `start` — not hoisted from there.
  */
 export const LEGACY_COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
@@ -229,8 +230,9 @@ function legacyPortConflictSuggestion(hostPort: string, serviceLabel: string): s
  * created (`docker network create host` errors with "operation is not
  * permitted on predefined host network"), so this returns immediately without
  * spawning `docker network create` at all for those names, reusing the same
- * `isUserDefinedDockerNetwork` check `shared/functions/deploy.ts` already
- * applies for the unrelated `functions deploy` extension-gateway network.
+ * `isUserDefinedDockerNetwork` check `shared/functions/functions-docker.ts`
+ * already applies for the unrelated `functions deploy`/`functions serve`
+ * extension-gateway network.
  */
 export function legacyEnsureStartNetwork(
   spawner: Spawner,

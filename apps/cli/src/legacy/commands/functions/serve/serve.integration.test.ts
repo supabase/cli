@@ -14,7 +14,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { toDockerPath } from "../../../../shared/functions/deploy.ts";
+import { toDockerPath } from "../../../../shared/functions/functions-docker.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -72,10 +72,10 @@ const deployMockState = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../../../../shared/functions/deploy.ts", async () => {
-  const actual = await vi.importActual<typeof import("../../../../shared/functions/deploy.ts")>(
-    "../../../../shared/functions/deploy.ts",
-  );
+vi.mock("../../../../shared/functions/functions-docker.ts", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../../shared/functions/functions-docker.ts")
+  >("../../../../shared/functions/functions-docker.ts");
   const { Effect } = await import("effect");
 
   return {

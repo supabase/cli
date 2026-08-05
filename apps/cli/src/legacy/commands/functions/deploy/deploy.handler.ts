@@ -1,8 +1,7 @@
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
 import { deployFunctions } from "../../../../shared/functions/deploy.ts";
+import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -29,12 +28,8 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
   const runtimeInfo = yield* RuntimeInfo;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
-  const edgeRuntimeVersion = yield* Effect.tryPromise(() =>
-    readFile(join(cliConfig.workdir, "supabase", ".temp", "edge-runtime-version"), "utf8"),
-  ).pipe(
-    Effect.map((version) => version.trim()),
-    Effect.catch(() => Effect.succeed("")),
-    Effect.map((version) => version || DEFAULT_VERSIONS["edge-runtime"]),
+  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
+    join(cliConfig.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 

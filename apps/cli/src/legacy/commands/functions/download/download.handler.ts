@@ -1,8 +1,10 @@
+import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
 import {
   downloadFunctions,
-  makeGoProxyDownloadArgs,
+  makeGoProxyLegacyBundleArgs,
 } from "../../../../shared/functions/download.ts";
+import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -22,12 +24,17 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
   const proxy = yield* LegacyGoProxy;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
+  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
+    join(cliConfig.workdir, "supabase"),
+  );
   let resolvedProjectRef = Option.none<string>();
 
   yield* downloadFunctions(flags, {
     api,
     projectRoot: cliConfig.workdir,
     rawArgs,
+    goViperCompat: true,
+    edgeRuntimeVersion,
     resolveProjectRef: (projectRef) =>
       resolver.resolve(projectRef).pipe(
         Effect.tap((ref) =>
@@ -47,7 +54,7 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
     // pattern for the CLI-1546 "stdout is payload-only in machine mode"
     // invariant — `downloadFunctions` emits the `Output` envelope itself.
     proxyDownload: (proxyFlags, projectRef, captureOutput) => {
-      const args = makeGoProxyDownloadArgs(proxyFlags, projectRef);
+      const args = makeGoProxyLegacyBundleArgs(proxyFlags.functionName, projectRef);
       const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
       return captureOutput
         ? Effect.asVoid(proxy.execCapture(args, { env, stdin: "ignore" }))

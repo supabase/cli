@@ -23,6 +23,7 @@ import {
   mockProjectLinkState,
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
+import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
 import {
   ConflictingFunctionDownloadFlagsError,
@@ -30,6 +31,7 @@ import {
   InvalidFunctionSlugError,
   UnsafeFunctionDownloadPathError,
 } from "../../../../shared/functions/download.errors.ts";
+import { invalidFunctionSlugDetail } from "../../../../shared/functions/functions.shared.ts";
 import { functionsDownload } from "./download.handler.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
@@ -74,6 +76,7 @@ function textResponse(
   status: number,
   body: ResponseBody = "",
   contentType = "text/plain",
+  extraHeaders: Readonly<Record<string, string>> = {},
 ): HttpClientResponse.HttpClientResponse {
   return HttpClientResponse.fromWeb(
     request,
@@ -81,6 +84,7 @@ function textResponse(
       status,
       headers: {
         "content-type": contentType,
+        ...extraHeaders,
       },
     }),
   );
@@ -182,7 +186,15 @@ function mockDownloadApi(opts: {
   functionStatusBySlug?: Readonly<Record<string, number>>;
   functionBodyBySlug?: Readonly<Record<string, unknown>>;
   bodyBySlug?: Readonly<
-    Record<string, { status?: number; body: ResponseBody; contentType: string }>
+    Record<
+      string,
+      {
+        status?: number;
+        body: ResponseBody;
+        contentType: string;
+        headers?: Readonly<Record<string, string>>;
+      }
+    >
   >;
   bodyErrorBySlug?: Readonly<Record<string, Error>>;
 }) {
@@ -233,6 +245,7 @@ function mockDownloadApi(opts: {
                 response?.status ?? 200,
                 response?.body ?? "",
                 response?.contentType ?? "multipart/form-data; boundary=missing",
+                response?.headers ?? {},
               ),
             );
           }
@@ -277,6 +290,7 @@ function setup(
     linked?: boolean;
     projectRoot?: string;
     rawArgs?: ReadonlyArray<string>;
+    childLayer?: ReturnType<typeof mockChildProcessSpawner>["layer"];
   } = {},
 ) {
   const out = mockOutput({ format: opts.format ?? "text", interactive: false });
@@ -293,6 +307,10 @@ function setup(
     Stdio.layerTest({
       args: Effect.succeed(opts.rawArgs ?? ["functions", "download"]),
     }),
+    // Overrides `emptyEnv()`'s real `ChildProcessSpawner` (via `BunServices`)
+    // so `--use-docker`'s now-default-true native path never spawns a real
+    // `docker` process — CLI-1963.
+    opts.childLayer ?? mockChildProcessSpawner({ exitCode: 0 }).layer,
   );
 
   return { out, api, layer, proxy };
@@ -709,43 +727,40 @@ describe("functions download", () => {
     );
   });
 
-  it.live("downloads remote slugs from download-all without local slug validation", () => {
+  it.live("rejects a malicious remote slug from download-all before any per-slug work", () => {
     const tempDir = makeTempDir();
-    const multipart = multipartBody([
-      {
-        headers: {
-          "Content-Disposition": 'form-data; name="metadata"',
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ deno2_entrypoint_path: "source/index.ts" }),
-      },
-      {
-        headers: {
-          "Content-Disposition": 'form-data; name="file"; filename="source/index.ts"',
-        },
-        body: "console.log('remote')",
-      },
-    ]);
+    // Mirrors Go's own `TestDownloadAllRejectsMaliciousSlug` regression test
+    // (`apps/cli-go/internal/functions/download/download_test.go`) — a
+    // path-traversal-shaped slug returned by the (untrusted) list endpoint.
+    const maliciousSlug = "../../../../../poc-escaped-outside-project";
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
-      const { layer } = setup(tempDir, {
-        list: [makeFunction({ slug: "1remote" })],
-        bodyBySlug: {
-          "1remote": multipart,
-        },
+      const { api, layer } = setup(tempDir, {
+        list: [makeFunction({ slug: maliciousSlug })],
       });
 
-      yield* functionsDownload({
+      // CLI-1891 (Go parity): every slug sourced from the Management API's
+      // function list must be validated before any per-slug network or
+      // filesystem work — not just user-supplied CLI arguments.
+      const error = yield* functionsDownload({
         ...BASE_FLAGS,
         functionName: Option.none(),
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "1remote", "index.ts"), "utf8"),
-        ),
-      ).toBe("console.log('remote')");
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        `failed to download function ${maliciousSlug}: ${invalidFunctionSlugDetail}`,
+      );
+      expect((error as Error & { suggestion?: string }).suggestion).toBe(
+        `The Supabase API returned an unexpected function slug (${maliciousSlug}). Retry the command, and if this keeps happening, verify your network connection is not being intercepted before contacting Supabase support.`,
+      );
+      // Only the list call happened — no GET to the malicious slug's own
+      // body/metadata endpoints, and nothing was written to disk.
+      expect(api.requests).toEqual([
+        `https://api.supabase.com/v1/projects/${PROJECT_REF}/functions`,
+      ]);
+      expect(existsSync(join(tempDir, "supabase", "functions"))).toBe(false);
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -851,50 +866,74 @@ describe("functions download", () => {
     );
   });
 
-  it.live("delegates --use-docker with the linked project ref to the Go proxy", () => {
+  it.live(
+    "runs the native Docker unbundle path for --use-docker with the linked project ref",
+    () => {
+      const tempDir = makeTempDir();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        const { out, layer, proxy } = setup(tempDir, {
+          bodyBySlug: {
+            "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+          },
+          rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+          childLayer: child.layer,
+        });
+
+        // CLI-1963: `--use-docker` now runs the native Docker-unbundle path
+        // instead of delegating to the Go proxy.
+        yield* functionsDownload({
+          ...BASE_FLAGS,
+          useDocker: true,
+        }).pipe(Effect.provide(layer));
+
+        expect(proxy.calls).toEqual([]);
+        expect(proxy.captureCalls).toEqual([]);
+        const runCommand = child.spawned.find(
+          (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
+        );
+        expect(runCommand?.args).toContain("unbundle");
+        expect(out.stderrText).toContain("Downloading function: hello-world\n");
+        // No `--debug` — the temp eszip file is removed after the run.
+        expect(existsSync(join(tempDir, "supabase", ".temp", "output_hello-world.eszip"))).toBe(
+          false,
+        );
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live("runs the native Docker path and emits a JSON envelope in machine mode", () => {
     const tempDir = makeTempDir();
-
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
-      const { layer, proxy } = setup(tempDir, {
-        rawArgs: ["functions", "download", "hello-world", "--use-docker"],
-      });
-
-      yield* functionsDownload({
-        ...BASE_FLAGS,
-        useDocker: true,
-      }).pipe(Effect.provide(layer));
-
-      expect(proxy.calls).toEqual([
-        ["functions", "download", "hello-world", "--project-ref", PROJECT_REF, "--use-docker"],
-      ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
-
-  it.live("captures the Go proxy's output and emits a JSON envelope in machine mode", () => {
-    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
       const { out, layer, proxy } = setup(tempDir, {
         format: "json",
+        bodyBySlug: {
+          "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+        },
         rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+        childLayer: child.layer,
       });
 
-      // CLI-1546: stdout is payload-only in machine mode, so the delegated
-      // Go child's raw output must be captured/discarded (not inherited),
-      // and this command must emit the `Output` envelope itself.
+      // CLI-1963: `--use-docker` now runs the native Docker-unbundle path;
+      // this asserts the JSON envelope this command emits itself still
+      // shows up correctly once the native path is exercised in machine mode.
       yield* functionsDownload({
         ...BASE_FLAGS,
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
       expect(proxy.calls).toEqual([]);
-      expect(proxy.captureCalls).toEqual([
-        ["functions", "download", "hello-world", "--project-ref", PROJECT_REF, "--use-docker"],
-      ]);
+      expect(proxy.captureCalls).toEqual([]);
+      expect(
+        child.spawned.some((spawned) => spawned.command === "docker" && spawned.args[0] === "run"),
+      ).toBe(true);
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -910,39 +949,176 @@ describe("functions download", () => {
     );
   });
 
+  it.live("lists remote functions and downloads each natively via Docker in machine mode", () => {
+    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { out, layer, proxy } = setup(tempDir, {
+        format: "json",
+        list: [makeFunction({ slug: "hello-world" }), makeFunction({ slug: "goodbye-world" })],
+        bodyBySlug: {
+          "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+          "goodbye-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+        },
+        rawArgs: ["functions", "download", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      yield* functionsDownload({
+        ...BASE_FLAGS,
+        functionName: Option.none(),
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      expect(proxy.calls).toEqual([]);
+      expect(proxy.captureCalls).toEqual([]);
+      expect(
+        child.spawned.filter(
+          (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
+        ),
+      ).toHaveLength(2);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "Downloaded Edge Function source.",
+          data: {
+            function_slugs: ["hello-world", "goodbye-world"],
+            project_ref: PROJECT_REF,
+          },
+        }),
+      );
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live(
-    "lists remote functions before delegating when no function name is given in machine mode",
+    "defaults --use-docker to true so a bare invocation still runs the native Docker path",
     () => {
       const tempDir = makeTempDir();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
 
       return Effect.gen(function* () {
         yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
-        const { out, layer, proxy } = setup(tempDir, {
-          format: "json",
-          list: [makeFunction({ slug: "hello-world" }), makeFunction({ slug: "goodbye-world" })],
-          rawArgs: ["functions", "download", "--use-docker"],
+        const { layer, proxy } = setup(tempDir, {
+          bodyBySlug: {
+            "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+          },
+          // No `--use-docker` at all — mirrors a bare `supabase functions
+          // download hello-world` invocation relying on the flag's default.
+          rawArgs: ["functions", "download", "hello-world"],
+          childLayer: child.layer,
         });
 
+        // `useDocker: true` is what `download.command.ts`'s
+        // `Flag.withDefault(true)` resolves to when the flag is omitted
+        // (CLI-1963 parity fix — `next` was previously missing this default,
+        // unlike the legacy shell's equivalent command).
         yield* functionsDownload({
           ...BASE_FLAGS,
-          functionName: Option.none(),
           useDocker: true,
         }).pipe(Effect.provide(layer));
 
         expect(proxy.calls).toEqual([]);
-        expect(proxy.captureCalls).toEqual([
-          ["functions", "download", "--project-ref", PROJECT_REF, "--use-docker"],
-        ]);
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({
-            type: "success",
-            message: "Downloaded Edge Function source.",
-            data: {
-              function_slugs: ["hello-world", "goodbye-world"],
-              project_ref: PROJECT_REF,
+        expect(
+          child.spawned.some(
+            (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
+          ),
+        ).toBe(true);
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live(
+    "falls back to the native server-side path with a warning when Docker is not running",
+    () => {
+      const tempDir = makeTempDir();
+      const child = mockChildProcessSpawner({ exitCode: 1 });
+      const multipart = multipartBody([
+        {
+          headers: {
+            "Content-Disposition": 'form-data; name="metadata"',
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deno2_entrypoint_path: "source/index.ts" }),
+        },
+        {
+          headers: {
+            "Content-Disposition": 'form-data; name="file"; filename="source/index.ts"',
+          },
+          body: "console.log('fallback')",
+        },
+      ]);
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        const { out, layer } = setup(tempDir, {
+          bodyBySlug: { "hello-world": multipart },
+          rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+          childLayer: child.layer,
+        });
+
+        yield* functionsDownload({
+          ...BASE_FLAGS,
+          useDocker: true,
+        }).pipe(Effect.provide(layer));
+
+        expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
+        expect(out.stderrText).toContain("WARNING: Docker is not running\n");
+        expect(
+          yield* Effect.tryPromise(() =>
+            readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
+          ),
+        ).toBe("console.log('fallback')");
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live(
+    "writes the eszip response body to disk exactly as received, regardless of Content-Encoding",
+    () => {
+      const tempDir = makeTempDir();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      // Arbitrary binary bytes, not valid brotli — this mocked `Response` (a
+      // hand-built `new Response(body, {...})`, unlike a real `fetch()`)
+      // never applies transport-level content-decoding, so a
+      // `Content-Encoding: br` header here must have zero effect on what
+      // `downloadEszipBody` does with it. If production code ever tried to
+      // brotli-decompress this body again, decompression itself would throw
+      // on these bytes, failing this test.
+      const rawEszipBytes = new Uint8Array([0, 1, 2, 253, 254, 255, 10, 13, 0, 128, 200]);
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        const { layer } = setup(tempDir, {
+          bodyBySlug: {
+            "hello-world": {
+              body: new Blob([rawEszipBytes]),
+              contentType: "application/octet-stream",
+              headers: { "content-encoding": "br" },
             },
-          }),
+          },
+          // `--debug` keeps the temp eszip file on disk after a successful
+          // run so this test can inspect the exact bytes that were written.
+          rawArgs: ["functions", "download", "hello-world", "--use-docker", "--debug"],
+          childLayer: child.layer,
+        });
+
+        yield* functionsDownload({
+          ...BASE_FLAGS,
+          useDocker: true,
+        }).pipe(Effect.provide(layer));
+
+        const written = yield* Effect.tryPromise(() =>
+          readFile(join(tempDir, "supabase", ".temp", "output_hello-world.eszip")),
         );
+        expect(new Uint8Array(written)).toEqual(rawEszipBytes);
       }).pipe(
         Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
       );
@@ -1338,6 +1514,65 @@ describe("functions download", () => {
       });
 
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe("Error status 503: unavailable");
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("maps eszip body transport errors with Go-style wording (Docker path)", () => {
+    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { layer } = setup(tempDir, {
+        bodyErrorBySlug: {
+          "hello-world": new Error("network error"),
+        },
+        rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      // `downloadEszipBody` (the Docker path's own GET) uses a distinct
+      // error prefix ("failed to get function body") from the server-side
+      // `downloadBody`'s ("failed to download function") — Go parity.
+      const error = yield* functionsDownload({
+        ...BASE_FLAGS,
+        useDocker: true,
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe("failed to get function body: network error");
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("maps unexpected eszip body statuses with Go-style wording (Docker path)", () => {
+    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { layer } = setup(tempDir, {
+        bodyBySlug: {
+          "hello-world": {
+            status: 503,
+            body: "unavailable",
+            contentType: "text/plain",
+          },
+        },
+        rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      const error = yield* functionsDownload({
+        ...BASE_FLAGS,
+        useDocker: true,
+      }).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe("Error status 503: unavailable");

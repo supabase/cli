@@ -8,19 +8,19 @@ import {
   loadProjectConfig,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
-import { Duration, Effect, Option, Schema, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
-import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyBold } from "../../legacy/shared/legacy-colors.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
+  explicitStringFlag,
   hasExplicitLongFlag,
+  hasGlobalLongFlag,
 } from "../cli/cobra-flag-groups.ts";
 import {
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
@@ -33,14 +33,21 @@ import {
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
+import {
+  ensureDockerNamedVolume,
+  ensureDockerNetwork,
+  isDockerRunning,
+  localDockerId,
+  resolveEdgeRuntimeVersion,
+  runChildProcess,
+  toDockerPath,
+  toSlash,
+} from "./functions-docker.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
-const DENO1_EDGE_RUNTIME_VERSION = "1.68.4";
 const DEPLOY_RATE_LIMIT_MAX_RETRIES = 8;
 const SUPABASE_FUNCTIONS_DIR = "supabase/functions";
 const IMPORT_MAP_GUIDE_URL = "https://supabase.com/docs/guides/functions/import-maps";
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
 const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:\//;
 const importPathPattern =
   /(?:import|export)\s+(?:type\s+)?(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)/gi;
@@ -213,6 +220,18 @@ function validateDeploySlug(slug: string): Effect.Effect<void, InvalidFunctionDe
   return Effect.fail(new InvalidFunctionDeploySlugError({ message: invalidFunctionSlugDetail }));
 }
 
+function isDenoConfigFile(pathname: string) {
+  const name = basename(pathname).toLowerCase();
+  return name === "deno.json" || name === "deno.jsonc";
+}
+
+/**
+ * Presence-based `Option.some(value)` when `--<flagName>` was passed
+ * explicitly after `commandPath`, matching cobra's `Changed()`;
+ * `Option.none()` otherwise. Used only by `deployFunctions`'s
+ * `--no-verify-jwt` override below — kept private per this file's own
+ * "used by one command only -> keep it in the command's own directory" rule.
+ */
 function explicitBooleanFlag(
   rawArgs: ReadonlyArray<string>,
   commandPath: ReadonlyArray<string>,
@@ -222,45 +241,6 @@ function explicitBooleanFlag(
   return hasExplicitLongFlag(rawArgs, commandPath, flagName) ? Option.some(value) : Option.none();
 }
 
-function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const token = rawArgs[index];
-    if (token === `--${flagName}`) {
-      return rawArgs[index + 1];
-    }
-    if (token?.startsWith(`--${flagName}=`)) {
-      return token.slice(flagName.length + 3);
-    }
-  }
-  return undefined;
-}
-
-function hasGlobalLongFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
-  return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
-}
-
-function isDenoConfigFile(pathname: string) {
-  const name = basename(pathname).toLowerCase();
-  return name === "deno.json" || name === "deno.jsonc";
-}
-
-function toSlash(pathname: string) {
-  return pathname.replaceAll("\\", "/");
-}
-
-export function normalizeProjectId(source: string) {
-  const sanitized = source.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return sanitized.length > MAX_PROJECT_ID_LENGTH
-    ? sanitized.slice(0, MAX_PROJECT_ID_LENGTH)
-    : sanitized;
-}
-
-export function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${normalizeProjectId(projectId)}`;
-}
-
-const dockerCliProjectLabel = "com.supabase.cli.project";
-const dockerComposeProjectLabel = "com.docker.compose.project";
 /**
  * Must stay in sync with `LEGACY_CLI_WORKDIR_LABEL`
  * (`legacy/shared/legacy-docker-ids.ts:95`) — same string literal, kept as a
@@ -279,18 +259,6 @@ export const dockerWorkdirLabel = "com.supabase.cli.workdir";
  * strict parity over the TS-only forwarding that #5645 had added.
  */
 const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY"] as const;
-
-export function dockerProjectLabels(projectId: string) {
-  return {
-    [dockerCliProjectLabel]: projectId,
-    [dockerComposeProjectLabel]: projectId,
-  };
-}
-
-export function toDockerPath(hostPath: string) {
-  const normalized = toSlash(resolve(hostPath));
-  return normalized.replace(/^[A-Za-z]:/, "");
-}
 
 function toBundledFileUrl(hostPath: string) {
   const url = new URL("file:///");
@@ -1107,15 +1075,6 @@ function createBundledMetadata(
   };
 }
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
-}
-
 function sanitizeDockerBinds(
   binds: ReadonlyArray<string>,
   functionsDir: string,
@@ -1261,84 +1220,6 @@ function shouldUseDenoJsonDiscovery(entrypoint: string, importMap: string) {
   return isDenoConfigFile(importMap) && dirname(importMap) === dirname(entrypoint);
 }
 
-export function isUserDefinedDockerNetwork(networkMode: string) {
-  return (
-    networkMode.length > 0 &&
-    networkMode !== "default" &&
-    networkMode !== "bridge" &&
-    networkMode !== "host" &&
-    networkMode !== "none"
-  );
-}
-
-export const ensureDockerNetwork = Effect.fnUntraced(function* (
-  networkMode: string,
-  projectId: string,
-) {
-  if (!isUserDefinedDockerNetwork(networkMode)) {
-    return;
-  }
-
-  const inspect = yield* runChildProcess("docker", ["network", "inspect", networkMode], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-  if (inspect.exitCode === 0) {
-    return;
-  }
-
-  const labels = dockerProjectLabels(projectId);
-  const create = yield* runChildProcess(
-    "docker",
-    [
-      "network",
-      "create",
-      "--label",
-      `${dockerCliProjectLabel}=${labels[dockerCliProjectLabel]}`,
-      "--label",
-      `${dockerComposeProjectLabel}=${labels[dockerComposeProjectLabel]}`,
-      networkMode,
-    ],
-    {
-      stdout: "ignore",
-      stderr: "pipe",
-    },
-  );
-  if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
-  }
-});
-
-export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
-  volumeName: string,
-  projectId: string,
-) {
-  if (process.env["BITBUCKET_CLONE_DIR"] !== undefined) {
-    return;
-  }
-
-  const labels = dockerProjectLabels(projectId);
-  const create = yield* runChildProcess(
-    "docker",
-    [
-      "volume",
-      "create",
-      "--label",
-      `${dockerCliProjectLabel}=${labels[dockerCliProjectLabel]}`,
-      "--label",
-      `${dockerComposeProjectLabel}=${labels[dockerComposeProjectLabel]}`,
-      volumeName,
-    ],
-    {
-      stdout: "ignore",
-      stderr: "pipe",
-    },
-  );
-  if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker volume: ${volumeName}`));
-  }
-});
-
 async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: string) {
   if (importMap.length > 0) {
     return false;
@@ -1350,48 +1231,6 @@ async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: stri
     return false;
   }
 }
-
-// Runs a container CLI command and collects its output. Every caller runs
-// `docker`, so the spawn goes through `spawnContainerCli` to fall back to
-// `podman` on Docker-less hosts. `command` is retained for the extendEnv
-// default and the `functions serve` dependency-injection seam.
-export const runChildProcess = Effect.fnUntraced(function* (
-  command: string,
-  args: ReadonlyArray<string>,
-  opts: {
-    readonly stdout?: "pipe" | "ignore";
-    readonly stderr?: "pipe" | "ignore";
-    readonly env?: Readonly<Record<string, string>>;
-    readonly extendEnv?: boolean;
-  } = {},
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawnContainerCli(spawner, [...args], {
-    stdin: "ignore",
-    stdout: opts.stdout ?? "pipe",
-    stderr: opts.stderr ?? "pipe",
-    env: opts.env,
-    extendEnv: opts.extendEnv ?? command === "docker",
-  });
-
-  const [stdout, stderr, exitCode] = yield* Effect.all(
-    [
-      opts.stdout === "ignore" ? Effect.succeed("") : collectByteStream(child.stdout),
-      opts.stderr === "ignore" ? Effect.succeed("") : collectByteStream(child.stderr),
-      child.exitCode.pipe(Effect.map(Number)),
-    ],
-    { concurrency: "unbounded" },
-  );
-  return { exitCode, stdout, stderr };
-});
-
-const isDockerRunning = Effect.fnUntraced(function* () {
-  const result = yield* runChildProcess("docker", ["info"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-  return result.exitCode === 0;
-});
 
 const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   projectId: string,
@@ -2160,21 +1999,6 @@ const deployViaDocker = Effect.fnUntraced(function* (
     yield* bulkUpdateRemoteFunctions(api, projectRef, changed);
   }
 });
-
-export function resolveEdgeRuntimeVersion(
-  denoVersion: number | undefined,
-  defaultVersion: string,
-): Effect.Effect<string, Error> {
-  if (denoVersion === undefined || denoVersion === 2) {
-    return Effect.succeed(defaultVersion);
-  }
-  if (denoVersion === 1) {
-    return Effect.succeed(DENO1_EDGE_RUNTIME_VERSION);
-  }
-  return Effect.fail(
-    new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
-  );
-}
 
 const pruneFunctions = Effect.fnUntraced(function* (
   projectRef: string,
