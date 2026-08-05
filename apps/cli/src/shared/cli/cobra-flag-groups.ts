@@ -71,6 +71,42 @@ export function hasGlobalLongFlag(rawArgs: ReadonlyArray<string>, flagName: stri
   return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
 }
 
+const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
+  "0",
+  "f",
+  "F",
+  "false",
+  "FALSE",
+  "False",
+]);
+
+/**
+ * Last explicit `--<flagName>`/`--<flagName>=<value>` boolean occurrence in
+ * argv, or `undefined` when the flag never appears — matching pflag/viper's
+ * shared-variable last-`Set()`-wins semantics (mirrors
+ * `legacyExperimentalFlagFromArgs`, `shared/legacy/global-flags.ts`). A bare
+ * `--<flagName>` records pflag's bool `NoOptDefVal` (`true`); an inline value
+ * is parsed through pflag's `strconv.ParseBool` false set — anything else
+ * (including garbage) is truthy, same as `cast.ToBool`'s permissive default.
+ * Unlike {@link hasGlobalLongFlag}, this distinguishes `--<flagName>=false`
+ * from presence alone, which matters for Go call sites gated on
+ * `viper.GetBool` rather than "was the flag passed at all".
+ */
+export function explicitBooleanLongFlag(
+  rawArgs: ReadonlyArray<string>,
+  flagName: string,
+): boolean | undefined {
+  let result: boolean | undefined;
+  for (const token of rawArgs) {
+    if (token === `--${flagName}`) {
+      result = true;
+    } else if (token.startsWith(`--${flagName}=`)) {
+      result = !PFLAG_BOOLEAN_FALSE_VALUES.has(token.slice(flagName.length + 3));
+    }
+  }
+  return result;
+}
+
 /**
  * Value-taking long flags registered persistently on the Go root command
  * (`apps/cli-go/cmd/root.go:324-333`: `--workdir`, `--network-id`,

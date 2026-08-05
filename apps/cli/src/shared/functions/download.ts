@@ -10,9 +10,9 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 import { Output } from "../output/output.service.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
+  explicitBooleanLongFlag,
   explicitNonEmptyStringFlag,
   hasExplicitLongFlag,
-  hasGlobalLongFlag,
 } from "../cli/cobra-flag-groups.ts";
 import { legacyDescribeContainerCliFailure } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
@@ -928,7 +928,17 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   // wraps every step from here on so a failure resolving the network/volume,
   // spawning Docker, or a non-zero container exit all still clean up the
   // temp eszip, matching Go instead of only doing so on the happy path.
-  const debugEnabled = hasGlobalLongFlag(dependencies.rawArgs, "debug");
+  //
+  // Go gates this on `viper.GetBool("DEBUG")` (`download.go:203`), which
+  // resolves an explicit `--debug=false` to `false` (cleanup runs) — a plain
+  // presence check would get that backwards, so this reads the last explicit
+  // occurrence's boolean value instead (`explicitBooleanLongFlag`), falling
+  // back to `false` (cleanup runs) when `--debug` never appears. `SUPABASE_DEBUG`
+  // env-var fallback is a separate, pre-existing gap shared with every other
+  // `hasGlobalLongFlag(rawArgs, "debug")` call site in this file family
+  // (e.g. `deploy.ts`) and the legacy debug logger itself, none of which
+  // currently honor it either — left open rather than fixed piecemeal here.
+  const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
   const cleanupEszip = debugEnabled
     ? Effect.void
     : Effect.tryPromise({

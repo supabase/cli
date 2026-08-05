@@ -888,6 +888,48 @@ describe("legacy functions download", () => {
   });
 
   it.live(
+    "removes the temporary eszip file when --debug=false overrides the flag's own presence",
+    () => {
+      // Go gates this on `viper.GetBool("DEBUG")`, so an explicit
+      // `--debug=false` resolves to `false` (cleanup runs) — a presence-only
+      // check would get this backwards and treat `--debug=false` like
+      // `--debug` (review round on CLI-1963's `functions download` port).
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const proxy = mockProxy();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+            "--debug=false",
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+        expect(
+          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "fails on an invalid project config before falling back when Docker is not running",
     () => {
       // Go's `Run` calls `flags.LoadConfig(fsys)` unconditionally at the very
