@@ -3,13 +3,12 @@ import {
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
-  SERVICE_ACTIVATION_POLICY,
 } from "./ServiceActivation.ts";
-import { SERVICE_NAMES } from "./versions.ts";
+import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 
 describe("service activation", () => {
   it("defines an access policy for every stack service", () => {
-    expect(Object.keys(SERVICE_ACTIVATION_POLICY).sort()).toEqual([...SERVICE_NAMES].sort());
+    expect(Object.keys(SERVICE_CATALOG).sort()).toEqual([...SERVICE_NAMES].sort());
   });
 
   it("starts direct endpoints eagerly", () => {

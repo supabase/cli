@@ -1,6 +1,7 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerStorageOptions {
   readonly image: string;
@@ -38,9 +39,7 @@ const storageHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/status",
     scheme: "http",
   },
-  initialDelaySeconds: 1,
-  periodSeconds: 0.5,
-  failureThreshold: 30,
+  ...stackHealthBudgets.storage,
 });
 
 export const makeStorageServiceDocker = (opts: DockerStorageOptions): ServiceDef =>

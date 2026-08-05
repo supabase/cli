@@ -4,9 +4,10 @@ import { Effect, Fiber, Layer, ManagedRuntime, Stream } from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
-import { StackBuildError } from "./errors.ts";
+import { StackBuildError, StackReadinessError } from "./errors.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack, type StackInfo } from "./Stack.ts";
+import type { ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
@@ -44,7 +45,21 @@ const AUTH_STATE = new StackServiceState({
   error: null,
 });
 
-const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE, AUTH_STATE];
+const HEALTH_FAILED_STATE = new StackServiceState({
+  name: "edge-runtime",
+  status: "Failed",
+  pid: null,
+  exitCode: null,
+  restartCount: 2,
+  startedAt: Date.now(),
+  error: "Health check failed and restart budget was exhausted",
+});
+
+const MOCK_STATES: ReadonlyArray<StackServiceState> = [
+  POSTGRES_STATE,
+  AUTH_STATE,
+  HEALTH_FAILED_STATE,
+];
 
 const MOCK_LOGS: ReadonlyArray<LogEntry> = [
   { timestamp: 1000, service: "postgres", stream: "stdout", line: "starting" },
@@ -61,11 +76,13 @@ function mockStack(
     readonly startServiceBuildError?: string;
     readonly startServiceReadyError?: string;
     readonly waitReadyBuildError?: string;
+    readonly waitReadyTimeoutMs?: number;
     readonly restartServiceReadyError?: string;
   } = {},
 ) {
   let stopped = false;
   const serviceCalls: string[] = [];
+  const readinessCalls: Array<{ readonly target: string; readonly options?: ReadyOptions }> = [];
 
   const layer = Layer.succeed(Stack, {
     getInfo: () => Effect.succeed(MOCK_INFO),
@@ -132,18 +149,29 @@ function mockStack(
         : Effect.fail(new ServiceNotFoundError({ name }));
     },
     allStateChanges: () => Stream.fromIterable(MOCK_STATES),
-    waitReady: (name: string) => {
+    waitReady: (name: string, readyOptions?: ReadyOptions) => {
       const match = MOCK_STATES.find((s) => s.name === name);
       if (match === undefined) return Effect.fail(new ServiceNotFoundError({ name }));
       if (options.waitReadyBuildError !== undefined) {
         return Effect.fail(new StackBuildError({ detail: options.waitReadyBuildError }));
       }
+      if (options.waitReadyTimeoutMs !== undefined) {
+        return Effect.fail(
+          new StackReadinessError({
+            target: name,
+            timeoutMs: options.waitReadyTimeoutMs,
+            detail: `Timed out waiting for ${name}`,
+          }),
+        );
+      }
       return Effect.sync(() => {
+        readinessCalls.push({ target: name, options: readyOptions });
         serviceCalls.push(`ready:${name}`);
       });
     },
-    waitAllReady: () =>
+    waitAllReady: (readyOptions?: ReadyOptions) =>
       Effect.sync(() => {
+        readinessCalls.push({ target: "stack", options: readyOptions });
         serviceCalls.push("ready:all");
       }),
     subscribeLogs: (name: string) =>
@@ -171,6 +199,7 @@ function mockStack(
       return stopped;
     },
     serviceCalls,
+    readinessCalls,
   };
 }
 
@@ -233,9 +262,16 @@ describe("RemoteStack integration", () => {
     const states = await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) => stack.getAllStates()),
     );
-    expect(states).toHaveLength(2);
+    expect(states).toHaveLength(3);
     expect(states.at(0)?.name).toBe("postgres");
     expect(states.at(1)?.name).toBe("auth");
+    expect(states.at(2)).toMatchObject({
+      name: "edge-runtime",
+      status: "Failed",
+      pid: null,
+      exitCode: null,
+      error: "Health check failed and restart budget was exhausted",
+    });
   });
 
   test("getState returns a single service state", async () => {
@@ -267,9 +303,15 @@ describe("RemoteStack integration", () => {
     expect(exit._tag).toBe("Failure");
   });
 
-  test("waitReady delegates to the daemon coordinator", async () => {
-    await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.waitReady("auth")));
+  test("waitReady passes one validated finite override through the daemon", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.waitReady("auth", { mode: "finite", timeoutMs: 250 })),
+    );
     expect(mock.serviceCalls).toContain("ready:auth");
+    expect(mock.readinessCalls).toContainEqual({
+      target: "auth",
+      options: { mode: "finite", timeoutMs: 250 },
+    });
   });
 
   test("waitReady rejects dot path segments locally", async () => {
@@ -280,9 +322,38 @@ describe("RemoteStack integration", () => {
     expect(mock.serviceCalls).not.toContain("ready:all");
   });
 
-  test("waitAllReady delegates to the daemon coordinator", async () => {
+  test("waitAllReady sends explicit inherit semantics to the daemon", async () => {
     await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.waitAllReady()));
     expect(mock.serviceCalls).toContain("ready:all");
+    expect(mock.readinessCalls).toContainEqual({
+      target: "stack",
+      options: { mode: "inherit" },
+    });
+  });
+
+  test("preserves StackReadinessError across the daemon transport", async () => {
+    const failingMock = mockStack({ waitReadyTimeoutMs: 75 });
+    const failingServer = ManagedRuntime.make(buildServerLayer(failingMock));
+    let failingClient: ManagedRuntime.ManagedRuntime<Stack, never> | undefined;
+    try {
+      const daemon = await failingServer.runPromise(DaemonServer);
+      const addr = daemon.address;
+      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
+      failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
+
+      const error = await failingClient.runPromise(
+        Effect.flatMap(Stack, (stack) => stack.waitReady("auth")).pipe(Effect.flip),
+      );
+      expect(error._tag).toBe("StackReadinessError");
+      if (error._tag === "StackReadinessError") {
+        expect(error.target).toBe("auth");
+        expect(error.timeoutMs).toBe(75);
+      }
+    } finally {
+      await failingClient?.dispose();
+      await failingServer.dispose();
+    }
   });
 
   test("interrupting waitReady aborts the daemon request", async () => {

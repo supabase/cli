@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerRealtimeOptions {
   readonly image: string;
@@ -31,9 +32,7 @@ const realtimeHealthCheck = (port: number, tenantId: string): ServiceDef["health
       `http://127.0.0.1:${port}/api/ping`,
     ],
   },
-  initialDelaySeconds: 1,
-  periodSeconds: 0.5,
-  failureThreshold: 30,
+  ...stackHealthBudgets.realtime,
 });
 
 export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceDef =>

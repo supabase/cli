@@ -1,16 +1,13 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpServer } from "effect/unstable/http";
-import {
-  resolveDaemonConfig,
-  type DaemonConfigInput,
-  type PlatformFactory,
-} from "./createStack.ts";
+import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
 import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { runningServiceVersionsForConfig } from "./StackMetadata.ts";
 import { foregroundDaemonLayer } from "./layers.ts";
 import { Stack } from "./Stack.ts";
+import { resolveDaemonConfig, type DaemonConfigInput } from "./StackConfigResolver.ts";
 import { StateManager, type StackState } from "./StateManager.ts";
 
 /** Factory for creating the daemon's Unix socket HTTP server (platform-specific). */

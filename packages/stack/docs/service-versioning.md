@@ -38,10 +38,10 @@ The important separation is:
 
 ## Artifact Providers and Runtime Support
 
-Every service in the Stack has one artifact definition, regardless of who maintains it. The
-definition records its Docker image provider, tag convention, and whether a supported native
-release is available. Runtime code consumes the resulting service resolution and does not need to
-know which registry or release repository supplied it.
+Every service in the Stack has one entry in `ServiceCatalog.ts`, regardless of who maintains it.
+The entry records its default version, Docker image provider, tag convention, runtime support, and
+any native release source. Runtime code consumes the resulting service resolution and does not
+need to know which registry or release repository supplied it.
 
 Supabase-managed images currently retain their ECR, Docker Hub, and GHCR candidates. External
 services such as imgproxy, Mailpit, and Vector retain their upstream Docker images and are marked
@@ -63,8 +63,8 @@ service definitions.
 The old Go CLI used `pkg/config/templates/Dockerfile` as a version manifest so Dependabot could
 bump image tags automatically.
 
-The TypeScript stack exports a typed `DEFAULT_VERSIONS` manifest instead. That constant is the
-built-in default version set for a given CLI release.
+The TypeScript stack derives its typed `DEFAULT_VERSIONS` manifest from `ServiceCatalog.ts`. The
+catalog values are the built-in default version set for a given CLI release.
 
 These defaults are the fallback for:
 
