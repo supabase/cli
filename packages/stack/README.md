@@ -93,7 +93,7 @@ Optional. When omitted, uses all defaults (ephemeral temp data directory, auto-a
 | --------- | -------- | -------- | ------------------------------------------------------------------------------------------- |
 | `dataDir` | `string` | No       | Directory for Postgres data (PGDATA). Ephemeral temp dir if omitted (cleaned up on dispose) |
 | `port`    | `number` | No       | Postgres port (auto-allocated if omitted)                                                   |
-| `version` | `string` | No       | Postgres version (default: `17.6.1.081`)                                                    |
+| `version` | `string` | No       | Override the current pinned Postgres version                                                |
 
 ### `postgrest`
 
@@ -104,7 +104,7 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 | `schemas`         | `string[]` | `["public"]`               | Database schemas to expose                |
 | `extraSearchPath` | `string[]` | `["public", "extensions"]` | Additional Postgres `search_path` entries |
 | `maxRows`         | `number`   | `1000`                     | Maximum rows returned per request         |
-| `version`         | `string`   | `14.5`                     | PostgREST version                         |
+| `version`         | `string`   | current pinned version     | PostgREST version override                |
 
 ### `auth`
 
@@ -116,7 +116,7 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 | `siteUrl`     | `string` | `http://localhost:3000`    | Auth redirect URL (your app's URL) |
 | `jwtExpiry`   | `number` | `3600`                     | JWT expiry in seconds              |
 | `externalUrl` | `string` | `http://127.0.0.1:${port}` | Auth external URL                  |
-| `version`     | `string` | `2.188.0-rc.15`            | Auth version                       |
+| `version`     | `string` | current pinned version     | Auth version override              |
 
 ### Full config example
 
@@ -124,8 +124,8 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 const stack = await createStack({
   jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
   port: 54321,
-  postgres: { port: 54322, dataDir: "/tmp/data", version: "17.6.1.081" },
-  postgrest: { schemas: ["public", "custom"], maxRows: 500, version: "14.5" },
+  postgres: { port: 54322, dataDir: "/tmp/data" },
+  postgrest: { schemas: ["public", "custom"], maxRows: 500 },
   auth: { port: 9999, siteUrl: "http://myapp.dev:3000", jwtExpiry: 7200 },
 });
 ```
@@ -187,8 +187,9 @@ Service activation is dependency-aware. Starting Storage also starts imgproxy wh
 starting Analytics also starts Vector when enabled, so a public service never comes up without the
 companion it calls or feeds.
 
-Common service names include `"postgres"`, `"postgrest"`, `"auth"`, `"realtime"`, `"storage"`,
-`"imgproxy"`, `"mailpit"`, `"pgmeta"`, `"studio"`, `"analytics"`, `"vector"`, and `"pooler"`.
+Service names are `"postgres"`, `"postgrest"`, `"auth"`, `"edge-runtime"`, `"realtime"`,
+`"storage"`, `"imgproxy"`, `"mailpit"`, `"pgmeta"`, `"studio"`, `"analytics"`, `"vector"`, and
+`"pooler"`.
 
 Internal helper processes are projected away from the public stack API. For example, `postgres-init`
 is treated as an implementation detail of `postgres`, so callers only see the public `postgres`
@@ -274,22 +275,18 @@ await prefetch({ versions: { postgres: "17.4.1.045" } });
 
 ## Service Versions
 
-Default versions are used when no `version` field is specified per service:
-
-| Service   | Default Version |
-| --------- | --------------- |
-| Postgres  | `17.6.1.081`    |
-| PostgREST | `14.5`          |
-| Auth      | `2.188.0-rc.15` |
+Default versions are used when no per-service `version` field is specified. The authoritative,
+exhaustive values are exported as `DEFAULT_VERSIONS` and live in
+[`src/versions.ts`](./src/versions.ts); they are intentionally not copied into this README.
 
 Override versions per service:
 
 ```typescript
 const stack = await createStack({
   jwtSecret: "...",
-  postgres: { dataDir: "/tmp/data", version: "17.4.1.045" },
-  postgrest: { version: "14.4" },
-  auth: { version: "2.180.0" },
+  postgres: { dataDir: "/tmp/data", version: "<postgres-version>" },
+  postgrest: { version: "<postgrest-version>" },
+  auth: { version: "<auth-version>" },
 });
 ```
 

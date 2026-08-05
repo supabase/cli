@@ -38,9 +38,23 @@ is used as-is.
 
 Re-running on the same day reuses the existing dated folder (mkdir is recursive /
 idempotent) and **overwrites** the previous run's CSVs silently — no `--force`,
-matching Go. If a `COPY` fails partway through, the CSVs written before the failure
-remain on disk (Go writes each file before running the next query), the command
-aborts with exit code 1, and the rules summary is not printed.
+matching Go. If a `COPY` fails partway through, the CSVs from queries that already
+completed remain on disk (both sides write each file before running the next query),
+the command aborts with exit code 1, and the rules summary is not printed.
+
+**Divergence on the query that was in flight when `COPY` failed:** Go's
+`copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`) opens the output file
+with `O_TRUNC` _before_ running the query, then streams `COPY ... TO STDOUT` directly
+into it — so a failing/erroring `COPY` still leaves that query's `<name>.csv` on disk,
+empty or partially written. TS buffers the `COPY` result in memory
+(`session.copyToCsv`) and only calls `fs.writeFile` after it succeeds
+(`report.handler.ts`) — so on a fresh run, TS leaves **no file at all** for the query
+that failed, where Go leaves an empty (or partial) one. On a same-day **re-run**, the
+difference is the opposite way round: Go's `O_TRUNC` destroys that query's previous
+CSV (leaving it empty), while TS never touches the file at all, so the **previous
+run's stale CSV is left in place** — a user re-reading that file gets old data with no
+indication it wasn't refreshed this run, where Go at least makes the failure visible
+as an empty file.
 
 ## API Routes
 
