@@ -58,6 +58,7 @@ import {
 } from "./deploy.ts";
 import {
   dockerProjectLabels,
+  edgeRuntimeImageTag,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   localDockerId,
@@ -1380,10 +1381,6 @@ async function writeServeMainTemplateFile(template: string, dir: string) {
   await writeFile(pathname, template);
   // `Z` — same SELinux relabel rationale as `writeDockerMultilineEnvScript`'s bind.
   return { bind: `${pathname}:${serveMainContainerPath}:ro,Z` } as const;
-}
-
-function edgeRuntimeImageTag(version: string) {
-  return version.startsWith("v") ? version : `v${version}`;
 }
 
 const resolveServeFunctionConfigs = Effect.fnUntraced(function* (

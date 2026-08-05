@@ -701,6 +701,52 @@ describe("legacy functions download", () => {
     },
   );
 
+  it.live("does not double-prefix an already v-prefixed edge-runtime-version pin", () => {
+    // Go's `replaceImageTag` (`pkg/config/utils.go:81-84`) appends the pin
+    // file's raw content verbatim after the image's `:`, so a pin already
+    // carrying its own `v` prefix (a legitimate form — see
+    // `legacy-edge-runtime-image.unit.test.ts`'s own `"v9.9.9"` fixture) must
+    // not be prepended with a second `v` (review round on CLI-1963's
+    // `functions download` port).
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        mkdir(join(tempRoot.current, "supabase", ".temp"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"), "v9.9.9\n"),
+      );
+
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      expect(runCommand?.args.slice(-6)[0]).toBe("public.ecr.aws/supabase/edge-runtime:v9.9.9");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("keeps the temporary eszip file when --debug is passed", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();

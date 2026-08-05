@@ -186,3 +186,21 @@ export function resolveEdgeRuntimeVersion(
     new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
   );
 }
+
+/**
+ * Formats a resolved edge-runtime version as a Docker tag, tolerating a
+ * pin that's already `v`-prefixed. `resolveEdgeRuntimeVersion`'s own
+ * defaults are bare (`"1.74.2"`, `DENO1_EDGE_RUNTIME_VERSION`), but a value
+ * sourced from `supabase/.temp/edge-runtime-version` can legitimately be
+ * either form — Go's `replaceImageTag` (`pkg/config/utils.go:81-84`) appends
+ * the pin file's raw content verbatim after the image's `:`, and both forms
+ * are exercised elsewhere in this codebase (`legacy-edge-runtime-image.ts`'s
+ * own `replaceImageTag` port, and its and `services.integration.test.ts`'s
+ * `"v9.9.9"` fixtures alongside `deploy.integration.test.ts`'s bare
+ * `"9.9.9"`). Blindly prepending `v` — as every caller below did before this
+ * helper existed — double-prefixes an already-`v`-prefixed pin
+ * (`supabase/edge-runtime:vv9.9.9`), which docker then simply fails to pull.
+ */
+export function edgeRuntimeImageTag(version: string): string {
+  return version.startsWith("v") ? version : `v${version}`;
+}

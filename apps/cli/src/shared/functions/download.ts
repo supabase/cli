@@ -17,6 +17,7 @@ import {
 import { legacyDescribeContainerCliFailure } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import {
+  edgeRuntimeImageTag,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
@@ -857,7 +858,12 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   return {
     projectId,
     denoVersion,
-    image: legacyGetRegistryImageUrl(`supabase/edge-runtime:v${edgeRuntimeVersion}`),
+    // `edgeRuntimeImageTag` (not a bare `v${edgeRuntimeVersion}` prepend) —
+    // `dependencies.edgeRuntimeVersion` comes from a `.temp/edge-runtime-version`
+    // pin that may already carry its own `v` prefix (see the helper's doc).
+    image: legacyGetRegistryImageUrl(
+      `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+    ),
   };
 });
 

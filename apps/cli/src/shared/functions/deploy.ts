@@ -34,6 +34,7 @@ import {
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
 import {
+  edgeRuntimeImageTag,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
@@ -1279,7 +1280,11 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     }
 
     command.push(
-      legacyGetRegistryImageUrl(`supabase/edge-runtime:v${edgeRuntimeVersion}`),
+      // `edgeRuntimeImageTag`, not a bare `v${edgeRuntimeVersion}` prepend —
+      // `edgeRuntimeVersion` can come from a `.temp/edge-runtime-version` pin
+      // that's already `v`-prefixed (see the helper's doc in
+      // `functions-docker.ts`); blindly prepending `v` double-prefixes it.
+      legacyGetRegistryImageUrl(`supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`),
       "bundle",
       "--entrypoint",
       toDockerPath(config.entrypoint),
