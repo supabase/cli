@@ -4,7 +4,9 @@ import * as Schema from "effect/Schema";
 export const BranchResponse = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   name: Schema.String,
@@ -12,7 +14,12 @@ export const BranchResponse = Schema.Struct({
   parent_project_ref: Schema.String,
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
-  pr_number: Schema.optionalKey(Schema.Number.annotate({ format: "int32" }).check(Schema.isInt())),
+  pr_number: Schema.optionalKey(
+    Schema.Number.annotate({ format: "int32" })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
@@ -29,12 +36,40 @@ export const BranchResponse = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
-  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  review_requested_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  deletion_scheduled_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -115,13 +150,34 @@ export const ApiKeyResponse = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
-    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Null]),
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Null,
+    ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
 });
 export const SecretResponse = Schema.Struct({
@@ -143,30 +199,31 @@ export const V1ServiceHealthResponse = Schema.Struct({
   healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
   status: Schema.Literals(["COMING_UP", "ACTIVE_HEALTHY", "UNHEALTHY"]),
   info: Schema.optionalKey(
-    Schema.Union(
-      [
-        Schema.Struct({
-          name: Schema.Literal("GoTrue"),
-          version: Schema.String,
-          description: Schema.String,
-        }),
-        Schema.Struct({
-          healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
-          db_connected: Schema.Boolean,
-          replication_connected: Schema.Boolean,
-          connected_cluster: Schema.Number.check(Schema.isInt()),
-        }),
-        Schema.Struct({ db_schema: Schema.String }),
-      ],
-      { mode: "oneOf" },
-    ),
+    Schema.Union([
+      Schema.Struct({
+        name: Schema.Literal("GoTrue"),
+        version: Schema.String,
+        description: Schema.String,
+      }),
+      Schema.Struct({
+        healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
+        db_connected: Schema.Boolean,
+        replication_connected: Schema.Boolean,
+        connected_cluster: Schema.Number.check(Schema.isInt())
+          .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+          .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      }),
+      Schema.Struct({ db_schema: Schema.String }),
+    ]),
   ),
   error: Schema.optionalKey(Schema.String),
 });
 export const ThirdPartyAuth = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   type: Schema.String,
@@ -183,9 +240,17 @@ export const FunctionResponse = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt()),
-  created_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
-  updated_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
+  version: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  created_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  updated_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -206,12 +271,24 @@ export const SupavisorConfigResponse = Schema.Struct({
   is_using_scram_auth: Schema.Boolean,
   db_user: Schema.String,
   db_host: Schema.String,
-  db_port: Schema.Number.check(Schema.isInt()),
+  db_port: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   db_name: Schema.String,
   connection_string: Schema.String,
   connectionString: Schema.String.annotate({ description: "Use connection_string instead" }),
-  default_pool_size: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  max_client_conn: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  default_pool_size: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  max_client_conn: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   pool_mode: Schema.Literals(["transaction", "session"]),
 });
 export const V1OrganizationMemberResponse = Schema.Struct({
@@ -222,6 +299,43 @@ export const V1OrganizationMemberResponse = Schema.Struct({
   mfa_enabled: Schema.Boolean,
   avatar_url: Schema.Union([Schema.String, Schema.Null]),
 });
+// recursive definitions
+export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
+  Schema.Union([
+    Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite()), Schema.Boolean]),
+    Schema.Null,
+  ]),
+  Schema.Array(
+    Schema.suspend(
+      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
+        UpdateCustomHostnameResponseJsonValue,
+    ),
+  ),
+  Schema.Record(
+    Schema.String,
+    Schema.suspend(
+      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
+        UpdateCustomHostnameResponseJsonValue,
+    ),
+  ),
+]).annotate({ description: "Any JSON-serializable value" });
+export const ListProjectAddonsResponseJsonValue = Schema.Union([
+  Schema.Union([
+    Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite()), Schema.Boolean]),
+    Schema.Null,
+  ]),
+  Schema.Array(
+    Schema.suspend(
+      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
+    ),
+  ),
+  Schema.Record(
+    Schema.String,
+    Schema.suspend(
+      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
+    ),
+  ),
+]).annotate({ description: "Any JSON-serializable value" });
 // binary input helpers
 export const BinaryInput = Schema.Union([
   Schema.Uint8Array,
@@ -233,14 +347,24 @@ export const V1AcceptInviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  email: Schema.String.annotate({ format: "email" }).check(Schema.isMinLength(1)),
+  email: Schema.String.annotate({ format: "email" })
+    .check(Schema.isMinLength(1))
+    .check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        ),
+      ),
+    ),
   token: Schema.String.check(Schema.isMinLength(1)),
 });
 export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
   user_id: Schema.optionalKey(
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
-        new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
       ),
     ),
   ),
@@ -250,9 +374,31 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
       expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
+          allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
+          ),
           allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
           ),
         }),
       ),
@@ -278,8 +424,8 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
-    messages: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
+    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
@@ -323,34 +469,31 @@ export const V1ApplyProjectAddonInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  addon_variant: Schema.Union(
-    [
-      Schema.Literals([
-        "ci_micro",
-        "ci_small",
-        "ci_medium",
-        "ci_large",
-        "ci_xlarge",
-        "ci_2xlarge",
-        "ci_4xlarge",
-        "ci_8xlarge",
-        "ci_12xlarge",
-        "ci_16xlarge",
-        "ci_24xlarge",
-        "ci_24xlarge_optimized_cpu",
-        "ci_24xlarge_optimized_memory",
-        "ci_24xlarge_high_memory",
-        "ci_48xlarge",
-        "ci_48xlarge_optimized_cpu",
-        "ci_48xlarge_optimized_memory",
-        "ci_48xlarge_high_memory",
-      ]),
-      Schema.Literal("cd_default"),
-      Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
-      Schema.Literal("ipv4_default"),
-    ],
-    { mode: "oneOf" },
-  ),
+  addon_variant: Schema.Union([
+    Schema.Literals([
+      "ci_micro",
+      "ci_small",
+      "ci_medium",
+      "ci_large",
+      "ci_xlarge",
+      "ci_2xlarge",
+      "ci_4xlarge",
+      "ci_8xlarge",
+      "ci_12xlarge",
+      "ci_16xlarge",
+      "ci_24xlarge",
+      "ci_24xlarge_optimized_cpu",
+      "ci_24xlarge_optimized_memory",
+      "ci_24xlarge_high_memory",
+      "ci_48xlarge",
+      "ci_48xlarge_optimized_cpu",
+      "ci_48xlarge_optimized_memory",
+      "ci_48xlarge_high_memory",
+    ]),
+    Schema.Literal("cd_default"),
+    Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
+    Schema.Literal("ipv4_default"),
+  ]),
   addon_type: Schema.Literals([
     "custom_domain",
     "compute_instance",
@@ -367,12 +510,29 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   role: Schema.String.check(Schema.isMinLength(1)),
-  rhost: Schema.String.check(Schema.isMinLength(1)),
+  rhost: Schema.Union([
+    Schema.String.annotate({ format: "ipv4" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+        ),
+      ),
+    ),
+    Schema.String.annotate({ format: "ipv6" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+        ),
+      ),
+    ),
+  ]),
 });
 export const V1AuthorizeJitAccessOutput = Schema.Struct({
   user_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   user_role: Schema.Struct({
@@ -380,8 +540,32 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
     expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
     allowed_networks: Schema.optionalKey(
       Schema.Struct({
-        allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
-        allowed_cidrs_v6: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
+        allowed_cidrs: Schema.optionalKey(
+          Schema.Array(
+            Schema.Struct({
+              cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                Schema.isPattern(
+                  new RegExp(
+                    "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                  ),
+                ),
+              ),
+            }),
+          ),
+        ),
+        allowed_cidrs_v6: Schema.optionalKey(
+          Schema.Array(
+            Schema.Struct({
+              cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                Schema.isPattern(
+                  new RegExp(
+                    "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                  ),
+                ),
+              ),
+            }),
+          ),
+        ),
       }),
     ),
     branches_only: Schema.optionalKey(Schema.Boolean),
@@ -390,7 +574,9 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
 export const V1AuthorizeUserInput = Schema.Struct({
   client_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
@@ -437,9 +623,14 @@ export const V1BulkUpdateFunctionsInput = Schema.Struct({
       slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$"))),
       name: Schema.String,
       status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-      version: Schema.Number.check(Schema.isInt()),
+      version: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
       created_at: Schema.optionalKey(
-        Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
+        Schema.Number.annotate({ format: "int64" })
+          .check(Schema.isInt())
+          .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+          .check(Schema.isLessThanOrEqualTo(9007199254740991)),
       ),
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       import_map: Schema.optionalKey(Schema.Boolean),
@@ -456,9 +647,17 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
       slug: Schema.String,
       name: Schema.String,
       status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-      version: Schema.Number.check(Schema.isInt()),
-      created_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
-      updated_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
+      version: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      created_at: Schema.Number.annotate({ format: "int64" })
+        .check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      updated_at: Schema.Number.annotate({ format: "int64" })
+        .check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       import_map: Schema.optionalKey(Schema.Boolean),
       entrypoint_path: Schema.optionalKey(Schema.String),
@@ -545,7 +744,9 @@ export const V1CreateABranchInput = Schema.Struct({
 export const V1CreateABranchOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   name: Schema.String,
@@ -553,7 +754,12 @@ export const V1CreateABranchOutput = Schema.Struct({
   parent_project_ref: Schema.String,
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
-  pr_number: Schema.optionalKey(Schema.Number.annotate({ format: "int32" }).check(Schema.isInt())),
+  pr_number: Schema.optionalKey(
+    Schema.Number.annotate({ format: "int32" })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
@@ -570,12 +776,40 @@ export const V1CreateABranchOutput = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
-  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  review_requested_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  deletion_scheduled_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -602,8 +836,8 @@ export const V1CreateAFunctionInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   slug: Schema.optionalKey(Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")))),
   name: Schema.optionalKey(Schema.String),
-  verify_jwt: Schema.optionalKey(Schema.Boolean),
-  import_map: Schema.optionalKey(Schema.Boolean),
+  verify_jwt: Schema.optionalKey(Schema.String),
+  import_map: Schema.optionalKey(Schema.String),
   entrypoint_path: Schema.optionalKey(Schema.String),
   import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
@@ -614,9 +848,17 @@ export const V1CreateAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt()),
-  created_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
-  updated_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
+  version: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  created_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  updated_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -743,6 +985,8 @@ export const V1CreateAProjectInput = Schema.Struct({
       format: "uri",
     }),
   ),
+  release_channel: Schema.optionalKey(Schema.Null),
+  postgres_engine: Schema.optionalKey(Schema.Null),
   high_availability: Schema.optionalKey(
     Schema.Boolean.annotate({
       description: "[Experimental] Whether to enable high availability for the project.",
@@ -798,15 +1042,12 @@ export const V1CreateASsoProviderInput = Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
           default: Schema.optionalKey(
-            Schema.Union(
-              [
-                Schema.Struct({}),
-                Schema.Number.check(Schema.isFinite()),
-                Schema.String,
-                Schema.Boolean,
-              ],
-              { mode: "oneOf" },
-            ),
+            Schema.Union([
+              Schema.Struct({}),
+              Schema.Number.check(Schema.isFinite()),
+              Schema.String,
+              Schema.Boolean,
+            ]),
           ),
           array: Schema.optionalKey(Schema.Boolean),
         }),
@@ -891,14 +1132,28 @@ export const V1CreateLegacySigningKeyInput = Schema.Struct({
 export const V1CreateLegacySigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
+  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
 });
 export const V1CreateLoginRoleInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -911,20 +1166,24 @@ export const V1CreateLoginRoleOutput = Schema.Struct({
   password: Schema.String.check(Schema.isMinLength(1)),
   ttl_seconds: Schema.Number.annotate({ format: "int64" })
     .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(1)),
+    .check(Schema.isGreaterThanOrEqualTo(1))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
 });
 export const V1CreateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  reveal: Schema.optionalKey(Schema.Boolean),
+  reveal: Schema.optionalKey(Schema.String),
   type: Schema.Literals(["publishable", "secret"]),
   name: Schema.String.check(Schema.isMinLength(4))
     .check(Schema.isMaxLength(64))
     .check(Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$"))),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
-    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Null]),
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Null,
+    ]),
   ),
 });
 export const V1CreateProjectApiKeyOutput = Schema.Struct({
@@ -941,13 +1200,34 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
-    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Null]),
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Null,
+    ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
 });
 export const V1CreateProjectClaimTokenInput = Schema.Struct({
@@ -962,7 +1242,9 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
   created_at: Schema.String,
   created_by: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -980,7 +1262,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
             Schema.String.annotate({ format: "uuid" }).check(
               Schema.isPattern(
                 new RegExp(
-                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
               ),
             ),
@@ -1008,7 +1290,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
             Schema.String.annotate({ format: "uuid" }).check(
               Schema.isPattern(
                 new RegExp(
-                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
               ),
             ),
@@ -1032,7 +1314,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
             Schema.String.annotate({ format: "uuid" }).check(
               Schema.isPattern(
                 new RegExp(
-                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
               ),
             ),
@@ -1055,7 +1337,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
             Schema.String.annotate({ format: "uuid" }).check(
               Schema.isPattern(
                 new RegExp(
-                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                 ),
               ),
             ),
@@ -1079,14 +1361,28 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
 export const V1CreateProjectSigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
+  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
 });
 export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -1099,7 +1395,9 @@ export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
 export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   type: Schema.String,
@@ -1120,7 +1418,16 @@ export const V1CreateRestorePointInput = Schema.Struct({
 export const V1CreateRestorePointOutput = Schema.Struct({
   name: Schema.String,
   status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
-  completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+  completed_on: Schema.Union([
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+    Schema.Null,
+  ]),
 });
 export const V1DeactivateVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -1131,26 +1438,23 @@ export const V1DeleteHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  remove_addon: Schema.optionalKey(Schema.Boolean),
+  remove_addon: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteABranchInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
-  force: Schema.optionalKey(Schema.Boolean),
+    ),
+  ]),
+  force: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteABranchOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteAFunctionInput = Schema.Struct({
@@ -1165,7 +1469,9 @@ export const V1DeleteAProjectInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1DeleteAProjectOutput = Schema.Struct({
-  id: Schema.Number.check(Schema.isInt()),
+  id: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   ref: Schema.String,
   name: Schema.String,
 });
@@ -1175,7 +1481,9 @@ export const V1DeleteASsoProviderInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   provider_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -1236,7 +1544,9 @@ export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   invite_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -1246,7 +1556,9 @@ export const V1DeleteJitAccessInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   user_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -1276,11 +1588,13 @@ export const V1DeleteProjectApiKeyInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
-  reveal: Schema.optionalKey(Schema.Boolean),
-  was_compromised: Schema.optionalKey(Schema.Boolean),
+  reveal: Schema.optionalKey(Schema.String),
+  was_compromised: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteProjectApiKeyOutput = Schema.Struct({
@@ -1297,13 +1611,34 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
-    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Null]),
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Null,
+    ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
 });
 export const V1DeleteProjectClaimTokenInput = Schema.Struct({
@@ -1317,14 +1652,18 @@ export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   tpa_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
 export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   type: Schema.String,
@@ -1343,9 +1682,9 @@ export const V1DeployAFunctionInput = Schema.Struct({
   slug: Schema.optionalKey(
     Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$"))),
   ),
-  bundleOnly: Schema.optionalKey(Schema.Boolean),
+  bundleOnly: Schema.optionalKey(Schema.String),
   body: Schema.Struct({
-    file: Schema.optionalKey(Schema.Array(BinaryInput)),
+    file: Schema.Array(BinaryInput),
     metadata: Schema.Struct({
       entrypoint_path: Schema.String,
       import_map_path: Schema.optionalKey(Schema.String),
@@ -1360,9 +1699,21 @@ export const V1DeployAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt()),
-  created_at: Schema.optionalKey(Schema.Number.annotate({ format: "int64" }).check(Schema.isInt())),
-  updated_at: Schema.optionalKey(Schema.Number.annotate({ format: "int64" }).check(Schema.isInt())),
+  version: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  created_at: Schema.optionalKey(
+    Schema.Number.annotate({ format: "int64" })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
+  updated_at: Schema.optionalKey(
+    Schema.Number.annotate({ format: "int64" })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -1370,24 +1721,21 @@ export const V1DeployAFunctionOutput = Schema.Struct({
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1DiffABranchInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
+    ),
+  ]),
   included_schemas: Schema.optionalKey(Schema.String),
-  pgdelta: Schema.optionalKey(Schema.Boolean),
+  pgdelta: Schema.optionalKey(Schema.String),
 });
 export const V1DiffABranchOutput = Schema.String;
 export const V1DisablePreviewBranchingInput = Schema.Struct({
@@ -1418,7 +1766,7 @@ export const V1ExchangeOauthTokenInput = Schema.Struct({
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
           ),
         ),
       ),
@@ -1451,7 +1799,9 @@ export const V1ExchangeOauthTokenOutput = Schema.Struct({
         "The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`.",
     }),
   ),
-  expires_in: Schema.Number.check(Schema.isInt()),
+  expires_in: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   token_type: Schema.Literal("Bearer"),
 });
 export const V1GenerateTypescriptTypesInput = Schema.Struct({
@@ -1470,7 +1820,9 @@ export const V1GetABranchInput = Schema.Struct({
 export const V1GetABranchOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   name: Schema.String,
@@ -1478,7 +1830,12 @@ export const V1GetABranchOutput = Schema.Struct({
   parent_project_ref: Schema.String,
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
-  pr_number: Schema.optionalKey(Schema.Number.annotate({ format: "int32" }).check(Schema.isInt())),
+  pr_number: Schema.optionalKey(
+    Schema.Number.annotate({ format: "int32" })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
@@ -1495,12 +1852,40 @@ export const V1GetABranchOutput = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
-  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  review_requested_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  deletion_scheduled_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -1522,22 +1907,19 @@ export const V1GetABranchOutput = Schema.Struct({
   ),
 });
 export const V1GetABranchConfigInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
+    ),
+  ]),
 });
 export const V1GetABranchConfigOutput = Schema.Struct({
   ref: Schema.String,
@@ -1562,7 +1944,9 @@ export const V1GetABranchConfigOutput = Schema.Struct({
     "RESIZING",
   ]),
   db_host: Schema.String,
-  db_port: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+  db_port: Schema.Number.check(Schema.isInt())
+    .check(Schema.isLessThanOrEqualTo(9007199254740991))
+    .check(Schema.isGreaterThan(0)),
   db_user: Schema.optionalKey(Schema.String),
   db_pass: Schema.optionalKey(Schema.String),
   jwt_secret: Schema.optionalKey(Schema.String),
@@ -1578,9 +1962,17 @@ export const V1GetAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt()),
-  created_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
-  updated_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
+  version: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  created_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  updated_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -1611,7 +2003,9 @@ export const V1GetAMigrationOutput = Schema.Struct({
 export const V1GetASnippetInput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -1646,7 +2040,9 @@ export const V1GetASsoProviderInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   provider_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -1742,7 +2138,9 @@ export const V1GetActionRunLogsOutput = Schema.String;
 export const V1GetAllProjectsForOrganizationInput = Schema.Struct({
   slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
   offset: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   ),
   limit: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
@@ -1869,8 +2267,18 @@ export const V1GetAuthServiceConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetAuthServiceConfigOutput = Schema.Struct({
-  api_max_request_duration: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  db_max_pool_size: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  api_max_request_duration: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  db_max_pool_size: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   db_max_pool_size_unit: Schema.Union([
     Schema.Literals(["connections", "percent"]),
     Schema.Union([Schema.Null]),
@@ -1992,11 +2400,23 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   hook_after_user_created_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   hook_after_user_created_uri: Schema.Union([Schema.String, Schema.Null]),
   hook_after_user_created_secrets: Schema.Union([Schema.String, Schema.Null]),
-  jwt_exp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  jwt_exp: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   mailer_allow_unverified_email_sign_ins: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  mailer_otp_exp: Schema.Number.check(Schema.isInt()),
-  mailer_otp_length: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  mailer_otp_exp: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  mailer_otp_length: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   mailer_secure_email_change_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_subjects_confirmation: Schema.Union([Schema.String, Schema.Null]),
   mailer_subjects_email_change: Schema.Union([Schema.String, Schema.Null]),
@@ -2043,7 +2463,12 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   mailer_notifications_mfa_factor_unenrolled_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_linked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_unlinked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
-  mfa_max_enrolled_factors: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  mfa_max_enrolled_factors: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   mfa_totp_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_totp_verify_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_phone_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -2054,14 +2479,26 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_otp_length: Schema.Number.check(Schema.isInt()),
+  mfa_phone_otp_length: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  mfa_phone_max_frequency: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   nimbus_oauth_client_id: Schema.Union([Schema.String, Schema.Null]),
   nimbus_oauth_email_optional: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
-  password_min_length: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  password_min_length: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   password_required_characters: Schema.Union([
     Schema.Literals([
       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
@@ -2071,13 +2508,48 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     ]),
     Schema.Union([Schema.Null]),
   ]),
-  rate_limit_anonymous_users: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_email_sent: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_sms_sent: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_token_refresh: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_verify: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_otp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_web3: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  rate_limit_anonymous_users: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_email_sent: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_sms_sent: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_token_refresh: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_verify: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_otp: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_web3: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   refresh_token_rotation_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   saml_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   saml_external_url: Schema.Union([Schema.String, Schema.Null]),
@@ -2091,7 +2563,9 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_refresh_token_reuse_interval: Schema.Union([
-    Schema.Number.check(Schema.isInt()),
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     Schema.Null,
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -2101,11 +2575,23 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   sessions_timebox: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  sms_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  sms_max_frequency: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   sms_messagebird_access_key: Schema.Union([Schema.String, Schema.Null]),
   sms_messagebird_originator: Schema.Union([Schema.String, Schema.Null]),
-  sms_otp_exp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  sms_otp_length: Schema.Number.check(Schema.isInt()),
+  sms_otp_exp: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  sms_otp_length: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   sms_provider: Schema.Union([
     Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
     Schema.Union([Schema.Null]),
@@ -2113,7 +2599,13 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp_valid_until: Schema.Union([
-    Schema.String.annotate({ format: "date-time" }),
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+        ),
+      ),
+    ),
     Schema.Null,
   ]),
   sms_textlocal_api_key: Schema.Union([Schema.String, Schema.Null]),
@@ -2128,9 +2620,23 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   sms_vonage_api_key: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_api_secret: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_from: Schema.Union([Schema.String, Schema.Null]),
-  smtp_admin_email: Schema.Union([Schema.String.annotate({ format: "email" }), Schema.Null]),
+  smtp_admin_email: Schema.Union([
+    Schema.String.annotate({ format: "email" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        ),
+      ),
+    ),
+    Schema.Null,
+  ]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
-  smtp_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  smtp_max_frequency: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   smtp_pass: Schema.Union([Schema.String, Schema.Null]),
   smtp_port: Schema.Union([Schema.String, Schema.Null]),
   smtp_sender_name: Schema.Union([Schema.String, Schema.Null]),
@@ -2140,7 +2646,9 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   oauth_server_allow_dynamic_registration: Schema.Boolean,
   oauth_server_authorization_path: Schema.Union([Schema.String, Schema.Null]),
   custom_oauth_enabled: Schema.Boolean,
-  custom_oauth_max_providers: Schema.Number.check(Schema.isInt()),
+  custom_oauth_max_providers: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
 });
 export const V1GetAvailableRegionsInput = Schema.Struct({
   organization_slug: Schema.String,
@@ -2200,7 +2708,7 @@ export const V1GetAvailableRegionsOutput = Schema.Struct({
           "sa-east-1",
         ]),
         type: Schema.Literal("specific"),
-        provider: Schema.Literals(["AWS", "FLY", "AWS_K8S", "AWS_NIMBUS"]),
+        provider: Schema.Literals(["AWS", "AWS_K8S", "AWS_NIMBUS"]),
         status: Schema.optionalKey(Schema.Literals(["capacity", "other"])),
       }),
     ),
@@ -2237,7 +2745,7 @@ export const V1GetAvailableRegionsOutput = Schema.Struct({
           "sa-east-1",
         ]),
         type: Schema.Literal("specific"),
-        provider: Schema.Literals(["AWS", "FLY", "AWS_K8S", "AWS_NIMBUS"]),
+        provider: Schema.Literals(["AWS", "AWS_K8S", "AWS_NIMBUS"]),
         status: Schema.optionalKey(Schema.Literals(["capacity", "other"])),
       }),
     ),
@@ -2251,11 +2759,17 @@ export const V1GetBackupScheduleInput = Schema.Struct({
 export const V1GetBackupScheduleOutput = Schema.Struct({
   schedule_for: Schema.String.annotate({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
-  }),
+  }).check(Schema.isPattern(new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"))),
   updated_at: Schema.String.annotate({
     description: "Timestamp of when the backup schedule was last updated.",
     format: "date-time",
-  }),
+  }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+      ),
+    ),
+  ),
 });
 export const V1GetDatabaseDiskInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2263,24 +2777,31 @@ export const V1GetDatabaseDiskInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetDatabaseDiskOutput = Schema.Struct({
-  attributes: Schema.Union(
-    [
-      Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-        size_gb: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-        throughput_mibps: Schema.optionalKey(
-          Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-        ),
-        type: Schema.Literal("gp3"),
-      }),
-      Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-        size_gb: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-        type: Schema.Literal("io2"),
-      }),
-    ],
-    { mode: "oneOf" },
-  ),
+  attributes: Schema.Union([
+    Schema.Struct({
+      iops: Schema.Number.check(Schema.isInt())
+        .check(Schema.isLessThanOrEqualTo(9007199254740991))
+        .check(Schema.isGreaterThan(0)),
+      size_gb: Schema.Number.check(Schema.isInt())
+        .check(Schema.isLessThanOrEqualTo(9007199254740991))
+        .check(Schema.isGreaterThan(0)),
+      throughput_mibps: Schema.optionalKey(
+        Schema.Number.check(Schema.isInt())
+          .check(Schema.isLessThanOrEqualTo(9007199254740991))
+          .check(Schema.isGreaterThan(0)),
+      ),
+      type: Schema.Literal("gp3"),
+    }),
+    Schema.Struct({
+      iops: Schema.Number.check(Schema.isInt())
+        .check(Schema.isLessThanOrEqualTo(9007199254740991))
+        .check(Schema.isGreaterThan(0)),
+      size_gb: Schema.Number.check(Schema.isInt())
+        .check(Schema.isLessThanOrEqualTo(9007199254740991))
+        .check(Schema.isGreaterThan(0)),
+      type: Schema.Literal("io2"),
+    }),
+  ]),
   last_modified_at: Schema.optionalKey(Schema.String),
 });
 export const V1GetDatabaseMetadataInput = Schema.Struct({
@@ -2341,8 +2862,8 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
-    messages: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
+    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
@@ -2373,7 +2894,9 @@ export const V1GetJitAccessOutput = Schema.Struct({
   user_id: Schema.optionalKey(
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
-        new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
       ),
     ),
   ),
@@ -2383,9 +2906,31 @@ export const V1GetJitAccessOutput = Schema.Struct({
       expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
+          allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
+          ),
           allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
           ),
         }),
       ),
@@ -2423,14 +2968,28 @@ export const V1GetLegacySigningKeyInput = Schema.Struct({
 export const V1GetLegacySigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
+  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
 });
 export const V1GetNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2456,8 +3015,24 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
     }),
   ),
   status: Schema.Literals(["stored", "applied"]),
-  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  updated_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
+  applied_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
 });
 export const V1GetOrganizationEntitlementsInput = Schema.Struct({
   slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
@@ -2535,19 +3110,16 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
       }),
       hasAccess: Schema.Boolean,
       type: Schema.Literals(["boolean", "numeric", "set"]),
-      config: Schema.Union(
-        [
-          Schema.Struct({ enabled: Schema.Boolean }),
-          Schema.Struct({
-            enabled: Schema.Boolean,
-            value: Schema.Number.check(Schema.isFinite()),
-            unlimited: Schema.Boolean,
-            unit: Schema.String,
-          }),
-          Schema.Struct({ enabled: Schema.Boolean, set: Schema.Array(Schema.String) }),
-        ],
-        { mode: "oneOf" },
-      ),
+      config: Schema.Union([
+        Schema.Struct({ enabled: Schema.Boolean }),
+        Schema.Struct({
+          enabled: Schema.Boolean,
+          value: Schema.Number.check(Schema.isFinite()),
+          unlimited: Schema.Boolean,
+          unit: Schema.String,
+        }),
+        Schema.Struct({ enabled: Schema.Boolean, set: Schema.Array(Schema.String) }),
+      ]),
     }),
   ),
 });
@@ -2575,7 +3147,9 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
   created_at: Schema.String,
   created_by: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -2716,7 +3290,11 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       .check(Schema.isGreaterThanOrEqualTo(0))
       .check(Schema.isLessThanOrEqualTo(1024)),
   ),
-  max_replication_slots: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  max_replication_slots: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
@@ -2726,7 +3304,11 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       .check(Schema.isLessThanOrEqualTo(262143)),
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
-  max_wal_senders: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  max_wal_senders: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   max_worker_processes: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -2790,54 +3372,48 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
     description: "Use validation_errors instead.",
   }),
   validation_errors: Schema.Array(
-    Schema.Union(
-      [
-        Schema.Struct({
-          type: Schema.Literal("objects_depending_on_pg_cron"),
-          dependents: Schema.Array(Schema.String),
-        }),
-        Schema.Struct({
-          type: Schema.Literal("indexes_referencing_ll_to_earth"),
-          schema_name: Schema.String,
-          table_name: Schema.String,
-          index_name: Schema.String,
-        }),
-        Schema.Struct({
-          type: Schema.Literal("function_using_obsolete_lang"),
-          schema_name: Schema.String,
-          function_name: Schema.String,
-          lang_name: Schema.String,
-        }),
-        Schema.Struct({
-          type: Schema.Literal("unsupported_extension"),
-          extension_name: Schema.String,
-        }),
-        Schema.Struct({
-          type: Schema.Literal("unsupported_fdw_handler"),
-          fdw_name: Schema.String,
-          fdw_handler_name: Schema.String,
-        }),
-        Schema.Struct({
-          type: Schema.Literal("unlogged_table_with_persistent_sequence"),
-          schema_name: Schema.String,
-          table_name: Schema.String,
-          sequence_name: Schema.String,
-        }),
-        Schema.Struct({
-          type: Schema.Literal("user_defined_objects_in_internal_schemas"),
-          obj_type: Schema.Literals(["table", "function"]),
-          schema_name: Schema.String,
-          obj_name: Schema.String,
-        }),
-        Schema.Struct({
-          type: Schema.Literal("active_replication_slot"),
-          slot_name: Schema.String,
-        }),
-        Schema.Struct({ type: Schema.Literal("x86_architecture") }),
-        Schema.Struct({ type: Schema.Literal("project_hibernating") }),
-      ],
-      { mode: "oneOf" },
-    ),
+    Schema.Union([
+      Schema.Struct({
+        type: Schema.Literal("objects_depending_on_pg_cron"),
+        dependents: Schema.Array(Schema.String),
+      }),
+      Schema.Struct({
+        type: Schema.Literal("indexes_referencing_ll_to_earth"),
+        schema_name: Schema.String,
+        table_name: Schema.String,
+        index_name: Schema.String,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("function_using_obsolete_lang"),
+        schema_name: Schema.String,
+        function_name: Schema.String,
+        lang_name: Schema.String,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("unsupported_extension"),
+        extension_name: Schema.String,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("unsupported_fdw_handler"),
+        fdw_name: Schema.String,
+        fdw_handler_name: Schema.String,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("unlogged_table_with_persistent_sequence"),
+        schema_name: Schema.String,
+        table_name: Schema.String,
+        sequence_name: Schema.String,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("user_defined_objects_in_internal_schemas"),
+        obj_type: Schema.Literals(["table", "function"]),
+        schema_name: Schema.String,
+        obj_name: Schema.String,
+      }),
+      Schema.Struct({ type: Schema.Literal("active_replication_slot"), slot_name: Schema.String }),
+      Schema.Struct({ type: Schema.Literal("x86_architecture") }),
+      Schema.Struct({ type: Schema.Literal("project_hibernating") }),
+    ]),
   ),
   warnings: Schema.Array(
     Schema.Union(
@@ -2902,18 +3478,26 @@ export const V1GetPostgrestServiceConfigInput = Schema.Struct({
 });
 export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
-  max_rows: Schema.Number.check(Schema.isInt()),
+  max_rows: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   db_extra_search_path: Schema.String,
   db_pool: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
-    }).check(Schema.isInt()),
+    })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     Schema.Null,
   ]),
   db_pool_acquisition_timeout: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured to 10.",
-    }).check(Schema.isInt()),
+    })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     Schema.Null,
   ]),
   jwt_secret: Schema.optionalKey(Schema.String),
@@ -2974,10 +3558,12 @@ export const V1GetProjectApiKeyInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
-  reveal: Schema.optionalKey(Schema.Boolean),
+  reveal: Schema.optionalKey(Schema.String),
 });
 export const V1GetProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -2993,20 +3579,41 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
-    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Null]),
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Null,
+    ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
 });
 export const V1GetProjectApiKeysInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  reveal: Schema.optionalKey(Schema.Boolean),
+  reveal: Schema.optionalKey(Schema.String),
 });
 export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse);
 export const V1GetProjectClaimTokenInput = Schema.Struct({
@@ -3020,7 +3627,9 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
   created_at: Schema.String,
   created_by: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
@@ -3033,18 +3642,21 @@ export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
   growth_percent: Schema.Union([
     Schema.Number.annotate({ description: "Growth percentage for disk autoscaling" })
       .check(Schema.isInt())
+      .check(Schema.isLessThanOrEqualTo(9007199254740991))
       .check(Schema.isGreaterThan(0)),
     Schema.Null,
   ]),
   min_increment_gb: Schema.Union([
     Schema.Number.annotate({ description: "Minimum increment size for disk autoscaling in GB" })
       .check(Schema.isInt())
+      .check(Schema.isLessThanOrEqualTo(9007199254740991))
       .check(Schema.isGreaterThan(0)),
     Schema.Null,
   ]),
   max_size_gb: Schema.Union([
     Schema.Number.annotate({ description: "Maximum limit the disk size will grow to in GB" })
       .check(Schema.isInt())
+      .check(Schema.isLessThanOrEqualTo(9007199254740991))
       .check(Schema.isGreaterThan(0)),
     Schema.Null,
   ]),
@@ -3059,26 +3671,23 @@ export const V1GetProjectFunctionCombinedStatsInput = Schema.Struct({
 export const V1GetProjectFunctionCombinedStatsOutput = Schema.Struct({
   result: Schema.optionalKey(Schema.Array(Schema.Json)),
   error: Schema.optionalKey(
-    Schema.Union(
-      [
-        Schema.String,
-        Schema.Struct({
-          code: Schema.Number.check(Schema.isFinite()),
-          errors: Schema.Array(
-            Schema.Struct({
-              domain: Schema.String,
-              location: Schema.String,
-              locationType: Schema.String,
-              message: Schema.String,
-              reason: Schema.String,
-            }),
-          ),
-          message: Schema.String,
-          status: Schema.String,
-        }),
-      ],
-      { mode: "oneOf" },
-    ),
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        code: Schema.Number.check(Schema.isFinite()),
+        errors: Schema.Array(
+          Schema.Struct({
+            domain: Schema.String,
+            location: Schema.String,
+            locationType: Schema.String,
+            message: Schema.String,
+            reason: Schema.String,
+          }),
+        ),
+        message: Schema.String,
+        status: Schema.String,
+      }),
+    ]),
   ),
 });
 export const V1GetProjectLegacyApiKeysInput = Schema.Struct({
@@ -3092,32 +3701,45 @@ export const V1GetProjectLogsInput = Schema.Struct({
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   sql: Schema.optionalKey(Schema.String),
-  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  iso_timestamp_start: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
+  iso_timestamp_end: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
 });
 export const V1GetProjectLogsOutput = Schema.Struct({
   result: Schema.optionalKey(Schema.Array(Schema.Json)),
   error: Schema.optionalKey(
-    Schema.Union(
-      [
-        Schema.String,
-        Schema.Struct({
-          code: Schema.Number.check(Schema.isFinite()),
-          errors: Schema.Array(
-            Schema.Struct({
-              domain: Schema.String,
-              location: Schema.String,
-              locationType: Schema.String,
-              message: Schema.String,
-              reason: Schema.String,
-            }),
-          ),
-          message: Schema.String,
-          status: Schema.String,
-        }),
-      ],
-      { mode: "oneOf" },
-    ),
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        code: Schema.Number.check(Schema.isFinite()),
+        errors: Schema.Array(
+          Schema.Struct({
+            domain: Schema.String,
+            location: Schema.String,
+            locationType: Schema.String,
+            message: Schema.String,
+            reason: Schema.String,
+          }),
+        ),
+        message: Schema.String,
+        status: Schema.String,
+      }),
+    ]),
   ),
 });
 export const V1GetProjectLogsAllInput = Schema.Struct({
@@ -3125,32 +3747,45 @@ export const V1GetProjectLogsAllInput = Schema.Struct({
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   sql: Schema.optionalKey(Schema.String),
-  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  iso_timestamp_start: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
+  iso_timestamp_end: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
 });
 export const V1GetProjectLogsAllOutput = Schema.Struct({
   result: Schema.optionalKey(Schema.Array(Schema.Json)),
   error: Schema.optionalKey(
-    Schema.Union(
-      [
-        Schema.String,
-        Schema.Struct({
-          code: Schema.Number.check(Schema.isFinite()),
-          errors: Schema.Array(
-            Schema.Struct({
-              domain: Schema.String,
-              location: Schema.String,
-              locationType: Schema.String,
-              message: Schema.String,
-              reason: Schema.String,
-            }),
-          ),
-          message: Schema.String,
-          status: Schema.String,
-        }),
-      ],
-      { mode: "oneOf" },
-    ),
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        code: Schema.Number.check(Schema.isFinite()),
+        errors: Schema.Array(
+          Schema.Struct({
+            domain: Schema.String,
+            location: Schema.String,
+            locationType: Schema.String,
+            message: Schema.String,
+            reason: Schema.String,
+          }),
+        ),
+        message: Schema.String,
+        status: Schema.String,
+      }),
+    ]),
   ),
 });
 export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
@@ -3159,20 +3794,46 @@ export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
-  default_pool_size: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  default_pool_size: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   ignore_startup_parameters: Schema.optionalKey(Schema.String),
-  max_client_conn: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  max_client_conn: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   pool_mode: Schema.optionalKey(Schema.Literals(["transaction", "session", "statement"])),
   connection_string: Schema.optionalKey(Schema.String),
-  server_idle_timeout: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-  server_lifetime: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-  query_wait_timeout: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-  reserve_pool_size: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  server_idle_timeout: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
+  server_lifetime: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
+  query_wait_timeout: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
+  reserve_pool_size: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
 });
 export const V1GetProjectSigningKeyInput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -3182,14 +3843,28 @@ export const V1GetProjectSigningKeyInput = Schema.Struct({
 export const V1GetProjectSigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
+  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
 });
 export const V1GetProjectSigningKeysInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -3202,15 +3877,27 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
       id: Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
           ),
         ),
       ),
       algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
       status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-      public_jwk: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-      created_at: Schema.String.annotate({ format: "date-time" }),
-      updated_at: Schema.String.annotate({ format: "date-time" }),
+      public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+      created_at: Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      updated_at: Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
     }),
   ),
 });
@@ -3220,14 +3907,18 @@ export const V1GetProjectTpaIntegrationInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   tpa_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
 });
 export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   type: Schema.String,
@@ -3251,7 +3942,13 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
   result: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        timestamp: Schema.String.annotate({ format: "date-time" }),
+        timestamp: Schema.String.annotate({ format: "date-time" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|))$",
+            ),
+          ),
+        ),
         total_auth_requests: Schema.Number.check(Schema.isFinite()),
         total_realtime_requests: Schema.Number.check(Schema.isFinite()),
         total_rest_requests: Schema.Number.check(Schema.isFinite()),
@@ -3260,26 +3957,23 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
     ),
   ),
   error: Schema.optionalKey(
-    Schema.Union(
-      [
-        Schema.String,
-        Schema.Struct({
-          code: Schema.Number.check(Schema.isFinite()),
-          errors: Schema.Array(
-            Schema.Struct({
-              domain: Schema.String,
-              location: Schema.String,
-              locationType: Schema.String,
-              message: Schema.String,
-              reason: Schema.String,
-            }),
-          ),
-          message: Schema.String,
-          status: Schema.String,
-        }),
-      ],
-      { mode: "oneOf" },
-    ),
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        code: Schema.Number.check(Schema.isFinite()),
+        errors: Schema.Array(
+          Schema.Struct({
+            domain: Schema.String,
+            location: Schema.String,
+            locationType: Schema.String,
+            message: Schema.String,
+            reason: Schema.String,
+          }),
+        ),
+        message: Schema.String,
+        status: Schema.String,
+      }),
+    ]),
   ),
 });
 export const V1GetProjectUsageRequestCountInput = Schema.Struct({
@@ -3292,26 +3986,23 @@ export const V1GetProjectUsageRequestCountOutput = Schema.Struct({
     Schema.Array(Schema.Struct({ count: Schema.Number.check(Schema.isFinite()) })),
   ),
   error: Schema.optionalKey(
-    Schema.Union(
-      [
-        Schema.String,
-        Schema.Struct({
-          code: Schema.Number.check(Schema.isFinite()),
-          errors: Schema.Array(
-            Schema.Struct({
-              domain: Schema.String,
-              location: Schema.String,
-              locationType: Schema.String,
-              message: Schema.String,
-              reason: Schema.String,
-            }),
-          ),
-          message: Schema.String,
-          status: Schema.String,
-        }),
-      ],
-      { mode: "oneOf" },
-    ),
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        code: Schema.Number.check(Schema.isFinite()),
+        errors: Schema.Array(
+          Schema.Struct({
+            domain: Schema.String,
+            location: Schema.String,
+            locationType: Schema.String,
+            message: Schema.String,
+            reason: Schema.String,
+          }),
+        ),
+        message: Schema.String,
+        status: Schema.String,
+      }),
+    ]),
   ),
 });
 export const V1GetReadonlyModeStatusInput = Schema.Struct({
@@ -3414,7 +4105,16 @@ export const V1GetRestorePointInput = Schema.Struct({
 export const V1GetRestorePointOutput = Schema.Struct({
   name: Schema.String,
   status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
-  completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+  completed_on: Schema.Union([
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+    Schema.Null,
+  ]),
 });
 export const V1GetSecurityAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -3483,18 +4183,24 @@ export const V1GetServicesHealthInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  services: Schema.Array(
-    Schema.Literals([
-      "auth",
-      "db",
-      "db_postgres_user",
-      "pooler",
-      "realtime",
-      "rest",
-      "storage",
-      "pg_bouncer",
-    ]),
-  ),
+  services: Schema.Union([
+    Schema.String.annotate({
+      description:
+        "Comma-separated list of enums:\n\n- `auth`\n- `db`\n- `db_postgres_user`\n- `pooler`\n- `realtime`\n- `rest`\n- `storage`\n- `pg_bouncer`",
+    }),
+    Schema.Array(
+      Schema.Literals([
+        "auth",
+        "db",
+        "db_postgres_user",
+        "pooler",
+        "realtime",
+        "rest",
+        "storage",
+        "pg_bouncer",
+      ]),
+    ).annotate({ description: "Array of enums." }),
+  ]),
   timeout_ms: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -3517,21 +4223,34 @@ export const V1GetStorageConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetStorageConfigOutput = Schema.Struct({
-  fileSizeLimit: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
+  fileSizeLimit: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   features: Schema.Struct({
     imageTransformation: Schema.Struct({ enabled: Schema.Boolean }),
     s3Protocol: Schema.Struct({ enabled: Schema.Boolean }),
     purgeCache: Schema.Struct({ enabled: Schema.Boolean }),
     icebergCatalog: Schema.Struct({
       enabled: Schema.Boolean,
-      maxNamespaces: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
-      maxTables: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
-      maxCatalogs: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+      maxNamespaces: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      maxTables: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      maxCatalogs: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     }),
     vectorBuckets: Schema.Struct({
       enabled: Schema.Boolean,
-      maxBuckets: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
-      maxIndexes: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+      maxBuckets: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      maxIndexes: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     }),
   }),
   capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
@@ -3552,16 +4271,46 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  email: Schema.String.annotate({ format: "email" }).check(Schema.isMinLength(1)),
+  email: Schema.String.annotate({ format: "email" })
+    .check(Schema.isMinLength(1))
+    .check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        ),
+      ),
+    ),
   roles: Schema.Array(
     Schema.Struct({
       role: Schema.String.check(Schema.isMinLength(1)),
       expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
+          allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
+          ),
           allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
           ),
         }),
       ),
@@ -3570,10 +4319,18 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
   ),
 });
 export const V1InviteExternalJitAccessOutput = Schema.Struct({
-  email: Schema.String.annotate({ format: "email" }),
+  email: Schema.String.annotate({ format: "email" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      ),
+    ),
+  ),
   invite_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   user_roles: Schema.Array(
@@ -3582,9 +4339,31 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
       expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
+          allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
+          ),
           allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
           ),
         }),
       ),
@@ -3649,7 +4428,9 @@ export const V1ListAllBackupsOutput = Schema.Struct({
   pitr_enabled: Schema.Boolean,
   backups: Schema.Array(
     Schema.Struct({
-      id: Schema.Number.check(Schema.isInt()),
+      id: Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
       is_physical_backup: Schema.Boolean,
       status: Schema.Literals([
         "COMPLETED",
@@ -3663,8 +4444,16 @@ export const V1ListAllBackupsOutput = Schema.Struct({
     }),
   ),
   physical_backup_data: Schema.Struct({
-    earliest_physical_backup_date_unix: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-    latest_physical_backup_date_unix: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+    earliest_physical_backup_date_unix: Schema.optionalKey(
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    ),
+    latest_physical_backup_date_unix: Schema.optionalKey(
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    ),
   }),
 });
 export const V1ListAllBranchesInput = Schema.Struct({
@@ -3830,69 +4619,106 @@ export const V1ListJitAccessInput = Schema.Struct({
 });
 export const V1ListJitAccessOutput = Schema.Struct({
   items: Schema.Array(
-    Schema.Union(
-      [
-        Schema.Struct({
-          user_id: Schema.String.annotate({ format: "uuid" }).check(
-            Schema.isPattern(
-              new RegExp(
-                "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-              ),
+    Schema.Union([
+      Schema.Struct({
+        user_id: Schema.String.annotate({ format: "uuid" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             ),
           ),
-          primary_email: Schema.Union([Schema.String, Schema.Null]),
-          invite_id: Schema.Null,
-          expires_at: Schema.Null,
-          user_roles: Schema.Array(
-            Schema.Struct({
-              role: Schema.String.check(Schema.isMinLength(1)),
-              expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
-              allowed_networks: Schema.optionalKey(
-                Schema.Struct({
-                  allowed_cidrs: Schema.optionalKey(
-                    Schema.Array(Schema.Struct({ cidr: Schema.String })),
+        ),
+        primary_email: Schema.Union([Schema.String, Schema.Null]),
+        invite_id: Schema.Null,
+        expires_at: Schema.Null,
+        user_roles: Schema.Array(
+          Schema.Struct({
+            role: Schema.String.check(Schema.isMinLength(1)),
+            expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+            allowed_networks: Schema.optionalKey(
+              Schema.Struct({
+                allowed_cidrs: Schema.optionalKey(
+                  Schema.Array(
+                    Schema.Struct({
+                      cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                        Schema.isPattern(
+                          new RegExp(
+                            "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                          ),
+                        ),
+                      ),
+                    }),
                   ),
-                  allowed_cidrs_v6: Schema.optionalKey(
-                    Schema.Array(Schema.Struct({ cidr: Schema.String })),
+                ),
+                allowed_cidrs_v6: Schema.optionalKey(
+                  Schema.Array(
+                    Schema.Struct({
+                      cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                        Schema.isPattern(
+                          new RegExp(
+                            "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                          ),
+                        ),
+                      ),
+                    }),
                   ),
-                }),
-              ),
-              branches_only: Schema.optionalKey(Schema.Boolean),
-            }),
-          ),
-        }),
-        Schema.Struct({
-          user_id: Schema.Null,
-          primary_email: Schema.String,
-          invite_id: Schema.String.annotate({ format: "uuid" }).check(
-            Schema.isPattern(
-              new RegExp(
-                "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-              ),
+                ),
+              }),
+            ),
+            branches_only: Schema.optionalKey(Schema.Boolean),
+          }),
+        ),
+      }),
+      Schema.Struct({
+        user_id: Schema.Null,
+        primary_email: Schema.String,
+        invite_id: Schema.String.annotate({ format: "uuid" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             ),
           ),
-          expires_at: Schema.String,
-          user_roles: Schema.Array(
-            Schema.Struct({
-              role: Schema.String.check(Schema.isMinLength(1)),
-              expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
-              allowed_networks: Schema.optionalKey(
-                Schema.Struct({
-                  allowed_cidrs: Schema.optionalKey(
-                    Schema.Array(Schema.Struct({ cidr: Schema.String })),
+        ),
+        expires_at: Schema.String,
+        user_roles: Schema.Array(
+          Schema.Struct({
+            role: Schema.String.check(Schema.isMinLength(1)),
+            expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+            allowed_networks: Schema.optionalKey(
+              Schema.Struct({
+                allowed_cidrs: Schema.optionalKey(
+                  Schema.Array(
+                    Schema.Struct({
+                      cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                        Schema.isPattern(
+                          new RegExp(
+                            "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                          ),
+                        ),
+                      ),
+                    }),
                   ),
-                  allowed_cidrs_v6: Schema.optionalKey(
-                    Schema.Array(Schema.Struct({ cidr: Schema.String })),
+                ),
+                allowed_cidrs_v6: Schema.optionalKey(
+                  Schema.Array(
+                    Schema.Struct({
+                      cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                        Schema.isPattern(
+                          new RegExp(
+                            "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                          ),
+                        ),
+                      ),
+                    }),
                   ),
-                }),
-              ),
-              branches_only: Schema.optionalKey(Schema.Boolean),
-            }),
-          ),
-        }),
-      ],
-      { mode: "oneOf" },
-    ),
+                ),
+              }),
+            ),
+            branches_only: Schema.optionalKey(Schema.Boolean),
+          }),
+        ),
+      }),
+    ]),
   ),
 });
 export const V1ListMigrationHistoryInput = Schema.Struct({
@@ -3929,8 +4755,62 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
         "etl_pipeline",
       ]),
       variant: Schema.Struct({
-        id: Schema.Union(
-          [
+        id: Schema.Union([
+          Schema.Literals([
+            "ci_micro",
+            "ci_small",
+            "ci_medium",
+            "ci_large",
+            "ci_xlarge",
+            "ci_2xlarge",
+            "ci_4xlarge",
+            "ci_8xlarge",
+            "ci_12xlarge",
+            "ci_16xlarge",
+            "ci_24xlarge",
+            "ci_24xlarge_optimized_cpu",
+            "ci_24xlarge_optimized_memory",
+            "ci_24xlarge_high_memory",
+            "ci_48xlarge",
+            "ci_48xlarge_optimized_cpu",
+            "ci_48xlarge_optimized_memory",
+            "ci_48xlarge_high_memory",
+          ]),
+          Schema.Literal("cd_default"),
+          Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
+          Schema.Literal("ipv4_default"),
+          Schema.Literal("auth_mfa_phone_default"),
+          Schema.Literal("auth_mfa_web_authn_default"),
+          Schema.Literal("log_drain_default"),
+          Schema.Literal("etl_pipeline_default"),
+        ]),
+        name: Schema.String,
+        price: Schema.Struct({
+          description: Schema.String,
+          type: Schema.Literals(["fixed", "usage"]),
+          interval: Schema.Literals(["monthly", "hourly"]),
+          amount: Schema.Number.check(Schema.isFinite()),
+        }),
+        meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
+      }),
+    }),
+  ),
+  available_addons: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literals([
+        "custom_domain",
+        "compute_instance",
+        "pitr",
+        "ipv4",
+        "auth_mfa_phone",
+        "auth_mfa_web_authn",
+        "log_drain",
+        "etl_pipeline",
+      ]),
+      name: Schema.String,
+      variants: Schema.Array(
+        Schema.Struct({
+          id: Schema.Union([
             Schema.Literals([
               "ci_micro",
               "ci_small",
@@ -3958,69 +4838,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
             Schema.Literal("auth_mfa_web_authn_default"),
             Schema.Literal("log_drain_default"),
             Schema.Literal("etl_pipeline_default"),
-          ],
-          { mode: "oneOf" },
-        ),
-        name: Schema.String,
-        price: Schema.Struct({
-          description: Schema.String,
-          type: Schema.Literals(["fixed", "usage"]),
-          interval: Schema.Literals(["monthly", "hourly"]),
-          amount: Schema.Number.check(Schema.isFinite()),
-        }),
-        meta: Schema.optionalKey(
-          Schema.Json.annotate({ description: "Any JSON-serializable value" }),
-        ),
-      }),
-    }),
-  ),
-  available_addons: Schema.Array(
-    Schema.Struct({
-      type: Schema.Literals([
-        "custom_domain",
-        "compute_instance",
-        "pitr",
-        "ipv4",
-        "auth_mfa_phone",
-        "auth_mfa_web_authn",
-        "log_drain",
-        "etl_pipeline",
-      ]),
-      name: Schema.String,
-      variants: Schema.Array(
-        Schema.Struct({
-          id: Schema.Union(
-            [
-              Schema.Literals([
-                "ci_micro",
-                "ci_small",
-                "ci_medium",
-                "ci_large",
-                "ci_xlarge",
-                "ci_2xlarge",
-                "ci_4xlarge",
-                "ci_8xlarge",
-                "ci_12xlarge",
-                "ci_16xlarge",
-                "ci_24xlarge",
-                "ci_24xlarge_optimized_cpu",
-                "ci_24xlarge_optimized_memory",
-                "ci_24xlarge_high_memory",
-                "ci_48xlarge",
-                "ci_48xlarge_optimized_cpu",
-                "ci_48xlarge_optimized_memory",
-                "ci_48xlarge_high_memory",
-              ]),
-              Schema.Literal("cd_default"),
-              Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
-              Schema.Literal("ipv4_default"),
-              Schema.Literal("auth_mfa_phone_default"),
-              Schema.Literal("auth_mfa_web_authn_default"),
-              Schema.Literal("log_drain_default"),
-              Schema.Literal("etl_pipeline_default"),
-            ],
-            { mode: "oneOf" },
-          ),
+          ]),
           name: Schema.String,
           price: Schema.Struct({
             description: Schema.String,
@@ -4028,9 +4846,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
             interval: Schema.Literals(["monthly", "hourly"]),
             amount: Schema.Number.check(Schema.isFinite()),
           }),
-          meta: Schema.optionalKey(
-            Schema.Json.annotate({ description: "Any JSON-serializable value" }),
-          ),
+          meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
         }),
       ),
     }),
@@ -4043,22 +4859,19 @@ export const V1ListProjectTpaIntegrationsInput = Schema.Struct({
 });
 export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth);
 export const V1MergeABranchInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
+    ),
+  ]),
   migration_version: Schema.optionalKey(Schema.String),
 });
 export const V1MergeABranchOutput = Schema.Struct({
@@ -4072,16 +4885,26 @@ export const V1ModifyDatabaseDiskInput = Schema.Struct({
   attributes: Schema.Union(
     [
       Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-        size_gb: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+        iops: Schema.Number.check(Schema.isInt())
+          .check(Schema.isLessThanOrEqualTo(9007199254740991))
+          .check(Schema.isGreaterThan(0)),
+        size_gb: Schema.Number.check(Schema.isInt())
+          .check(Schema.isLessThanOrEqualTo(9007199254740991))
+          .check(Schema.isGreaterThan(0)),
         throughput_mibps: Schema.optionalKey(
-          Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+          Schema.Number.check(Schema.isInt())
+            .check(Schema.isLessThanOrEqualTo(9007199254740991))
+            .check(Schema.isGreaterThan(0)),
         ),
         type: Schema.Literal("gp3"),
       }),
       Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-        size_gb: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+        iops: Schema.Number.check(Schema.isInt())
+          .check(Schema.isLessThanOrEqualTo(9007199254740991))
+          .check(Schema.isGreaterThan(0)),
+        size_gb: Schema.Number.check(Schema.isInt())
+          .check(Schema.isLessThanOrEqualTo(9007199254740991))
+          .check(Schema.isGreaterThan(0)),
         type: Schema.Literal("io2"),
       }),
     ],
@@ -4094,7 +4917,9 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   client_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
@@ -4151,8 +4976,24 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
     }),
   ),
-  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  updated_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
+  applied_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   status: Schema.Literals(["stored", "applied"]),
 });
 export const V1PauseAProjectInput = Schema.Struct({
@@ -4161,22 +5002,19 @@ export const V1PauseAProjectInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1PushABranchInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
+    ),
+  ]),
   migration_version: Schema.optionalKey(Schema.String),
 });
 export const V1PushABranchOutput = Schema.Struct({
@@ -4200,39 +5038,38 @@ export const V1RemoveProjectAddonInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  addon_variant: Schema.Union(
-    [
-      Schema.Literals([
-        "ci_micro",
-        "ci_small",
-        "ci_medium",
-        "ci_large",
-        "ci_xlarge",
-        "ci_2xlarge",
-        "ci_4xlarge",
-        "ci_8xlarge",
-        "ci_12xlarge",
-        "ci_16xlarge",
-        "ci_24xlarge",
-        "ci_24xlarge_optimized_cpu",
-        "ci_24xlarge_optimized_memory",
-        "ci_24xlarge_high_memory",
-        "ci_48xlarge",
-        "ci_48xlarge_optimized_cpu",
-        "ci_48xlarge_optimized_memory",
-        "ci_48xlarge_high_memory",
-      ]),
-      Schema.Literal("cd_default"),
-      Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
-      Schema.Literal("ipv4_default"),
-    ],
-    { mode: "oneOf" },
-  ),
+  addon_variant: Schema.Union([
+    Schema.Literals([
+      "ci_micro",
+      "ci_small",
+      "ci_medium",
+      "ci_large",
+      "ci_xlarge",
+      "ci_2xlarge",
+      "ci_4xlarge",
+      "ci_8xlarge",
+      "ci_12xlarge",
+      "ci_16xlarge",
+      "ci_24xlarge",
+      "ci_24xlarge_optimized_cpu",
+      "ci_24xlarge_optimized_memory",
+      "ci_24xlarge_high_memory",
+      "ci_48xlarge",
+      "ci_48xlarge_optimized_cpu",
+      "ci_48xlarge_optimized_memory",
+      "ci_48xlarge_high_memory",
+    ]),
+    Schema.Literal("cd_default"),
+    Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
+    Schema.Literal("ipv4_default"),
+  ]),
 });
 export const V1RemoveProjectSigningKeyInput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -4242,32 +5079,43 @@ export const V1RemoveProjectSigningKeyInput = Schema.Struct({
 export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
+  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
 });
 export const V1ResetABranchInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
+    ),
+  ]),
   migration_version: Schema.optionalKey(Schema.String),
 });
 export const V1ResetABranchOutput = Schema.Struct({
@@ -4280,22 +5128,19 @@ export const V1RestartAProjectInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1RestoreABranchInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
+    ),
+  ]),
 });
 export const V1RestoreABranchOutput = Schema.Struct({
   message: Schema.Literal("Branch restoration initiated"),
@@ -4309,7 +5154,9 @@ export const V1RestorePhysicalBackupInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.Number.check(Schema.isInt()),
+  id: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
 });
 export const V1RestorePitrBackupInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -4317,12 +5164,15 @@ export const V1RestorePitrBackupInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   recovery_time_target_unix: Schema.Number.annotate({ format: "int64" })
     .check(Schema.isInt())
-    .check(Schema.isGreaterThanOrEqualTo(0)),
+    .check(Schema.isGreaterThanOrEqualTo(0))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
 });
 export const V1RevokeTokenInput = Schema.Struct({
   client_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   client_secret: Schema.String,
@@ -4385,22 +5235,19 @@ export const V1UndoInput = Schema.Struct({
   name: Schema.String.check(Schema.isMaxLength(20)),
 });
 export const V1UpdateABranchConfigInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union(
-    [
-      Schema.String.annotate({ description: "Project ref" })
-        .check(Schema.isMinLength(20))
-        .check(Schema.isMaxLength(20))
-        .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          ),
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(Schema.isMinLength(20))
+      .check(Schema.isMaxLength(20))
+      .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         ),
       ),
-    ],
-    { mode: "oneOf" },
-  ),
+    ),
+  ]),
   branch_name: Schema.optionalKey(Schema.String),
   git_branch: Schema.optionalKey(Schema.String),
   reset_on_push: Schema.optionalKey(
@@ -4431,7 +5278,9 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
 export const V1UpdateABranchConfigOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   name: Schema.String,
@@ -4439,7 +5288,12 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
   parent_project_ref: Schema.String,
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
-  pr_number: Schema.optionalKey(Schema.Number.annotate({ format: "int32" }).check(Schema.isInt())),
+  pr_number: Schema.optionalKey(
+    Schema.Number.annotate({ format: "int32" })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   latest_check_run_id: Schema.optionalKey(
     Schema.Number.annotate({
       description: "This field is deprecated and will not be populated.",
@@ -4456,12 +5310,40 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
-  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  review_requested_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  deletion_scheduled_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -4489,8 +5371,8 @@ export const V1UpdateAFunctionInput = Schema.Struct({
   function_slug: Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$"))),
   slug: Schema.optionalKey(Schema.String.check(Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")))),
   name: Schema.optionalKey(Schema.String),
-  verify_jwt: Schema.optionalKey(Schema.Boolean),
-  import_map: Schema.optionalKey(Schema.Boolean),
+  verify_jwt: Schema.optionalKey(Schema.String),
+  import_map: Schema.optionalKey(Schema.String),
   entrypoint_path: Schema.optionalKey(Schema.String),
   import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
@@ -4501,9 +5383,17 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt()),
-  created_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
-  updated_at: Schema.Number.annotate({ format: "int64" }).check(Schema.isInt()),
+  version: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  created_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  updated_at: Schema.Number.annotate({ format: "int64" })
+    .check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
@@ -4517,7 +5407,9 @@ export const V1UpdateAProjectInput = Schema.Struct({
   name: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(256)),
 });
 export const V1UpdateAProjectOutput = Schema.Struct({
-  id: Schema.Number.check(Schema.isInt()),
+  id: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   ref: Schema.String,
   name: Schema.String,
 });
@@ -4527,7 +5419,9 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   provider_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   metadata_xml: Schema.optionalKey(Schema.String),
@@ -4541,15 +5435,12 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
           default: Schema.optionalKey(
-            Schema.Union(
-              [
-                Schema.Struct({}),
-                Schema.Number.check(Schema.isFinite()),
-                Schema.String,
-                Schema.Boolean,
-              ],
-              { mode: "oneOf" },
-            ),
+            Schema.Union([
+              Schema.Struct({}),
+              Schema.Number.check(Schema.isFinite()),
+              Schema.String,
+              Schema.Boolean,
+            ]),
           ),
           array: Schema.optionalKey(Schema.Boolean),
         }),
@@ -4661,7 +5552,16 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     ]),
   ),
   smtp_admin_email: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "email" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "email" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
   smtp_host: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   smtp_port: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -4948,7 +5848,16 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     ]),
   ),
   sms_test_otp_valid_until: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
   sms_textlocal_api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sms_textlocal_sender: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -5099,13 +6008,23 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   external_zoom_email_optional: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   external_zoom_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   db_max_pool_size: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      Schema.Null,
+    ]),
   ),
   db_max_pool_size_unit: Schema.optionalKey(
     Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Union([Schema.Null])]),
   ),
   api_max_request_duration: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+        .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+      Schema.Null,
+    ]),
   ),
   mfa_totp_enroll_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_totp_verify_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
@@ -5144,8 +6063,18 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   custom_oauth_enabled: Schema.optionalKey(Schema.Boolean),
 });
 export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
-  api_max_request_duration: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  db_max_pool_size: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  api_max_request_duration: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  db_max_pool_size: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   db_max_pool_size_unit: Schema.Union([
     Schema.Literals(["connections", "percent"]),
     Schema.Union([Schema.Null]),
@@ -5267,11 +6196,23 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   hook_after_user_created_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   hook_after_user_created_uri: Schema.Union([Schema.String, Schema.Null]),
   hook_after_user_created_secrets: Schema.Union([Schema.String, Schema.Null]),
-  jwt_exp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  jwt_exp: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   mailer_allow_unverified_email_sign_ins: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  mailer_otp_exp: Schema.Number.check(Schema.isInt()),
-  mailer_otp_length: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  mailer_otp_exp: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  mailer_otp_length: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   mailer_secure_email_change_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_subjects_confirmation: Schema.Union([Schema.String, Schema.Null]),
   mailer_subjects_email_change: Schema.Union([Schema.String, Schema.Null]),
@@ -5318,7 +6259,12 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   mailer_notifications_mfa_factor_unenrolled_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_linked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_unlinked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
-  mfa_max_enrolled_factors: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  mfa_max_enrolled_factors: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   mfa_totp_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_totp_verify_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_phone_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -5329,14 +6275,26 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_otp_length: Schema.Number.check(Schema.isInt()),
+  mfa_phone_otp_length: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  mfa_phone_max_frequency: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   nimbus_oauth_client_id: Schema.Union([Schema.String, Schema.Null]),
   nimbus_oauth_email_optional: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
-  password_min_length: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  password_min_length: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   password_required_characters: Schema.Union([
     Schema.Literals([
       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
@@ -5346,13 +6304,48 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     ]),
     Schema.Union([Schema.Null]),
   ]),
-  rate_limit_anonymous_users: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_email_sent: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_sms_sent: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_token_refresh: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_verify: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_otp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  rate_limit_web3: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  rate_limit_anonymous_users: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_email_sent: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_sms_sent: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_token_refresh: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_verify: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_otp: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  rate_limit_web3: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   refresh_token_rotation_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   saml_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   saml_external_url: Schema.Union([Schema.String, Schema.Null]),
@@ -5366,7 +6359,9 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_refresh_token_reuse_interval: Schema.Union([
-    Schema.Number.check(Schema.isInt()),
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     Schema.Null,
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -5376,11 +6371,23 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   sessions_timebox: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  sms_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  sms_max_frequency: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   sms_messagebird_access_key: Schema.Union([Schema.String, Schema.Null]),
   sms_messagebird_originator: Schema.Union([Schema.String, Schema.Null]),
-  sms_otp_exp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
-  sms_otp_length: Schema.Number.check(Schema.isInt()),
+  sms_otp_exp: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
+  sms_otp_length: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   sms_provider: Schema.Union([
     Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
     Schema.Union([Schema.Null]),
@@ -5388,7 +6395,13 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp_valid_until: Schema.Union([
-    Schema.String.annotate({ format: "date-time" }),
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+        ),
+      ),
+    ),
     Schema.Null,
   ]),
   sms_textlocal_api_key: Schema.Union([Schema.String, Schema.Null]),
@@ -5403,9 +6416,23 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   sms_vonage_api_key: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_api_secret: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_from: Schema.Union([Schema.String, Schema.Null]),
-  smtp_admin_email: Schema.Union([Schema.String.annotate({ format: "email" }), Schema.Null]),
+  smtp_admin_email: Schema.Union([
+    Schema.String.annotate({ format: "email" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        ),
+      ),
+    ),
+    Schema.Null,
+  ]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
-  smtp_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  smtp_max_frequency: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   smtp_pass: Schema.Union([Schema.String, Schema.Null]),
   smtp_port: Schema.Union([Schema.String, Schema.Null]),
   smtp_sender_name: Schema.Union([Schema.String, Schema.Null]),
@@ -5415,7 +6442,9 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   oauth_server_allow_dynamic_registration: Schema.Boolean,
   oauth_server_authorization_path: Schema.Union([Schema.String, Schema.Null]),
   custom_oauth_enabled: Schema.Boolean,
-  custom_oauth_max_providers: Schema.Number.check(Schema.isInt()),
+  custom_oauth_max_providers: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
 });
 export const V1UpdateBackupScheduleInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -5423,16 +6452,22 @@ export const V1UpdateBackupScheduleInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   schedule_for: Schema.String.annotate({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
-  }),
+  }).check(Schema.isPattern(new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"))),
 });
 export const V1UpdateBackupScheduleOutput = Schema.Struct({
   schedule_for: Schema.String.annotate({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
-  }),
+  }).check(Schema.isPattern(new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"))),
   updated_at: Schema.String.annotate({
     description: "Timestamp of when the backup schedule was last updated.",
     format: "date-time",
-  }),
+  }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+      ),
+    ),
+  ),
 });
 export const V1UpdateDatabasePasswordInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -5460,8 +6495,8 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
-    messages: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
+    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
@@ -5491,7 +6526,9 @@ export const V1UpdateJitAccessInput = Schema.Struct({
     .check(Schema.isMinLength(1))
     .check(
       Schema.isPattern(
-        new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
       ),
     ),
   roles: Schema.Array(
@@ -5500,9 +6537,31 @@ export const V1UpdateJitAccessInput = Schema.Struct({
       expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
+          allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
+          ),
           allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
           ),
         }),
       ),
@@ -5514,7 +6573,9 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
   user_id: Schema.optionalKey(
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
-        new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
       ),
     ),
   ),
@@ -5524,9 +6585,31 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
       expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
+          allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv4" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
+          ),
           allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
+            Schema.Array(
+              Schema.Struct({
+                cidr: Schema.String.annotate({ format: "cidrv6" }).check(
+                  Schema.isPattern(
+                    new RegExp(
+                      "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    ),
+                  ),
+                ),
+              }),
+            ),
           ),
         }),
       ),
@@ -5583,8 +6666,24 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
     }),
   ),
   status: Schema.Literals(["stored", "applied"]),
-  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  updated_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
+  applied_at: Schema.optionalKey(
+    Schema.String.annotate({ format: "date-time" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+        ),
+      ),
+    ),
+  ),
 });
 export const V1UpdatePgsodiumConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -5618,7 +6717,12 @@ export const V1UpdatePoolerConfigInput = Schema.Struct({
   ),
 });
 export const V1UpdatePoolerConfigOutput = Schema.Struct({
-  default_pool_size: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  default_pool_size: Schema.Union([
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+    Schema.Null,
+  ]),
   pool_mode: Schema.String,
 });
 export const V1UpdatePostgresConfigInput = Schema.Struct({
@@ -5678,7 +6782,11 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       .check(Schema.isGreaterThanOrEqualTo(0))
       .check(Schema.isLessThanOrEqualTo(1024)),
   ),
-  max_replication_slots: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  max_replication_slots: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
@@ -5688,7 +6796,11 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       .check(Schema.isLessThanOrEqualTo(262143)),
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
-  max_wal_senders: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  max_wal_senders: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   max_worker_processes: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -5771,7 +6883,11 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       .check(Schema.isGreaterThanOrEqualTo(0))
       .check(Schema.isLessThanOrEqualTo(1024)),
   ),
-  max_replication_slots: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  max_replication_slots: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
@@ -5781,7 +6897,11 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       .check(Schema.isLessThanOrEqualTo(262143)),
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
-  max_wal_senders: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
+  max_wal_senders: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+  ),
   max_worker_processes: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -5833,18 +6953,26 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
 });
 export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
-  max_rows: Schema.Number.check(Schema.isInt()),
+  max_rows: Schema.Number.check(Schema.isInt())
+    .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+    .check(Schema.isLessThanOrEqualTo(9007199254740991)),
   db_extra_search_path: Schema.String,
   db_pool: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
-    }).check(Schema.isInt()),
+    })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     Schema.Null,
   ]),
   db_pool_acquisition_timeout: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured to 10.",
-    }).check(Schema.isInt()),
+    })
+      .check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(-9007199254740991))
+      .check(Schema.isLessThanOrEqualTo(9007199254740991)),
     Schema.Null,
   ]),
 });
@@ -5854,10 +6982,12 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
-  reveal: Schema.optionalKey(Schema.Boolean),
+  reveal: Schema.optionalKey(Schema.String),
   name: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(4))
       .check(Schema.isMaxLength(64))
@@ -5865,7 +6995,10 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
   ),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
-    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Null]),
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Null,
+    ]),
   ),
 });
 export const V1UpdateProjectApiKeyOutput = Schema.Struct({
@@ -5882,26 +7015,49 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
-    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Null]),
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json).check(Schema.isPropertyNames(Schema.String)),
+      Schema.Null,
+    ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
+    Schema.Union([
+      Schema.String.annotate({ format: "date-time" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          ),
+        ),
+      ),
+      Schema.Null,
+    ]),
   ),
 });
 export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  enabled: Schema.Boolean,
+  enabled: Schema.String,
 });
 export const V1UpdateProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
 export const V1UpdateProjectSigningKeyInput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -5912,14 +7068,28 @@ export const V1UpdateProjectSigningKeyInput = Schema.Struct({
 export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
-      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
     ),
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.optionalKey(Schema.Union([Schema.Json, Schema.Null])),
-  created_at: Schema.String.annotate({ format: "date-time" }),
-  updated_at: Schema.String.annotate({ format: "date-time" }),
+  public_jwk: Schema.Union([Schema.Json, Schema.Null]),
+  created_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
+  updated_at: Schema.String.annotate({ format: "date-time" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      ),
+    ),
+  ),
 });
 export const V1UpdateRealtimeConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -6020,18 +7190,26 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
       icebergCatalog: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.Boolean,
-          maxNamespaces: Schema.Number.check(Schema.isInt()).check(
-            Schema.isGreaterThanOrEqualTo(0),
-          ),
-          maxTables: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
-          maxCatalogs: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+          maxNamespaces: Schema.Number.check(Schema.isInt())
+            .check(Schema.isGreaterThanOrEqualTo(0))
+            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+          maxTables: Schema.Number.check(Schema.isInt())
+            .check(Schema.isGreaterThanOrEqualTo(0))
+            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+          maxCatalogs: Schema.Number.check(Schema.isInt())
+            .check(Schema.isGreaterThanOrEqualTo(0))
+            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
         }),
       ),
       vectorBuckets: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.Boolean,
-          maxBuckets: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
-          maxIndexes: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
+          maxBuckets: Schema.Number.check(Schema.isInt())
+            .check(Schema.isGreaterThanOrEqualTo(0))
+            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
+          maxIndexes: Schema.Number.check(Schema.isInt())
+            .check(Schema.isGreaterThanOrEqualTo(0))
+            .check(Schema.isLessThanOrEqualTo(9007199254740991)),
         }),
       ),
     }),
@@ -6077,8 +7255,8 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
-    messages: Schema.Array(Schema.Json.annotate({ description: "Any JSON-serializable value" })),
+    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
@@ -6354,7 +7532,7 @@ export const operationDefinitions = {
   },
   v1ApplyAMigration: {
     id: "v1ApplyAMigration",
-    description: "Only available to selected partner OAuth apps",
+    description: "Apply a database migration",
     method: "POST",
     path: "/v1/projects/{ref}/database/migrations",
     pathParams: ["ref"],
@@ -6590,6 +7768,8 @@ export const operationDefinitions = {
         "kps_enabled",
         "desired_instance_size",
         "template_url",
+        "release_channel",
+        "postgres_engine",
         "high_availability",
       ],
     },
@@ -7058,7 +8238,7 @@ export const operationDefinitions = {
   },
   v1GetAMigration: {
     id: "v1GetAMigration",
-    description: "Only available to selected partner OAuth apps",
+    description: "Fetch an existing entry from migration history",
     method: "GET",
     path: "/v1/projects/{ref}/database/migrations/{version}",
     pathParams: ["ref", "version"],
@@ -7941,7 +9121,7 @@ export const operationDefinitions = {
   },
   v1ListMigrationHistory: {
     id: "v1ListMigrationHistory",
-    description: "Only available to selected partner OAuth apps",
+    description: "List applied migration versions",
     method: "GET",
     path: "/v1/projects/{ref}/database/migrations",
     pathParams: ["ref"],
@@ -8043,7 +9223,7 @@ export const operationDefinitions = {
   },
   v1PatchAMigration: {
     id: "v1PatchAMigration",
-    description: "Only available to selected partner OAuth apps",
+    description: "Patch an existing entry in migration history",
     method: "PATCH",
     path: "/v1/projects/{ref}/database/migrations/{version}",
     pathParams: ["ref", "version"],
@@ -8248,7 +9428,7 @@ export const operationDefinitions = {
   },
   v1RollbackMigrations: {
     id: "v1RollbackMigrations",
-    description: "Only available to selected partner OAuth apps",
+    description: "Rollback database migrations and remove them from history table",
     method: "DELETE",
     path: "/v1/projects/{ref}/database/migrations",
     pathParams: ["ref"],
@@ -8990,7 +10170,7 @@ export const operationDefinitions = {
   },
   v1UpsertAMigration: {
     id: "v1UpsertAMigration",
-    description: "Only available to selected partner OAuth apps",
+    description: "Upsert a database migration without applying",
     method: "PUT",
     path: "/v1/projects/{ref}/database/migrations",
     pathParams: ["ref"],
