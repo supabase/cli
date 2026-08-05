@@ -93,7 +93,9 @@ runtime.
 
 `StackBuilder.build(config, prepared)` is the explicit owner of cross-service topology. Individual
 factories under `src/services/` own executable arguments, environment, mounts, health checks, and
-per-process cleanup. The builder owns which definitions exist and how they depend on one another.
+per-process cleanup. Docker factories also own their host-network and port-mapping arguments. The
+builder owns which definitions exist and how they depend on one another, including the choice
+between `postgres-init (completed)` and `postgres (healthy)` for every database consumer.
 
 | Public service | Automatic runtime support               | Principal dependency or role                                                                                       |
 | -------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -213,8 +215,10 @@ binding. Supervised Docker services have a wider window because the supervisor s
 
 Every Docker definition has ordinary in-process cleanup and supervisor-owned orphan cleanup.
 `StackBuilder` also returns exact Docker container names for the definitions it constructed. The
-coordinator persists these targets for managed daemons and uses them as a force-removal safety net
-after graceful stop. Auto-created PostgreSQL, Storage, and runtime paths are also removed.
+local Implementation captures these targets before persistence or orchestrator setup, persists
+them for managed daemons, and uses them as a force-removal safety net after graceful stop. Launch,
+exact cleanup, and candidate cleanup all derive container identity through the same naming
+function. Auto-created PostgreSQL, Storage, and runtime paths are also removed.
 
 Cleanup is intentionally defensive:
 
@@ -223,7 +227,8 @@ Cleanup is intentionally defensive:
    external resources;
 3. stack disposal force-removes exact known Docker containers;
 4. managed `stop` can use persisted cleanup metadata after daemon death;
-5. startup failure has candidate cleanup derived from the requested configuration.
+5. a failure before the exact build plan exists has candidate cleanup derived from enabled catalog
+   services; a partial startup failure disposes the exact build-produced plan.
 
 These paths overlap by design and must remain idempotent.
 

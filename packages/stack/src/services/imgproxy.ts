@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
@@ -7,7 +8,7 @@ interface DockerImgproxyOptions {
   readonly port: number;
   readonly apiPort: number;
   readonly dataDir: string;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -21,9 +22,9 @@ const imgproxyHealthCheck = (port: number): ServiceDef["healthCheck"] =>
 export const makeImgproxyServiceDocker = (opts: DockerImgproxyOptions): ServiceDef =>
   dockerRunService({
     name: "imgproxy",
-    containerName: `supabase-imgproxy-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:${IMGPROXY_STORAGE_DIR}`],
     env: {
       IMGPROXY_BIND: `:${opts.port}`,
@@ -36,6 +37,6 @@ export const makeImgproxyServiceDocker = (opts: DockerImgproxyOptions): ServiceD
       IMGPROXY_PRESETS: "default=width:3000/height:8192",
       IMGPROXY_FORMAT_QUALITY: "jpeg=80,avif=62,webp=80",
     },
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: imgproxyHealthCheck(opts.port),
   });

@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StackHandle } from "./createStack.ts";
+import { candidateCleanupTargets } from "./cleanup.ts";
+import { dockerContainerName } from "./CleanupTargets.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
@@ -243,6 +245,32 @@ describe("resolveConfig edge runtime defaults", () => {
         version: DEFAULT_VERSIONS["edge-runtime"],
       }),
     );
+  });
+});
+
+describe("candidateCleanupTargets", () => {
+  it("derives fallback Docker identities from enabled catalog services", async () => {
+    const config = await resolveConfig({
+      mode: "docker",
+      auth: false,
+      edgeRuntime: false,
+      realtime: false,
+      storage: false,
+      imgproxy: false,
+      mailpit: false,
+      pgmeta: false,
+      studio: false,
+      analytics: false,
+      vector: false,
+      pooler: false,
+    });
+
+    expect(candidateCleanupTargets(config)).toEqual({
+      dockerContainerNames: [
+        dockerContainerName("postgres", config.apiPort),
+        dockerContainerName("postgrest", config.apiPort),
+      ],
+    });
   });
 });
 
