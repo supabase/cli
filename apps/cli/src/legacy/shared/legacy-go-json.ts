@@ -70,7 +70,7 @@ export function escapeGoJsonString(value: string): string {
   return out + '"';
 }
 
-function walk(value: unknown, depth: number): string {
+function walk(value: unknown, depth: number, pretty: boolean): string {
   if (value === null || value === undefined) return "null";
   switch (typeof value) {
     case "string":
@@ -83,19 +83,23 @@ function walk(value: unknown, depth: number): string {
     case "boolean":
       return value ? "true" : "false";
   }
-  const indent = "  ".repeat(depth + 1);
-  const closeIndent = "  ".repeat(depth);
+  const indent = pretty ? "  ".repeat(depth + 1) : "";
+  const closeIndent = pretty ? "  ".repeat(depth) : "";
+  const open = pretty ? "\n" : "";
+  const separator = pretty ? ",\n" : ",";
+  const close = pretty ? "\n" : "";
   if (Array.isArray(value)) {
     if (value.length === 0) return "[]";
-    const items = value.map((item) => indent + walk(item, depth + 1));
-    return `[\n${items.join(",\n")}\n${closeIndent}]`;
+    const items = value.map((item) => indent + walk(item, depth + 1, pretty));
+    return `[${open}${items.join(separator)}${close}${closeIndent}]`;
   }
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length === 0) return "{}";
+  const colon = pretty ? ": " : ":";
   const lines = entries.map(
-    ([key, val]) => `${indent}${escapeGoJsonString(key)}: ${walk(val, depth + 1)}`,
+    ([key, val]) => `${indent}${escapeGoJsonString(key)}${colon}${walk(val, depth + 1, pretty)}`,
   );
-  return `{\n${lines.join(",\n")}\n${closeIndent}}`;
+  return `{${open}${lines.join(separator)}${close}${closeIndent}}`;
 }
 
 /**
@@ -104,5 +108,14 @@ function walk(value: unknown, depth: number): string {
  * Go string escaping, and a trailing newline.
  */
 export function encodeGoJsonIndented(value: unknown): string {
-  return walk(value, 0) + "\n";
+  return walk(value, 0, true) + "\n";
+}
+
+/**
+ * Encodes a value the way Go's `json.Marshal` does: compact separators
+ * (`{"k":v}`), object keys in insertion (struct) order, Go string escaping
+ * (HTML characters included), and no trailing newline.
+ */
+export function encodeGoJsonCompact(value: unknown): string {
+  return walk(value, 0, false);
 }

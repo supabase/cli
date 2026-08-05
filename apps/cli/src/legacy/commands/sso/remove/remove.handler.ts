@@ -5,7 +5,12 @@ import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts"
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
+import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -17,6 +22,7 @@ import {
   LegacySsoRemoveNetworkError,
   LegacySsoRemoveNotFoundError,
   LegacySsoRemoveUnexpectedStatusError,
+  LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { LegacySsoRemoveFlags } from "./remove.command.ts";
@@ -82,11 +88,20 @@ export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(response));
+        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeToml(response) + "\n");
+        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
+        // rejects the payload (review r3684270640) — same pattern as list/show.
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          catch: (cause) =>
+            new LegacySsoTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
         return;
       }
       if (goFmt === "env") {

@@ -83,15 +83,24 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // and even `db diff --use-pgadmin --linked` must not fail at layer build).
           // Every pg-delta/migra caller passes `opts.denoVersion`, so the base read
           // is a defensive fallback that does not run for them.
+          //
+          // Same per-run override for `workdir`: `cliConfig.workdir` is fixed at
+          // layer-build time, before a command's own `process.chdir` (bootstrap's
+          // real target directory only exists once its handler runs — see
+          // `bootstrap.handler.ts`), so every pg-delta/migra caller passes its own
+          // `ctx.cwd` here too, keeping the image-pin lookup and the base-config
+          // fallback read consistent with the workdir the rest of the run actually
+          // targets.
+          const workdir = opts.workdir ?? cliConfig.workdir;
           const denoVersion =
             opts.denoVersion ??
-            (yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+            (yield* legacyReadDbToml(fs, path, workdir).pipe(
               Effect.mapError(
                 (error) => new LegacyEdgeRuntimeScriptError({ message: error.message }),
               ),
             )).denoVersion;
           const registryImage = legacyGetRegistryImageUrl(
-            yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion),
+            yield* legacyResolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
           );
           const port = yield* allocateFreeHostPort;
           const startCmd = legacyBuildEdgeRuntimeStartCmd({ port, debug }).join(" ");

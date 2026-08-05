@@ -7,8 +7,16 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import {
+  LEGACY_GO_BRANCHES_LIST,
+  LEGACY_GO_BRANCHES_TOML_WRAPPER,
+} from "../branches.go-payload.ts";
 import {
   LegacyBranchesEnvNotSupportedError,
   LegacyBranchesListNetworkError,
@@ -59,11 +67,18 @@ export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(branches));
+      yield* output.raw(encodeLegacyGoYaml(branches, LEGACY_GO_BRANCHES_LIST));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml({ branches }) + "\n");
+      // Go builds the list with `append` (`list.go:70-80`), so an empty list
+      // stays a nil slice and BurntSushi emits nothing for the wrapper.
+      yield* output.raw(
+        encodeLegacyGoToml(
+          { branches: branches.length > 0 ? branches : undefined },
+          LEGACY_GO_BRANCHES_TOML_WRAPPER,
+        ),
+      );
       return;
     }
 

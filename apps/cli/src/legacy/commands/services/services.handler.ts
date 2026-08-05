@@ -13,9 +13,16 @@ import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-
 import { legacyReadServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeLegacyTomlRows,
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+  legacyGoTomlListWrapper,
+} from "../../shared/legacy-go-struct-output.encoders.ts";
+import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
   listLocalServiceVersions,
@@ -26,6 +33,25 @@ import {
 } from "../../../shared/services/services.shared.ts";
 import type { LegacyServicesFlags } from "./services.command.ts";
 import { LegacyServicesEnvNotSupportedError } from "./services.errors.ts";
+
+/**
+ * Mirror of Go's hand-written `imageVersion`
+ * (`apps/cli-go/internal/services/services.go`) — declaration order is
+ * Name, Local, Remote (not alphabetical), and `Remote` is always emitted
+ * even when empty (CLI-1975).
+ */
+const LEGACY_GO_IMAGE_VERSION = legacyGoStruct([
+  ["name", legacyGoString],
+  ["local", legacyGoString],
+  ["remote", legacyGoString],
+]);
+
+const LEGACY_GO_SERVICES_LIST = legacyGoSlice(LEGACY_GO_IMAGE_VERSION);
+
+const LEGACY_GO_SERVICES_TOML_WRAPPER = legacyGoTomlListWrapper(
+  "services",
+  LEGACY_GO_IMAGE_VERSION,
+);
 
 export const legacyServices = Effect.fn("legacy.services")(function* (_flags: LegacyServicesFlags) {
   const output = yield* Output;
@@ -48,7 +74,25 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       return Option.none<string>();
     }
 
-    const content = yield* fs.readFileString(projectRefPath).pipe(Effect.orElseSucceed(() => ""));
+    // Go's `Run` warns on a ref-file READ error (as opposed to the file simply
+    // not existing) and keeps going as unlinked (`internal/services/
+    // services.go:18-20`: `fmt.Fprintln(os.Stderr, err)` with `LoadProjectRef`'s
+    // `failed to load project ref: %w`, `project_ref.go:71-72`). A NotFound
+    // between the exists() check above and this read (TOCTOU) maps to Go's
+    // `os.ErrNotExist` → `ErrNotLinked` branch: silent, no warning. The
+    // warning's error suffix is Effect's description, not Go's `*PathError`
+    // text — the prefix is the parity-bearing part.
+    const content = yield* fs
+      .readFileString(projectRefPath)
+      .pipe(
+        Effect.catch((cause) =>
+          cause._tag === "PlatformError" && cause.reason._tag === "NotFound"
+            ? Effect.succeed("")
+            : output
+                .raw(`failed to load project ref: ${String(cause)}\n`, "stderr")
+                .pipe(Effect.as("")),
+        ),
+      );
     const trimmed = content.trim();
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });
@@ -158,12 +202,12 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     }
 
     if (goOutput === "yaml") {
-      yield* output.raw(encodeYaml(rows));
+      yield* output.raw(encodeLegacyGoYaml(rows, LEGACY_GO_SERVICES_LIST));
       return;
     }
 
     if (goOutput === "toml") {
-      yield* output.raw(encodeToml(encodeLegacyTomlRows(rows)));
+      yield* output.raw(encodeLegacyGoToml({ services: rows }, LEGACY_GO_SERVICES_TOML_WRAPPER));
       return;
     }
 

@@ -1,6 +1,5 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { terminateChildProcess } from "../src/terminateChild.ts";
 import {
@@ -10,58 +9,17 @@ import {
   cleanupLeakArtifacts,
   type LeakSnapshot,
 } from "./helpers/leaks.ts";
+import { type SpawnedStackInfo, spawnStandaloneStack } from "./helpers/spawn-stack.ts";
 
 const STACK_COUNT = 2;
-const SCRIPT = resolve(import.meta.dirname, "helpers/standalone-stack.ts");
 const PARALLEL_STACK_TEST_TIMEOUT_MS = 5_000;
 
-interface StackInfo {
-  url: string;
-  dbUrl: string;
-  process: ChildProcess;
-}
-
-function spawnStack(): Promise<StackInfo> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("bun", ["run", SCRIPT, "--parent-pid", String(process.pid)], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout!.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-      const newline = stdout.indexOf("\n");
-      if (newline !== -1) {
-        try {
-          const info = JSON.parse(stdout.slice(0, newline));
-          resolve({
-            url: info.url,
-            dbUrl: info.dbUrl,
-            process: child,
-          });
-        } catch {
-          reject(new Error(`Failed to parse stack info: ${stdout.slice(0, newline)}`));
-        }
-      }
-    });
-
-    child.stderr!.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (err) => reject(err));
-    child.on("exit", (code) => {
-      if (code !== 0) {
-        reject(new Error(`Stack process exited with code ${code}\nstderr: ${stderr}`));
-      }
-    });
-  });
-}
-
 describe("parallel stacks (multi-process)", () => {
-  const stacks: StackInfo[] = [];
+  const stacks: SpawnedStackInfo[] = [];
+  // Registered at spawn time, not readiness: when one stack fails bring-up,
+  // `Promise.all` discards its healthy siblings' values, so this list — not
+  // `stacks` — is what teardown owns.
+  const children: ChildProcess[] = [];
   let leakBaseline: LeakSnapshot;
 
   beforeAll(async () => {
@@ -69,13 +27,17 @@ describe("parallel stacks (multi-process)", () => {
       homeDir: homedir(),
       processNeedles: ["standalone-stack.ts"],
     });
-    const results = await Promise.all(Array.from({ length: STACK_COUNT }, () => spawnStack()));
+    const results = await Promise.all(
+      Array.from({ length: STACK_COUNT }, () =>
+        spawnStandaloneStack({ onSpawn: (child) => children.push(child) }),
+      ),
+    );
     stacks.push(...results);
   }, 90_000);
 
   afterAll(async () => {
     await Promise.allSettled(
-      stacks.map((s) => terminateChildProcess(s.process, { timeoutMs: 30_000 })),
+      children.map((child) => terminateChildProcess(child, { timeoutMs: 30_000 })),
     );
 
     const after = await waitForLeakSnapshot(

@@ -426,7 +426,7 @@ jobs:
 
       - name: Sync stable release to Linear
         if: ${{ inputs.channel == 'stable' && env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY != '' }}
-        uses: linear/linear-release-action@3858a5d7892435dc63302ac76b0cdb587435caa9 # v0
+        uses: linear/linear-release-action@af56a9a388625921f3757a2f988e4d7aca958377 # v0
         with:
           access_key: ${{ env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
           version: v${{ inputs.version }}
@@ -437,7 +437,7 @@ jobs:
 
       - name: Sync beta release to Linear
         if: ${{ inputs.channel == 'beta' && env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY != '' }}
-        uses: linear/linear-release-action@3858a5d7892435dc63302ac76b0cdb587435caa9 # v0
+        uses: linear/linear-release-action@af56a9a388625921f3757a2f988e4d7aca958377 # v0
         with:
           access_key: ${{ env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
           version: v${{ inputs.version }}
