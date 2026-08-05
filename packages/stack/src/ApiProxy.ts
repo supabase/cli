@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Context, Duration, Schedule, Result } from "effect";
+import { Deferred, Effect, Layer, Option, Context, Duration, Schedule, Result } from "effect";
 import {
   Headers,
   HttpBody,
@@ -14,7 +14,7 @@ import type { ServiceName } from "./versions.ts";
 
 export interface ProxyConfig {
   readonly listenPort: number;
-  readonly activationTimeout?: Duration.Input;
+  readonly activationTimeout?: Duration.Input | "infinite";
   readonly gotruePort: number;
   readonly postgrestPort: number;
   readonly postgrestAdminPort: number;
@@ -134,16 +134,24 @@ function makeProxyHandler(
   client: HttpClient.HttpClient,
   config: ProxyConfig,
   activator: StackServiceActivator["Service"],
+  signalTerminalFailure: Effect.Effect<void>,
   opts: ProxyHandlerOptions,
 ) {
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
-      const activation = yield* activator
-        .activate(opts.service)
-        .pipe(
-          Effect.timeout(config.activationTimeout ?? DEFAULT_SERVICE_ACTIVATION_TIMEOUT),
-          Effect.result,
-        );
+      const activationEffect = activator.activate(opts.service);
+      const activation = yield* (
+        config.activationTimeout === "infinite"
+          ? activationEffect
+          : activationEffect.pipe(
+              Effect.timeout(config.activationTimeout ?? DEFAULT_SERVICE_ACTIVATION_TIMEOUT),
+            )
+      ).pipe(
+        Effect.tapError((error) =>
+          error._tag === "StackReadinessError" ? signalTerminalFailure : Effect.void,
+        ),
+        Effect.result,
+      );
       if (Result.isFailure(activation)) {
         return HttpServerResponse.text("Service unavailable", {
           status: 503,
@@ -224,6 +232,8 @@ export class ApiProxy extends Context.Service<
   ApiProxy,
   {
     readonly address: HttpServer.Address;
+    /** Completes when terminal lazy-activation failure requires daemon teardown. */
+    readonly awaitTerminalFailure: Effect.Effect<void>;
   }
 >()("local/ApiProxy") {
   static layer = (
@@ -238,13 +248,15 @@ export class ApiProxy extends Context.Service<
         const server = yield* HttpServer.HttpServer;
         const client = yield* HttpClient.HttpClient;
         const activator = yield* StackServiceActivator;
+        const terminalFailure = yield* Deferred.make<void>();
+        const signalTerminalFailure = Deferred.succeed(terminalFailure, void 0).pipe(Effect.asVoid);
 
         const routes = [
           HttpRouter.route("*", "/health", HttpServerResponse.text("OK", { status: 200 })),
           HttpRouter.route(
             "*",
             "/.well-known/oauth-authorization-server",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "auth",
               backendPort: config.gotruePort,
               backendPath: "/.well-known/oauth-authorization-server",
@@ -253,7 +265,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/verify",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
@@ -262,7 +274,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/callback",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
@@ -271,7 +283,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/authorize",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
@@ -280,7 +292,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/auth/v1/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "auth",
               backendPort: config.gotruePort,
               stripPrefix: "/auth/v1",
@@ -290,7 +302,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/rest/v1/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "postgrest",
               backendPort: config.postgrestPort,
               stripPrefix: "/rest/v1",
@@ -300,7 +312,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/rest-admin/v1/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "postgrest",
               backendPort: config.postgrestAdminPort,
               stripPrefix: "/rest-admin/v1",
@@ -309,7 +321,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/graphql/v1",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "postgrest",
               backendPort: config.postgrestPort,
               backendPath: "/rpc/graphql",
@@ -320,7 +332,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/functions/v1/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "edge-runtime",
               backendPort: config.edgeRuntimePort,
               stripPrefix: "/functions/v1",
@@ -332,7 +344,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/realtime/v1/api/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "realtime",
               backendPort: config.realtimePort,
               stripPrefix: "/realtime/v1",
@@ -342,7 +354,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/realtime/v1/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "realtime",
               backendPort: config.realtimePort,
               stripPrefix: "/realtime/v1",
@@ -351,7 +363,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/storage/v1/s3/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "storage",
               backendPort: config.storagePort,
               stripPrefix: "/storage/v1",
@@ -360,7 +372,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/storage/v1/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "storage",
               backendPort: config.storagePort,
               stripPrefix: "/storage/v1",
@@ -370,7 +382,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/pg/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "pgmeta",
               backendPort: config.pgmetaPort,
               stripPrefix: "/pg",
@@ -379,7 +391,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/analytics/v1/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "analytics",
               backendPort: config.analyticsPort,
               stripPrefix: "/analytics/v1",
@@ -388,7 +400,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/pooler/v2/*",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "pooler",
               backendPort: config.poolerPort,
               stripPrefix: "/pooler",
@@ -397,7 +409,7 @@ export class ApiProxy extends Context.Service<
           HttpRouter.route(
             "*",
             "/mcp",
-            makeProxyHandler(client, config, activator, {
+            makeProxyHandler(client, config, activator, signalTerminalFailure, {
               service: "studio",
               backendPort: config.studioPort,
               backendPath: "/api/mcp",
@@ -422,6 +434,7 @@ export class ApiProxy extends Context.Service<
 
         return {
           address: server.address,
+          awaitTerminalFailure: Deferred.await(terminalFailure),
         };
       }),
     );
