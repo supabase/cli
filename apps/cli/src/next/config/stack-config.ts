@@ -389,7 +389,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
       : dirname(input.loadedProjectConfig.path);
   const translatedAuth = yield* translateAuthStackConfig({
     projectConfig,
-    rawDocument: input.loadedProjectConfig?.document,
+    loadedProjectConfig: input.loadedProjectConfig,
     projectEnvironment: input.projectEnvironment,
     configDir,
     authEnabled: coreConfig.auth !== false,

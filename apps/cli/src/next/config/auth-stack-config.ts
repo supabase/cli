@@ -1,4 +1,4 @@
-import type { ProjectConfig, ProjectEnvironment } from "@supabase/config";
+import type { LoadedProjectConfig, ProjectConfig, ProjectEnvironment } from "@supabase/config";
 import {
   defaultJwtSecret,
   type AuthConfig,
@@ -14,6 +14,12 @@ import {
 import { Data, Effect, Schema } from "effect";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import {
+  effectiveEnvironmentOverride,
+  effectiveStringList,
+  parseGoBoolean,
+  resolveEnvironmentReference,
+} from "./local-stack-config-values.ts";
 
 export class AuthStackConfigError extends Data.TaggedError("AuthStackConfigError")<{
   readonly path: string;
@@ -64,21 +70,6 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function environmentOverride(
-  environment: ProjectEnvironment | null,
-  name: string,
-  configured: string | undefined,
-): string | undefined {
-  const value = environment?.values[name];
-  if (value === undefined || value.length === 0) return configured;
-  const match = /^env\(([^)]+)\)$/.exec(value);
-  if (match === null) return value;
-  const referencedName = match[1];
-  if (referencedName === undefined) return value;
-  const referenced = environment?.values[referencedName];
-  return referenced === undefined || referenced.length === 0 ? value : referenced;
-}
-
 function invalidOverride(path: string, suggestion: string): AuthStackConfigError {
   return new AuthStackConfigError({
     path,
@@ -87,32 +78,17 @@ function invalidOverride(path: string, suggestion: string): AuthStackConfigError
   });
 }
 
-const GO_BOOLEAN_VALUES: Readonly<Record<string, boolean>> = {
-  "1": true,
-  t: true,
-  T: true,
-  TRUE: true,
-  true: true,
-  True: true,
-  "0": false,
-  f: false,
-  F: false,
-  FALSE: false,
-  false: false,
-  False: false,
-};
-
 function envBoolean(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
-  readonly name: string;
   readonly configured: boolean;
   readonly path: string;
   readonly enabled?: boolean;
 }): boolean {
   if (input.enabled === false) return input.configured;
-  const value = environmentOverride(input.environment, input.name, undefined);
+  const value = effectiveEnvironmentOverride(input);
   if (value === undefined) return input.configured;
-  const parsed = GO_BOOLEAN_VALUES[value];
+  const parsed = parseGoBoolean(value);
   if (parsed === undefined) {
     throw invalidOverride(input.path, "Use a Go-compatible boolean such as true, false, 1, or 0.");
   }
@@ -142,15 +118,15 @@ function parseGoUnsigned(value: string): number | undefined {
 }
 
 function envNumber(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
-  readonly name: string;
   readonly configured: number | undefined;
   readonly path: string;
   readonly max?: number;
   readonly enabled?: boolean;
 }): number | undefined {
   if (input.enabled === false) return input.configured;
-  const value = environmentOverride(input.environment, input.name, undefined);
+  const value = effectiveEnvironmentOverride(input);
   if (value === undefined) return input.configured;
   const parsed = parseGoUnsigned(value);
   if (parsed === undefined || (input.max !== undefined && parsed > input.max)) {
@@ -160,23 +136,37 @@ function envNumber(input: {
 }
 
 function envString(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
-  readonly name: string;
+  readonly path: string;
   readonly configured: string | undefined;
   readonly enabled?: boolean;
 }): string | undefined {
-  return input.enabled === false
-    ? input.configured
-    : environmentOverride(input.environment, input.name, input.configured);
+  if (input.enabled === false) return input.configured;
+  const value = effectiveEnvironmentOverride(input) ?? input.configured;
+  return value === undefined ? undefined : resolveEnvironmentReference(value, input.environment);
 }
 
 function envList(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
-  readonly name: string;
+  readonly path: string;
   readonly configured: ReadonlyArray<string>;
 }): ReadonlyArray<string> {
-  const value = environmentOverride(input.environment, input.name, undefined);
-  return value === undefined ? input.configured : value.length === 0 ? [] : value.split(",");
+  return effectiveStringList(input);
+}
+
+function envStringMap(input: {
+  readonly loaded: LoadedProjectConfig | null;
+  readonly environment: ProjectEnvironment | null;
+  readonly path: string;
+  readonly configured: Readonly<Record<string, string>> | undefined;
+}): Readonly<Record<string, string>> | undefined {
+  if (effectiveEnvironmentOverride(input) === undefined) return input.configured;
+  throw invalidOverride(
+    input.path,
+    "Configure this string map in config.toml; a single environment string cannot decode to it.",
+  );
 }
 
 function resolvePasswordRequirements(value: string): PasswordRequirements {
@@ -198,14 +188,15 @@ function resolvePasswordRequirements(value: string): PasswordRequirements {
 function resolveSmsProvider(input: {
   readonly sms: ProjectConfig["auth"]["sms"];
   readonly authDocument: Readonly<Record<string, unknown>> | undefined;
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
 }): AuthSmsConfig["provider"] {
   const smsDocument = isRecord(input.authDocument?.sms) ? input.authDocument.sms : undefined;
   const providerPresent = (name: string) => name === "twilio" || isRecord(smsDocument?.[name]);
   const enabled = (name: string, configured: boolean) =>
     envBoolean({
+      loaded: input.loaded,
       environment: input.environment,
-      name: `SUPABASE_AUTH_SMS_${name.toUpperCase()}_ENABLED`,
       configured,
       path: `auth.sms.${name}.enabled`,
       enabled: providerPresent(name),
@@ -216,8 +207,9 @@ function resolveSmsProvider(input: {
     configured: string | undefined,
   ): string | undefined =>
     envString({
+      loaded: input.loaded,
       environment: input.environment,
-      name: `SUPABASE_AUTH_SMS_${name.toUpperCase()}_${field.toUpperCase()}`,
+      path: `auth.sms.${name}.${field}`,
       configured,
       enabled: providerPresent(name),
     });
@@ -303,6 +295,7 @@ function resolveSmsProvider(input: {
 function resolveExternalProviders(input: {
   readonly external: ProjectConfig["auth"]["external"];
   readonly authDocument: Readonly<Record<string, unknown>> | undefined;
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
 }): Readonly<Record<string, AuthExternalProviderConfig>> {
   const externalDocument = isRecord(input.authDocument?.external)
@@ -311,18 +304,18 @@ function resolveExternalProviders(input: {
   return Object.fromEntries(
     Object.entries(input.external).map(([name, provider]) => {
       const sectionPresent = name === "apple" || isRecord(externalDocument?.[name]);
-      const prefix = `SUPABASE_AUTH_EXTERNAL_${name.toUpperCase()}`;
       const stringField = (field: string, configured: string | undefined) =>
         envString({
+          loaded: input.loaded,
           environment: input.environment,
-          name: `${prefix}_${field.toUpperCase()}`,
+          path: `auth.external.${name}.${field}`,
           configured,
           enabled: sectionPresent,
         });
       const booleanField = (field: string, configured: boolean) =>
         envBoolean({
+          loaded: input.loaded,
           environment: input.environment,
-          name: `${prefix}_${field.toUpperCase()}`,
           configured,
           path: `auth.external.${name}.${field}`,
           enabled: sectionPresent,
@@ -346,32 +339,34 @@ function resolveExternalProviders(input: {
 function resolveHooks(input: {
   readonly hooks: ProjectConfig["auth"]["hook"];
   readonly authDocument: Readonly<Record<string, unknown>> | undefined;
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
 }): Readonly<Record<string, AuthHookConfig>> {
   const hookDocument = isRecord(input.authDocument?.hook) ? input.authDocument.hook : undefined;
   return Object.fromEntries(
     Object.entries(input.hooks).map(([name, hook]) => {
       const sectionPresent = isRecord(hookDocument?.[name]);
-      const prefix = `SUPABASE_AUTH_HOOK_${name.toUpperCase()}`;
       return [
         name,
         {
           enabled: envBoolean({
+            loaded: input.loaded,
             environment: input.environment,
-            name: `${prefix}_ENABLED`,
             configured: hook.enabled,
             path: `auth.hook.${name}.enabled`,
             enabled: sectionPresent,
           }),
           uri: envString({
+            loaded: input.loaded,
             environment: input.environment,
-            name: `${prefix}_URI`,
+            path: `auth.hook.${name}.uri`,
             configured: hook.uri,
             enabled: sectionPresent,
           }),
           secrets: envString({
+            loaded: input.loaded,
             environment: input.environment,
-            name: `${prefix}_SECRETS`,
+            path: `auth.hook.${name}.secrets`,
             configured: hook.secrets,
             enabled: sectionPresent,
           }),
@@ -423,31 +418,34 @@ interface TranslatedAuthStackConfig {
 
 export const translateAuthStackConfig = Effect.fnUntraced(function* (input: {
   readonly projectConfig: ProjectConfig;
-  readonly rawDocument?: Readonly<Record<string, unknown>>;
+  readonly loadedProjectConfig: LoadedProjectConfig | null;
   readonly projectEnvironment: ProjectEnvironment | null;
   readonly configDir: string;
   readonly authEnabled: boolean;
 }) {
   const { auth } = input.projectConfig;
-  const authDocument = isRecord(input.rawDocument?.auth) ? input.rawDocument.auth : undefined;
+  const authDocument = isRecord(input.loadedProjectConfig?.document?.auth)
+    ? input.loadedProjectConfig.document.auth
+    : undefined;
   const authEnabled = input.authEnabled;
   const flatString = (field: string, configured: string | undefined) =>
     envString({
+      loaded: input.loadedProjectConfig,
       environment: input.projectEnvironment,
-      name: `SUPABASE_AUTH_${field.toUpperCase()}`,
+      path: `auth.${field}`,
       configured,
     });
   const flatBoolean = (field: string, configured: boolean) =>
     envBoolean({
+      loaded: input.loadedProjectConfig,
       environment: input.projectEnvironment,
-      name: `SUPABASE_AUTH_${field.toUpperCase()}`,
       configured,
       path: `auth.${field}`,
     });
   const flatNumber = (field: string, configured: number) =>
     envNumber({
+      loaded: input.loadedProjectConfig,
       environment: input.projectEnvironment,
-      name: `SUPABASE_AUTH_${field.toUpperCase()}`,
       configured,
       path: `auth.${field}`,
     }) ?? configured;
@@ -483,15 +481,16 @@ export const translateAuthStackConfig = Effect.fnUntraced(function* (input: {
   const smtpEnabled =
     smtpPresent &&
     envBoolean({
+      loaded: input.loadedProjectConfig,
       environment: input.projectEnvironment,
-      name: "SUPABASE_AUTH_EMAIL_SMTP_ENABLED",
       configured: smtpDocument.enabled === undefined ? true : auth.email.smtp?.enabled === true,
       path: "auth.email.smtp.enabled",
     });
   const smtpString = (field: string, configured: string | undefined) =>
     envString({
+      loaded: input.loadedProjectConfig,
       environment: input.projectEnvironment,
-      name: `SUPABASE_AUTH_EMAIL_SMTP_${field.toUpperCase()}`,
+      path: `auth.email.smtp.${field}`,
       configured,
       enabled: smtpPresent,
     });
@@ -500,8 +499,8 @@ export const translateAuthStackConfig = Effect.fnUntraced(function* (input: {
         host: required(smtpString("host", auth.email.smtp?.host), "auth.email.smtp.host"),
         port: requiredNumber(
           envNumber({
+            loaded: input.loadedProjectConfig,
             environment: input.projectEnvironment,
-            name: "SUPABASE_AUTH_EMAIL_SMTP_PORT",
             configured: auth.email.smtp?.port,
             path: "auth.email.smtp.port",
             max: 65_535,
@@ -524,8 +523,9 @@ export const translateAuthStackConfig = Effect.fnUntraced(function* (input: {
     auth: {
       siteUrl: flatString("site_url", auth.site_url) ?? auth.site_url,
       additionalRedirectUrls: envList({
+        loaded: input.loadedProjectConfig,
         environment: input.projectEnvironment,
-        name: "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
+        path: "auth.additional_redirect_urls",
         configured: auth.additional_redirect_urls,
       }),
       jwtExpiry: flatNumber("jwt_expiry", auth.jwt_expiry),
@@ -551,46 +551,47 @@ export const translateAuthStackConfig = Effect.fnUntraced(function* (input: {
       ),
       email: {
         enableSignup: envBoolean({
+          loaded: input.loadedProjectConfig,
           environment: input.projectEnvironment,
-          name: "SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP",
           configured: auth.email.enable_signup,
           path: "auth.email.enable_signup",
         }),
         doubleConfirmChanges: envBoolean({
+          loaded: input.loadedProjectConfig,
           environment: input.projectEnvironment,
-          name: "SUPABASE_AUTH_EMAIL_DOUBLE_CONFIRM_CHANGES",
           configured: auth.email.double_confirm_changes,
           path: "auth.email.double_confirm_changes",
         }),
         enableConfirmations: envBoolean({
+          loaded: input.loadedProjectConfig,
           environment: input.projectEnvironment,
-          name: "SUPABASE_AUTH_EMAIL_ENABLE_CONFIRMATIONS",
           configured: auth.email.enable_confirmations,
           path: "auth.email.enable_confirmations",
         }),
         securePasswordChange: envBoolean({
+          loaded: input.loadedProjectConfig,
           environment: input.projectEnvironment,
-          name: "SUPABASE_AUTH_EMAIL_SECURE_PASSWORD_CHANGE",
           configured: auth.email.secure_password_change,
           path: "auth.email.secure_password_change",
         }),
         maxFrequency:
           envString({
+            loaded: input.loadedProjectConfig,
             environment: input.projectEnvironment,
-            name: "SUPABASE_AUTH_EMAIL_MAX_FREQUENCY",
+            path: "auth.email.max_frequency",
             configured: auth.email.max_frequency,
           }) ?? auth.email.max_frequency,
         otpLength:
           envNumber({
+            loaded: input.loadedProjectConfig,
             environment: input.projectEnvironment,
-            name: "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
             configured: auth.email.otp_length,
             path: "auth.email.otp_length",
           }) ?? auth.email.otp_length,
         otpExpiry:
           envNumber({
+            loaded: input.loadedProjectConfig,
             environment: input.projectEnvironment,
-            name: "SUPABASE_AUTH_EMAIL_OTP_EXPIRY",
             configured: auth.email.otp_expiry,
             path: "auth.email.otp_expiry",
           }) ?? auth.email.otp_expiry,
@@ -598,44 +599,54 @@ export const translateAuthStackConfig = Effect.fnUntraced(function* (input: {
       },
       sms: {
         enableSignup: envBoolean({
+          loaded: input.loadedProjectConfig,
           environment: input.projectEnvironment,
-          name: "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
           configured: auth.sms.enable_signup,
           path: "auth.sms.enable_signup",
         }),
         enableConfirmations: envBoolean({
+          loaded: input.loadedProjectConfig,
           environment: input.projectEnvironment,
-          name: "SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS",
           configured: auth.sms.enable_confirmations,
           path: "auth.sms.enable_confirmations",
         }),
         template:
           envString({
+            loaded: input.loadedProjectConfig,
             environment: input.projectEnvironment,
-            name: "SUPABASE_AUTH_SMS_TEMPLATE",
+            path: "auth.sms.template",
             configured: auth.sms.template,
           }) ?? auth.sms.template,
         maxFrequency:
           envString({
+            loaded: input.loadedProjectConfig,
             environment: input.projectEnvironment,
-            name: "SUPABASE_AUTH_SMS_MAX_FREQUENCY",
+            path: "auth.sms.max_frequency",
             configured: auth.sms.max_frequency,
           }) ?? auth.sms.max_frequency,
-        testOtp: auth.sms.test_otp,
+        testOtp: envStringMap({
+          loaded: input.loadedProjectConfig,
+          environment: input.projectEnvironment,
+          path: "auth.sms.test_otp",
+          configured: auth.sms.test_otp,
+        }),
         provider: resolveSmsProvider({
           sms: auth.sms,
           authDocument,
+          loaded: input.loadedProjectConfig,
           environment: input.projectEnvironment,
         }),
       },
       externalProviders: resolveExternalProviders({
         external: auth.external,
         authDocument,
+        loaded: input.loadedProjectConfig,
         environment: input.projectEnvironment,
       }),
       hooks: resolveHooks({
         hooks: auth.hook,
         authDocument,
+        loaded: input.loadedProjectConfig,
         environment: input.projectEnvironment,
       }),
     },
