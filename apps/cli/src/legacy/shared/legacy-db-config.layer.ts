@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import {
   LegacyProjectRefResolver,
@@ -433,6 +434,13 @@ export const legacyDbConfigLayer = Layer.effect(
       // platform-API factory + linked-project cache (Go's single root-context
       // `sync.Once`). Provided to this layer by each command runtime.
       Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
+      // Optional (absent in handler tests): the lazy rebuild of
+      // `legacyCliConfigLayer` reads it for explicit `--profile` detection, so
+      // the nested resolution matches the outer layer's.
+      Option.match(yield* Effect.serviceOption(CliArgs), {
+        onNone: () => Layer.empty,
+        onSome: (value) => Layer.succeed(CliArgs, value),
+      }),
       BunServices.layer,
     );
     // Compile-time guard: if `legacyLinkedDbResolverRuntimeLayer`'s requirements ever
