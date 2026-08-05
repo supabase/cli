@@ -31,6 +31,14 @@ const globOne = (
   pattern: string,
 ): Effect.Effect<ReadonlyArray<string>, never> =>
   Effect.gen(function* () {
+    // Go's `fs.Glob`/`afero.Glob` resolve a literal (no-metacharacter) pattern via
+    // `Lstat`, which errors on an empty path — so `""` always yields no matches. An
+    // unguarded `path.join(workdir, "")` resolves to `workdir` itself, which would
+    // wrongly report the workdir as a match for an empty `schema_paths`/`sql_paths`
+    // entry (e.g. `schema_paths = [""]`).
+    if (pattern.length === 0) {
+      return [];
+    }
     // Absolute patterns resolve against the filesystem root; relative ones are
     // rooted at the workdir.
     const resolve = (p: string): string => (path.isAbsolute(p) ? p : path.join(workdir, p));
@@ -81,12 +89,26 @@ const legacyWalkSqlFiles = (
           .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
         for (const name of names) {
           const childRel = `${rel}/${name}`;
-          const childType = yield* fs
-            .stat(path.isAbsolute(childRel) ? childRel : path.join(workdir, childRel))
-            .pipe(
-              Effect.map((info) => info.type),
-              Effect.orElseSucceed(() => "Unknown" as const),
-            );
+          const childAbs = path.isAbsolute(childRel) ? childRel : path.join(workdir, childRel);
+          // Go's `fs.WalkDir` types each child from the parent's `ReadDir` entry
+          // (`os.ReadDir`'s Lstat-based `DirEntry`) and never re-`Stat`s through it —
+          // so a symlinked file or subdirectory found below the matched root is
+          // neither included nor recursed into, regardless of what it points to
+          // (`io/fs/walk.go:114-115`: only the matched root itself, resolved once by
+          // the caller before reaching this walk, may be a symlink). `readLink`
+          // succeeds only for symlinks, so use it as the no-follow probe in place of
+          // the `Lstat` this FileSystem service doesn't expose.
+          const isSymlink = yield* fs.readLink(childAbs).pipe(
+            Effect.map(() => true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (isSymlink) {
+            continue;
+          }
+          const childType = yield* fs.stat(childAbs).pipe(
+            Effect.map((info) => info.type),
+            Effect.orElseSucceed(() => "Unknown" as const),
+          );
           if (childType === "Directory") {
             yield* walk(childRel);
           } else if (childType === "File" && childRel.endsWith(".sql")) {
