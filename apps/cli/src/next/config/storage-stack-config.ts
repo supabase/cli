@@ -1,5 +1,6 @@
 import {
   parseStorageSizeBytes,
+  type LoadedProjectConfig,
   type ProjectConfig,
   type ProjectEnvironment,
 } from "@supabase/config";
@@ -12,12 +13,17 @@ import {
 } from "./data-plane-stack-config-values.ts";
 
 function resolveFileSizeLimit(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly configured: string;
   readonly environment: ProjectEnvironment | null;
 }): string {
   const configured =
-    environmentOverride("SUPABASE_STORAGE_FILE_SIZE_LIMIT", input.configured, input.environment) ??
-    input.configured;
+    environmentOverride(
+      "storage.file_size_limit",
+      input.configured,
+      input.environment,
+      input.loaded,
+    ) ?? input.configured;
   try {
     return String(parseStorageSizeBytes(configured));
   } catch {
@@ -29,23 +35,25 @@ function resolveFileSizeLimit(input: {
 }
 
 export function resolveStorageStackConfig(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly config: ProjectConfig["storage"];
   readonly environment: ProjectEnvironment | null;
   readonly base: StorageConfig | false | undefined;
 }): StorageConfig | false {
   const fileSizeLimit = resolveFileSizeLimit({
+    loaded: input.loaded,
     configured: input.config.file_size_limit,
     environment: input.environment,
   });
   const s3ProtocolEnabled = resolveBooleanOverride({
+    loaded: input.loaded,
     environment: input.environment,
-    envName: "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
     configured: input.config.s3_protocol.enabled,
     path: "storage.s3_protocol.enabled",
   });
   const vectorBucketsEnabled = resolveBooleanOverride({
+    loaded: input.loaded,
     environment: input.environment,
-    envName: "SUPABASE_STORAGE_VECTOR_ENABLED",
     configured: input.config.vector.enabled,
     path: "storage.vector.enabled",
   });

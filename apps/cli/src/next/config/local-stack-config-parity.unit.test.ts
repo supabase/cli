@@ -7,7 +7,7 @@ describe("localStackConfigParity", () => {
   it("classifies every fixed project-config leaf exactly once", () => {
     const paths = entries.map(({ path }) => path);
 
-    expect(paths).toHaveLength(361);
+    expect(paths).toHaveLength(362);
     expect(new Set(paths).size).toBe(paths.length);
     expect(
       Object.fromEntries(
@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 256,
-      "not-applicable": 10,
-      "unsupported-blocking": 89,
+      mapped: 255,
+      "not-applicable": 11,
+      "unsupported-blocking": 90,
       "unsupported-warning": 6,
     });
   });
@@ -53,7 +53,6 @@ describe("localStackConfigParity", () => {
       "db.seed.enabled",
       "db.seed.sql_paths",
       "edge_runtime.enabled",
-      "edge_runtime.inspector_port",
       "edge_runtime.policy",
       "edge_runtime.secrets",
       "functions.*.enabled",
@@ -125,23 +124,27 @@ describe("localStackConfigParity", () => {
         .filter(({ decision }) => decision._tag === "not-applicable")
         .map(({ path }) => path)
         .sort(),
-    ).toEqual([
-      "db.network_restrictions.allowed_cidrs",
-      "db.network_restrictions.allowed_cidrs_v6",
-      "db.network_restrictions.enabled",
-      "db.shadow_port",
-      "experimental.inspect.rules",
-      "experimental.pgdelta.declarative_schema_path",
-      "experimental.pgdelta.enabled",
-      "experimental.pgdelta.format_options",
-      "project_id",
-      "remotes",
-    ]);
+    ).toEqual(
+      [
+        "db.network_restrictions.allowed_cidrs",
+        "db.network_restrictions.allowed_cidrs_v6",
+        "db.network_restrictions.enabled",
+        "db.shadow_port",
+        "experimental.inspect.rules",
+        "experimental.pgdelta.declarative_schema_path",
+        "experimental.pgdelta.enabled",
+        "experimental.pgdelta.format_options",
+        "project_id",
+        "remotes",
+        "edge_runtime.inspector_port",
+      ].sort(),
+    );
   });
 
   it("keeps bucket seeding and unconsumed quotas blocking", () => {
     const byPath = new Map(entries.map(({ path, decision }) => [path, decision]));
     for (const path of [
+      "storage.buckets.*",
       "storage.buckets.*.objects_path",
       "storage.buckets.*.public",
       "storage.analytics.max_namespaces",

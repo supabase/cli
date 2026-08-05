@@ -12,6 +12,7 @@ import { makeMailpitServiceDocker } from "./mailpit.ts";
 import { makePgmetaServiceDocker } from "./pgmeta.ts";
 import {
   makePostgresInitService,
+  makePostgresInitServiceDocker,
   REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL,
 } from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
@@ -963,6 +964,32 @@ describe("makePostgresInitService", () => {
       "revoke usage, select on sequences from anon, authenticated, service_role",
     );
     expect(script).toContain("revoke execute on functions from anon, authenticated, service_role");
+  });
+});
+
+describe("makePostgresInitServiceDocker", () => {
+  it("creates a one-shot privilege initialization service inside the postgres container", () => {
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const def = makePostgresInitServiceDocker({
+      containerName: "supabase-postgres-54321",
+      dbPort: DB_PORT,
+      dependencies,
+    });
+
+    expect(def.name).toBe("postgres-init");
+    expect(def.command).toBe("bash");
+    expect(def.args).toEqual([
+      "-c",
+      expect.stringContaining(REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL),
+      "postgres-init",
+      "supabase-postgres-54321",
+      String(DB_PORT),
+    ]);
+    expect(def.args?.[1]).toContain('docker exec -i -e PGPASSWORD=postgres "$1" psql');
+    expect(def.dependencies).toEqual(dependencies);
+    expect(def.restart).toBe("no");
+    expect(def.healthCheck).toBeUndefined();
+    expect(def.supervision).toEqual({});
   });
 });
 

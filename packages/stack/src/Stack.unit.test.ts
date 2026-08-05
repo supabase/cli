@@ -733,6 +733,43 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
+  it.live(
+    "lazy Docker postgres activation applies and reactivates its privilege policy",
+    () => {
+      const config: ResolvedStackConfig = {
+        ...defaultConfig,
+        mode: "docker",
+        startupMode: "lazy",
+        postgres: { ...defaultConfig.postgres, autoExposeNewTables: false },
+      };
+      const { layer, spawner } = setupLayer(config);
+      const privilegeInitSpawnCount = () =>
+        spawner.spawned.filter((record) =>
+          record.args.some((arg) => {
+            const definition = Buffer.from(arg, "base64url").toString();
+            return (
+              definition.includes("postgres-init") &&
+              definition.includes("alter default privileges for role postgres")
+            );
+          }),
+        ).length;
+
+      return Effect.gen(function* () {
+        const stack = yield* Stack;
+        yield* stack.start();
+        const initialPrivilegeInitSpawns = privilegeInitSpawnCount();
+        expect(initialPrivilegeInitSpawns).toBeGreaterThan(0);
+
+        yield* stack.stopService("postgres");
+        yield* stack.startService("postgres");
+
+        expect(privilegeInitSpawnCount()).toBeGreaterThan(initialPrivilegeInitSpawns);
+        yield* stack.stop();
+      }).pipe(Effect.provide(layer), Effect.timeout("10 seconds"));
+    },
+    10_000,
+  );
+
   it.live("lazy activation honors explicitly stopped transitive dependencies", () => {
     const config: ResolvedStackConfig = {
       ...defaultConfig,

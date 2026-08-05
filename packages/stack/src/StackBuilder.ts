@@ -18,7 +18,10 @@ import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
 import { makeMailpitServiceDocker } from "./services/mailpit.ts";
 import { makePgmetaServiceDocker } from "./services/pgmeta.ts";
 import { makePoolerServiceDocker } from "./services/pooler.ts";
-import { makePostgresInitService } from "./services/postgres-init.ts";
+import {
+  makePostgresInitService,
+  makePostgresInitServiceDocker,
+} from "./services/postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./services/postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./services/postgrest.ts";
 import { makeRealtimeServiceDocker } from "./services/realtime.ts";
@@ -232,7 +235,8 @@ export class StackBuilder extends Context.Service<
           postgresResolution,
           dockerServicesEnabled,
         );
-        const hasPostgresInit = postgresResolution.type === "binary";
+        const hasPostgresInit =
+          postgresResolution.type === "binary" || !config.postgres.autoExposeNewTables;
         const initialPostgresDeps = dependsOnPostgres(hasPostgresInit);
         const bootstrapRuntime: DatabaseBootstrapRuntime =
           postgresResolution.type === "binary"
@@ -275,12 +279,21 @@ export class StackBuilder extends Context.Service<
           },
         ];
 
-        if (hasPostgresInit) {
+        if (postgresResolution.type === "binary") {
           defs.push({
             ...makePostgresInitService({
               postgresDir: postgresResolution.path,
               dbPort: config.dbPort,
               autoExposeNewTables: config.postgres.autoExposeNewTables,
+              dependencies: [{ service: "postgres", condition: "healthy" }],
+            }),
+            enabled: true,
+          });
+        } else if (!config.postgres.autoExposeNewTables) {
+          defs.push({
+            ...makePostgresInitServiceDocker({
+              containerName: dockerContainerName("postgres", config.apiPort),
+              dbPort: config.dbPort,
               dependencies: [{ service: "postgres", condition: "healthy" }],
             }),
             enabled: true,
@@ -572,8 +585,8 @@ export class StackBuilder extends Context.Service<
               image: studioImage,
               apiPort: config.apiPort,
               port: config.studio.port,
-              apiUrl: config.studio.apiUrl,
-              publicApiUrl: `http://127.0.0.1:${config.apiPort}`,
+              apiUrl: `http://${serviceHost}:${config.apiPort}`,
+              publicApiUrl: config.studio.apiUrl,
               pgmetaUrl: pgmetaConfig === false ? "" : `http://${serviceHost}:${pgmetaConfig.port}`,
               publishableKey: config.publishableKey,
               secretKey: config.secretKey,

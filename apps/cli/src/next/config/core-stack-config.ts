@@ -1,6 +1,13 @@
-import type { ProjectConfig, ProjectEnvironment } from "@supabase/config";
+import type { LoadedProjectConfig, ProjectConfig, ProjectEnvironment } from "@supabase/config";
 import type { StackConfig } from "@supabase/stack/effect";
 import { Data } from "effect";
+import {
+  effectiveEnvironmentOverride,
+  effectiveString,
+  effectiveStringList,
+  parseGoBoolean,
+  parseGoUint32,
+} from "./local-stack-config-values.ts";
 
 export const excludedStackServices = [
   "auth",
@@ -25,21 +32,6 @@ export class LocalStackConfigError extends Data.TaggedError("LocalStackConfigErr
   readonly paths: ReadonlyArray<string>;
 }> {}
 
-const GO_BOOLEAN_VALUES: Readonly<Record<string, boolean>> = {
-  "1": true,
-  t: true,
-  T: true,
-  TRUE: true,
-  true: true,
-  True: true,
-  "0": false,
-  f: false,
-  F: false,
-  FALSE: false,
-  false: false,
-  False: false,
-};
-
 export function invalidLocalStackConfig(path: string, suggestion: string): LocalStackConfigError {
   return new LocalStackConfigError({
     detail: `Invalid local stack configuration at ${path}.`,
@@ -49,29 +41,23 @@ export function invalidLocalStackConfig(path: string, suggestion: string): Local
 }
 
 function environmentOverride(
-  name: string,
+  path: string,
   configured: string | undefined,
   environment: ProjectEnvironment | null,
+  loaded: LoadedProjectConfig | null,
 ): string | undefined {
-  const value = environment?.values[name];
-  if (value === undefined || value.length === 0) return configured;
-  const match = /^env\(([^)]+)\)$/.exec(value);
-  if (match === null) return value;
-  const referencedName = match[1];
-  if (referencedName === undefined) return value;
-  const referenced = environment?.values[referencedName];
-  return referenced === undefined || referenced.length === 0 ? value : referenced;
+  return effectiveEnvironmentOverride({ loaded, environment, path }) ?? configured;
 }
 
 function resolveBoolean(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
-  readonly envName: string;
   readonly configured: boolean;
   readonly path: string;
 }): boolean {
-  const override = environmentOverride(input.envName, undefined, input.environment);
+  const override = effectiveEnvironmentOverride(input);
   if (override === undefined) return input.configured;
-  const resolved = GO_BOOLEAN_VALUES[override];
+  const resolved = parseGoBoolean(override);
   if (resolved === undefined) {
     throw invalidLocalStackConfig(
       input.path,
@@ -104,13 +90,13 @@ function parseGoPort(value: string): number | undefined {
 }
 
 function resolvePort(input: {
+  readonly loaded: LoadedProjectConfig | null;
   readonly environment: ProjectEnvironment | null;
-  readonly envName: string;
   readonly configured: number | undefined;
   readonly path: string;
   readonly required?: boolean;
 }): number | undefined {
-  const override = environmentOverride(input.envName, undefined, input.environment);
+  const override = effectiveEnvironmentOverride(input);
   const resolved = override === undefined ? input.configured : parseGoPort(override);
   if (resolved === undefined && input.required !== true && override === undefined) return undefined;
   if (
@@ -149,6 +135,7 @@ function resolvePoolMode(value: string): "transaction" | "session" {
 }
 
 export function resolveCoreStackConfig(input: {
+  readonly loadedProjectConfig: LoadedProjectConfig | null;
   readonly projectConfig: ProjectConfig;
   readonly rawDocument?: Readonly<Record<string, unknown>>;
   readonly projectEnvironment: ProjectEnvironment | null;
@@ -158,68 +145,58 @@ export function resolveCoreStackConfig(input: {
   const { projectConfig, projectEnvironment } = input;
   const excluded = new Set(input.exclude);
   const enabled = (params: {
-    readonly envName: string;
     readonly configured: boolean;
     readonly path: string;
     readonly excludedAs: ExcludedStackService;
   }) =>
     resolveBoolean({
+      loaded: input.loadedProjectConfig,
       environment: projectEnvironment,
-      envName: params.envName,
       configured: params.configured,
       path: params.path,
     }) && !excluded.has(params.excludedAs);
 
   const apiEnabled = enabled({
-    envName: "SUPABASE_API_ENABLED",
     configured: projectConfig.api.enabled,
     path: "api.enabled",
     excludedAs: "postgrest",
   });
   const authEnabled = enabled({
-    envName: "SUPABASE_AUTH_ENABLED",
     configured: projectConfig.auth.enabled,
     path: "auth.enabled",
     excludedAs: "auth",
   });
   const realtimeEnabled = enabled({
-    envName: "SUPABASE_REALTIME_ENABLED",
     configured: projectConfig.realtime.enabled,
     path: "realtime.enabled",
     excludedAs: "realtime",
   });
   const storageEnabled = enabled({
-    envName: "SUPABASE_STORAGE_ENABLED",
     configured: projectConfig.storage.enabled,
     path: "storage.enabled",
     excludedAs: "storage",
   });
   const mailpitEnabled = enabled({
-    envName: "SUPABASE_LOCAL_SMTP_ENABLED",
     configured: projectConfig.local_smtp.enabled,
     path: "local_smtp.enabled",
     excludedAs: "mailpit",
   });
   const studioEnabled = enabled({
-    envName: "SUPABASE_STUDIO_ENABLED",
     configured: projectConfig.studio.enabled,
     path: "studio.enabled",
     excludedAs: "studio",
   });
   const analyticsEnabled = enabled({
-    envName: "SUPABASE_ANALYTICS_ENABLED",
     configured: projectConfig.analytics.enabled,
     path: "analytics.enabled",
     excludedAs: "analytics",
   });
   const poolerEnabled = enabled({
-    envName: "SUPABASE_DB_POOLER_ENABLED",
     configured: projectConfig.db.pooler.enabled,
     path: "db.pooler.enabled",
     excludedAs: "pooler",
   });
   const edgeRuntimeEnabled = enabled({
-    envName: "SUPABASE_EDGE_RUNTIME_ENABLED",
     configured: projectConfig.edge_runtime.enabled,
     path: "edge_runtime.enabled",
     excludedAs: "edge-runtime",
@@ -230,72 +207,76 @@ export function resolveCoreStackConfig(input: {
   const imageTransformationEnabled =
     isRecord(imageTransformationSection) &&
     resolveBoolean({
+      loaded: input.loadedProjectConfig,
       environment: projectEnvironment,
-      envName: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
       configured: projectConfig.storage.image_transformation?.enabled ?? false,
       path: "storage.image_transformation.enabled",
     });
 
   const apiPort = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_API_PORT",
     configured: projectConfig.api.port,
     path: "api.port",
     required: apiEnabled,
   });
   const dbPort = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_DB_PORT",
     configured: projectConfig.db.port,
     path: "db.port",
     required: true,
   });
   const studioPort = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_STUDIO_PORT",
     configured: projectConfig.studio.port,
     path: "studio.port",
     required: studioEnabled,
   });
   const mailpitPort = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_LOCAL_SMTP_PORT",
     configured: projectConfig.local_smtp.port,
     path: "local_smtp.port",
     required: mailpitEnabled,
   });
   const mailpitSmtpPort = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_LOCAL_SMTP_SMTP_PORT",
     configured: projectConfig.local_smtp.smtp_port,
     path: "local_smtp.smtp_port",
   });
   const mailpitPop3Port = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_LOCAL_SMTP_POP3_PORT",
     configured: projectConfig.local_smtp.pop3_port,
     path: "local_smtp.pop3_port",
   });
   const analyticsPort = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_ANALYTICS_PORT",
     configured: projectConfig.analytics.port,
     path: "analytics.port",
     required: analyticsEnabled,
   });
   const poolerPort = resolvePort({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_DB_POOLER_PORT",
     configured: projectConfig.db.pooler.port,
     path: "db.pooler.port",
     required: poolerEnabled,
   });
-  const edgeRuntimeInspectorPort = resolvePort({
+  const maxRowsOverride = effectiveEnvironmentOverride({
+    loaded: input.loadedProjectConfig,
     environment: projectEnvironment,
-    envName: "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-    configured: projectConfig.edge_runtime.inspector_port,
-    path: "edge_runtime.inspector_port",
+    path: "api.max_rows",
   });
+  const maxRows =
+    maxRowsOverride === undefined ? projectConfig.api.max_rows : parseGoUint32(maxRowsOverride);
+  if (maxRows === undefined) {
+    throw invalidLocalStackConfig("api.max_rows", "Use a non-negative 32-bit integer.");
+  }
 
   return {
     ...input.base,
@@ -303,16 +284,32 @@ export function resolveCoreStackConfig(input: {
     postgres: serviceConfig(input.base.postgres, { port: dbPort }),
     postgrest: apiEnabled
       ? serviceConfig(input.base.postgrest, {
-          schemas: projectConfig.api.schemas,
-          extraSearchPath: projectConfig.api.extra_search_path,
-          maxRows: projectConfig.api.max_rows,
+          schemas: effectiveStringList({
+            loaded: input.loadedProjectConfig,
+            environment: projectEnvironment,
+            path: "api.schemas",
+            configured: projectConfig.api.schemas,
+          }),
+          extraSearchPath: effectiveStringList({
+            loaded: input.loadedProjectConfig,
+            environment: projectEnvironment,
+            path: "api.extra_search_path",
+            configured: projectConfig.api.extra_search_path,
+          }),
+          maxRows,
         })
       : false,
     auth: authEnabled ? serviceConfig(input.base.auth, {}) : false,
     edgeRuntime: edgeRuntimeEnabled
       ? serviceConfig(input.base.edgeRuntime, {
-          policy: resolveEdgeRuntimePolicy(projectConfig.edge_runtime.policy),
-          inspectorPort: edgeRuntimeInspectorPort,
+          policy: resolveEdgeRuntimePolicy(
+            effectiveString({
+              loaded: input.loadedProjectConfig,
+              environment: projectEnvironment,
+              path: "edge_runtime.policy",
+              configured: projectConfig.edge_runtime.policy,
+            }),
+          ),
         })
       : false,
     realtime: realtimeEnabled
@@ -333,17 +330,23 @@ export function resolveCoreStackConfig(input: {
     mailpit: mailpitEnabled
       ? serviceConfig(input.base.mailpit, {
           port: mailpitPort,
-          ...(mailpitSmtpPort === undefined ? {} : { smtpPort: mailpitSmtpPort }),
-          ...(mailpitPop3Port === undefined ? {} : { pop3Port: mailpitPop3Port }),
+          ...(mailpitSmtpPort === undefined || mailpitSmtpPort === 0
+            ? {}
+            : { smtpPort: mailpitSmtpPort }),
+          ...(mailpitPop3Port === undefined || mailpitPop3Port === 0
+            ? {}
+            : { pop3Port: mailpitPop3Port }),
           adminEmail: environmentOverride(
-            "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
+            "local_smtp.admin_email",
             projectConfig.local_smtp.admin_email,
             projectEnvironment,
+            input.loadedProjectConfig,
           ),
           senderName: environmentOverride(
-            "SUPABASE_LOCAL_SMTP_SENDER_NAME",
+            "local_smtp.sender_name",
             projectConfig.local_smtp.sender_name,
             projectEnvironment,
+            input.loadedProjectConfig,
           ),
         })
       : false,
@@ -354,9 +357,10 @@ export function resolveCoreStackConfig(input: {
             port: studioPort,
             apiUrl:
               environmentOverride(
-                "SUPABASE_STUDIO_API_URL",
+                "studio.api_url",
                 projectConfig.studio.api_url,
                 projectEnvironment,
+                input.loadedProjectConfig,
               ) ?? projectConfig.studio.api_url,
           })
         : false,

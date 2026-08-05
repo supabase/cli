@@ -29,6 +29,11 @@ import {
   flattenLocalStackConfigParity,
   type LocalStackConfigParityDecision,
 } from "./local-stack-config-parity.ts";
+import {
+  effectiveEnvironmentOverride,
+  hasEffectiveEnvironmentOverride,
+  parseGoBoolean,
+} from "./local-stack-config-values.ts";
 
 export { excludedStackServices, LocalStackConfigError, type ExcludedStackService };
 export const startModes = ["native", "auto", "docker"] as const;
@@ -125,23 +130,35 @@ export interface ExplicitLocalStackConfigEntry {
 export function explicitLocalStackConfigEntries(input: {
   readonly projectConfig: ProjectConfig;
   readonly rawDocument?: Readonly<Record<string, unknown>>;
+  readonly loadedProjectConfig?: LoadedProjectConfig | null;
+  readonly projectEnvironment?: ProjectEnvironment | null;
 }): ReadonlyArray<ExplicitLocalStackConfigEntry> {
   return flattenLocalStackConfigParity().flatMap(({ path, decision }) => {
     const source = decision.presence === "raw-document" ? input.rawDocument : input.projectConfig;
-    if (source === undefined) {
-      return [];
-    }
-    return expandPresentValues(source, path.split("."))
-      .filter(({ value }) =>
-        decision.presence === "raw-document" ? true : hasMeaningfulDecodedValue(value),
-      )
-      .map(({ path: explicitPath }) => ({ path: explicitPath, decision }));
+    const configuredEntries =
+      source === undefined
+        ? []
+        : expandPresentValues(source, path.split("."))
+            .filter(({ value }) =>
+              decision.presence === "raw-document" ? true : hasMeaningfulDecodedValue(value),
+            )
+            .map(({ path: explicitPath }) => ({ path: explicitPath, decision }));
+    if (configuredEntries.length > 0 || path.includes("*")) return configuredEntries;
+    return hasEffectiveEnvironmentOverride({
+      loaded: input.loadedProjectConfig ?? null,
+      environment: input.projectEnvironment ?? null,
+      path,
+    })
+      ? [{ path, decision }]
+      : [];
   });
 }
 
 function diagnosticsFor(input: {
   readonly projectConfig: ProjectConfig;
   readonly rawDocument?: Readonly<Record<string, unknown>>;
+  readonly loadedProjectConfig: LoadedProjectConfig | null;
+  readonly projectEnvironment: ProjectEnvironment | null;
 }): {
   readonly warnings: ReadonlyArray<LocalStackWarning>;
   readonly blockingPaths: ReadonlyArray<string>;
@@ -307,12 +324,29 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
           mode: "finite",
           timeoutMs: postgresStartupTimeoutMs + LEGACY_NON_DATABASE_READINESS_BUDGET_MS,
         };
+  const autoExposeOverride = effectiveEnvironmentOverride({
+    loaded: input.loadedProjectConfig,
+    environment: input.projectEnvironment,
+    path: "api.auto_expose_new_tables",
+  });
+  const autoExposeOverrideValue =
+    autoExposeOverride === undefined ? undefined : parseGoBoolean(autoExposeOverride);
+  if (autoExposeOverride !== undefined && autoExposeOverrideValue === undefined) {
+    return yield* Effect.fail(
+      invalidLocalStackConfig(
+        "api.auto_expose_new_tables",
+        "Use a Go-compatible boolean such as true, false, 1, or 0.",
+      ),
+    );
+  }
   const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
-    projectConfig.api.auto_expose_new_tables,
+    autoExposeOverrideValue ?? projectConfig.api.auto_expose_new_tables,
   );
   const diagnostics = diagnosticsFor({
     projectConfig,
     rawDocument: input.loadedProjectConfig?.document,
+    loadedProjectConfig: input.loadedProjectConfig,
+    projectEnvironment: input.projectEnvironment,
   });
   if (diagnostics.blockingPaths.length > 0) {
     return yield* Effect.fail(
@@ -333,6 +367,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
   const coreConfig = yield* Effect.try({
     try: () =>
       resolveCoreStackConfig({
+        loadedProjectConfig: input.loadedProjectConfig,
         projectConfig,
         rawDocument: input.loadedProjectConfig?.document,
         projectEnvironment: input.projectEnvironment,
@@ -390,6 +425,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
   const dataPlaneConfig = yield* Effect.try({
     try: () =>
       resolveDataPlaneStackConfig({
+        loadedProjectConfig: input.loadedProjectConfig,
         projectConfig,
         projectEnvironment: input.projectEnvironment,
         configDir:

@@ -12,6 +12,12 @@ interface PostgresInitOptions {
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
+interface DockerPostgresInitOptions {
+  readonly containerName: string;
+  readonly dbPort: number;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
+}
+
 /**
  * SQL that matches what Studio runs at cloud project creation when "Default privileges for new
  * entities" is off. Revokes the default GRANTs installed by the bundled initial schema so new
@@ -143,3 +149,32 @@ END
     restart: "no",
   };
 };
+
+const dockerPrivilegeInitScript = `
+set -euo pipefail
+
+docker exec -i -e PGPASSWORD=postgres "$1" psql \
+  -p "$2" \
+  -U postgres \
+  -d postgres \
+  -v ON_ERROR_STOP=1 \
+  --no-password \
+  --no-psqlrc <<'EOSQL'
+${REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL}
+EOSQL
+`.trim();
+
+/**
+ * Applies the Docker-only post-start privilege policy that cannot be expressed through the
+ * postgres image's environment. StackBuilder only adds this one-shot phase when automatic Data
+ * API exposure is disabled.
+ */
+export const makePostgresInitServiceDocker = (opts: DockerPostgresInitOptions): ServiceDef => ({
+  name: "postgres-init",
+  command: "bash",
+  args: ["-c", dockerPrivilegeInitScript, "postgres-init", opts.containerName, String(opts.dbPort)],
+  env: {},
+  dependencies: opts.dependencies,
+  supervision: {},
+  restart: "no",
+});

@@ -36,6 +36,14 @@ export interface LoadedProjectConfig {
    */
   readonly appliedRemote?: string;
   /**
+   * Config paths explicitly supplied by the applied remote override. Go applies
+   * these with `viper.Set`, so they take precedence over `SUPABASE_*`
+   * environment bindings. Paths, rather than values, are retained here so
+   * downstream presence and precedence checks cannot accidentally expose
+   * secrets.
+   */
+  readonly remoteOverridePaths?: ReadonlyArray<string>;
+  /**
    * The top-level `auth.external.{linkedin,slack}` sub-objects that were stripped from
    * {@link document} before it was returned (provider id → the removed object), keyed by
    * provider id. Empty when neither deprecated block was present. See
@@ -273,6 +281,16 @@ const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<
  * `remotes` subtree) is used only for {@link checkRemoteProjectIdFormat} — see
  * its doc comment for why that check needs the resolved value instead.
  */
+interface AppliedRemoteOverride {
+  readonly document: Record<string, unknown>;
+  readonly appliedRemote: string | undefined;
+  readonly remoteOverridePaths: ReadonlyArray<string>;
+}
+
+function withoutAppliedRemote(document: Record<string, unknown>): AppliedRemoteOverride {
+  return { document, appliedRemote: undefined, remoteOverridePaths: [] };
+}
+
 const applyRemoteOverride = Effect.fnUntraced(function* (
   rawDocument: Record<string, unknown>,
   interpolatedRemotes: Record<string, unknown> | undefined,
@@ -281,7 +299,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
 ) {
   const remotes = rawDocument["remotes"];
   if (!isObject(remotes)) {
-    return { document: rawDocument, appliedRemote: undefined as string | undefined };
+    return withoutAppliedRemote(rawDocument);
   }
   if (goViperCompat) {
     yield* checkDuplicateRemoteProjectIds(remotes);
@@ -293,7 +311,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     return projectRef !== undefined && projectId === projectRef;
   })?.[0];
   if (name === undefined) {
-    return { document: rawDocument, appliedRemote: undefined as string | undefined };
+    return withoutAppliedRemote(rawDocument);
   }
   const remoteSubtree = remotes[name];
   let merged = isObject(remoteSubtree)
@@ -303,8 +321,25 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     merged = withDbSeedDisabled(merged);
   }
   delete merged["remotes"];
-  return { document: merged, appliedRemote: name };
+  const remoteOverridePaths = isObject(remoteSubtree) ? collectConfiguredPaths(remoteSubtree) : [];
+  return {
+    document: merged,
+    appliedRemote: name,
+    remoteOverridePaths: remoteSetsDbSeedEnabled(isObject(remoteSubtree) ? remoteSubtree : {})
+      ? remoteOverridePaths
+      : [...remoteOverridePaths, "db.seed.enabled"],
+  } satisfies AppliedRemoteOverride;
 });
+
+function collectConfiguredPaths(
+  value: Readonly<Record<string, unknown>>,
+  prefix = "",
+): ReadonlyArray<string> {
+  return Object.entries(value).flatMap(([key, child]) => {
+    const path = prefix === "" ? key : `${prefix}.${key}`;
+    return isObject(child) ? [path, ...collectConfiguredPaths(child, path)] : [path];
+  });
+}
 
 function isEqualValue(left: unknown, right: unknown): boolean {
   if (Array.isArray(left) && Array.isArray(right)) {
@@ -748,6 +783,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // checks only run when `goViperCompat` is set — see `applyRemoteOverride`.
   let documentForDecode: unknown = normalized;
   let appliedRemote: string | undefined;
+  let remoteOverridePaths: ReadonlyArray<string> = [];
   if (isObject(normalized)) {
     const resolved = yield* applyRemoteOverride(
       normalized,
@@ -757,6 +793,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     );
     documentForDecode = resolved.document;
     appliedRemote = resolved.appliedRemote;
+    remoteOverridePaths = resolved.remoteOverridePaths;
   }
 
   // The merge above ran on the raw document, so any `env(...)` reference in
@@ -807,6 +844,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     ignoredPaths: [],
     document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
     appliedRemote,
+    remoteOverridePaths,
     removedDeprecatedExternalProviders: removedProviders,
   } satisfies LoadedProjectConfig;
 });

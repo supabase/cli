@@ -1,4 +1,8 @@
-import { ProjectConfigSchema, type ProjectEnvironment } from "@supabase/config";
+import {
+  ProjectConfigSchema,
+  type LoadedProjectConfig,
+  type ProjectEnvironment,
+} from "@supabase/config";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { resolveDataPlaneStackConfig } from "./data-plane-stack-config.ts";
@@ -47,6 +51,7 @@ describe("resolveDataPlaneStackConfig", () => {
     });
 
     const resolved = resolveDataPlaneStackConfig({
+      loadedProjectConfig: null,
       projectConfig,
       projectEnvironment: environment({
         SUPABASE_REALTIME_IP_VERSION: "IPv6",
@@ -97,6 +102,7 @@ describe("resolveDataPlaneStackConfig", () => {
   it("preserves exclusions while still validating environment overrides", () => {
     const projectConfig = decodeProjectConfig({ analytics: { enabled: false } });
     const resolved = resolveDataPlaneStackConfig({
+      loadedProjectConfig: null,
       projectConfig,
       projectEnvironment: null,
       configDir: "/project/supabase",
@@ -113,6 +119,7 @@ describe("resolveDataPlaneStackConfig", () => {
     const privateValue = "private-invalid-transport";
     expect(() =>
       resolveDataPlaneStackConfig({
+        loadedProjectConfig: null,
         projectConfig,
         projectEnvironment: environment({ SUPABASE_REALTIME_IP_VERSION: privateValue }),
         configDir: "/project/supabase",
@@ -121,6 +128,7 @@ describe("resolveDataPlaneStackConfig", () => {
     ).toThrowError(expect.objectContaining({ paths: ["realtime.ip_version"] }));
     try {
       resolveDataPlaneStackConfig({
+        loadedProjectConfig: null,
         projectConfig,
         projectEnvironment: environment({ SUPABASE_REALTIME_IP_VERSION: privateValue }),
         configDir: "/project/supabase",
@@ -129,6 +137,84 @@ describe("resolveDataPlaneStackConfig", () => {
     } catch (error) {
       expect(JSON.stringify(error)).not.toContain(privateValue);
     }
+  });
+
+  it("keeps selected remote values ahead of legacy environment bindings", () => {
+    const document = {
+      realtime: { ip_version: "IPv6", max_header_length: 8192 },
+      storage: { file_size_limit: "5MiB", s3_protocol: { enabled: false } },
+      analytics: {
+        enabled: true,
+        backend: "bigquery",
+        gcp_project_id: "remote-project",
+        gcp_project_number: "123",
+        gcp_jwt_path: "remote.json",
+      },
+      studio: { openai_api_key: "remote-openai" },
+      db: { pooler: { pool_mode: "session", default_pool_size: 32, max_client_conn: 128 } },
+    };
+    const projectConfig = decodeProjectConfig(document);
+    const remoteOverridePaths = [
+      "realtime.ip_version",
+      "realtime.max_header_length",
+      "storage.file_size_limit",
+      "storage.s3_protocol.enabled",
+      "analytics.enabled",
+      "analytics.backend",
+      "analytics.gcp_project_id",
+      "analytics.gcp_project_number",
+      "analytics.gcp_jwt_path",
+      "studio.openai_api_key",
+      "db.pooler.pool_mode",
+      "db.pooler.default_pool_size",
+      "db.pooler.max_client_conn",
+    ];
+    const loaded: LoadedProjectConfig = {
+      path: "/project/supabase/config.toml",
+      format: "toml",
+      config: projectConfig,
+      document,
+      appliedRemote: "preview",
+      remoteOverridePaths,
+      ignoredPaths: [],
+    };
+
+    const resolved = resolveDataPlaneStackConfig({
+      loadedProjectConfig: loaded,
+      projectConfig,
+      projectEnvironment: environment({
+        SUPABASE_REALTIME_IP_VERSION: "invalid-private-value",
+        SUPABASE_REALTIME_MAX_HEADER_LENGTH: "invalid-private-value",
+        SUPABASE_STORAGE_FILE_SIZE_LIMIT: "invalid-private-value",
+        SUPABASE_STORAGE_S3_PROTOCOL_ENABLED: "invalid-private-value",
+        SUPABASE_ANALYTICS_ENABLED: "false",
+        SUPABASE_ANALYTICS_BACKEND: "postgres",
+        SUPABASE_ANALYTICS_GCP_PROJECT_ID: "environment-project",
+        SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER: "999",
+        SUPABASE_ANALYTICS_GCP_JWT_PATH: "environment.json",
+        SUPABASE_STUDIO_OPENAI_API_KEY: "environment-openai",
+        SUPABASE_DB_POOLER_POOL_MODE: "invalid-private-value",
+        SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE: "invalid-private-value",
+        SUPABASE_DB_POOLER_MAX_CLIENT_CONN: "invalid-private-value",
+      }),
+      configDir: "/project/supabase",
+      base: { realtime: {}, storage: {}, analytics: {}, studio: {}, pooler: {} },
+    });
+
+    expect(resolved).toMatchObject({
+      realtime: { ipVersion: "IPv6", maxHeaderLength: 8192 },
+      storage: { fileSizeLimit: "5242880", s3ProtocolEnabled: false },
+      analytics: {
+        backend: "bigquery",
+        gcp: {
+          projectId: "remote-project",
+          projectNumber: "123",
+          credentialsPath: "/project/supabase/remote.json",
+        },
+      },
+      studio: { openAiApiKey: "remote-openai" },
+      pooler: { mode: "session", defaultPoolSize: 32, maxClientConn: 128 },
+    });
   });
 
   it("reports invalid sizes and missing BigQuery fields by path only", () => {
@@ -149,6 +235,7 @@ describe("resolveDataPlaneStackConfig", () => {
     for (const scenario of scenarios) {
       try {
         resolveDataPlaneStackConfig({
+          loadedProjectConfig: null,
           projectConfig,
           projectEnvironment: environment(scenario.values),
           configDir: "/project/supabase",

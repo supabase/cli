@@ -336,6 +336,82 @@ describe("StackBuilder", () => {
     },
   );
 
+  it.effect(
+    "gates Docker database consumers on privilege initialization when auto expose is off",
+    () => {
+      const resolver = mockBinaryResolver();
+      const layer = builderLayer(resolver);
+
+      return Effect.gen(function* () {
+        const builder = yield* StackBuilder;
+        const preparation = yield* StackPreparation;
+        const { graph, serviceProjection } = yield* prepareAndBuild(builder, preparation, {
+          ...dockerConfig,
+          postgres: { ...dockerConfig.postgres, autoExposeNewTables: false },
+        });
+
+        const service = (name: string) =>
+          graph.startOrder.find((definition) => definition.name === name);
+        const names = graph.startOrder.map(({ name }) => name);
+
+        expect(names.indexOf("postgres")).toBeLessThan(names.indexOf("postgres-init"));
+        expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("postgrest"));
+        expect(service("postgres-init")?.dependencies).toEqual([
+          { service: "postgres", condition: "healthy" },
+        ]);
+        expect(service("postgres-init")?.args).toEqual(
+          expect.arrayContaining(["supabase-postgres-3000", "5432"]),
+        );
+        expect(service("postgrest")?.dependencies).toEqual([
+          { service: "postgres-init", condition: "completed" },
+        ]);
+        expect(service("auth")?.dependencies).toEqual([
+          { service: "postgres-init", condition: "completed" },
+        ]);
+        expect(serviceProjection.get("postgres-init")).toEqual({
+          visibility: "internal",
+          owner: "postgres",
+          ownerStatusWhileActive: "Initializing",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("runs Docker seed bootstrap after privilege initialization", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, {
+        ...dockerConfig,
+        postgres: { ...dockerConfig.postgres, autoExposeNewTables: false },
+        databaseBootstrap: {
+          seedFiles: [
+            {
+              path: "/project/supabase/seed.sql",
+              historyPath: "supabase/seed.sql",
+              checksum: "a".repeat(64),
+            },
+          ],
+        },
+      });
+
+      const service = (name: string) =>
+        graph.startOrder.find((definition) => definition.name === name);
+      expect(service("postgres-seed")?.dependencies).toEqual([
+        { service: "postgres-init", condition: "completed" },
+      ]);
+      expect(service("postgrest")?.dependencies).toEqual([
+        { service: "postgres-seed", condition: "completed" },
+      ]);
+      expect(service("auth")?.dependencies).toEqual([
+        { service: "postgres-seed", condition: "completed" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("uses docker fallback when auth binary not found", () => {
     const resolver = mockBinaryResolver({ failServices: ["auth"] });
     const layer = builderLayer(resolver);
@@ -513,6 +589,39 @@ describe("StackBuilder", () => {
       expect(args).toContain(`${basePorts.mailpitSmtpPort}:1025`);
       expect(args).toContain(`${basePorts.mailpitPop3Port}:1110`);
       expect(args).not.toContain(`127.0.0.1:${basePorts.mailpitSmtpPort}:1025`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("separates Studio's container API URL from its public browser URL", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+    const publicApiUrl = "https://public.example.test";
+    const config = {
+      ...dockerConfig,
+      postgrest: false,
+      auth: false,
+      pgmeta: {
+        port: basePorts.pgmetaPort,
+        version: DEFAULT_VERSIONS.pgmeta,
+      },
+      studio: {
+        port: basePorts.studioPort,
+        version: DEFAULT_VERSIONS.studio,
+        apiUrl: publicApiUrl,
+      },
+    } satisfies ResolvedStackConfig;
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, config);
+      const args = graph.startOrder.find(({ name }) => name === "studio")?.args ?? [];
+      const internalUrl = args.find((arg) => arg.startsWith("SUPABASE_URL="));
+
+      expect(args).toContain(`SUPABASE_PUBLIC_URL=${publicApiUrl}`);
+      expect(internalUrl).toContain(`:${basePorts.apiPort}`);
+      expect(internalUrl).not.toContain(publicApiUrl);
+      expect(internalUrl).not.toContain("127.0.0.1");
     }).pipe(Effect.provide(layer));
   });
 

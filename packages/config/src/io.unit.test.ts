@@ -1416,6 +1416,9 @@ enabled = false
     try {
       const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.appliedRemote).toBe("preview");
+      expect(loaded!.remoteOverridePaths).toEqual(
+        expect.arrayContaining(["project_id", "api", "api.schemas", "api.max_rows"]),
+      );
       // remote block's project_id overrides the base
       expect(loaded!.config.project_id).toBe(PREVIEW_REF);
       // remote scalar wins

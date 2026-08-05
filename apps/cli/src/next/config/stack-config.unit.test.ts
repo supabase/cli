@@ -1,4 +1,8 @@
-import { ProjectConfigSchema, type LoadedProjectConfig } from "@supabase/config";
+import {
+  ProjectConfigSchema,
+  type LoadedProjectConfig,
+  type ProjectEnvironment,
+} from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
@@ -16,13 +20,36 @@ const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const resolveLocalStackLaunchWithBun = (input: Parameters<typeof resolveLocalStackLaunch>[0]) =>
   resolveLocalStackLaunch(input).pipe(Effect.provide(BunServices.layer));
 
-function loaded(document: Record<string, unknown>): LoadedProjectConfig {
+function loaded(
+  document: Record<string, unknown>,
+  options: {
+    readonly appliedRemote?: string;
+    readonly remoteOverridePaths?: ReadonlyArray<string>;
+  } = {},
+): LoadedProjectConfig {
   return {
     path: "/project/supabase/config.toml",
     format: "toml",
     config: decodeProjectConfig(document),
     document,
+    appliedRemote: options.appliedRemote,
+    remoteOverridePaths: options.remoteOverridePaths,
     ignoredPaths: [],
+  };
+}
+
+function environment(values: Readonly<Record<string, string>>): ProjectEnvironment {
+  return {
+    paths: {
+      projectRoot: "/project",
+      supabaseDir: "/project/supabase",
+      configPath: "/project/supabase/config.toml",
+      envPath: "/project/supabase/.env",
+      envLocalPath: "/project/supabase/.env.local",
+    },
+    values,
+    loadedPaths: [],
+    sources: {},
   };
 }
 
@@ -172,6 +199,91 @@ describe("resolveLocalStackLaunch", () => {
     expect(result.stackConfig.postgrest).toBe(false);
   });
 
+  it("maps legacy API and Edge Runtime environment bindings with Go parsing", async () => {
+    const result = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        projectEnvironment: environment({
+          SUPABASE_API_SCHEMAS: "public,private_api",
+          SUPABASE_API_EXTRA_SEARCH_PATH: "public,extensions",
+          SUPABASE_API_MAX_ROWS: "0x100",
+          SUPABASE_API_AUTO_EXPOSE_NEW_TABLES: "true",
+          SUPABASE_EDGE_RUNTIME_POLICY: "oneshot",
+        }),
+      }),
+    );
+
+    expect(result.stackConfig).toMatchObject({
+      postgrest: {
+        schemas: ["public", "private_api"],
+        extraSearchPath: ["public", "extensions"],
+        maxRows: 256,
+      },
+      postgres: { autoExposeNewTables: true },
+      edgeRuntime: { policy: "oneshot" },
+    });
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "deprecated",
+        paths: ["api.auto_expose_new_tables"],
+      }),
+    );
+  });
+
+  it("keeps selected remote core values ahead of legacy environment bindings", async () => {
+    const document = {
+      api: {
+        schemas: ["remote_api"],
+        extra_search_path: ["remote_extensions"],
+        max_rows: 321,
+        auto_expose_new_tables: false,
+      },
+      edge_runtime: { policy: "per_worker" },
+      local_smtp: { enabled: true, port: 6104, smtp_port: 6105, pop3_port: 6106 },
+      studio: { api_url: "https://remote.example.test" },
+    };
+    const result = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded(document, {
+          appliedRemote: "preview",
+          remoteOverridePaths: [
+            "api.schemas",
+            "api.extra_search_path",
+            "api.max_rows",
+            "api.auto_expose_new_tables",
+            "edge_runtime.policy",
+            "local_smtp.smtp_port",
+            "local_smtp.pop3_port",
+            "studio.api_url",
+          ],
+        }),
+        projectEnvironment: environment({
+          SUPABASE_API_SCHEMAS: "environment_api",
+          SUPABASE_API_EXTRA_SEARCH_PATH: "environment_extensions",
+          SUPABASE_API_MAX_ROWS: "999",
+          SUPABASE_API_AUTO_EXPOSE_NEW_TABLES: "true",
+          SUPABASE_EDGE_RUNTIME_POLICY: "invalid-private-value",
+          SUPABASE_LOCAL_SMTP_SMTP_PORT: "0",
+          SUPABASE_LOCAL_SMTP_POP3_PORT: "0",
+          SUPABASE_STUDIO_API_URL: "https://environment.example.test",
+        }),
+      }),
+    );
+
+    expect(result.stackConfig).toMatchObject({
+      postgrest: {
+        schemas: ["remote_api"],
+        extraSearchPath: ["remote_extensions"],
+        maxRows: 321,
+      },
+      postgres: { autoExposeNewTables: false },
+      edgeRuntime: { policy: "per_worker" },
+      mailpit: { smtpPort: 6105, pop3Port: 6106 },
+      studio: { apiUrl: "https://remote.example.test" },
+    });
+  });
+
   it("reports malformed topology overrides by path without retaining their value", async () => {
     const exit = await Effect.runPromise(
       resolveLocalStackLaunchWithBun({
@@ -211,6 +323,26 @@ describe("resolveLocalStackLaunch", () => {
         }),
       }),
     );
+    const disabledFromConfig = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({
+          local_smtp: { enabled: true, port: 6104, smtp_port: 0, pop3_port: 0 },
+        }),
+      }),
+    );
+    const disabledFromEnvironment = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({
+          local_smtp: { enabled: true, port: 6104, smtp_port: 6105, pop3_port: 6106 },
+        }),
+        projectEnvironment: environment({
+          SUPABASE_LOCAL_SMTP_SMTP_PORT: "0",
+          SUPABASE_LOCAL_SMTP_POP3_PORT: "0",
+        }),
+      }),
+    );
 
     expect(omitted.stackConfig.mailpit).toEqual(
       expect.not.objectContaining({ smtpPort: expect.anything(), pop3Port: expect.anything() }),
@@ -218,6 +350,11 @@ describe("resolveLocalStackLaunch", () => {
     expect(explicit.stackConfig.mailpit).toEqual(
       expect.objectContaining({ port: 6104, smtpPort: 6105, pop3Port: 6106 }),
     );
+    for (const disabled of [disabledFromConfig, disabledFromEnvironment]) {
+      expect(disabled.stackConfig.mailpit).toEqual(
+        expect.not.objectContaining({ smtpPort: expect.anything(), pop3Port: expect.anything() }),
+      );
+    }
   });
 
   it("composes project config, paths, flags, versions, and finite readiness", async () => {
@@ -317,6 +454,35 @@ describe("resolveLocalStackLaunch", () => {
     expect(JSON.stringify(exit)).not.toContain("third-private-value");
   });
 
+  it("blocks environment-only unsupported settings without retaining values", async () => {
+    const exit = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        projectEnvironment: environment({
+          SUPABASE_API_TLS_ENABLED: "true",
+          SUPABASE_DB_MAJOR_VERSION: "private-major-version",
+        }),
+      }).pipe(Effect.exit),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain("api.tls.enabled");
+    expect(JSON.stringify(exit)).toContain("db.major_version");
+    expect(JSON.stringify(exit)).not.toContain("private-major-version");
+  });
+
+  it("blocks a bare Storage bucket declaration", async () => {
+    const exit = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({ storage: { buckets: { images: {} } } }),
+      }).pipe(Effect.exit),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain("storage.buckets.images");
+  });
+
   it("warns on explicit warning fields using paths only", async () => {
     const result = await Effect.runPromise(
       resolveLocalStackLaunchWithBun({
@@ -335,5 +501,28 @@ describe("resolveLocalStackLaunch", () => {
       }),
     ]);
     expect(JSON.stringify(result.warnings)).not.toContain("do-not-leak");
+  });
+
+  it("warns for environment-only experimental fields and ignores ordinary inspector config", async () => {
+    const result = await Effect.runPromise(
+      resolveLocalStackLaunchWithBun({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({ edge_runtime: { inspector_port: 9999 } }),
+        projectEnvironment: environment({
+          SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "private-experimental-version",
+        }),
+      }),
+    );
+
+    expect(result.stackConfig.edgeRuntime).not.toEqual(
+      expect.objectContaining({ inspectorPort: 9999 }),
+    );
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "unsupported",
+        paths: ["experimental.orioledb_version"],
+      }),
+    );
+    expect(JSON.stringify(result.warnings)).not.toContain("private-experimental-version");
   });
 });

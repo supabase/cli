@@ -33,10 +33,18 @@ export type LocalStackConfigParityDecision =
     };
 
 export interface LocalStackConfigParitySection {
-  readonly [field: string]: LocalStackConfigParityDecision | LocalStackConfigParitySection;
+  readonly [field: string]: Node;
 }
 
-type Node = LocalStackConfigParityDecision | LocalStackConfigParitySection;
+interface LocalStackConfigParityBranch {
+  readonly decision: LocalStackConfigParityDecision;
+  readonly children: LocalStackConfigParitySection;
+}
+
+type Node =
+  | LocalStackConfigParityDecision
+  | LocalStackConfigParityBranch
+  | LocalStackConfigParitySection;
 
 const unsupportedRuntimeField: LocalStackConfigParityDecision = {
   _tag: "unsupported-blocking",
@@ -182,6 +190,20 @@ const unsupportedFutureRuntimeField: LocalStackConfigParityDecision = {
   presence: "raw-document",
   rationale:
     "This experimental field has no stable local stack contract yet; an explicit value must be surfaced rather than silently ignored.",
+};
+
+const ordinaryStartInspectorField: LocalStackConfigParityDecision = {
+  _tag: "not-applicable",
+  presence: "raw-document",
+  rationale:
+    "Legacy ordinary start never enables Edge Runtime inspector mode; the field belongs to an explicit functions debugging workflow rather than stack startup.",
+};
+
+const unsupportedStorageBucket: LocalStackConfigParityDecision = {
+  _tag: "unsupported-blocking",
+  presence: "raw-document",
+  rationale:
+    "Declaring a bucket changes legacy startup behavior even when every bucket property uses its default, but the next stack does not seed Storage buckets yet.",
 };
 
 const authExternalProviderParity = {
@@ -493,7 +515,7 @@ const localStackConfigParity = {
   edge_runtime: {
     enabled: mappedCoreTopologyField,
     policy: mappedCoreTopologyField,
-    inspector_port: mappedCoreTopologyField,
+    inspector_port: ordinaryStartInspectorField,
     deno_version: unsupportedRuntimeField,
     secrets: mappedStartFunctionsEnvironment,
   } satisfies Record<keyof ProjectConfig["edge_runtime"], Node>,
@@ -521,11 +543,14 @@ const localStackConfigParity = {
     } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["image_transformation"]>, Node>,
     buckets: {
       "*": {
-        public: unsupportedRuntimeField,
-        file_size_limit: unsupportedRuntimeField,
-        allowed_mime_types: unsupportedRuntimeField,
-        objects_path: unsupportedRuntimeField,
-      } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["buckets"]>[string], Node>,
+        decision: unsupportedStorageBucket,
+        children: {
+          public: unsupportedRuntimeField,
+          file_size_limit: unsupportedRuntimeField,
+          allowed_mime_types: unsupportedRuntimeField,
+          objects_path: unsupportedRuntimeField,
+        } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["buckets"]>[string], Node>,
+      } satisfies LocalStackConfigParityBranch,
     },
     s3_protocol: {
       enabled: mappedCoreTopologyField,
@@ -580,6 +605,10 @@ function isDecision(node: Node): node is LocalStackConfigParityDecision {
   return "_tag" in node;
 }
 
+function isBranch(node: Node): node is LocalStackConfigParityBranch {
+  return "decision" in node && "children" in node;
+}
+
 /** Flattens the nested, compile-checked ledger for diagnostics and tests. */
 export function flattenLocalStackConfigParity(
   section: LocalStackConfigParitySection = localStackConfigParity,
@@ -587,8 +616,13 @@ export function flattenLocalStackConfigParity(
 ): ReadonlyArray<LocalStackConfigParityEntry> {
   return Object.entries(section).flatMap(([field, node]) => {
     const path = prefix === "" ? field : `${prefix}.${field}`;
-    return isDecision(node)
-      ? [{ path, decision: node }]
-      : flattenLocalStackConfigParity(node, path);
+    if (isDecision(node)) return [{ path, decision: node }];
+    if (isBranch(node)) {
+      return [
+        { path, decision: node.decision },
+        ...flattenLocalStackConfigParity(node.children, path),
+      ];
+    }
+    return flattenLocalStackConfigParity(node, path);
   });
 }
