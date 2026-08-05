@@ -579,9 +579,7 @@ describe("docker-backed auxiliary services", () => {
     const def = makeMailpitServiceDocker({
       image: dockerImageForService("mailpit", DEFAULT_VERSIONS.mailpit),
       apiPort: API_PORT,
-      webPort: 54323,
-      smtpPort: 54324,
-      pop3Port: 54325,
+      healthPort: 54323,
       networkArgs: [
         ...LINUX_HOST_GATEWAY_ARGS,
         "-p",

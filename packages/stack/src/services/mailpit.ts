@@ -5,11 +5,15 @@ import { stackHealthBudgets } from "./health-budgets.ts";
 interface DockerMailpitOptions {
   readonly image: string;
   readonly apiPort: number;
-  readonly webPort: number;
-  readonly smtpPort: number;
-  readonly pop3Port: number;
+  readonly healthPort: number;
   readonly networkArgs: ReadonlyArray<string>;
 }
+
+export const mailpitContainerPorts = {
+  web: 8025,
+  smtp: 1025,
+  pop3: 1110,
+} as const;
 
 const mailpitHealthCheck = (port: number): ServiceDef["healthCheck"] =>
   hostHttpHealthCheck(port, "/readyz", {
@@ -23,10 +27,10 @@ export const makeMailpitServiceDocker = (opts: DockerMailpitOptions): ServiceDef
     image: opts.image,
     networkArgs: opts.networkArgs,
     env: {
-      MP_UI_BIND_ADDR: `0.0.0.0:${opts.webPort}`,
-      MP_SMTP_BIND_ADDR: `0.0.0.0:${opts.smtpPort}`,
-      MP_POP3_BIND_ADDR: `0.0.0.0:${opts.pop3Port}`,
+      MP_UI_BIND_ADDR: `0.0.0.0:${mailpitContainerPorts.web}`,
+      MP_SMTP_BIND_ADDR: `0.0.0.0:${mailpitContainerPorts.smtp}`,
+      MP_POP3_BIND_ADDR: `0.0.0.0:${mailpitContainerPorts.pop3}`,
       MP_SMTP_DISABLE_RDNS: "true",
     },
-    healthCheck: mailpitHealthCheck(opts.webPort),
+    healthCheck: mailpitHealthCheck(opts.healthPort),
   });

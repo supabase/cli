@@ -44,6 +44,7 @@ const StackLaunchSchema = Schema.Struct({
   excludedServices: Schema.Array(
     Schema.Literals([
       "auth",
+      "edge-runtime",
       "postgrest",
       "realtime",
       "storage",

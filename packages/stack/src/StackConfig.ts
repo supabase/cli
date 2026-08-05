@@ -111,8 +111,10 @@ export interface ImgproxyConfig {
 
 export interface MailpitConfig {
   readonly port?: number;
-  readonly smtpPort?: number;
-  readonly pop3Port?: number;
+  /** Host port to publish for SMTP clients, or false to keep SMTP stack-internal. */
+  readonly smtpPort?: number | false;
+  /** Host port to publish for POP3 clients, or false to keep POP3 stack-internal. */
+  readonly pop3Port?: number | false;
   readonly version?: string;
   readonly adminEmail?: string;
   readonly senderName?: string;
@@ -240,8 +242,11 @@ export interface ResolvedImgproxyConfig {
 
 export interface ResolvedMailpitConfig {
   readonly port: number;
-  readonly smtpPort: number;
-  readonly pop3Port: number;
+  /** Private loopback bridge used by native or Docker Auth to reach Mailpit. */
+  readonly smtpTransportPort: number;
+  /** Optional user-facing host publications. */
+  readonly smtpHostPort: number | false;
+  readonly pop3HostPort: number | false;
   readonly version: string;
   readonly adminEmail: string;
   readonly senderName: string;

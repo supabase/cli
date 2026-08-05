@@ -110,8 +110,12 @@ const stackInfoFor = (config: ResolvedStackConfig): StackInfo => {
         ? {}
         : {
             mailpit: `http://127.0.0.1:${config.mailpit.port}`,
-            mailpit_smtp: `smtp://127.0.0.1:${config.mailpit.smtpPort}`,
-            mailpit_pop3: `pop3://127.0.0.1:${config.mailpit.pop3Port}`,
+            ...(config.mailpit.smtpHostPort === false
+              ? {}
+              : { mailpit_smtp: `smtp://127.0.0.1:${config.mailpit.smtpHostPort}` }),
+            ...(config.mailpit.pop3HostPort === false
+              ? {}
+              : { mailpit_pop3: `pop3://127.0.0.1:${config.mailpit.pop3HostPort}` }),
           }),
       ...(config.pgmeta === false ? {} : { pgmeta: `${apiUrl}/pg` }),
       ...(config.studio === false ? {} : { studio: `http://127.0.0.1:${config.studio.port}` }),

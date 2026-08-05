@@ -61,8 +61,12 @@ export const dockerPortMapArgs = (
   mappings: ReadonlyArray<{
     readonly host: number;
     readonly container: number;
+    readonly hostAddress?: string;
   }>,
 ): readonly string[] => [
   ...dockerHostGatewayArgs(os),
-  ...mappings.flatMap(({ host, container }) => ["-p", `${host}:${container}`]),
+  ...mappings.flatMap(({ host, container, hostAddress }) => [
+    "-p",
+    hostAddress === undefined ? `${host}:${container}` : `${hostAddress}:${host}:${container}`,
+  ]),
 ];

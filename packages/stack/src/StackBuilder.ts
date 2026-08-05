@@ -17,7 +17,7 @@ import {
   makeEdgeRuntimeServiceNative,
 } from "./services/edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
-import { makeMailpitServiceDocker } from "./services/mailpit.ts";
+import { mailpitContainerPorts, makeMailpitServiceDocker } from "./services/mailpit.ts";
 import { makePgmetaServiceDocker } from "./services/pgmeta.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./services/pooler.ts";
 import { makePostgresInitService } from "./services/postgres-init.ts";
@@ -325,7 +325,7 @@ export class StackBuilder extends Context.Service<
                   jwtExpiry: config.auth.jwtExpiry,
                   externalUrl: config.auth.externalUrl,
                   smtpHost: config.mailpit !== false ? serviceHost : undefined,
-                  smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
+                  smtpPort: config.mailpit !== false ? config.mailpit.smtpTransportPort : undefined,
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
                   dependencies: postgresDeps,
@@ -340,7 +340,7 @@ export class StackBuilder extends Context.Service<
                   jwtExpiry: config.auth.jwtExpiry,
                   externalUrl: config.auth.externalUrl,
                   smtpHost: config.mailpit !== false ? serviceHost : undefined,
-                  smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
+                  smtpPort: config.mailpit !== false ? config.mailpit.smtpTransportPort : undefined,
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
                   networkArgs: dockerNetworkArgs(platform.os, [config.auth.port]),
@@ -385,13 +385,31 @@ export class StackBuilder extends Context.Service<
             ...makeMailpitServiceDocker({
               image: mailpitImage,
               apiPort: config.apiPort,
-              webPort: config.mailpit.port,
-              smtpPort: config.mailpit.smtpPort,
-              pop3Port: config.mailpit.pop3Port,
-              networkArgs: dockerNetworkArgs(platform.os, [
-                config.mailpit.port,
-                config.mailpit.smtpPort,
-                config.mailpit.pop3Port,
+              healthPort: config.mailpit.port,
+              networkArgs: dockerPortMapArgs(platform.os, [
+                { host: config.mailpit.port, container: mailpitContainerPorts.web },
+                ...(config.mailpit.smtpHostPort === false
+                  ? [
+                      {
+                        host: config.mailpit.smtpTransportPort,
+                        container: mailpitContainerPorts.smtp,
+                        hostAddress: "127.0.0.1",
+                      },
+                    ]
+                  : [
+                      {
+                        host: config.mailpit.smtpHostPort,
+                        container: mailpitContainerPorts.smtp,
+                      },
+                    ]),
+                ...(config.mailpit.pop3HostPort === false
+                  ? []
+                  : [
+                      {
+                        host: config.mailpit.pop3HostPort,
+                        container: mailpitContainerPorts.pop3,
+                      },
+                    ]),
               ]),
             }),
             enabled: true,

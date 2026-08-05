@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 12,
-      "not-applicable": 9,
-      "unsupported-blocking": 334,
+      mapped: 42,
+      "not-applicable": 10,
+      "unsupported-blocking": 303,
       "unsupported-warning": 6,
     });
   });
@@ -31,8 +31,23 @@ describe("localStackConfigParity", () => {
         .map(({ path }) => path)
         .sort(),
     ).toEqual([
+      "analytics.backend",
+      "analytics.enabled",
+      "analytics.port",
       "api.auto_expose_new_tables",
+      "api.enabled",
+      "api.extra_search_path",
+      "api.max_rows",
+      "api.port",
+      "api.schemas",
+      "auth.enabled",
       "db.health_timeout",
+      "db.pooler.default_pool_size",
+      "db.pooler.enabled",
+      "db.pooler.max_client_conn",
+      "db.pooler.pool_mode",
+      "db.pooler.port",
+      "db.port",
       "edge_runtime.enabled",
       "edge_runtime.inspector_port",
       "edge_runtime.policy",
@@ -43,6 +58,21 @@ describe("localStackConfigParity", () => {
       "functions.*.import_map",
       "functions.*.static_files",
       "functions.*.verify_jwt",
+      "local_smtp.admin_email",
+      "local_smtp.enabled",
+      "local_smtp.pop3_port",
+      "local_smtp.port",
+      "local_smtp.sender_name",
+      "local_smtp.smtp_port",
+      "realtime.enabled",
+      "realtime.max_header_length",
+      "storage.enabled",
+      "storage.file_size_limit",
+      "storage.image_transformation.enabled",
+      "storage.s3_protocol.enabled",
+      "studio.api_url",
+      "studio.enabled",
+      "studio.port",
     ]);
   });
 
@@ -72,6 +102,7 @@ describe("localStackConfigParity", () => {
       "experimental.pgdelta.declarative_schema_path",
       "experimental.pgdelta.enabled",
       "experimental.pgdelta.format_options",
+      "project_id",
       "remotes",
     ]);
   });

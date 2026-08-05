@@ -75,6 +75,21 @@ const mappedDatabaseHealthTimeout: LocalStackConfigParityDecision = {
     "The launch Adapter resolves the legacy environment override, applies the duration to PostgreSQL startup health, and derives the stack readiness deadline from it.",
 };
 
+const mappedCoreTopologyField: LocalStackConfigParityDecision = {
+  _tag: "mapped",
+  presence: "raw-document",
+  mappedBy: "start",
+  rationale:
+    "The launch Adapter applies project values, legacy environment overrides, and CLI exclusions before constructing StackConfig.",
+};
+
+const projectIdentityField: LocalStackConfigParityDecision = {
+  _tag: "not-applicable",
+  presence: "raw-document",
+  rationale:
+    "Project identity and managed state paths are resolved before the launch Adapter; this value does not configure a stack runtime.",
+};
+
 const mappedFunctionManifest: LocalStackConfigParityDecision = {
   _tag: "mapped",
   presence: "raw-document",
@@ -215,7 +230,7 @@ const authSmsParity = {
 } satisfies Record<keyof ProjectConfig["auth"]["sms"], Node>;
 
 const authParity = {
-  enabled: unsupportedRuntimeField,
+  enabled: mappedCoreTopologyField,
   site_url: unsupportedRuntimeField,
   additional_redirect_urls: unsupportedRuntimeField,
   jwt_expiry: unsupportedRuntimeField,
@@ -371,22 +386,22 @@ const dbSettingsParity = {
  * classified at the record field itself.
  */
 const localStackConfigParity = {
-  project_id: unsupportedOptionalRuntimeField,
+  project_id: projectIdentityField,
   analytics: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
-    backend: unsupportedRuntimeField,
+    enabled: mappedCoreTopologyField,
+    port: mappedCoreTopologyField,
+    backend: mappedCoreTopologyField,
     vector_port: unsupportedOptionalRuntimeField,
     gcp_project_id: unsupportedOptionalRuntimeField,
     gcp_project_number: unsupportedOptionalRuntimeField,
     gcp_jwt_path: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof ProjectConfig["analytics"], Node>,
   api: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
-    schemas: unsupportedRuntimeField,
-    extra_search_path: unsupportedRuntimeField,
-    max_rows: unsupportedRuntimeField,
+    enabled: mappedCoreTopologyField,
+    port: mappedCoreTopologyField,
+    schemas: mappedCoreTopologyField,
+    extra_search_path: mappedCoreTopologyField,
+    max_rows: mappedCoreTopologyField,
     auto_expose_new_tables: mappedAutoExposeNewTables,
     tls: {
       enabled: unsupportedRuntimeField,
@@ -397,16 +412,16 @@ const localStackConfigParity = {
   } satisfies Record<keyof ProjectConfig["api"], Node>,
   auth: authParity,
   db: {
-    port: unsupportedRuntimeField,
+    port: mappedCoreTopologyField,
     shadow_port: commandOnlyDatabaseField,
     health_timeout: mappedDatabaseHealthTimeout,
     major_version: unsupportedRuntimeField,
     pooler: {
-      enabled: unsupportedRuntimeField,
-      port: unsupportedRuntimeField,
-      pool_mode: unsupportedRuntimeField,
-      default_pool_size: unsupportedRuntimeField,
-      max_client_conn: unsupportedRuntimeField,
+      enabled: mappedCoreTopologyField,
+      port: mappedCoreTopologyField,
+      pool_mode: mappedCoreTopologyField,
+      default_pool_size: mappedCoreTopologyField,
+      max_client_conn: mappedCoreTopologyField,
     } satisfies Record<keyof ProjectConfig["db"]["pooler"], Node>,
     migrations: {
       enabled: unsupportedRuntimeField,
@@ -428,9 +443,9 @@ const localStackConfigParity = {
     vault: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["db"], Node>,
   edge_runtime: {
-    enabled: mappedFunctionsDevEdgeRuntime,
-    policy: mappedFunctionsDevEdgeRuntime,
-    inspector_port: mappedFunctionsDevEdgeRuntime,
+    enabled: mappedCoreTopologyField,
+    policy: mappedCoreTopologyField,
+    inspector_port: mappedCoreTopologyField,
     deno_version: unsupportedRuntimeField,
     secrets: mappedFunctionsDevEdgeRuntime,
   } satisfies Record<keyof ProjectConfig["edge_runtime"], Node>,
@@ -438,23 +453,23 @@ const localStackConfigParity = {
     "*": functionConfigParity,
   },
   local_smtp: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
-    smtp_port: unsupportedOptionalRuntimeField,
-    pop3_port: unsupportedOptionalRuntimeField,
-    admin_email: unsupportedOptionalRuntimeField,
-    sender_name: unsupportedOptionalRuntimeField,
+    enabled: mappedCoreTopologyField,
+    port: mappedCoreTopologyField,
+    smtp_port: mappedCoreTopologyField,
+    pop3_port: mappedCoreTopologyField,
+    admin_email: mappedCoreTopologyField,
+    sender_name: mappedCoreTopologyField,
   } satisfies Record<keyof ProjectConfig["local_smtp"], Node>,
   realtime: {
-    enabled: unsupportedRuntimeField,
+    enabled: mappedCoreTopologyField,
     ip_version: unsupportedRuntimeField,
-    max_header_length: unsupportedRuntimeField,
+    max_header_length: mappedCoreTopologyField,
   } satisfies Record<keyof ProjectConfig["realtime"], Node>,
   storage: {
-    enabled: unsupportedRuntimeField,
-    file_size_limit: unsupportedRuntimeField,
+    enabled: mappedCoreTopologyField,
+    file_size_limit: mappedCoreTopologyField,
     image_transformation: {
-      enabled: unsupportedRuntimeField,
+      enabled: mappedCoreTopologyField,
     } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["image_transformation"]>, Node>,
     buckets: {
       "*": {
@@ -465,7 +480,7 @@ const localStackConfigParity = {
       } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["buckets"]>[string], Node>,
     },
     s3_protocol: {
-      enabled: unsupportedRuntimeField,
+      enabled: mappedCoreTopologyField,
     } satisfies Record<keyof ProjectConfig["storage"]["s3_protocol"], Node>,
     analytics: {
       enabled: unsupportedRuntimeField,
@@ -482,9 +497,9 @@ const localStackConfigParity = {
     } satisfies Record<keyof ProjectConfig["storage"]["vector"], Node>,
   } satisfies Record<keyof ProjectConfig["storage"], Node>,
   studio: {
-    enabled: unsupportedRuntimeField,
-    port: unsupportedRuntimeField,
-    api_url: unsupportedRuntimeField,
+    enabled: mappedCoreTopologyField,
+    port: mappedCoreTopologyField,
+    api_url: mappedCoreTopologyField,
     openai_api_key: unsupportedSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["studio"], Node>,
   experimental: {

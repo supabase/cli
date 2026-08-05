@@ -110,6 +110,112 @@ describe("explicitLocalStackConfigEntries", () => {
 });
 
 describe("resolveLocalStackLaunch", () => {
+  it("maps API and database topology into the stack interface", async () => {
+    const result = await Effect.runPromise(
+      resolveLocalStackLaunch({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({
+          api: {
+            enabled: true,
+            port: 6101,
+            schemas: ["public", "private_api"],
+            extra_search_path: ["extensions"],
+            max_rows: 250,
+          },
+          db: { port: 6102 },
+        }),
+      }),
+    );
+
+    expect(result.stackConfig).toMatchObject({
+      port: 6101,
+      postgres: { port: 6102 },
+      postgrest: {
+        schemas: ["public", "private_api"],
+        extraSearchPath: ["extensions"],
+        maxRows: 250,
+      },
+    });
+  });
+
+  it("applies environment overrides before CLI exclusions", async () => {
+    const result = await Effect.runPromise(
+      resolveLocalStackLaunch({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({ api: { enabled: false, port: 6101 }, db: { port: 6102 } }),
+        projectEnvironment: {
+          paths: {
+            projectRoot: "/project",
+            supabaseDir: "/project/supabase",
+            configPath: "/project/supabase/config.toml",
+            envPath: "/project/supabase/.env",
+            envLocalPath: "/project/supabase/.env.local",
+          },
+          values: {
+            SUPABASE_API_ENABLED: "true",
+            SUPABASE_API_PORT: "6201",
+            SUPABASE_DB_PORT: "6202",
+          },
+          loadedPaths: [],
+          sources: {},
+        },
+        exclude: ["postgrest"],
+      }),
+    );
+
+    expect(result.stackConfig.port).toBe(6201);
+    expect(result.stackConfig.postgres?.port).toBe(6202);
+    expect(result.stackConfig.postgrest).toBe(false);
+  });
+
+  it("reports malformed topology overrides by path without retaining their value", async () => {
+    const exit = await Effect.runPromise(
+      resolveLocalStackLaunch({
+        ...baseLaunchInput,
+        projectEnvironment: {
+          paths: {
+            projectRoot: "/project",
+            supabaseDir: "/project/supabase",
+            configPath: "/project/supabase/config.toml",
+            envPath: "/project/supabase/.env",
+            envLocalPath: "/project/supabase/.env.local",
+          },
+          values: { SUPABASE_DB_PORT: "private-invalid-value" },
+          loadedPaths: [],
+          sources: {},
+        },
+      }).pipe(Effect.exit),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain("db.port");
+    expect(JSON.stringify(exit)).not.toContain("private-invalid-value");
+  });
+
+  it("only requests Mailpit protocol publication for explicit host ports", async () => {
+    const omitted = await Effect.runPromise(
+      resolveLocalStackLaunch({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({ local_smtp: { enabled: true, port: 6104 } }),
+      }),
+    );
+    const explicit = await Effect.runPromise(
+      resolveLocalStackLaunch({
+        ...baseLaunchInput,
+        loadedProjectConfig: loaded({
+          local_smtp: { enabled: true, port: 6104, smtp_port: 6105, pop3_port: 6106 },
+        }),
+      }),
+    );
+
+    expect(omitted.stackConfig.mailpit).toEqual(
+      expect.not.objectContaining({ smtpPort: expect.anything(), pop3Port: expect.anything() }),
+    );
+    expect(explicit.stackConfig.mailpit).toEqual(
+      expect.objectContaining({ port: 6104, smtpPort: 6105, pop3Port: 6106 }),
+    );
+  });
+
   it("composes project config, paths, flags, versions, and finite readiness", async () => {
     const result = await Effect.runPromise(
       resolveLocalStackLaunch({
@@ -186,14 +292,14 @@ describe("resolveLocalStackLaunch", () => {
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
           auth: { jwt_secret: "do-not-leak" },
-          storage: { file_size_limit: "another-private-value" },
+          realtime: { ip_version: "IPv6" },
         }),
       }).pipe(Effect.exit),
     );
 
     expect(exit._tag).toBe("Failure");
     expect(JSON.stringify(exit)).toContain("auth.jwt_secret");
-    expect(JSON.stringify(exit)).toContain("storage.file_size_limit");
+    expect(JSON.stringify(exit)).toContain("realtime.ip_version");
     expect(JSON.stringify(exit)).not.toContain("do-not-leak");
     expect(JSON.stringify(exit)).not.toContain("another-private-value");
   });

@@ -344,8 +344,9 @@ function resolveMailpitConfig(
   const cfg = input ?? {};
   return {
     port: ports.mailpitPort,
-    smtpPort: ports.mailpitSmtpPort,
-    pop3Port: ports.mailpitPop3Port,
+    smtpTransportPort: ports.mailpitSmtpPort,
+    smtpHostPort: typeof cfg.smtpPort === "number" ? ports.mailpitSmtpPort : false,
+    pop3HostPort: typeof cfg.pop3Port === "number" ? ports.mailpitPop3Port : false,
     version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
     adminEmail: cfg.adminEmail ?? "admin@email.com",
     senderName: cfg.senderName ?? "Admin",
@@ -478,8 +479,10 @@ export async function resolveConfig(
         storagePort: storageInput?.port,
         imgproxyPort: imgproxyInput?.port,
         mailpitPort: mailpitInput?.port,
-        mailpitSmtpPort: mailpitInput?.smtpPort,
-        mailpitPop3Port: mailpitInput?.pop3Port,
+        mailpitSmtpPort:
+          typeof mailpitInput?.smtpPort === "number" ? mailpitInput.smtpPort : undefined,
+        mailpitPop3Port:
+          typeof mailpitInput?.pop3Port === "number" ? mailpitInput.pop3Port : undefined,
         pgmetaPort: pgmetaInput?.port,
         studioPort: studioInput?.port,
         analyticsPort: analyticsInput?.port,

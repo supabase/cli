@@ -556,8 +556,9 @@ describe("Stack", () => {
         startupMode: "lazy",
         mailpit: {
           port: defaultPorts.mailpitPort,
-          smtpPort: defaultPorts.mailpitSmtpPort,
-          pop3Port: defaultPorts.mailpitPop3Port,
+          smtpTransportPort: defaultPorts.mailpitSmtpPort,
+          smtpHostPort: false,
+          pop3HostPort: false,
           version: DEFAULT_VERSIONS.mailpit,
           adminEmail: "admin@example.com",
           senderName: "Admin",

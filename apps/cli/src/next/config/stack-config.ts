@@ -5,28 +5,21 @@ import {
   type ProjectEnvironment,
 } from "@supabase/config";
 import type { ReadinessPolicy, StackConfig, VersionManifest } from "@supabase/stack/effect";
-import { Data, Effect, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { legacyParseGoDuration } from "../../shared/config/go-duration.ts";
+import {
+  excludedStackServices,
+  invalidLocalStackConfig,
+  LocalStackConfigError,
+  resolveCoreStackConfig,
+  type ExcludedStackService,
+} from "./core-stack-config.ts";
 import {
   flattenLocalStackConfigParity,
   type LocalStackConfigParityDecision,
 } from "./local-stack-config-parity.ts";
 
-export const excludedStackServices = [
-  "auth",
-  "postgrest",
-  "realtime",
-  "storage",
-  "imgproxy",
-  "mailpit",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "vector",
-  "pooler",
-] as const;
-
-export type ExcludedStackService = (typeof excludedStackServices)[number];
+export { excludedStackServices, LocalStackConfigError, type ExcludedStackService };
 export const startModes = ["native", "auto", "docker"] as const;
 export type StartMode = (typeof startModes)[number];
 
@@ -46,6 +39,8 @@ export interface LocalStackLaunchInput {
   readonly mode: StartMode;
   readonly exclude: ReadonlyArray<ExcludedStackService>;
   readonly runtimeVersions: Partial<VersionManifest>;
+  /** Managed project launches are lazy; diagnostic callers may request eager startup. */
+  readonly startupMode?: "eager" | "lazy";
   /** Interactive diagnostics may opt out of deadlines; ordinary starts are finite. */
   readonly readiness?: "finite" | "infinite";
 }
@@ -61,12 +56,6 @@ interface ResolvedLocalStackLaunch {
   readonly projectPaths: LocalStackProjectPaths;
   readonly warnings: ReadonlyArray<LocalStackWarning>;
 }
-
-export class LocalStackConfigError extends Data.TaggedError("LocalStackConfigError")<{
-  readonly detail: string;
-  readonly suggestion: string;
-  readonly paths: ReadonlyArray<string>;
-}> {}
 
 interface PresentConfigValue {
   readonly path: string;
@@ -173,11 +162,13 @@ function diagnosticsFor(input: {
 export function baseStackConfig(
   exclude: ReadonlyArray<ExcludedStackService>,
   mode: StartMode,
+  startupMode: "eager" | "lazy" = "lazy",
 ): StackConfig {
   const excluded = new Set(exclude);
   return {
     mode,
-    startupMode: "lazy",
+    startupMode,
+    edgeRuntime: excluded.has("edge-runtime") ? false : {},
     realtime: excluded.has("realtime") ? false : {},
     storage: excluded.has("storage") ? false : {},
     imgproxy: excluded.has("imgproxy") || excluded.has("storage") ? false : {},
@@ -253,8 +244,12 @@ export function resolveStoredStackLaunch(input: {
   readonly exclude: ReadonlyArray<ExcludedStackService>;
   readonly mode: StartMode;
   readonly runtimeVersions: Partial<VersionManifest>;
+  readonly startupMode?: "eager" | "lazy";
 }): StackConfig {
-  return withServiceVersions(baseStackConfig(input.exclude, input.mode), input.runtimeVersions);
+  return withServiceVersions(
+    baseStackConfig(input.exclude, input.mode, input.startupMode),
+    input.runtimeVersions,
+  );
 }
 
 export function resolveFunctionsDevStackLaunch(
@@ -279,12 +274,11 @@ function resolvePostgresStartupTimeout(input: {
       }
       return postgresStartupTimeoutMs;
     },
-    catch: (cause) =>
-      new LocalStackConfigError({
-        detail: `Invalid db.health_timeout '${configured}': ${cause instanceof Error ? cause.message : String(cause)}`,
-        suggestion: "Use a non-negative Go duration such as 2m or 30s.",
-        paths: ["db.health_timeout"],
-      }),
+    catch: () =>
+      invalidLocalStackConfig(
+        "db.health_timeout",
+        "Use a non-negative Go duration such as 2m or 30s.",
+      ),
   });
 }
 
@@ -322,15 +316,34 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
     exclude: input.exclude,
     mode: input.mode,
     runtimeVersions: input.runtimeVersions,
+    startupMode: input.startupMode,
+  });
+  const coreConfig = yield* Effect.try({
+    try: () =>
+      resolveCoreStackConfig({
+        projectConfig,
+        rawDocument: input.loadedProjectConfig?.document,
+        projectEnvironment: input.projectEnvironment,
+        exclude: input.exclude,
+        base: versionedConfig,
+      }),
+    catch: (cause) =>
+      cause instanceof LocalStackConfigError
+        ? cause
+        : new LocalStackConfigError({
+            detail: "Invalid local stack configuration.",
+            suggestion: "Review the configured service topology and port values.",
+            paths: [],
+          }),
   });
 
   return {
     stackConfig: {
-      ...versionedConfig,
+      ...coreConfig,
       projectDir: input.projectPaths.projectRoot,
       readiness,
       postgres: {
-        ...versionedConfig.postgres,
+        ...coreConfig.postgres,
         autoExposeNewTables,
         startupHealthTimeoutMs: postgresStartupTimeoutMs,
       },

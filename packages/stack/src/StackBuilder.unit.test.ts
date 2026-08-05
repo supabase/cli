@@ -335,6 +335,65 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("keeps omitted Mailpit protocol ports private to stack transport", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+    const config = {
+      ...dockerConfig,
+      postgrest: false,
+      auth: false,
+      mailpit: {
+        port: basePorts.mailpitPort,
+        smtpTransportPort: basePorts.mailpitSmtpPort,
+        smtpHostPort: false,
+        pop3HostPort: false,
+        version: DEFAULT_VERSIONS.mailpit,
+        adminEmail: "admin@example.com",
+        senderName: "Admin",
+      },
+    } satisfies ResolvedStackConfig;
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, config);
+      const args = graph.startOrder.find(({ name }) => name === "mailpit")?.args ?? [];
+
+      expect(args).toContain(`127.0.0.1:${basePorts.mailpitSmtpPort}:1025`);
+      expect(args).not.toContain(`${basePorts.mailpitPop3Port}:1110`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("publishes explicitly configured Mailpit protocol ports", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+    const config = {
+      ...dockerConfig,
+      postgrest: false,
+      auth: false,
+      mailpit: {
+        port: basePorts.mailpitPort,
+        smtpTransportPort: basePorts.mailpitSmtpPort,
+        smtpHostPort: basePorts.mailpitSmtpPort,
+        pop3HostPort: basePorts.mailpitPop3Port,
+        version: DEFAULT_VERSIONS.mailpit,
+        adminEmail: "admin@example.com",
+        senderName: "Admin",
+      },
+    } satisfies ResolvedStackConfig;
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, config);
+      const args = graph.startOrder.find(({ name }) => name === "mailpit")?.args ?? [];
+
+      expect(args).toContain(`${basePorts.mailpitSmtpPort}:1025`);
+      expect(args).toContain(`${basePorts.mailpitPop3Port}:1110`);
+      expect(args).not.toContain(`127.0.0.1:${basePorts.mailpitSmtpPort}:1025`);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("docker mode wires auth directly to postgres readiness", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
