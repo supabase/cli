@@ -32,9 +32,15 @@ const spawnError = () =>
  * Docker's/Podman's "image not found" stderr shape for `image inspect` — the subprocess
  * equivalent of Go's `errdefs.IsNotFound`, mirroring `db-bootstrap/container-lifecycle.ts`'s
  * (private) `isVolumeNotFoundMessage` for `volume inspect`. Confirmed empirically: `docker image
- * inspect <missing>` prints `Error response from daemon: No such image: <ref>` and exits 1.
+ * inspect <missing>` prints `Error response from daemon: No such image: <ref>` and exits 1;
+ * an uncached Podman inspect exits non-zero with the differently worded `<ref>: image not
+ * known` instead (Podman's `libimage` not-found error, independent of Docker's daemon-response
+ * wording — see e.g. containers/podman-compose#358's `failed to find image …: image not known`
+ * trace). Both must resolve to "not cached" or the pull loop below never runs on a Podman-only
+ * host, matching the same Docker/Podman fallback `spawnContainerCli` already builds in.
  */
-const isImageNotFoundMessage = (message: string): boolean => /no such image/iu.test(message);
+const isImageNotFoundMessage = (message: string): boolean =>
+  /no such image/iu.test(message) || /image not known/iu.test(message);
 
 const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   const total = chunks.reduce((size, chunk) => size + chunk.length, 0);

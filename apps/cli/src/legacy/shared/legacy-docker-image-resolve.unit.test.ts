@@ -396,4 +396,32 @@ describe("legacyMakeDockerImageResolver", () => {
         }
       }),
   );
+
+  it.effect(
+    "treats Podman's differently worded image-inspect miss as a cache miss and proceeds to pull",
+    () =>
+      Effect.gen(function* () {
+        const previousRegistry = process.env[REGISTRY_ENV];
+        process.env[REGISTRY_ENV] = "docker.io";
+
+        try {
+          // An uncached `podman image inspect <missing>` exits non-zero with `image not
+          // known` rather than Docker's `No such image` — see `isImageNotFoundMessage`'s
+          // doc comment. Both wordings must reach the pull loop identically.
+          const mock = mockSpawner([{ exitCode: 0 }], {
+            exitCode: 1,
+            stderr: "supabase/postgres:17.6.1.138: image not known",
+          });
+          const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+          const image = yield* resolve("supabase/postgres:17.6.1.138");
+
+          expect(image).toBe("supabase/postgres:17.6.1.138");
+          expect(mock.pulls).toHaveLength(1);
+        } finally {
+          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+          else process.env[REGISTRY_ENV] = previousRegistry;
+        }
+      }),
+  );
 });
