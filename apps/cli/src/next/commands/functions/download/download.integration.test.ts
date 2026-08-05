@@ -766,6 +766,49 @@ describe("functions download", () => {
     );
   });
 
+  it.live(
+    "fails the whole list before downloading anything when a slug is typed as a non-string",
+    () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        // Go's generated client unmarshals the whole `[]FunctionResponse`
+        // array in one `json.Unmarshal` call
+        // (`apps/cli-go/pkg/api/client.gen.go:22186-22208`); a type mismatch
+        // on any single element's `slug` (a required `string` field) fails
+        // that call outright, so `downloadAll` fails with "failed to list
+        // functions: ..." before downloading anything — including the
+        // earlier, well-formed "ok" entry. Confirmed empirically:
+        // `json.Unmarshal([]byte(`[{"slug":"ok"},{"slug":123}]`), &dest)`
+        // returns a `*json.UnmarshalTypeError`, and the generated parser
+        // returns before ever assigning `response.JSON200`.
+        const { api, layer } = setup(tempDir, {
+          listBody: [{ slug: "ok" }, { slug: 123 }],
+        });
+
+        const error = yield* functionsDownload({
+          ...BASE_FLAGS,
+          functionName: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(InvalidFunctionDownloadResponseError);
+        expect((error as Error).message).toBe(
+          "failed to read functions list: expected function slug to be a string, got number",
+        );
+        // Only the list call happened — "ok" was never downloaded, matching
+        // Go's atomic list-decode failure instead of downloading it before
+        // hitting the later entry's error.
+        expect(api.requests).toEqual([
+          `https://api.supabase.com/v1/projects/${PROJECT_REF}/functions`,
+        ]);
+        expect(existsSync(join(tempDir, "supabase", "functions"))).toBe(false);
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
   it.live("prints the download-all success line when the project has one function", () => {
     const tempDir = makeTempDir();
     const multipart = multipartBody([

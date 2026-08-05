@@ -684,9 +684,30 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
       // silently download fewer functions than requested" invariant — the
       // exact CLI-1891 threat model `validateRemoteSlug` exists for (review
       // round on CLI-1963's `functions download` port).
+      //
+      // A "slug" present but typed as something other than string/null is a
+      // different case: Go's generated client decodes the *entire* array in
+      // one `json.Unmarshal` call (`ParseV1ListAllFunctionsResponse`,
+      // `apps/cli-go/pkg/api/client.gen.go:22186-22208`), and a type mismatch
+      // on any single element fails that whole call — confirmed empirically
+      // (`json.Unmarshal([]byte(`+"`"+`[{"slug":"ok"},{"slug":123}]`+"`"+`), &dest)`
+      // returns a `*json.UnmarshalTypeError`; `dest` is partially populated in
+      // memory, but `ParseV1ListAllFunctionsResponse` returns before ever
+      // assigning `response.JSON200`, discarding it), so `V1ListAllFunctionsWithResponse`
+      // returns an error and `downloadAll` fails with "failed to list
+      // functions: ..." before downloading anything — not after downloading
+      // the earlier, well-formed entries. Throwing here (rather than
+      // coercing to `""` like the missing/null case above) preserves that
+      // same fail-before-any-download ordering.
       return parsed.map((value) => {
         const slug = getObjectProperty(value, "slug");
-        return typeof slug === "string" ? slug : "";
+        if (slug === null || slug === undefined) {
+          return "";
+        }
+        if (typeof slug !== "string") {
+          throw new Error(`expected function slug to be a string, got ${typeof slug}`);
+        }
+        return slug;
       });
     },
     catch: (cause) =>
