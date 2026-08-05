@@ -1,949 +1,267 @@
 # Architecture of `@supabase/process-compose`
 
-A service orchestrator that manages a dependency graph of long-running processes with health checks, log streaming, restart policies, and graceful shutdown. Built on [Effect V4](https://effect.website).
+`@supabase/process-compose` supervises an in-memory dependency graph of operating-system
+processes. It is a generic Effect Module: it has no Supabase service knowledge, project-file
+parser, CLI, or management HTTP server.
 
-## Table of contents
+## Why the process manager is TypeScript
 
-- [High-level overview](#high-level-overview)
-- [Effect primer for newcomers](#effect-primer-for-newcomers)
-- [Components](#components)
-  - [ServiceDef — configuration](#servicedef--configuration)
-  - [ServiceState — state machine](#servicestate--state-machine)
-  - [ServiceTransition — enforced state machine](#servicetransition--enforced-state-machine)
-  - [errors — typed error hierarchy](#errors--typed-error-hierarchy)
-  - [DependencyGraph — ordering engine](#dependencygraph--ordering-engine)
-  - [LogBuffer — log capture and streaming](#logbuffer--log-capture-and-streaming)
-  - [HealthProbe — health checking](#healthprobe--health-checking)
-  - [Orchestrator — the coordinator](#orchestrator--the-coordinator)
-- [Why Effect?](#why-effect)
-- [Data flow](#data-flow)
+The local stack needs one lifecycle model for native executables and Docker-backed processes, plus
+in-process access to typed state streams, log streams, lifecycle hooks, and scoped cleanup. Keeping
+that model in TypeScript lets `@supabase/stack` compose it directly with Effect resources without
+maintaining a second configuration and transport protocol to a Go process-manager binary. Docker
+Compose would make Docker the orchestration model and would prevent the native-first and
+sandbox-friendly runtime. The package borrows useful process-compose concepts—dependency
+conditions, health checks, and restart policies—but deliberately implements only the library
+capabilities needed by current callers.
 
----
-
-## High-level overview
-
-You give process-compose a list of service definitions ("run postgres on port 5432, then start the API once postgres is healthy"). It figures out the right startup order, spawns each process, monitors health, captures logs, and tears everything down cleanly when you ask it to stop.
+## Module map
 
 ```mermaid
-graph TB
-    subgraph Input
-        Config["ServiceDef[]<br/><i>what to run</i>"]
-    end
-
-    subgraph Core
-        DG["DependencyGraph<br/><i>start/stop ordering</i>"]
-        ORC["Orchestrator<br/><i>lifecycle coordinator</i>"]
-        FSM["ServiceTransition<br/><i>validated state machine</i>"]
-    end
-
-    subgraph Runtime
-        FM["FiberMap<br/><i>one fiber per service</i>"]
-        CPS["ChildProcessSpawner<br/><i>spawn OS processes</i>"]
-    end
-
-    subgraph Observation
-        SS["ServiceState<br/><i>per-service state</i>"]
-        LB["LogBuffer<br/><i>log capture + streaming</i>"]
-        HP["HealthProbe<br/><i>HTTP / exec / TCP checks</i>"]
-    end
-
-    Config --> DG
-    DG --> ORC
-    ORC --> FM
-    FM --> CPS
-    CPS --> LB
-    CPS --> HP
-    HP --> FSM
-    ORC --> FSM
-    FSM --> SS
+flowchart LR
+    Def["ServiceDef values"] --> Graph["DependencyGraph"]
+    Graph --> Orch["Orchestrator"]
+    Orch --> Spawn["ChildProcessSpawner Adapter"]
+    Orch --> State["ServiceState streams"]
+    Orch --> Logs["LogBuffer"]
+    Orch --> Probe["HealthProbe"]
+    Orch --> Supervisor["Optional supervisor runtime"]
+    Probe --> Transition["ServiceTransition"]
+    Orch --> Transition
 ```
 
-The library has no CLI, no config file parser, and no HTTP server. It is a pure TypeScript library that exposes an `Orchestrator` service — consumers build their own interface on top.
+The public package export is `src/index.ts`. The principal Interface is `Orchestrator`; callers
+construct its layer from a validated `ResolvedGraph`, a `ChildProcessSpawner` Adapter, and a shared
+`LogBuffer`.
 
----
+## Service definitions and dependency graph
 
-## Effect primer for newcomers
+`ServiceDef` describes one process:
 
-process-compose uses several primitives from the Effect library. If you've never seen Effect before, here's a quick mental model for each one. You don't need to understand them deeply to read this document — just enough to follow the "why" behind each design choice.
+- executable, arguments, environment, and working directory;
+- dependencies and a dependency wait timeout;
+- optional HTTP, TCP, or exec health check;
+- shutdown signal and grace period;
+- restart policy and restart budget;
+- `started` and `healthy` lifecycle hooks;
+- in-process cleanup and optional external orphan supervision.
 
-### Effect
+`buildGraph()` removes definitions with `enabled: false`, validates every referenced dependency,
+rejects cycles, and returns topological start and reverse-topological stop orders. Dependencies use
+one of three conditions:
 
-A lazy, composable description of work. Think of it as a `Promise` that hasn't started yet. You can chain operations, handle errors, and add timeouts — all before anything actually runs. Nothing happens until a "runner" executes the description.
+| Condition   | Satisfied when                                                                                     |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| `started`   | The dependency is desired to run and has spawned, is healthy/unhealthy, or completed successfully. |
+| `healthy`   | The dependency is desired to run and currently `Healthy`.                                          |
+| `completed` | The dependency reached `Stopped` with exit code `0`; a non-zero completion fails the dependent.    |
 
-```
-Promise:  const result = await fetchUser(id);          // runs immediately
-Effect:   const program = fetchUser(id);                // just a description
-          const result = await Effect.runPromise(program); // runs here
-```
+`startService(name)` starts the requested definition and its transitive dependencies.
+`stopService(name)` and `restartService(name)` also include active dependents so a caller cannot
+leave an already-running dependent attached to a restarted dependency.
 
-### Fiber
+`updateServiceDefinition(name, replacement)` validates a graph with the replacement and then swaps
+the graph used for subsequent starts and restarts. It does not mutate a process generation that is
+already running. The replacement name is normalized to the selected name.
 
-A lightweight green thread managed by the Effect runtime. While an OS thread costs ~1 MB of stack, a fiber costs a few hundred bytes. The runtime multiplexes thousands of fibers onto a small pool of OS threads.
+## Desired state and observed state
 
-Why this matters for process-compose: we run one fiber per managed service. If you're orchestrating 50 services, that's 50 fibers — trivial for the runtime, but 50 OS threads would be wasteful. More importantly, fibers support **structured concurrency**: when a parent fiber is interrupted, all its children are interrupted too. This is how we guarantee no process is ever leaked.
-
-### Layer and Context.Service
-
-Effect's dependency injection system. A `Layer` is a recipe for building a service and its dependencies. `Context.Service` is the base class for declaring a service interface (what methods it provides) and its implementation (a `Layer` that creates those methods).
-
-In process-compose, `Orchestrator`, `LogBuffer`, and `Browser` are all services. Tests swap in mock implementations via `Layer.succeed(ServiceTag, mockImpl)` — no monkey-patching globals, no `jest.mock()`.
-
-### Deferred
-
-A one-shot async signal. Like a `Promise` you resolve manually: anyone can `await` it, and the first call to `succeed` or `fail` resolves all waiters.
-
-```
-const gate = Deferred.make<void>();
-
-// In fiber A (waiter):
-yield* Deferred.await(gate);   // blocks until resolved
-
-// In fiber B (signaler):
-yield* Deferred.succeed(gate, void 0);  // unblocks A
-```
-
-process-compose uses `Deferred` for local, one-shot coordination, such as racing a process exit against an unhealthy-restart request. Durable lifecycle coordination uses the service's state stream instead: a `Deferred` cannot represent repeated start/restart generations without replacing the object that existing waiters reference.
-
-### SubscriptionRef
-
-A mutable cell that broadcasts every update as a `Stream`. Readers can either snapshot the current value (`getUnsafe`) or subscribe to a stream of all future changes (`changes`).
-
-```
-const ref = yield* SubscriptionRef.make(0);
-
-// Writer:
-yield* SubscriptionRef.set(ref, 42);
-
-// Reader (snapshot):
-const value = SubscriptionRef.getUnsafe(ref);  // 42
-
-// Reader (live stream):
-const stream = SubscriptionRef.changes(ref);   // Stream of 0, 42, ...
-```
-
-Each service has one stable `SubscriptionRef<ServiceState>` for its entire lifetime. The Orchestrator updates it on state transitions; dependencies, readiness waiters, shutdown ordering, and consumers all subscribe to the same stream. `SubscriptionRef.changes` emits the current value first, so a waiter cannot miss a transition that happened just before it subscribed.
-
-### FiberMap
-
-A concurrent `Map<Key, Fiber>` with a crucial property: **removing a key interrupts its fiber**, which triggers all registered finalizers (cleanup logic). When the FiberMap's scope closes, _all_ entries are interrupted.
-
-This is the single most important data structure in process-compose. Each service gets one entry in the FiberMap:
-
-- **Start a service**: `FiberMap.run(fibers, "postgres", runService(pgDef))` — forks a fiber and stores it
-- **Stop a service**: `FiberMap.remove(fibers, "postgres")` — interrupts the fiber, which triggers `Effect.addFinalizer` to send SIGTERM/SIGKILL to the OS process
-- **Stop everything**: close the scope — FiberMap auto-interrupts all entries
-
-### Stream and PubSub
-
-`Stream` is a pull-based sequence of values, like an async iterator. `PubSub` is a bounded, backpressure-aware fan-out channel: one publisher, many subscribers, each getting their own queue.
-
-LogBuffer uses `PubSub` internally: when a service writes a log line, it's published once and delivered to every active subscriber (a TUI panel, a log file writer, etc.) independently.
-
-### Graph
-
-Effect's directed graph data structure with built-in topological sort. We build a graph where nodes are services and edges represent dependencies (edge from A to B means "A must start before B"). `Graph.topo()` gives us the correct startup order; reversing it gives shutdown order.
-
-### Data.Class and Data.TaggedError
-
-Immutable value types with built-in **structural equality**. Two `ServiceState` objects with the same fields are `===` equal, which is critical for `SubscriptionRef` — it only emits a change notification when the value actually differs.
-
-`Data.TaggedError` adds a `_tag` field for type-safe pattern matching:
+Each definition owns one stable `SubscriptionRef<ServiceState>` for the lifetime of the
+orchestrator. State contains both observed lifecycle status and caller-owned intent:
 
 ```ts
-class SpawnError extends Data.TaggedError("SpawnError")<{ service: string; cause: unknown }> {}
-class ServiceNotFoundError extends Data.TaggedError("ServiceNotFoundError")<{ name: string }> {}
+type ServiceDesiredState = "inactive" | "running" | "stopped";
 
-// Pattern matching:
-effect.pipe(
-  Effect.catch("SpawnError", (e) => ...),
-  Effect.catch("ServiceNotFoundError", (e) => ...),
-)
-```
-
----
-
-## Components
-
-### ServiceDef — configuration
-
-**File:** `src/ServiceDef.ts`
-
-Pure TypeScript interfaces with no Effect imports (except for the `ChildProcess.Signal` type). This is the user-facing API for defining what to run.
-
-```ts
-interface ServiceDef {
-  name: string; // unique identifier
-  command: string; // executable path
-  args?: string[]; // command arguments
-  env?: Record<string, string>;
-  cwd?: string;
-  dependencies?: Dependency[];
-  dependencyTimeoutSeconds?: number; // max wait for deps (default: 30)
-  healthCheck?: HealthCheckConfig;
-  shutdown?: ShutdownConfig;
-  restart?: RestartPolicy; // "no" | "on-failure" | "always" | "unless-stopped"
-  maxRestarts?: number;
-  enabled?: boolean;
-  hooks?: LifecycleHook[];
+interface ServiceState {
+  readonly name: string;
+  readonly status:
+    | "Pending"
+    | "Starting"
+    | "Running"
+    | "Healthy"
+    | "Unhealthy"
+    | "Stopping"
+    | "Stopped"
+    | "Failed"
+    | "Restarting";
+  readonly pid: number | null;
+  readonly exitCode: number | null;
+  readonly restartCount: number;
+  readonly startedAt: number | null;
+  readonly error: string | null;
+  readonly desired: ServiceDesiredState;
 }
 ```
 
-**Dependency conditions** control when a dependent service is allowed to start:
-
-| Condition   | Meaning                                   | Use case                                     |
-| ----------- | ----------------------------------------- | -------------------------------------------- |
-| `started`   | The dependency's process has been spawned | Services that just need the port to be bound |
-| `healthy`   | The dependency's health check is passing  | Services that need a fully-ready database    |
-| `completed` | The dependency has exited with code 0     | One-shot setup scripts (migrations, seeding) |
-
-**Health check probes** come in three flavors:
-
-- **HTTP**: `fetch()` to a host:port/path — success if response is 2xx
-- **Exec**: runs the configured command with explicit args — success if exit code is 0
-- **TCP**: opens a TCP connection to a host:port — success if the connection is established
-
-**Lifecycle hooks** run effects at specific service lifecycle points. The `HookTrigger` determines when a hook fires, and the `LifecycleHook` interface describes what runs:
-
-```ts
-type HookTrigger = "started" | "healthy";
-
-// Callback injected into each hook — writes a message to the service's log buffer
-type HookLog = (message: string) => Effect<void>;
-
-interface LifecycleHook {
-  on: HookTrigger;
-  run: (log: HookLog) => Effect<void, unknown>; // log writes to the service's log stream
-  timeoutSeconds?: number; // default: 30
-  failurePolicy?: "fail" | "ignore"; // default: "fail"
-}
-```
-
-**Defaults** are defined as a const object and applied where config values are omitted:
-
-| Setting                        | Default                                 |
-| ------------------------------ | --------------------------------------- |
-| `restart`                      | `"unless-stopped"`                      |
-| `maxRestarts`                  | `0` (unlimited when restart is enabled) |
-| `dependencyTimeoutSeconds`     | `30`                                    |
-| `shutdown.signal`              | `SIGTERM`                               |
-| `shutdown.timeoutSeconds`      | `10`                                    |
-| `shutdownTimeoutSeconds`       | `60`                                    |
-| `healthCheck.periodSeconds`    | `10`                                    |
-| `healthCheck.timeoutSeconds`   | `2`                                     |
-| `healthCheck.successThreshold` | `1`                                     |
-| `healthCheck.failureThreshold` | `3`                                     |
-| `hookTimeoutSeconds`           | `30`                                    |
-
----
-
-### ServiceState — state machine
-
-**File:** `src/ServiceState.ts`
-
-Each service tracks its runtime state as an immutable `Data.Class`:
-
-```ts
-class ServiceState extends Data.Class<{
-  name: string;
-  status: ServiceStatus;
-  pid: number | null;
-  exitCode: number | null;
-  restartCount: number;
-  startedAt: number | null;
-  error: string | null;
-}> {}
-```
-
-The status field follows this state machine:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Pending
-    Pending --> Starting : DependenciesSatisfied
-    Pending --> Failed : DependencyFailed
-    Pending --> Stopped : StopRequested
-    Starting --> Running : ProcessSpawned
-    Starting --> Stopping : StopRequested
-    Running --> Healthy : HealthCheckPassed<br/>(or no health check)
-    Running --> Stopped : ProcessExited (code 0)
-    Running --> Failed : ProcessExited (code ≠ 0)
-    Running --> Stopping : StopRequested
-    Healthy --> Unhealthy : HealthCheckFailed
-    Healthy --> Healthy : HealthCheckPassed (no-op)
-    Unhealthy --> Healthy : HealthCheckPassed
-    Healthy --> Stopped : ProcessExited (code 0)
-    Healthy --> Failed : ProcessExited (code ≠ 0)
-    Unhealthy --> Stopped : ProcessExited (code 0)
-    Unhealthy --> Failed : ProcessExited (code ≠ 0)
-    Healthy --> Stopping : StopRequested
-    Unhealthy --> Stopping : StopRequested
-    Stopping --> Stopped : ProcessExited
-    Stopped --> Restarting : RestartTriggered
-    Failed --> Restarting : RestartTriggered
-    Unhealthy --> Restarting : RestartTriggered
-    Restarting --> Starting : BackoffElapsed
-    Restarting --> Stopped : StopRequested
-```
-
-**Why `Data.Class`?** Two `ServiceState` instances with identical fields are structurally equal. This means `SubscriptionRef` can detect when a state update actually changes something — subscribers only receive notifications for real transitions, not redundant updates.
-
----
-
-### ServiceTransition — enforced state machine
+`inactive` means the definition has not been requested, `running` means the caller wants the
+service maintained, and `stopped` records an explicit stop. Desired state is independent of
+intermediate observed states and is what prevents an explicit stop from being undone by restart
+policy.
+
+`ServiceState` extends `Data.Class`, so Effect's `Equal.equals` can compare values structurally. It
+does not make two separately allocated objects equal under JavaScript `===`, and
+`SubscriptionRef.set` is not itself a distinct-update filter. Callers that want to suppress
+redundant publications must compare before writing.
+
+`ServiceTransition` is the only normal path for observed-status changes. `applyEvent()` rejects
+illegal `(status, event)` pairs by returning `null`; `transition()` applies a legal event atomically
+through `SubscriptionRef.modifyEffect`. Races such as a late health callback during shutdown are
+therefore ignored without corrupting state.
+
+## Lifecycle of one process generation
+
+For each requested definition, `Orchestrator` runs this sequence:
+
+1. Set desired state to `running` and install one lifecycle fiber in a `FiberMap`.
+2. Call `beforeStart`, if supplied. It runs once for initial startup and again before each restart
+   backoff, allowing a caller to reserve external resources.
+3. Wait for dependencies, bounded by `dependencyTimeoutSeconds` (default: 120 seconds).
+4. Transition to `Starting`.
+5. Call `beforeSpawn` immediately before every spawn. The stack uses it to release a reserved port
+   as late as possible. For a supervised Docker command there is still a spawn-to-container-bind
+   window because no supervisor/container bind handshake exists.
+6. Spawn either the configured process or its optional supervisor.
+7. Register a scoped finalizer before exposing `Running`.
+8. Run `started` hooks sequentially. Only successful hooks allow `ProcessSpawned` to publish
+   `Running`.
+9. Stream stdout and stderr into `LogBuffer`.
+10. Run the health loop, or run `healthy` hooks immediately when no health check exists, then
+    publish `Healthy`.
+11. Race process exit against an unhealthy-restart request and apply restart policy.
+
+The service keeps the same state stream across restart generations. Restart backoff is
+`min(30 seconds, 2^(restartCount - 1))`.
+
+### Lifecycle hooks
+
+Hooks are caller-supplied Effects triggered on `started` or `healthy`. Hooks for one trigger run in
+declaration order. Each hook has a timeout (default: 30 seconds) and either:
+
+- `fail`: publish `HookFailed` and stop running later hooks for that trigger;
+- `ignore`: append a diagnostic log and continue.
+
+The supplied logger writes tagged stdout/stderr lines into the service's normal log stream.
 
-**File:** `src/ServiceTransition.ts`
+## Health and readiness
 
-State transitions are **enforced at runtime**, not just documented. Every state change goes through a validated finite state machine (FSM) that rejects illegal transitions.
+`HealthProbe` supports:
 
-#### Why an FSM?
+- HTTP: successful for a 2xx response;
+- TCP: successful when a connection opens;
+- exec: successful for exit code `0`.
 
-Without enforcement, any code with access to the `SubscriptionRef<ServiceState>` could set any status from any other status. In a concurrent system with multiple mutation sources (process exit handlers, health probe callbacks, manual stop/restart), this leads to subtle bugs:
+After `initialDelaySeconds`, probes repeat every `periodSeconds`. Each attempt is bounded by
+`timeoutSeconds`; consecutive success and failure counters reset each other. The current
+implementation calls `onHealthy` after `successThreshold`, and calls `onUnhealthy` after
+`failureThreshold` only after that same process generation has first become healthy. Consequently,
+initial probe failures leave a service in `Running` rather than publishing `Unhealthy`; callers
+must not treat the current generic `waitReady` Interface as a startup deadline.
 
-- A health probe callback firing `Healthy` after a stop has already begun
-- A stop setting `Stopped` before the OS process has actually exited
-- Concurrent stop and restart racing to update the same state
+`waitReady(name)` is intentionally unbounded. For long-running definitions it succeeds at
+`Healthy` and fails at a non-restarting terminal state. For `restart: "no"` one-shot definitions,
+successful completion is readiness. `waitAllReady()` considers only definitions whose desired
+state is `running`, so intentionally inactive definitions do not block lazy callers. Higher-level
+Modules own any finite user-facing deadline.
 
-The FSM eliminates these by making illegal transitions return `null` instead of corrupting state.
+## Restart policies
 
-#### Events
+| Policy           | Exit behavior                                        | Unhealthy behavior                                |
+| ---------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| `no`             | Never restart.                                       | Leave the live process observable as `Unhealthy`. |
+| `on-failure`     | Restart non-zero exits.                              | Restart.                                          |
+| `always`         | Restart every exit.                                  | Restart.                                          |
+| `unless-stopped` | Restart every exit while desired state is `running`. | Restart.                                          |
 
-Instead of directly setting status strings, the Orchestrator sends typed events:
+`maxRestarts: 0` means unlimited restarts when the selected policy allows one. Manual stop first
+sets desired state to `stopped`, so it does not re-enter the restart loop.
 
-| Event                   | Payload            | Meaning                                |
-| ----------------------- | ------------------ | -------------------------------------- |
-| `DependenciesSatisfied` | —                  | All dependency conditions met          |
-| `DependencyFailed`      | `error: string`    | A dependency exited with non-zero code |
-| `ProcessSpawned`        | `pid`, `startedAt` | OS process successfully created        |
-| `HealthCheckPassed`     | —                  | Health probe reports success           |
-| `HealthCheckFailed`     | —                  | Health probe reports failure           |
-| `HookFailed`            | `error: string`    | Lifecycle hook failed                  |
-| `ProcessExited`         | `exitCode: number` | OS process exited                      |
-| `StopRequested`         | —                  | Manual stop or shutdown initiated      |
-| `RestartTriggered`      | `restartCount`     | Restart policy decided to restart      |
-| `BackoffElapsed`        | —                  | Restart backoff timer completed        |
+## Shutdown and cleanup ownership
 
-#### Transition table
+Removing a service from the `FiberMap`, clearing the map, or closing the orchestrator scope
+interrupts its lifecycle fiber. The generation finalizer:
 
-The set of legal `(fromStatus, event)` pairs is defined as data:
+1. sends the configured shutdown signal (default `SIGTERM`);
+2. waits for the configured per-process timeout (default 10 seconds);
+3. falls back to `SIGKILL`;
+4. runs the in-process `cleanup` Effect.
 
-```ts
-const allowed = new Set([
-  "Pending:DependenciesSatisfied", // → Starting
-  "Pending:DependencyFailed", // → Failed
-  "Pending:StopRequested", // → Stopped (no process to kill)
-  "Starting:ProcessSpawned", // → Running
-  "Starting:StopRequested", // → Stopping
-  "Running:HealthCheckPassed", // → Healthy
-  "Running:HookFailed", // → Failed
-  "Running:ProcessExited", // → Stopped or Failed
-  "Running:StopRequested", // → Stopping
-  "Healthy:HealthCheckPassed", // → Healthy (no-op, structural eq)
-  "Healthy:HealthCheckFailed", // → Unhealthy
-  "Healthy:HookFailed", // → Failed
-  "Healthy:ProcessExited", // → Stopped or Failed
-  "Healthy:StopRequested", // → Stopping
-  "Unhealthy:HealthCheckPassed", // → Healthy
-  "Unhealthy:ProcessExited", // → Stopped or Failed
-  "Unhealthy:StopRequested", // → Stopping
-  "Stopping:ProcessExited", // → Stopped (always, any exit code)
-  "Stopped:RestartTriggered", // → Restarting
-  "Failed:RestartTriggered", // → Restarting
-  "Unhealthy:RestartTriggered", // → Restarting (kill process, restart)
-  "Restarting:StopRequested", // → Stopped (no process to kill)
-  "Restarting:BackoffElapsed", // → Starting
-]);
-```
+Whole-graph stop sets desired state first and then stops dependents before dependencies. The global
+shutdown budget defaults to 60 seconds. If that budget expires, the orchestrator logs the timeout
+and clears all fibers; it does not fail with `ShutdownTimeoutError`.
 
-Any `(status, event)` pair not in this set is silently rejected — `applyEvent()` returns `null`. This is intentional: in a concurrent system, a health probe callback racing a shutdown is expected, not an error.
+In-process cleanup and orphan supervision solve different failure modes:
 
-#### Core functions
+- `cleanup` runs while the owner Effect runtime is alive and can use its dependencies.
+- `supervision.orphanCleanup` is serializable work executed by a detached supervisor when the
+  owner's stdin closes, its PID disappears, the supervisor receives a termination signal, or the
+  managed child exits while cleanup is configured.
 
-```ts
-// Pure — computes new state or null if the transition is illegal
-const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceState | null
+`ExternalCleanupAction` currently supports removing a Docker container or a filesystem path. The
+supervisor validates the decoded configuration and ignores individual cleanup failures so cleanup
+remains best-effort and idempotent.
 
-// Effectful — atomic validate-and-apply via SubscriptionRef's internal Semaphore
-const transition = (
-  ref: SubscriptionRef<ServiceState>,
-  event: ServiceEvent,
-): Effect<ServiceState | null>
-```
+## Supervisor runtime
 
-`transition()` uses `SubscriptionRef.modifyEffect`, which holds a `Semaphore(1)` permit during the entire read-validate-write cycle. This guarantees that concurrent callers (e.g., a health probe and a manual stop) are serialized — one completes before the other starts. No explicit Queue or actor needed.
+A definition opts into supervision by setting `supervision`. Instead of spawning the configured
+command directly, `Supervisor.makeSupervisedCommand()` launches `supervisor-runtime.ts`. The
+supervisor:
 
-#### How invalid transitions are handled
+- starts the actual command in its own process group on Unix;
+- pipes child stdout/stderr back to the orchestrator;
+- watches both owner stdin and owner PID;
+- kills the entire child tree on owner loss or a shutdown signal;
+- applies graceful-then-forceful termination;
+- runs serializable orphan cleanup before it exits.
 
-When a health probe fires `HealthCheckPassed` but the service is already in `Stopping`:
+This extra process is required for abrupt owner death: an Effect finalizer cannot run after its
+own process has already disappeared. Ordinary definitions avoid the extra process.
 
-1. `transition()` acquires the semaphore
-2. `applyEvent(Stopping, HealthCheckPassed)` → `null` (not in the allowed set)
-3. State is unchanged, `null` returned to caller
-4. Semaphore released
+## Compiled Bun self-dispatch
 
-The health probe's callback gets `null` back and moves on. No error thrown, no state corrupted. The probe fiber will be interrupted shortly anyway when the service's scope closes.
-
----
-
-### errors — typed error hierarchy
-
-**File:** `src/errors.ts`
-
-All errors extend `Data.TaggedError`, giving each a unique `_tag` discriminator for pattern matching:
-
-| Error                    | Tag                        | When raised                                                  |
-| ------------------------ | -------------------------- | ------------------------------------------------------------ |
-| `CyclicDependencyError`  | `"CyclicDependencyError"`  | `buildGraph()` detects a cycle in service dependencies       |
-| `MissingDependencyError` | `"MissingDependencyError"` | A service references a dependency that doesn't exist         |
-| `ServiceNotFoundError`   | `"ServiceNotFoundError"`   | `getState()`, `stopService()`, etc. called with unknown name |
-| `SpawnError`             | `"SpawnError"`             | `ChildProcessSpawner` fails to spawn the process             |
-| `ShutdownTimeoutError`   | `"ShutdownTimeoutError"`   | Graceful shutdown exceeds the configured timeout             |
-
-Because these are in the Effect type system, the compiler tracks which functions can fail with which errors. A function returning `Effect<void, ServiceNotFoundError>` guarantees it can only fail with that specific error — no surprise exceptions at runtime.
-
----
-
-### DependencyGraph — ordering engine
+Development runtimes can execute `supervisor-runtime.ts` by file path. A Bun single-file executable
+cannot: `process.execPath` points back to the compiled CLI, and source URLs may live under Bun's
+virtual filesystem. The package therefore uses three internal environment variables:
 
-**File:** `src/DependencyGraph.ts`
+| Variable                                   | Role                                                                                                                                   |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `PROCESS_COMPOSE_SUPERVISOR_SELF_DISPATCH` | Enabled by the compiled parent when this package is loaded from `file:///$bunfs/`; tells later spawns to re-enter the same executable. |
+| `PROCESS_COMPOSE_RUN_SUPERVISOR`           | Selects the supervisor runtime when the executable re-enters its main entrypoint.                                                      |
+| `PROCESS_COMPOSE_SUPERVISOR_CONFIG`        | Carries the base64url-encoded supervisor configuration for that runtime.                                                               |
 
-Turns a flat list of `ServiceDef[]` into a `ResolvedGraph` that answers ordering questions.
+The CLI entrypoint calls `enableSupervisorSelfDispatchForCompiledBun()` before normal command
+dispatch, checks `isSupervisorRuntimeRequested()`, and invokes `runSupervisorRuntimeFromEnv()`.
+The supervisor removes all three variables before starting the managed command, preventing the
+protocol from leaking recursively into a service.
 
-```mermaid
-graph LR
-    subgraph "Input: ServiceDef[]"
-        DB["db"]
-        API["api<br/><i>depends on: db (healthy)</i>"]
-        WEB["web<br/><i>depends on: api (started)</i>"]
-        WORKER["worker<br/><i>depends on: db (started)</i>"]
-    end
+The stack daemon has a separate Supabase-owned marker, `SUPABASE_STACK_RUN_DAEMON`; it is documented
+in [the stack detach-mode guide](../../stack/docs/detach-mode.md#compiled-executable-re-entry).
 
-    subgraph "Graph edges (dep → dependent)"
-        DB2["db"] --> API2["api"]
-        DB2 --> WORKER2["worker"]
-        API2 --> WEB2["web"]
-    end
+These contracts exist because compiled-child behavior caused two user-visible incidents:
 
-    subgraph "Topological sort (start order)"
-        direction LR
-        S1["1. db"] ~~~ S2["2. api"] ~~~ S3["3. worker"] ~~~ S4["4. web"]
-    end
-```
+- [CLI-1452](https://linear.app/supabase/issue/CLI-1452/compiled-bun-compile-next-binary-cant-run-supabase-functions-dev): compiled runtime paths and native watcher bindings were unsafe for functions development.
+- [CLI-1453](https://linear.app/supabase/issue/CLI-1453/compiled-bun-compile-next-binary-start-detach-daemon-fork-ignores): detached startup re-entered the CLI instead of the daemon.
 
-**How it works:**
+## Logs
 
-1. **Filter** disabled services (`enabled: false`)
-2. **Build** a directed graph where edges point from dependency to dependent (`db → api`)
-3. **Validate** — throw `MissingDependencyError` if a dependency references a non-existent service
-4. **Cycle check** — `Graph.isAcyclic()` before sorting; throw `CyclicDependencyError` if cyclic
-5. **Topological sort** — `Graph.topo()` yields dependencies before their dependents
+`LogBuffer` holds a bounded per-service history and a bounded merged history (10,000 entries each),
+plus live per-service and merged `PubSub` streams. `historyAll` can filter by service names.
+Streams contain new entries only; callers explicitly request history when they need replay.
 
-The `ResolvedGraph` interface exposes five operations:
+When a process exits unexpectedly or becomes unhealthy, the orchestrator appends recent buffered
+output to its diagnostics. `truncate` currently clears both a service's history and its entries in
+the merged history; it has no production caller.
 
-| Method                 | Purpose                                                    |
-| ---------------------- | ---------------------------------------------------------- |
-| `startOrder`           | All services in topological order (dependencies first)     |
-| `stopOrder`            | Reverse of startOrder (dependents stopped first)           |
-| `startOrderFor(name)`  | Only the transitive dependency chain for one service       |
-| `dependenciesOf(name)` | Direct dependencies with their conditions                  |
-| `dependentsOf(name)`   | Direct dependents of a service (reverse of dependenciesOf) |
+## Error model
 
-`startOrderFor("web")` does a DFS on reverse adjacency from the `web` node, collecting `db`, `api`, and `web` — but not `worker`. This powers selective startup: `orchestrator.startService("web")` only starts what `web` actually needs.
+Graph construction can fail with `MissingDependencyError` or `CyclicDependencyError`. Lifecycle
+lookup uses `ServiceNotFoundError`; spawn preparation uses `SpawnError`; readiness uses
+`ServiceReadyError`. Global shutdown timeout is logged and force-cleared, so the exported
+`ShutdownTimeoutError` does not represent a current failure path.
 
----
+## Testing through Interfaces
 
-### LogBuffer — log capture and streaming
-
-**File:** `src/LogBuffer.ts`
-
-Captures stdout/stderr from every managed process and makes it available for both historical queries and live streaming.
-
-```mermaid
-graph LR
-    subgraph Producers
-        P1["service 'db' stdout"]
-        P2["service 'api' stderr"]
-    end
-
-    subgraph LogBuffer
-        PS1["PubSub<br/><i>per-service (1024)</i>"]
-        PS2["PubSub<br/><i>global (4096)</i>"]
-        BUF["Ref&lt;LogEntry[]&gt;<br/><i>ring buffer (10k)</i>"]
-    end
-
-    subgraph Consumers
-        C1["TUI dashboard<br/><i>subscribe('db')</i>"]
-        C2["Log file writer<br/><i>subscribeAll()</i>"]
-        C3["API endpoint<br/><i>history('api', 50)</i>"]
-    end
-
-    P1 --> PS1
-    P2 --> PS1
-    P1 --> PS2
-    P2 --> PS2
-    P1 --> BUF
-    P2 --> BUF
-    PS1 --> C1
-    PS2 --> C2
-    BUF --> C3
-```
-
-**Internal data structures:**
-
-- **Per-service `PubSub`** (bounded at 1024 entries): delivers log lines to subscribers watching a specific service. If a subscriber falls behind by 1024 lines, the oldest entries are dropped (backpressure).
-- **Global `PubSub`** (bounded at 4096): delivers all log lines across all services. Used by `subscribeAll()`.
-- **Per-service `Ref<Array<LogEntry>>`**: an in-memory ring buffer capped at 10,000 entries. Powers `history()` for historical queries — new subscribers can catch up on recent output without replaying the entire PubSub.
-
-**Why PubSub instead of EventEmitter?**
-
-- **Backpressure**: bounded buffers prevent a fast producer from overwhelming slow consumers
-- **Multiple subscribers**: each subscriber gets its own independent queue — one slow subscriber doesn't block others
-- **No callback hell**: consumers read from a `Stream`, which composes cleanly with the rest of the Effect pipeline
-- **No memory leaks**: subscribers are cleaned up when their fiber is interrupted (no forgotten `.removeListener()`)
-
----
-
-### HealthProbe — health checking
-
-**File:** `src/HealthProbe.ts`
-
-Runs periodic health checks against a service and calls back when the service transitions between healthy and unhealthy states.
-
-**Two probe types:**
-
-| Probe | How it works                                              | Success condition      |
-| ----- | --------------------------------------------------------- | ---------------------- |
-| HTTP  | `fetch(scheme://host:port/path)` with timeout             | Response status is 2xx |
-| Exec  | Spawns the configured command directly with explicit args | Exit code is 0         |
-| TCP   | `Net.createConnection(host, port)` with timeout           | Connection succeeds    |
-
-**Algorithm:**
-
-1. Wait `initialDelaySeconds` (default: 0)
-2. Execute the probe every `periodSeconds` (default: 10)
-3. Track consecutive successes and failures in a `Ref<{ successes, failures }>` counter
-4. When consecutive successes reaches `successThreshold` (default: 1): call `onHealthy()`
-5. When consecutive failures reaches `failureThreshold` (default: 3): call `onUnhealthy()`
-6. A success resets the failure counter to 0, and vice versa
-
-The health probe runs as a forked child fiber inside the service's main fiber. When the service fiber is interrupted (e.g., on stop), the health probe fiber is automatically interrupted too — no manual cleanup needed.
-
----
-
-### Orchestrator — the coordinator
-
-**File:** `src/Orchestrator.ts`
-
-The Orchestrator is the heart of the library. It ties together every other component into a coherent service lifecycle manager.
-
-#### Service interface
-
-```ts
-class Orchestrator extends Context.Service<Orchestrator, {
-  start: ()           => Effect<void>;                              // start all services
-  startService: (name) => Effect<void, ServiceNotFoundError>;       // start one + its deps
-  stop: ()            => Effect<void>;                              // stop all services
-  stopService: (name) => Effect<void, ServiceNotFoundError>;        // stop service + active dependents
-  restartService: (name) => Effect<void, ServiceNotFoundError>;     // stop then start
-  updateServiceDefinition: (name, def) => Effect<void, ...>;       // replace definition
-  getState: (name)    => Effect<ServiceState, ServiceNotFoundError>;// snapshot
-  getAllStates: ()     => Effect<ReadonlyArray<ServiceState>>;      // snapshot of all
-  stateChanges: (name) => Effect<Stream<ServiceState>, ServiceNotFoundError>; // live
-  allStateChanges: ()  => Stream<ServiceState>;                     // live, all services
-  waitReady: (name)    => Effect<void, ServiceNotFoundError | ServiceReadyError>;
-  waitAllReady: ()     => Effect<void, ServiceReadyError>;
-}>()("process-compose/Orchestrator") { ... }
-```
-
-#### Initialization
-
-`Orchestrator.layer` accepts an optional `OrchestratorConfig` parameter (e.g. `shutdownTimeoutSeconds`) that applies global defaults over the per-service configuration.
-
-When the Orchestrator layer is constructed, it:
-
-1. Yields the `ChildProcessSpawner` and `LogBuffer` services from the environment
-2. Creates a `Map<string, ServiceRuntime>` where each entry holds one stable `SubscriptionRef<ServiceState>`. It is both the live state machine and the synchronization point for lifecycle waiters.
-3. Creates a `FiberMap<string>` to track one fiber per running service
-
-#### FiberMap — the central data structure
-
-FiberMap is the architectural linchpin. Here's why:
-
-```mermaid
-sequenceDiagram
-    participant Consumer as Consumer code
-    participant FM as FiberMap
-    participant Fiber as Service fiber
-    participant Finalizer as Effect.addFinalizer
-    participant OS as OS process
-
-    Consumer->>FM: FiberMap.run("db", runService(dbDef))
-    FM->>Fiber: fork new fiber
-    Fiber->>OS: spawner.spawn(cmd)
-    Note over Fiber,OS: process is running
-
-    Consumer->>FM: FiberMap.remove("db")
-    FM->>Fiber: interrupt
-    Fiber->>Finalizer: trigger registered finalizers
-    Finalizer->>OS: kill(SIGTERM)
-    OS-->>Finalizer: exit
-    Note over FM: entry removed, fiber done
-```
-
-The key insight: **stopping a service is just removing it from the map**. The interrupt cascades to the fiber, which triggers finalizers, which send SIGTERM to the OS process. There's no separate "process manager" or "cleanup registry" — the fiber's scope _is_ the lifecycle.
-
-When the Orchestrator's own scope closes (application shutdown), FiberMap interrupts _all_ entries automatically. Every process gets a graceful shutdown attempt, guaranteed, even if the application crashes.
-
-#### Service lifecycle (`runService`)
-
-Each service follows this lifecycle. All state mutations go through `sendEvent()` which validates transitions via the FSM before updating the `SubscriptionRef`:
-
-```mermaid
-sequenceDiagram
-    participant RUN as runService
-    participant DEP as Dependency state stream
-    participant FSM as sendEvent (FSM)
-    participant SPAWN as spawnOnce
-    participant CPS as ChildProcessSpawner
-    participant LOG as LogBuffer
-    participant HP as HealthProbe
-
-    RUN->>DEP: await dependency state predicates
-    Note over DEP: changes emits current state, then future transitions
-
-    RUN->>FSM: DependenciesSatisfied → Starting
-    RUN->>SPAWN: spawnOnce()
-    SPAWN->>CPS: spawner.spawn(cmd)
-    CPS-->>SPAWN: handle (pid, stdout, stderr, exitCode)
-
-    SPAWN->>SPAWN: register finalizer (SIGTERM → SIGKILL)
-    SPAWN->>SPAWN: run started hooks
-    SPAWN->>FSM: ProcessSpawned → Running
-
-    par Log streaming
-        SPAWN->>LOG: fork: stdout → decodeText → splitLines → append
-        SPAWN->>LOG: fork: stderr → decodeText → splitLines → append
-    and Health checking
-        SPAWN->>HP: fork: runHealthProbe(callbacks)
-        HP->>HP: run healthy hooks
-        HP->>FSM: HealthCheckPassed → Healthy
-    end
-
-    alt Process exits normally
-        SPAWN->>SPAWN: await handle.exitCode
-        SPAWN-->>RUN: SpawnResult::Exited(exitCode)
-        RUN->>FSM: ProcessExited → Stopped or Failed
-    else Health probe detects unhealthy (restart policy allows)
-        HP->>FSM: HealthCheckFailed → Unhealthy
-        HP->>SPAWN: resolve unhealthyRestart Deferred
-        SPAWN-->>RUN: SpawnResult::UnhealthyRestart
-        Note over SPAWN: scope closes → finalizer kills process
-    end
-
-    alt restart policy says yes
-        RUN->>FSM: RestartTriggered → Restarting
-        RUN->>RUN: exponential backoff
-        RUN->>FSM: BackoffElapsed → Starting
-        RUN->>RUN: loop back to spawnOnce
-    end
-```
-
-#### Dependency waiting
-
-When a service has dependencies, its fiber waits for predicates on the dependency's stable state stream before spawning:
-
-```ts
-// Service "api" depends on "db" being healthy
-const db = services.get("db");
-if (db) {
-  yield * waitForState(db, (state) => state.status === "Healthy");
-}
-// Execution only continues here once db is healthy
-```
-
-This is fundamentally different from polling or event-based approaches:
-
-- **No polling**: the fiber is parked with zero CPU cost until the deferred resolves
-- **Stable across restarts**: every waiter observes the same `SubscriptionRef`; no lifecycle-generation aliases need replacing
-- **No missed current state**: `SubscriptionRef.changes` emits the current value before future transitions
-
-The entire dependency-wait phase is wrapped in an `Effect.timeout` using `dependencyTimeoutSeconds` (default: 30s). If dependencies don't reach their conditions in time, the service receives a `DependencyFailed` event with a timeout error message and transitions to `Failed` without ever spawning. This prevents services from blocking indefinitely when a dependency is stuck.
-
-If a dependency exits with a non-zero code and the condition is `completed`, the dependent service also receives a `DependencyFailed` event and transitions to `Failed` without ever spawning.
-
-#### Graceful shutdown
-
-Every spawned process registers a finalizer via `Effect.addFinalizer`:
-
-```
-1. Send shutdown signal (default: SIGTERM)
-2. Wait for process to exit (up to timeoutSeconds, default: 10)
-3. If timeout: send SIGKILL (force kill)
-4. Log "Shutdown timed out, sent SIGKILL"
-```
-
-Finalizers run in three scenarios:
-
-- **Explicit stop**: `stopService("db")` → `StopRequested` event → `FiberMap.remove` → interrupt → finalizer → `ProcessExited` event
-- **Scope close**: application shutdown → FiberMap scope closes → all finalizers
-- **Fiber failure**: if `runService` throws, the scope closes → finalizer
-
-**Global shutdown timeout.** The entire `stop()` operation is wrapped in a `shutdownTimeoutSeconds` timeout (default: 60 seconds). If the global timeout expires before all services have stopped — for example because a service ignores SIGTERM and its per-service `shutdown.timeoutSeconds` has not yet elapsed — `FiberMap.clear` force-interrupts all remaining fibers and a `[shutdown-timeout]` warning is appended to every service's log buffer. This is a safety net layered on top of the per-service SIGTERM → wait → SIGKILL escalation controlled by `shutdown.timeoutSeconds`: the per-service timeout governs how long a single process gets to exit gracefully; the global timeout bounds the total wall-clock time the entire shutdown can take.
-
-**Shutdown is parallel, not sequential.** Services stop concurrently, but each service waits for its active dependents to reach `Stopped` before stopping itself. It observes the same stable state streams used during startup, but follows the graph in reverse. The `dependentsOf(name)` graph query provides the reverse dependency edges needed to identify which services must stop first.
-
-`stopService(name)` stops the named service and its active transitive dependents, in reverse dependency order. This preserves the graph invariant that no managed dependent keeps running after a dependency has been stopped. Never-started dependents are left dormant.
-
-The FSM guarantees correct state transitions during shutdown. For each affected service:
-
-1. `StopRequested` event transitions the service to `Stopping`
-2. `FiberMap.remove` interrupts the fiber, which triggers the finalizer (SIGTERM → wait → SIGKILL)
-3. After `remove` completes (the process is dead), a `ProcessExited` event transitions to `Stopped`; shutdown waiters observe that transition on the state stream
-
-This fixes a subtle bug in the pre-FSM design where `Stopped` was set immediately after `FiberMap.remove` returned, before the process had actually exited. The FSM enforces that `Stopping → Stopped` only happens via `ProcessExited`, which is only sent after the fiber (and its finalizer) has completed.
-
-If a health probe callback fires between steps 1 and 3 (the service is in `Stopping`), the FSM silently rejects the `HealthCheckPassed`/`HealthCheckFailed` event — no state corruption.
-
-This is the "Effect advantage" — you write cleanup logic once, attached to the resource, and it runs no matter how the fiber exits. With vanilla Node.js, you'd need try/finally blocks, `process.on('exit')` handlers, and careful bookkeeping to achieve the same guarantee.
-
-#### Log streaming pipeline
-
-Each spawned process has its stdout/stderr piped through a streaming pipeline:
-
-```
-handle.stdout (Stream<Uint8Array>)
-  → Stream.decodeText      (decode binary to UTF-8 strings)
-  → Stream.splitLines       (split on newlines)
-  → Stream.runForEach(...)  (send each line to LogBuffer.append)
-```
-
-This runs in a forked child fiber (`Effect.forkChild`), so it:
-
-- Runs concurrently with the main process lifecycle
-- Is automatically interrupted when the parent fiber (the service) is interrupted
-- Catches and ignores stream errors (a broken pipe shouldn't crash the service)
-
-#### Restart loop
-
-After a process exits **or becomes unhealthy**, the restart policy is evaluated:
-
-| Policy             | Restart on crash                | Restart on unhealthy |
-| ------------------ | ------------------------------- | -------------------- |
-| `"no"`             | Never                           | Never                |
-| `"on-failure"`     | Exit code != 0                  | Yes                  |
-| `"always"`         | Always (even on success)        | Yes                  |
-| `"unless-stopped"` | Always, unless manually stopped | Yes                  |
-
-**Unhealthy restart flow**: when the health probe transitions a service to `Unhealthy` and the restart policy allows it, the Orchestrator races an `unhealthyRestart` Deferred against `handle.exitCode` inside `spawnOnce()`. When the Deferred wins, the scope closes, triggering the kill finalizer (SIGTERM → timeout → SIGKILL). The service then enters the normal restart loop via `RestartTriggered`. Crash restarts and unhealthy restarts share the same `maxRestarts` counter.
-
-If restarting, exponential backoff is applied: `min(30s, 2^(n-1)s)` where n is the restart count. The state stream remains stable across the restart and publishes `Restarting → Starting → Running → Healthy`, so existing waiters stay attached to the new generation.
-
-#### Lifecycle hooks
-
-Services can define hooks that run at specific lifecycle points:
-
-- **`on: "started"`** — runs after the process is spawned but before `ProcessSpawned` transitions the service to `Running`
-- **`on: "healthy"`** — runs after the first successful health probe but before `HealthCheckPassed` transitions the service to `Healthy`
-
-The stable state is published only after its hooks complete. This means a service depending on `db` with condition `healthy` waits until db's `on:healthy` hooks have succeeded and db has entered `Healthy`.
-
-Each hook receives a `HookLog` callback scoped to the service name, allowing it to write directly to the service's log buffer. Hook output appears in the same log stream as the service's stdout/stderr, so callers subscribed to a service's logs see hook messages inline with process output.
-
-Each hook has:
-
-- `run: (log: HookLog) => Effect<void, unknown>` — the effect to execute; `log` writes to the service's log buffer
-- `timeoutSeconds` (default: 30) — maximum execution time
-- `failurePolicy: "fail" | "ignore"` (default: `"fail"`) — whether hook failure should fail the service
-
-If a hook with `failurePolicy: "fail"` fails or times out, the service receives a `HookFailed` event and transitions to `Failed`. Hooks with `failurePolicy: "ignore"` log a `[hook-ignored]` message and continue.
-
-Multiple hooks on the same trigger run in sequence.
-
-#### Failure diagnostics
-
-When a health probe transitions a service to `Unhealthy`, the Orchestrator emits diagnostic output to the service's stderr log:
-
-- A `[health-check-failed]` header line
-- The last 20 log entries from the service (timestamp, stream, content)
-- If no recent logs exist, a "no recent log output" message
-
-This mirrors how Docker streams container logs on health check failure, helping operators diagnose issues without manually querying logs.
-
----
-
-## Why Effect?
-
-The core question: is Effect justified for a process orchestrator?
-
-The answer comes down to three properties that are trivial in Effect but hard to implement correctly by hand: **structured concurrency**, **resource safety**, and **composable observation**.
-
-### Without Effect — what you'd build
-
-A vanilla Node.js orchestrator would need:
-
-```ts
-class Orchestrator {
-  private processes = new Map<string, ChildProcess>();
-  private states = new Map<string, ServiceState>();
-  private listeners = new Map<string, Set<(state: ServiceState) => void>>();
-  private cleanupHandlers: Array<() => Promise<void>> = [];
-
-  async start() {
-    // Sort services topologically (custom implementation)
-    const order = topoSort(this.config);
-
-    for (const def of order) {
-      // Wait for dependencies (EventEmitter + Promise)
-      await this.waitForDependencies(def);
-
-      // Spawn process
-      const proc = spawn(def.command, def.args);
-      this.processes.set(def.name, proc);
-
-      // Track cleanup
-      this.cleanupHandlers.push(async () => {
-        proc.kill("SIGTERM");
-        await new Promise((resolve) => setTimeout(resolve, 10000));
-        if (!proc.killed) proc.kill("SIGKILL");
-      });
-
-      // Log streaming
-      proc.stdout?.on("data", (chunk) => {
-        /* parse lines, notify subscribers */
-      });
-
-      // State tracking
-      proc.on("exit", (code) => {
-        this.states.set(def.name, { ...state, status: code === 0 ? "Stopped" : "Failed" });
-        this.listeners.get(def.name)?.forEach((fn) => fn(this.states.get(def.name)!));
-        // Handle restart policy...
-        // But what if stop() was called during restart backoff?
-        // What if the EventEmitter fires before the listener is registered?
-        // What if cleanup throws?
-      });
-    }
-  }
-
-  async stop() {
-    // Run all cleanup handlers... but what if one throws?
-    // What order? What about concurrent stop+restart?
-    for (const handler of this.cleanupHandlers.reverse()) {
-      try {
-        await handler();
-      } catch {
-        /* swallow? log? */
-      }
-    }
-  }
-}
-```
-
-This works for simple cases but accumulates edge cases fast:
-
-- **Leaked processes**: if `start()` throws after spawning 3 of 5 services, who cleans up the 3?
-- **Race conditions**: what if `stop()` is called while a restart backoff `setTimeout` is pending?
-- **Memory leaks**: forgetting to `removeListener()` on a destroyed process
-- **Error swallowing**: `try/catch` around cleanup often hides important errors
-- **Testing**: mocking `child_process.spawn` globally affects all tests
-
-### With Effect — what you actually write
-
-| Concern                        | Vanilla Node.js                                                      | Effect                                                                         |
-| ------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| **Fork a concurrent service**  | `spawn()` + manual tracking                                          | `FiberMap.run(fibers, name, effect)`                                           |
-| **Stop a service**             | `proc.kill()` + cleanup bookkeeping                                  | `FiberMap.remove(fibers, name)`                                                |
-| **Stop everything**            | Loop over processes + cleanup handlers                               | Close the scope (automatic)                                                    |
-| **Leaked process guarantee**   | Must manually handle every exit path                                 | Structured concurrency: parent interrupt = children interrupt = finalizers run |
-| **Wait for dependency**        | `EventEmitter` + `Promise` + race-condition handling                 | Predicate over `SubscriptionRef.changes(dep.state)`                            |
-| **Observe state changes**      | `EventEmitter` + manual subscriber tracking                          | `SubscriptionRef.changes(ref)` (Stream)                                        |
-| **Stream logs to N consumers** | Custom pub/sub or multiple `.on('data')`                             | `PubSub` with bounded backpressure                                             |
-| **Graceful shutdown**          | `process.on('exit')` + manual per-process cleanup                    | `Effect.addFinalizer(() => kill then wait then SIGKILL)`                       |
-| **Restart with backoff**       | `setTimeout` + state flags + "is this service being stopped?" checks | `Effect.sleep(backoff)` inside a loop — interruption cancels the sleep         |
-| **Test process spawning**      | `jest.mock('child_process')` globally                                | `Layer.succeed(ChildProcessSpawner, mockImpl)` per test                        |
-
-The key realization: **most of the vanilla code isn't business logic — it's concurrency plumbing**. EventEmitter subscription management, cleanup handler registries, race-condition guards, manual timeout cancellation. Effect's structured concurrency eliminates all of it, leaving just the business logic: "spawn process, stream logs, check health, restart on failure."
-
-### The fiber advantage, concretely
-
-Consider what happens when you call `orchestrator.stop()`:
-
-**Vanilla**: iterate processes in reverse order, kill each, await exit with timeout, SIGKILL on timeout, handle errors, remove event listeners, cancel pending restart timers, update state, notify subscribers, deallocate buffers...
-
-**Effect**: `FiberMap` scope closes. Each fiber is interrupted. Each fiber's `Effect.addFinalizer` sends SIGTERM, waits, escalates to SIGKILL. `SubscriptionRef` updates automatically. PubSub publishers complete. Child fibers (log streaming, health probes) are interrupted by structured concurrency. Done.
-
-The entire shutdown sequence is **implicit in the fiber tree structure**. There's no explicit "cleanup everything" code because there's nothing to clean up — the resources are tied to the fiber scopes that own them.
-
----
-
-## Data flow
-
-End-to-end flow from configuration to consumer:
-
-```mermaid
-graph TB
-    subgraph "1. Configuration"
-        DEFS["ServiceDef[]"]
-    end
-
-    subgraph "2. Graph resolution"
-        BG["buildGraph()"]
-        RG["ResolvedGraph<br/><i>startOrder, stopOrder,<br/>startOrderFor, dependenciesOf</i>"]
-    end
-
-    subgraph "3. Orchestrator construction"
-        OL["Orchestrator.layer(graph)"]
-        SIGS["ServiceRuntime map<br/><i>stable SubscriptionRef per service</i>"]
-        FBM["FiberMap&lt;string&gt;"]
-    end
-
-    subgraph "4. Per-service fiber"
-        DEP["Await dependency<br/>state predicates"]
-        SPAWN["spawner.spawn(cmd)"]
-        FIN["Effect.addFinalizer<br/><i>SIGTERM → SIGKILL</i>"]
-        STDOUT["stdout → decodeText<br/>→ splitLines"]
-        STDERR["stderr → decodeText<br/>→ splitLines"]
-        HEALTH["runHealthProbe<br/><i>periodic HTTP/exec</i>"]
-        EXIT["await exitCode"]
-        RESTART["restart loop<br/><i>backoff + policy</i>"]
-    end
-
-    subgraph "5. State management"
-        FSM["ServiceTransition<br/><i>validate + apply event</i>"]
-        SREF["SubscriptionRef&lt;ServiceState&gt;<br/><i>Semaphore(1) serialization</i>"]
-    end
-
-    subgraph "6. Shared services"
-        LB["LogBuffer<br/><i>PubSub + ring buffer</i>"]
-    end
-
-    subgraph "7. Consumers"
-        TUI["TUI dashboard<br/><i>stateChanges / allStateChanges</i>"]
-        LOGS["Log viewer<br/><i>subscribe / subscribeAll</i>"]
-        API["REST API<br/><i>getState / getAllStates / history</i>"]
-    end
-
-    DEFS --> BG --> RG
-    RG --> OL
-    OL --> SIGS
-    OL --> FBM
-
-    FBM -->|"FiberMap.run(name, ...)"| DEP
-    DEP --> SPAWN
-    SPAWN --> FIN
-    SPAWN --> STDOUT
-    SPAWN --> STDERR
-    SPAWN --> HEALTH
-    SPAWN --> EXIT
-    EXIT --> RESTART
-    RESTART -.->|"loop"| SPAWN
-
-    STDOUT --> LB
-    STDERR --> LB
-    HEALTH -->|"sendEvent"| FSM
-    EXIT -->|"sendEvent"| FSM
-    FSM -->|"modifyEffect"| SREF
-
-    SREF --> TUI
-    LB --> LOGS
-    SREF --> API
-    LB --> API
-```
+- Pure unit tests cover graph construction, state transitions, health counters, and log buffering.
+- Orchestrator integration tests provide a stateful `ChildProcessSpawner` Adapter and assert on
+  public states, desired state, logs, hooks, dependency ordering, restart, and cleanup.
+- Supervisor runtime tests use real subprocesses because owner-loss and process-tree behavior cross
+  the process Seam.
