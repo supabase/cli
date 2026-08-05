@@ -100,24 +100,33 @@ describe("localStackConfigParity", () => {
     );
   });
 
-  it("preserves raw-document requirements for presence-sensitive sections", () => {
+  it("preserves effective presence requirements for presence-sensitive sections", () => {
     const byPath = new Map(entries.map(({ path, decision }) => [path, decision]));
 
     expect(byPath.get("api.auto_expose_new_tables")?.presence).toBe("raw-document");
-    expect(byPath.get("auth.external.github.enabled")?.presence).toBe("raw-document");
-    expect(byPath.get("auth.hook.send_email.enabled")?.presence).toBe("raw-document");
-    expect(byPath.get("auth.sms.twilio.enabled")?.presence).toBe("raw-document");
+    expect(byPath.get("auth.external.github.enabled")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.external.github.client_id")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.hook.send_email.enabled")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.hook.send_email.uri")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.sms.twilio.enabled")?.presence).toBe("enabled-subtree");
     expect(byPath.get("auth.oauth_server.enabled")?.presence).toBe("enabled-subtree");
     expect(byPath.get("auth.third_party.firebase.project_id")?.presence).toBe("enabled-subtree");
     expect(byPath.get("api.tls.cert_path")?.presence).toBe("enabled-subtree");
     expect(byPath.get("storage.analytics.max_tables")?.presence).toBe("enabled-subtree");
     expect(byPath.get("edge_runtime.deno_version")?.presence).toBe("non-default-value");
     expect(byPath.get("auth.jwt_secret")?.presence).toBe("decoded-value");
+    expect(byPath.get("auth.email.smtp.enabled")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.email.smtp.host")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.email.smtp.pass")?.presence).toBe("effective-secret");
     expect(byPath.get("auth.web3.solana.enabled")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.mfa.totp.enroll_enabled")?.presence).toBe("non-default-value");
+    expect(byPath.get("auth.mfa.phone.otp_length")?.presence).toBe("enabled-subtree");
+    expect(byPath.get("auth.mfa.max_enrolled_factors")?.presence).toBe("non-default-value");
     expect(byPath.get("db.major_version")?.presence).toBe("non-default-value");
     expect(byPath.get("auth.external_url")?.presence).toBe("raw-document");
     expect(byPath.get("auth.passkey.enabled")?.presence).toBe("enabled-subtree");
     expect(byPath.get("auth.webauthn.rp_id")?.presence).toBe("raw-document");
+    expect(byPath.get("studio.api_url")?.presence).toBe("non-default-value");
     expect(byPath.get("auth.external.*")?.presence).toBe("enabled-subtree");
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("storage.buckets.*")?.presence).toBe("raw-document");

@@ -82,11 +82,11 @@ const unsupportedNonDefaultRuntimeField: LocalStackConfigParityDecision = {
     "Only a value that differs from the generated project-config default changes local runtime behavior.",
 };
 
-const unsupportedEnabledProviderField: LocalStackConfigParityDecision = {
+const unsupportedEnabledSubtreeField: LocalStackConfigParityDecision = {
   _tag: "unsupported-blocking",
   presence: "enabled-subtree",
   rationale:
-    "This setting changes local authentication behavior only when its provider is effectively enabled; generated disabled provider stubs do not count.",
+    "This setting changes local runtime behavior only when its enclosing feature is effectively enabled; generated disabled stubs do not count.",
 };
 
 const mappedAutoExposeNewTables: LocalStackConfigParityDecision = {
@@ -161,6 +161,28 @@ const mappedAuthSecretRuntimeField: LocalStackConfigParityDecision = {
   rationale:
     "The Auth launch translator passes this credential to the stack without retaining it in diagnostics.",
 };
+
+const mappedAuthEnabledSubtreeField: LocalStackConfigParityDecision = {
+  ...mappedAuthRuntimeField,
+  presence: "enabled-subtree",
+  rationale:
+    "The Auth launch translator maps this field when its enclosing feature is effectively enabled; generated disabled stubs do not affect the runtime.",
+};
+
+const mappedAuthEnabledSecretRuntimeField: LocalStackConfigParityDecision = {
+  ...mappedAuthSecretRuntimeField,
+  presence: "effective-secret",
+  rationale:
+    "The Auth launch translator maps this credential only in an enabled runtime subtree and does not retain it in diagnostics; unresolved generated env placeholders do not count.",
+};
+
+const mappedNormalizedCoreTopologyField: LocalStackConfigParityDecision = {
+  ...mappedCoreTopologyField,
+  presence: "non-default-value",
+  rationale:
+    "The launch Adapter normalizes the generated project-config default to the effective stack endpoint and preserves genuine custom values.",
+};
+
 const projectIdentityField: LocalStackConfigParityDecision = {
   _tag: "not-applicable",
   presence: "raw-document",
@@ -241,19 +263,19 @@ const unsupportedStorageBucket: LocalStackConfigParityDecision = {
 };
 
 const authExternalProviderParity = {
-  enabled: mappedAuthRuntimeField,
-  client_id: mappedAuthRuntimeField,
-  secret: mappedAuthSecretRuntimeField,
-  url: mappedAuthRuntimeField,
-  redirect_uri: mappedAuthRuntimeField,
-  skip_nonce_check: mappedAuthRuntimeField,
-  email_optional: mappedAuthRuntimeField,
+  enabled: mappedAuthEnabledSubtreeField,
+  client_id: mappedAuthEnabledSubtreeField,
+  secret: mappedAuthEnabledSecretRuntimeField,
+  url: mappedAuthEnabledSubtreeField,
+  redirect_uri: mappedAuthEnabledSubtreeField,
+  skip_nonce_check: mappedAuthEnabledSubtreeField,
+  email_optional: mappedAuthEnabledSubtreeField,
 } satisfies Record<keyof ProjectConfig["auth"]["external"]["apple"], Node>;
 
 const authHookParity = {
-  enabled: mappedAuthRuntimeField,
-  uri: mappedAuthOptionalRuntimeField,
-  secrets: mappedAuthSecretRuntimeField,
+  enabled: mappedAuthEnabledSubtreeField,
+  uri: mappedAuthEnabledSubtreeField,
+  secrets: mappedAuthEnabledSecretRuntimeField,
 } satisfies Record<keyof ProjectConfig["auth"]["hook"]["send_email"], Node>;
 
 const authRateLimitParity = {
@@ -291,7 +313,7 @@ const authExternalParity = {
 const authExternalWithCustomParity = {
   ...authExternalParity,
   "*": {
-    decision: unsupportedEnabledProviderField,
+    decision: unsupportedEnabledSubtreeField,
     children: authExternalProviderParity,
   },
 } satisfies LocalStackConfigParitySection;
@@ -311,32 +333,32 @@ const authSmsParity = {
   template: mappedAuthRuntimeField,
   max_frequency: mappedAuthRuntimeField,
   twilio: {
-    enabled: mappedAuthRuntimeField,
-    account_sid: mappedAuthRuntimeField,
-    message_service_sid: mappedAuthRuntimeField,
-    auth_token: mappedAuthSecretRuntimeField,
+    enabled: mappedAuthEnabledSubtreeField,
+    account_sid: mappedAuthEnabledSubtreeField,
+    message_service_sid: mappedAuthEnabledSubtreeField,
+    auth_token: mappedAuthEnabledSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio"], Node>,
   twilio_verify: {
-    enabled: mappedAuthRuntimeField,
-    account_sid: mappedAuthOptionalRuntimeField,
-    message_service_sid: mappedAuthOptionalRuntimeField,
-    auth_token: mappedAuthSecretRuntimeField,
+    enabled: mappedAuthEnabledSubtreeField,
+    account_sid: mappedAuthEnabledSubtreeField,
+    message_service_sid: mappedAuthEnabledSubtreeField,
+    auth_token: mappedAuthEnabledSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["twilio_verify"], Node>,
   messagebird: {
-    enabled: mappedAuthRuntimeField,
-    originator: mappedAuthOptionalRuntimeField,
-    access_key: mappedAuthSecretRuntimeField,
+    enabled: mappedAuthEnabledSubtreeField,
+    originator: mappedAuthEnabledSubtreeField,
+    access_key: mappedAuthEnabledSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["messagebird"], Node>,
   textlocal: {
-    enabled: mappedAuthRuntimeField,
-    sender: mappedAuthOptionalRuntimeField,
-    api_key: mappedAuthSecretRuntimeField,
+    enabled: mappedAuthEnabledSubtreeField,
+    sender: mappedAuthEnabledSubtreeField,
+    api_key: mappedAuthEnabledSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["textlocal"], Node>,
   vonage: {
-    enabled: mappedAuthRuntimeField,
-    from: mappedAuthOptionalRuntimeField,
-    api_key: mappedAuthOptionalRuntimeField,
-    api_secret: mappedAuthSecretRuntimeField,
+    enabled: mappedAuthEnabledSubtreeField,
+    from: mappedAuthEnabledSubtreeField,
+    api_key: mappedAuthEnabledSubtreeField,
+    api_secret: mappedAuthEnabledSecretRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["sms"]["vonage"], Node>,
   test_otp: mappedAuthOptionalRuntimeField,
 } satisfies Record<keyof ProjectConfig["auth"]["sms"], Node>;
@@ -345,7 +367,7 @@ const authParity = {
   enabled: mappedAuthRuntimeField,
   external_url: unsupportedRuntimeField,
   passkey: {
-    enabled: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
   },
   webauthn: {
     rp_display_name: unsupportedRuntimeField,
@@ -378,21 +400,21 @@ const authParity = {
   hook: authHooksParity,
   mfa: {
     totp: {
-      enroll_enabled: unsupportedRuntimeField,
-      verify_enabled: unsupportedRuntimeField,
+      enroll_enabled: unsupportedNonDefaultRuntimeField,
+      verify_enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["mfa"]["totp"], Node>,
     phone: {
-      enroll_enabled: unsupportedRuntimeField,
-      verify_enabled: unsupportedRuntimeField,
-      otp_length: unsupportedRuntimeField,
-      template: unsupportedRuntimeField,
-      max_frequency: unsupportedRuntimeField,
+      enroll_enabled: unsupportedNonDefaultRuntimeField,
+      verify_enabled: unsupportedNonDefaultRuntimeField,
+      otp_length: unsupportedEnabledSubtreeField,
+      template: unsupportedEnabledSubtreeField,
+      max_frequency: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["mfa"]["phone"], Node>,
     web_authn: {
-      enroll_enabled: unsupportedRuntimeField,
-      verify_enabled: unsupportedRuntimeField,
+      enroll_enabled: unsupportedNonDefaultRuntimeField,
+      verify_enabled: unsupportedNonDefaultRuntimeField,
     } satisfies Record<keyof ProjectConfig["auth"]["mfa"]["web_authn"], Node>,
-    max_enrolled_factors: unsupportedRuntimeField,
+    max_enrolled_factors: unsupportedNonDefaultRuntimeField,
   } satisfies Record<keyof ProjectConfig["auth"]["mfa"], Node>,
   sessions: {
     timebox: unsupportedOptionalRuntimeField,
@@ -407,13 +429,13 @@ const authParity = {
     otp_length: mappedAuthRuntimeField,
     otp_expiry: mappedAuthRuntimeField,
     smtp: {
-      enabled: mappedAuthRuntimeField,
-      host: mappedAuthOptionalRuntimeField,
-      port: mappedAuthOptionalRuntimeField,
-      user: mappedAuthOptionalRuntimeField,
-      pass: mappedAuthSecretRuntimeField,
-      admin_email: mappedAuthOptionalRuntimeField,
-      sender_name: mappedAuthOptionalRuntimeField,
+      enabled: mappedAuthEnabledSubtreeField,
+      host: mappedAuthEnabledSubtreeField,
+      port: mappedAuthEnabledSubtreeField,
+      user: mappedAuthEnabledSubtreeField,
+      pass: mappedAuthEnabledSecretRuntimeField,
+      admin_email: mappedAuthEnabledSubtreeField,
+      sender_name: mappedAuthEnabledSubtreeField,
     } satisfies Record<keyof NonNullable<ProjectConfig["auth"]["email"]["smtp"]>, Node>,
     template: {
       "*": {
@@ -440,32 +462,32 @@ const authParity = {
     } satisfies Record<keyof ProjectConfig["auth"]["web3"]["ethereum"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["web3"], Node>,
   oauth_server: {
-    enabled: unsupportedEnabledProviderField,
-    authorization_url_path: unsupportedEnabledProviderField,
-    allow_dynamic_registration: unsupportedEnabledProviderField,
+    enabled: unsupportedEnabledSubtreeField,
+    authorization_url_path: unsupportedEnabledSubtreeField,
+    allow_dynamic_registration: unsupportedEnabledSubtreeField,
   } satisfies Record<keyof ProjectConfig["auth"]["oauth_server"], Node>,
   third_party: {
     firebase: {
-      enabled: unsupportedEnabledProviderField,
-      project_id: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      project_id: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["firebase"], Node>,
     auth0: {
-      enabled: unsupportedEnabledProviderField,
-      tenant: unsupportedEnabledProviderField,
-      tenant_region: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      tenant: unsupportedEnabledSubtreeField,
+      tenant_region: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["auth0"], Node>,
     aws_cognito: {
-      enabled: unsupportedEnabledProviderField,
-      user_pool_id: unsupportedEnabledProviderField,
-      user_pool_region: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      user_pool_id: unsupportedEnabledSubtreeField,
+      user_pool_region: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["aws_cognito"], Node>,
     clerk: {
-      enabled: unsupportedEnabledProviderField,
-      domain: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      domain: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["clerk"], Node>,
     workos: {
-      enabled: unsupportedEnabledProviderField,
-      issuer_url: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      issuer_url: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["auth"]["third_party"]["workos"], Node>,
   } satisfies Record<keyof ProjectConfig["auth"]["third_party"], Node>,
 } satisfies Record<keyof ProjectConfig["auth"], Node> & LocalStackConfigParitySection;
@@ -525,9 +547,9 @@ const localStackConfigParity = {
     max_rows: mappedCoreTopologyField,
     auto_expose_new_tables: mappedAutoExposeNewTables,
     tls: {
-      enabled: unsupportedEnabledProviderField,
-      cert_path: unsupportedEnabledProviderField,
-      key_path: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      cert_path: unsupportedEnabledSubtreeField,
+      key_path: unsupportedEnabledSubtreeField,
     } satisfies Record<keyof ProjectConfig["api"]["tls"], Node>,
     external_url: unsupportedOptionalRuntimeField,
   } satisfies Record<keyof ProjectConfig["api"], Node>,
@@ -607,13 +629,13 @@ const localStackConfigParity = {
       enabled: mappedCoreTopologyField,
     } satisfies Record<keyof ProjectConfig["storage"]["s3_protocol"], Node>,
     analytics: {
-      enabled: unsupportedEnabledProviderField,
-      max_namespaces: unsupportedEnabledProviderField,
-      max_tables: unsupportedEnabledProviderField,
-      max_catalogs: unsupportedEnabledProviderField,
+      enabled: unsupportedEnabledSubtreeField,
+      max_namespaces: unsupportedEnabledSubtreeField,
+      max_tables: unsupportedEnabledSubtreeField,
+      max_catalogs: unsupportedEnabledSubtreeField,
       buckets: {
         "*": {
-          decision: unsupportedEnabledProviderField,
+          decision: unsupportedEnabledSubtreeField,
           children: {} satisfies Record<
             keyof ProjectConfig["storage"]["analytics"]["buckets"][string],
             Node
@@ -627,7 +649,7 @@ const localStackConfigParity = {
       max_indexes: hostedConfigurationField,
       buckets: {
         "*": {
-          decision: unsupportedEnabledProviderField,
+          decision: unsupportedEnabledSubtreeField,
           children: {} satisfies Record<
             keyof ProjectConfig["storage"]["vector"]["buckets"][string],
             Node
@@ -639,7 +661,7 @@ const localStackConfigParity = {
   studio: {
     enabled: mappedCoreTopologyField,
     port: mappedCoreTopologyField,
-    api_url: mappedCoreTopologyField,
+    api_url: mappedNormalizedCoreTopologyField,
     openai_api_key: mappedOptionalDataPlaneRuntimeField,
   } satisfies Record<keyof ProjectConfig["studio"], Node>,
   experimental: {
