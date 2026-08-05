@@ -843,10 +843,10 @@ describe("Stack", () => {
 
         const error = yield* activator.activate("auth").pipe(Effect.flip);
 
-          expect(error._tag).toBe("StackReadinessError");
-          if (error._tag === "StackReadinessError") {
-            expect(error.target).toBe("auth");
-            expect(error.timeoutMs).toBe(1_000);
+        expect(error._tag).toBe("StackReadinessError");
+        if (error._tag === "StackReadinessError") {
+          expect(error.target).toBe("auth");
+          expect(error.timeoutMs).toBe(1_000);
         }
         expect(releasedAll).toBe(true);
         const spawnCountAfterDisposal = spawner.spawned.length;
