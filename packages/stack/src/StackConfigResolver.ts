@@ -555,7 +555,6 @@ export async function resolveConfig(
     anonJwt: credentials.anonKey,
     serviceRoleJwt: credentials.serviceRoleKey,
     databaseBootstrap: {
-      migrationFiles: config.databaseBootstrap?.migrationFiles ?? [],
       seedFiles: config.databaseBootstrap?.seedFiles ?? [],
     },
     postgres: {

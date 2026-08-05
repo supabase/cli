@@ -493,13 +493,26 @@ export const localStackLayer = (
           detail: `Prepared graph does not contain enabled service ${service}`,
           cause,
         });
+      const activationTargetNames = (
+        runtime: RuntimeState,
+        root: ServiceName,
+      ): ReadonlyArray<string> =>
+        activationTargetsForService(enabledServices, root).map((target) => {
+          if (target !== "postgres") return target;
+          if (runtime.graph.startOrder.some((definition) => definition.name === "postgres-seed")) {
+            return "postgres-seed";
+          }
+          return runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
+            ? "postgres-init"
+            : target;
+        });
       const beginStartTargets = (
         root: ServiceName,
         allowExplicitlyStopped: ReadonlySet<ServiceName>,
       ) =>
         Effect.gen(function* () {
           const runtime = yield* ensureRuntime;
-          const targets = activationTargetsForService(enabledServices, root);
+          const targets = activationTargetNames(runtime, root);
           const targetClosure = new Set(
             targets.flatMap((target) =>
               runtime.graph.startOrderFor(target).map((definition) => definition.name),
@@ -544,7 +557,7 @@ export const localStackLayer = (
         targets,
       }: {
         readonly runtime: RuntimeState;
-        readonly targets: ReadonlyArray<ServiceName>;
+        readonly targets: ReadonlyArray<string>;
       }) =>
         Effect.forEach(
           targets,
@@ -561,7 +574,7 @@ export const localStackLayer = (
       const inspectStartedTargets = (root: ServiceName) =>
         Effect.gen(function* () {
           const runtime = yield* ensureRuntime;
-          const targets = activationTargetsForService(enabledServices, root);
+          const targets = activationTargetNames(runtime, root);
           const states = yield* Effect.forEach(targets, (target) =>
             runtime.orchestrator
               .getState(target)
@@ -689,26 +702,6 @@ export const localStackLayer = (
 
             if (config.startupMode === "lazy") {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
-              if (
-                runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
-              ) {
-                yield* runtime.orchestrator
-                  .startService("postgres-init", serviceStartOptions)
-                  .pipe(
-                    Effect.catchTag("ServiceNotFoundError", (cause) =>
-                      Effect.fail(knownServiceError("postgres-init", cause)),
-                    ),
-                  );
-                readiness.push(
-                  runtime.orchestrator
-                    .waitReady("postgres-init")
-                    .pipe(
-                      Effect.catchTag("ServiceNotFoundError", (cause) =>
-                        Effect.fail(knownServiceError("postgres-init", cause)),
-                      ),
-                    ),
-                );
-              }
               for (const service of eagerServices(enabledServices)) {
                 const started = yield* beginStartTargets(
                   service,

@@ -21,7 +21,7 @@ const GO_BOOLEAN_VALUES: Readonly<Record<string, boolean>> = {
   False: false,
 };
 
-const migrationFilePattern = /^([0-9]{14})_(.+)\.sql$/;
+const migrationFilePattern = /^([0-9]+)_(.*)\.sql$/;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -268,7 +268,21 @@ export const translateDatabaseBootstrapConfig = Effect.fnUntraced(function* (inp
         configured: loaded.config.db.seed.sql_paths,
       });
 
-      const migrationFiles = migrationsEnabled ? await conventionalMigrationFiles(configDir) : [];
+      let migrationFiles: ReadonlyArray<string> = [];
+      try {
+        migrationFiles = migrationsEnabled ? await conventionalMigrationFiles(configDir) : [];
+      } catch {
+        throw invalidLocalStackConfig(
+          "db.migrations",
+          "Ensure the migrations directory is readable, or use the legacy local stack.",
+        );
+      }
+      if (migrationFiles.length > 0) {
+        throw invalidLocalStackConfig(
+          "db.migrations.enabled",
+          "Use the legacy local stack until migration execution preserves transaction boundaries and statement history.",
+        );
+      }
       const resolvedSeeds =
         seedEnabled && seedPatterns.length > 0
           ? await expandSqlPatterns({
@@ -280,10 +294,7 @@ export const translateDatabaseBootstrapConfig = Effect.fnUntraced(function* (inp
         resolvedSeeds.files.map((path) => seedFile(input.projectRoot, path)),
       );
 
-      const config =
-        migrationFiles.length === 0 && seedFiles.length === 0
-          ? undefined
-          : { migrationFiles, seedFiles };
+      const config = seedFiles.length === 0 ? undefined : { seedFiles };
       return {
         config,
         warnings: resolvedSeeds.hasUnmatchedPattern

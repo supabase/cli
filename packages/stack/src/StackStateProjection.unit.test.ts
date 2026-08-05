@@ -6,7 +6,12 @@ import {
   type StackServiceProjectionCatalog,
 } from "./StackStateProjection.ts";
 
-function rawState(name: string, status: ServiceState["status"], error: string | null = null) {
+function rawState(
+  name: string,
+  status: ServiceState["status"],
+  error: string | null = null,
+  desired: ServiceState["desired"] = "running",
+) {
   return new ServiceState({
     name,
     status,
@@ -15,7 +20,7 @@ function rawState(name: string, status: ServiceState["status"], error: string | 
     restartCount: 0,
     startedAt: null,
     error,
-    desired: "running",
+    desired,
   });
 }
 
@@ -57,6 +62,16 @@ describe("projectStackStates", () => {
     );
 
     expect(projected.find((state) => state.name === "postgres")?.status).toBe("Initializing");
+  });
+
+  test("ignores a dormant helper when projecting its owner", () => {
+    const projected = projectStackState(
+      "postgres",
+      [rawState("postgres", "Healthy"), rawState("postgres-init", "Pending", null, "inactive")],
+      projectionCatalog,
+    );
+
+    expect(projected?.status).toBe("Healthy");
   });
 
   test("propagates helper failure to owner", () => {

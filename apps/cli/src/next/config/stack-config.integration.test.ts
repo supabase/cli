@@ -166,24 +166,19 @@ describe("local stack launch config", () => {
     }
   });
 
-  it("resolves database bootstrap inputs before the stack launch is constructed", async () => {
+  it("resolves seed inputs before the stack launch is constructed", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "supabase-local-bootstrap-launch-"));
     const supabaseDir = join(projectRoot, "supabase");
     try {
-      await mkdir(join(supabaseDir, "migrations"), { recursive: true });
       await mkdir(join(supabaseDir, "seeds"), { recursive: true });
-      const migration = join(supabaseDir, "migrations", "20260805000000_create_widgets.sql");
       const seedSecond = join(supabaseDir, "seeds", "02_widgets.sql");
       const seedFirst = join(supabaseDir, "seeds", "01_accounts.sql");
-      await writeFile(migration, "create table widgets(id bigint primary key);");
       await writeFile(seedFirst, "insert into widgets values (1);");
       await writeFile(seedSecond, "insert into widgets values (2);");
+      await writeFile(join(supabaseDir, ".env.local"), "SUPABASE_DB_MIGRATIONS_ENABLED=false\n");
       await writeFile(
         join(supabaseDir, "config.toml"),
         [
-          "[db.migrations]",
-          "enabled = true",
-          "",
           "[db.seed]",
           "enabled = true",
           'sql_paths = ["./seeds/02_widgets.sql", "./seeds/01_accounts.sql"]',
@@ -208,9 +203,6 @@ describe("local stack launch config", () => {
         }),
       );
 
-      expect(result.stackConfig.databaseBootstrap).toMatchObject({
-        migrationFiles: [migration],
-      });
       expect(result.stackConfig.databaseBootstrap?.seedFiles?.map(({ path }) => path)).toEqual([
         seedSecond,
         seedFirst,

@@ -75,12 +75,12 @@ const mappedDatabaseHealthTimeout: LocalStackConfigParityDecision = {
     "The launch Adapter resolves the legacy environment override, applies the duration to PostgreSQL startup health, and derives the stack readiness deadline from it.",
 };
 
-const mappedDatabaseBootstrapField: LocalStackConfigParityDecision = {
+const mappedDatabaseSeedField: LocalStackConfigParityDecision = {
   _tag: "mapped",
   presence: "raw-document",
   mappedBy: "start",
   rationale:
-    "The launch Adapter expands ordered SQL inputs and the stack executes them as internal PostgreSQL bootstrap phases.",
+    "The launch Adapter expands ordered seed inputs and the stack executes them as an internal PostgreSQL bootstrap phase with legacy-compatible seed history semantics.",
 };
 
 const mappedCoreTopologyField: LocalStackConfigParityDecision = {
@@ -464,12 +464,12 @@ const localStackConfigParity = {
       max_client_conn: mappedCoreTopologyField,
     } satisfies Record<keyof ProjectConfig["db"]["pooler"], Node>,
     migrations: {
-      enabled: mappedDatabaseBootstrapField,
+      enabled: unsupportedRuntimeField,
       schema_paths: unsupportedRuntimeField,
     } satisfies Record<keyof ProjectConfig["db"]["migrations"], Node>,
     seed: {
-      enabled: mappedDatabaseBootstrapField,
-      sql_paths: mappedDatabaseBootstrapField,
+      enabled: mappedDatabaseSeedField,
+      sql_paths: mappedDatabaseSeedField,
     } satisfies Record<keyof ProjectConfig["db"]["seed"], Node>,
     settings: dbSettingsParity,
     network_restrictions: {

@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 256,
+      mapped: 255,
       "not-applicable": 10,
-      "unsupported-blocking": 89,
+      "unsupported-blocking": 90,
       "unsupported-warning": 6,
     });
   });
@@ -43,7 +43,6 @@ describe("localStackConfigParity", () => {
       "api.port",
       "api.schemas",
       "db.health_timeout",
-      "db.migrations.enabled",
       "db.pooler.default_pool_size",
       "db.pooler.enabled",
       "db.pooler.max_client_conn",

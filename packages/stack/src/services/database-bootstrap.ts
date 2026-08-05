@@ -12,13 +12,6 @@ export type DatabaseBootstrapRuntime =
       readonly containerName: string;
     };
 
-interface DatabaseMigrationServiceOptions {
-  readonly runtime: DatabaseBootstrapRuntime;
-  readonly dbPort: number;
-  readonly migrationFiles: ReadonlyArray<string>;
-  readonly dependencies: ReadonlyArray<ServiceDependency>;
-}
-
 interface DatabaseSeedServiceOptions {
   readonly runtime: DatabaseBootstrapRuntime;
   readonly dbPort: number;
@@ -54,64 +47,8 @@ const psqlOptions = [
 ].join(" ");
 
 // Native psql may open caller-resolved files directly. Docker psql cannot see host paths, so the
-// host-side Bash process streams SQL over `docker exec -i`. Each migration/seed payload and its
-// history write share one `--single-transaction` session: either both commit or neither does.
-
-const migrationsScript = `
-set -euo pipefail
-${psqlRunner}
-
-apply_migration() {
-  file="$1"
-  version="$2"
-  name="$3"
-  if [ "$runtime" = "native" ]; then
-    run_psql ${psqlOptions} --single-transaction -v migration_version="$version" -v migration_name="$name" -f "$file" -c "INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES (:'migration_version', :'migration_name', ARRAY[]::text[])"
-  else
-    {
-      cat "$file"
-      printf '\n'
-      cat <<'EOSQL'
-INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES (:'migration_version', :'migration_name', ARRAY[]::text[]);
-EOSQL
-    } | run_psql ${psqlOptions} --single-transaction -v migration_version="$version" -v migration_name="$name"
-  fi
-}
-
-migration_count="$1"
-shift
-
-if [ "$migration_count" -gt 0 ]; then
-  run_psql ${psqlOptions} <<'EOSQL'
-SET lock_timeout = '4s';
-CREATE SCHEMA IF NOT EXISTS supabase_migrations;
-CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY);
-ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[];
-ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS name text;
-EOSQL
-fi
-
-i=0
-while [ "$i" -lt "$migration_count" ]; do
-  file="$1"
-  shift
-  filename="\${file##*/}"
-  version="\${filename%%_*}"
-  name="\${filename#*_}"
-  name="\${name%.sql}"
-  applied="$(run_psql ${psqlOptions} -v migration_version="$version" -tAc "SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = :'migration_version'" || true)"
-  if [ "$applied" != "1" ]; then
-    latest="$(run_psql ${psqlOptions} -tAc "SELECT coalesce(max(version), '') FROM supabase_migrations.schema_migrations")"
-    if [ -n "$latest" ] && [[ "$version" < "$latest" ]]; then
-      echo "Cannot apply an out-of-order local migration." >&2
-      exit 1
-    fi
-    echo "Applying migration $filename..."
-    apply_migration "$file" "$version" "$name"
-  fi
-  i=$((i + 1))
-done
-`.trim();
+// host-side Bash process streams SQL over `docker exec -i`. A new seed payload and its history
+// write share one `--single-transaction` session: either both commit or neither does.
 
 const seedScript = `
 set -euo pipefail
@@ -186,25 +123,6 @@ function runtimeEnv(runtime: DatabaseBootstrapRuntime, dbPort: number): Record<s
     LD_LIBRARY_PATH: `${runtime.postgresDir}/lib`,
   };
 }
-
-export const makeDatabaseMigrationService = (
-  opts: DatabaseMigrationServiceOptions,
-): ServiceDef => ({
-  name: "postgres-migrations",
-  command: "bash",
-  args: [
-    "-c",
-    migrationsScript,
-    "postgres-migrations",
-    ...runtimeArgs(opts.runtime),
-    String(opts.migrationFiles.length),
-    ...opts.migrationFiles,
-  ],
-  env: runtimeEnv(opts.runtime, opts.dbPort),
-  dependencies: opts.dependencies,
-  supervision: {},
-  restart: "no",
-});
 
 export const makeDatabaseSeedService = (opts: DatabaseSeedServiceOptions): ServiceDef => ({
   name: "postgres-seed",

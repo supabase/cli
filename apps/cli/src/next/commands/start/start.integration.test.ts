@@ -646,21 +646,16 @@ project_id = "not-a-ref"
   it("hands resolved database bootstrap inputs to the stack launch", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "supabase-next-start-bootstrap-"));
     try {
-      await mkdir(join(projectRoot, "supabase", "migrations"), { recursive: true });
-      const migration = join(projectRoot, "supabase", "migrations", "20260805000000_start.sql");
+      await mkdir(join(projectRoot, "supabase"), { recursive: true });
       const seed = join(projectRoot, "supabase", "seed.sql");
-      await writeFile(migration, "create table start_bootstrap(id bigint);");
       await writeFile(seed, "insert into start_bootstrap values (1);");
       await writeFile(
+        join(projectRoot, "supabase", ".env.local"),
+        "SUPABASE_DB_MIGRATIONS_ENABLED=false\n",
+      );
+      await writeFile(
         join(projectRoot, "supabase", "config.toml"),
-        [
-          "[db.migrations]",
-          "enabled = true",
-          "",
-          "[db.seed]",
-          "enabled = true",
-          'sql_paths = ["./seed.sql"]',
-        ].join("\n"),
+        ["[db.seed]", "enabled = true", 'sql_paths = ["./seed.sql"]'].join("\n"),
       );
 
       const launch = await Effect.runPromise(
@@ -683,7 +678,6 @@ project_id = "not-a-ref"
         }).pipe(Effect.provide(BunServices.layer)),
       );
 
-      expect(launch.stackConfig.databaseBootstrap?.migrationFiles).toEqual([migration]);
       expect(launch.stackConfig.databaseBootstrap?.seedFiles?.map(({ path }) => path)).toEqual([
         seed,
       ]);

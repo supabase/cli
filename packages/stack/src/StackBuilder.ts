@@ -12,7 +12,6 @@ import {
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
-  makeDatabaseMigrationService,
   makeDatabaseSeedService,
   type DatabaseBootstrapRuntime,
 } from "./services/database-bootstrap.ts";
@@ -70,7 +69,7 @@ const publicServiceProjection = (
     }
   > = new Map(defs.map((def) => [def.name, { visibility: "public" as const }] as const));
 
-  for (const name of ["postgres-init", "postgres-migrations", "postgres-seed"]) {
+  for (const name of ["postgres-init", "postgres-seed"]) {
     if (serviceProjection.has(name)) {
       serviceProjection.set(name, {
         visibility: "internal",
@@ -249,13 +248,10 @@ export class StackBuilder extends Context.Service<
                 _tag: "Docker",
                 containerName: dockerContainerName("postgres", config.apiPort),
               };
-        const hasMigrationPhase = config.databaseBootstrap.migrationFiles.length > 0;
         const hasSeedPhase = config.databaseBootstrap.seedFiles.length > 0;
         const postgresDeps: ReadonlyArray<ServiceDependency> = hasSeedPhase
           ? [{ service: "postgres-seed", condition: "completed" }]
-          : hasMigrationPhase
-            ? [{ service: "postgres-migrations", condition: "completed" }]
-            : initialPostgresDeps;
+          : initialPostgresDeps;
         const jwtJwks = config.credentials.jwks;
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
@@ -295,27 +291,13 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (hasMigrationPhase) {
-          defs.push({
-            ...makeDatabaseMigrationService({
-              runtime: bootstrapRuntime,
-              dbPort: config.dbPort,
-              migrationFiles: config.databaseBootstrap.migrationFiles,
-              dependencies: initialPostgresDeps,
-            }),
-            enabled: true,
-          });
-        }
-
         if (hasSeedPhase) {
           defs.push({
             ...makeDatabaseSeedService({
               runtime: bootstrapRuntime,
               dbPort: config.dbPort,
               seedFiles: config.databaseBootstrap.seedFiles,
-              dependencies: hasMigrationPhase
-                ? [{ service: "postgres-migrations", condition: "completed" }]
-                : initialPostgresDeps,
+              dependencies: initialPostgresDeps,
             }),
             enabled: true,
           });

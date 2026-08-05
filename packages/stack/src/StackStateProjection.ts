@@ -14,7 +14,7 @@ interface StackServiceProjectionSpec {
 export type StackServiceProjectionCatalog = ReadonlyMap<string, StackServiceProjectionSpec>;
 
 function isHelperActive(state: RawServiceState): boolean {
-  return state.status !== "Stopped" && state.status !== "Failed";
+  return state.desired === "running" && state.status !== "Stopped" && state.status !== "Failed";
 }
 
 function sameState(a: StackServiceState | undefined, b: StackServiceState): boolean {
@@ -40,7 +40,9 @@ function projectPublicState(
 
   const ownerHelpers = [...rawByName.values()].filter((candidate) => {
     const spec = catalog.get(candidate.name);
-    return spec?.visibility === "internal" && spec.owner === raw.name;
+    return (
+      spec?.visibility === "internal" && spec.owner === raw.name && candidate.desired === "running"
+    );
   });
 
   const failedHelper = ownerHelpers.find((helper) => helper.status === "Failed");

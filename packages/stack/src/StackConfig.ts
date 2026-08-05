@@ -75,14 +75,11 @@ export interface DatabaseSeedFile {
 }
 
 export interface DatabaseBootstrapConfig {
-  /** Conventional timestamped migrations, already ordered by the caller. */
-  readonly migrationFiles?: ReadonlyArray<string>;
   /** Seed SQL, already expanded, ordered, and fingerprinted by the caller. */
   readonly seedFiles?: ReadonlyArray<DatabaseSeedFile>;
 }
 
 export interface ResolvedDatabaseBootstrapConfig {
-  readonly migrationFiles: ReadonlyArray<string>;
   readonly seedFiles: ReadonlyArray<DatabaseSeedFile>;
 }
 

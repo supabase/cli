@@ -46,15 +46,11 @@ function environment(
 }
 
 describe("translateDatabaseBootstrapConfig", () => {
-  it("resolves conventional migrations and ordered, deduplicated seed inputs", async () => {
+  it("resolves ordered, deduplicated seed inputs", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "stack-database-bootstrap-"));
     const supabaseDir = join(projectRoot, "supabase");
     try {
-      await mkdir(join(supabaseDir, "migrations"), { recursive: true });
       await mkdir(join(supabaseDir, "seeds", "nested"), { recursive: true });
-      await writeFile(join(supabaseDir, "migrations", "20240202000000_second.sql"), "select 2;");
-      await writeFile(join(supabaseDir, "migrations", "20240101000000_first.sql"), "select 1;");
-      await writeFile(join(supabaseDir, "migrations", "notes.sql"), "select 0;");
       await writeFile(join(supabaseDir, "seeds", "a.sql"), "insert into a values (1);");
       await writeFile(join(supabaseDir, "seeds", "nested", "b.sql"), "insert into b values (2);");
 
@@ -62,7 +58,7 @@ describe("translateDatabaseBootstrapConfig", () => {
         translateDatabaseBootstrapConfig({
           loadedProjectConfig: loaded(projectRoot, {
             db: {
-              migrations: { enabled: true },
+              migrations: { enabled: false },
               seed: { enabled: true, sql_paths: ["./seeds", "./seeds/a.sql"] },
             },
           }),
@@ -71,10 +67,6 @@ describe("translateDatabaseBootstrapConfig", () => {
         }),
       );
 
-      expect(result.config?.migrationFiles).toEqual([
-        join(supabaseDir, "migrations", "20240101000000_first.sql"),
-        join(supabaseDir, "migrations", "20240202000000_second.sql"),
-      ]);
       expect(result.config?.seedFiles?.map(({ historyPath }) => historyPath)).toEqual([
         "supabase/seeds/a.sql",
         "supabase/seeds/nested/b.sql",
@@ -83,6 +75,51 @@ describe("translateDatabaseBootstrapConfig", () => {
         result.config?.seedFiles?.every(({ checksum }) => /^[0-9a-f]{64}$/.test(checksum)),
       ).toBe(true);
       expect(result.warnings).toEqual([]);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks conventional migrations until the stack executor preserves legacy semantics", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "stack-database-migrations-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(join(supabaseDir, "migrations"), { recursive: true });
+      await writeFile(join(supabaseDir, "migrations", "1_private-migration.sql"), "VACUUM;");
+
+      const exit = await Effect.runPromise(
+        translateDatabaseBootstrapConfig({
+          loadedProjectConfig: loaded(projectRoot, { db: { seed: { enabled: false } } }),
+          projectEnvironment: null,
+          projectRoot,
+        }).pipe(Effect.exit),
+      );
+
+      expect(JSON.stringify(exit)).toContain("db.migrations.enabled");
+      expect(JSON.stringify(exit)).not.toContain("private-migration.sql");
+      expect(JSON.stringify(exit)).not.toContain("VACUUM");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("attributes migration discovery failures to db.migrations only", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "stack-database-migration-errors-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(supabaseDir, { recursive: true });
+      await writeFile(join(supabaseDir, "migrations"), "not a directory");
+
+      const exit = await Effect.runPromise(
+        translateDatabaseBootstrapConfig({
+          loadedProjectConfig: loaded(projectRoot, { db: { seed: { enabled: false } } }),
+          projectEnvironment: null,
+          projectRoot,
+        }).pipe(Effect.exit),
+      );
+
+      expect(JSON.stringify(exit)).toContain("db.migrations");
+      expect(JSON.stringify(exit)).not.toContain("db.seed.sql_paths");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -130,13 +167,13 @@ describe("translateDatabaseBootstrapConfig", () => {
       await writeFile(join(supabaseDir, "migrations", "20240101000000_remote.sql"), "select 1;");
       const document = {
         db: {
-          migrations: { enabled: true },
+          migrations: { enabled: false },
           seed: { enabled: false },
         },
         remotes: {
           staging: {
             project_id: "abcdefghijklmnopqrst",
-            db: { migrations: { enabled: true }, seed: { enabled: false } },
+            db: { migrations: { enabled: false }, seed: { enabled: false } },
           },
         },
       };
@@ -152,10 +189,7 @@ describe("translateDatabaseBootstrapConfig", () => {
         }),
       );
 
-      expect(result.config?.migrationFiles).toEqual([
-        join(supabaseDir, "migrations", "20240101000000_remote.sql"),
-      ]);
-      expect(result.config?.seedFiles).toEqual([]);
+      expect(result.config).toBeUndefined();
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }

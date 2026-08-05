@@ -61,7 +61,7 @@ const defaultConfig: ResolvedStackConfig = {
   autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
-  databaseBootstrap: { migrationFiles: [], seedFiles: [] },
+  databaseBootstrap: { seedFiles: [] },
   postgres: {
     port: 54322,
     dataDir: "/tmp/supabase/data",
@@ -440,7 +440,20 @@ describe("Stack", () => {
   });
 
   it.live("lazy startup starts direct services without starting HTTP backends", () => {
-    const { layer, spawner } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+    const config: ResolvedStackConfig = {
+      ...defaultConfig,
+      startupMode: "lazy",
+      databaseBootstrap: {
+        seedFiles: [
+          {
+            path: "/tmp/supabase-project/supabase/seed.sql",
+            historyPath: "supabase/seed.sql",
+            checksum: "a".repeat(64),
+          },
+        ],
+      },
+    };
+    const { layer, spawner } = setupLayer(config);
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
@@ -456,7 +469,50 @@ describe("Stack", () => {
       ).toBe(true);
       expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
       expect(spawner.spawned.some((record) => record.command.endsWith("/postgrest"))).toBe(false);
+      expect(
+        spawner.spawned.some((record) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes("postgres-seed"),
+          ),
+        ),
+      ).toBe(true);
 
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("startService postgres reactivates its terminal seed helper", () => {
+    const config: ResolvedStackConfig = {
+      ...defaultConfig,
+      startupMode: "lazy",
+      databaseBootstrap: {
+        seedFiles: [
+          {
+            path: "/tmp/supabase-project/supabase/seed.sql",
+            historyPath: "supabase/seed.sql",
+            checksum: "a".repeat(64),
+          },
+        ],
+      },
+    };
+    const { layer, spawner } = setupLayer(config);
+    const seedSpawnCount = () =>
+      spawner.spawned.filter((record) =>
+        record.args.some((arg) =>
+          Buffer.from(arg, "base64url").toString().includes("postgres-seed"),
+        ),
+      ).length;
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+      const initialSeedSpawns = seedSpawnCount();
+      expect(initialSeedSpawns).toBeGreaterThan(0);
+
+      yield* stack.stopService("postgres");
+      yield* stack.startService("postgres");
+
+      expect(seedSpawnCount()).toBeGreaterThan(initialSeedSpawns);
       yield* stack.stop();
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });

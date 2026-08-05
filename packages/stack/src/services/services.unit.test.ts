@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
-import { makeDatabaseMigrationService, makeDatabaseSeedService } from "./database-bootstrap.ts";
+import { makeDatabaseSeedService } from "./database-bootstrap.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
@@ -69,29 +69,6 @@ const AUTH_CONFIG = {
 };
 
 describe("database bootstrap services", () => {
-  it("keeps ordered migration inputs in a completed one-shot phase", () => {
-    const migration = "/project/supabase/migrations/20260805000000_init.sql";
-    const def = makeDatabaseMigrationService({
-      runtime: { _tag: "Native", postgresDir: POSTGRES_BIN_PATH },
-      dbPort: DB_PORT,
-      migrationFiles: [migration],
-      dependencies: [{ service: "postgres-init", condition: "completed" }],
-    });
-
-    expect(def).toMatchObject({
-      name: "postgres-migrations",
-      command: "bash",
-      restart: "no",
-      dependencies: [{ service: "postgres-init", condition: "completed" }],
-      env: {
-        PGPASSWORD: "postgres",
-        SUPABASE_BOOTSTRAP_DB_PORT: String(DB_PORT),
-      },
-    });
-    expect(def.args?.slice(-2)).toEqual(["1", migration]);
-    expect(def.args?.[1]).toContain("supabase_migrations.schema_migrations");
-  });
-
   it("passes stable seed history keys and checksums to Docker PostgreSQL", () => {
     const def = makeDatabaseSeedService({
       runtime: { _tag: "Docker", containerName: "supabase-postgres-54321" },
@@ -103,13 +80,13 @@ describe("database bootstrap services", () => {
           checksum: "a".repeat(64),
         },
       ],
-      dependencies: [{ service: "postgres-migrations", condition: "completed" }],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
     expect(def).toMatchObject({
       name: "postgres-seed",
       restart: "no",
-      dependencies: [{ service: "postgres-migrations", condition: "completed" }],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
     expect(def.args).toEqual(
       expect.arrayContaining([
