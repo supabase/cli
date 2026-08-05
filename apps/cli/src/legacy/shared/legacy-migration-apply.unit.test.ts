@@ -510,4 +510,90 @@ describe("legacyApplySchemaFiles", () => {
       }).pipe(Effect.provide(BunServices.layer));
     },
   );
+
+  it.effect(
+    "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go bufio.Scanner: token too long parity)",
+    () => {
+      // Go's `parser.Split` (`pkg/parser/token.go:81-119`) only enforces
+      // `SUPABASE_SCANNER_BUFFER_SIZE` when it's explicitly set — `parseFile`
+      // otherwise auto-grows the scanner to the real file's byte length, so the
+      // DEFAULT path can never hit `bufio.ErrTooLong`. With it set below a single
+      // statement's raw byte length, Go fails with `bufio.Scanner: token too long`
+      // instead of silently applying the oversized statement — verified empirically
+      // against `apps/cli-go/pkg/parser` (a `parser.SplitAndTrim` scratch probe).
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      // A single, un-splittable statement whose raw text exceeds the 4096-byte floor
+      // (Go's `bufio.Scanner` starts at that size regardless of the configured limit).
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "100b";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("bufio.Scanner: token too long");
+          expect(msg).toContain("After statement 1: SELECT 1;");
+          expect(msg).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB");
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "applies an oversized statement fine when SUPABASE_SCANNER_BUFFER_SIZE is unset (Go's default auto-grows to file size)",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-default-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT '${"a".repeat(5000)}';\n`);
+      const { session, calls } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        );
+        expect(calls.some((c) => c.kind === "exec" && c.sql.startsWith("SELECT 'a"))).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous !== undefined) process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
 });

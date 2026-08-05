@@ -11,7 +11,7 @@ import {
   legacyCreateMigrationTable,
 } from "./legacy-migration-history.ts";
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
-import { legacySplitAndTrim } from "./legacy-sql-split.ts";
+import { legacySplitAndTrim, legacySplitSqlTokens } from "./legacy-sql-split.ts";
 
 /**
  * Applying a migration file failed (Go's `ApplyMigrations` / `ExecBatch` error).
@@ -102,6 +102,110 @@ type LegacyBatchItem =
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
+// Go's `startBufSize` (`pkg/parser/token.go:15`) — the fixed initial `bufio.Scanner`
+// buffer `parser.Split` pre-allocates before applying the configured/default max
+// (`scanner.Buffer(buf, maxbuf)` where `buf := make([]byte, startBufSize)`). The
+// scanner's buffer therefore starts at exactly this size regardless of how small
+// `SUPABASE_SCANNER_BUFFER_SIZE` is set, and `bufio.Scanner`'s too-long check
+// (`len(s.buf) >= s.maxTokenSize`, `$GOROOT/src/bufio/scan.go:200`) only fires once
+// the buffer is full — so a statement must reach at least this many raw bytes
+// before Go can ever raise `bufio.ErrTooLong`, no matter how small the override.
+// Verified empirically against `apps/cli-go/pkg/parser` (`parser.SplitAndTrim`): a
+// single-statement probe of exactly 4096 raw bytes always succeeds — even with
+// `SUPABASE_SCANNER_BUFFER_SIZE` set to 10 bytes — while 4097 bytes always fails;
+// with the override set above this floor (e.g. 5000 bytes), the exact same
+// pattern repeats at the override's own value (5000 succeeds, 5001 fails).
+const GO_SCANNER_START_BUF_SIZE = 4096;
+
+/**
+ * Go's `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")` (env-prefixed
+ * `SUPABASE_SCANNER_BUFFER_SIZE`, `pkg/parser/token.go:87`): an integer byte count,
+ * optionally suffixed `k`/`K`/`m`/`M`/`g`/`G` (× 1024/1024²/1024³) plus a trailing
+ * `b`/`B` (e.g. `"5MB"`, `"256KB"`, or a bare byte count). Ported 1:1 from viper's
+ * own parser (`parseSizeInBytes`, `github.com/spf13/viper@v1.21.0/util.go:151-179`):
+ * an unparseable or non-positive result is treated as unset (`0`).
+ */
+const legacyParseScannerBufferSize = (raw: string): number => {
+  let value = raw.trim();
+  let multiplier = 1;
+  const lastIndex = value.length - 1;
+  if (lastIndex > 1 && (value[lastIndex] === "b" || value[lastIndex] === "B")) {
+    switch (value[lastIndex - 1]!.toLowerCase()) {
+      case "k":
+        multiplier = 1 << 10;
+        value = value.slice(0, lastIndex - 1).trim();
+        break;
+      case "m":
+        multiplier = 1 << 20;
+        value = value.slice(0, lastIndex - 1).trim();
+        break;
+      case "g":
+        multiplier = 1 << 30;
+        value = value.slice(0, lastIndex - 1).trim();
+        break;
+      default:
+        value = value.slice(0, lastIndex).trim();
+        break;
+    }
+  }
+  const size = Number.parseInt(value, 10);
+  return Number.isFinite(size) && size > 0 ? size * multiplier : 0;
+};
+
+/**
+ * Go's `parser.Split`/`SplitAndTrim` (`pkg/parser/token.go:81-119`) enforces
+ * `SUPABASE_SCANNER_BUFFER_SIZE` as the `bufio.Scanner`'s max token size — but only
+ * when the env var is actually SET: `parseFile` (`pkg/migration/file.go:55-70`)
+ * otherwise grows the package-level `parser.MaxScannerCapacity` to the real file's
+ * byte length before the scan even starts (`viper.IsSet("SCANNER_BUFFER_SIZE")`
+ * gates the auto-growth), so the DEFAULT (unset) path can never hit
+ * `bufio.ErrTooLong` for a file read this way — no single statement can be bigger
+ * than the whole file. Every caller of `execMigrationBatch` mirrors exactly this
+ * Go call site (`ApplyMigrations`, `SeedGlobals`, `applySchemaFiles` all read their
+ * file via `NewMigrationFromFile`/`parseFile`), so this is the correct single home
+ * for the check (CLI-1958 review) rather than duplicating it per caller.
+ *
+ * Fails the same way `parser.Split` does on the FIRST raw (pre-trim) statement
+ * whose byte length exceeds the effective limit (`Math.max(configured,
+ * GO_SCANNER_START_BUF_SIZE)` — see that constant's comment). `"After statement
+ * <n>: …"` reports the count and RAW text of the last statement successfully
+ * scanned BEFORE the oversized one: Go's loop body (`token = scanner.Text()`)
+ * never runs for the failing `Scan()` call, so `token` still holds whatever the
+ * previous iteration left it as (`""` if the very first statement is already
+ * oversized) — verified empirically against the same `apps/cli-go/pkg/parser`
+ * probe. This is a "read"-phase failure (`NewMigrationFromFile`/`parseFile`
+ * returns before `apply.go`'s `CmdSuggestion` is ever set), so it carries no
+ * suggestion, same as the file-open failure above.
+ */
+const checkScannerBufferSize = <E>(
+  content: string,
+  mapError: (message: string, phase: "read" | "exec") => E,
+): Effect.Effect<void, E> => {
+  const raw = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+  if (raw === undefined) return Effect.void;
+  const configuredLimit = legacyParseScannerBufferSize(raw);
+  if (configuredLimit <= 0) return Effect.void;
+  const limit = Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE);
+  let emitted = 0;
+  let lastRaw = "";
+  for (const token of legacySplitSqlTokens(content)) {
+    if (utf8ByteLength(token.raw) > limit) {
+      const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(configuredLimit / 1024)}KB)`;
+      return Effect.fail(
+        mapError(
+          `bufio.Scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
+          "read",
+        ),
+      );
+    }
+    if (token.trimmed.length > 0) {
+      emitted += 1;
+      lastRaw = token.raw;
+    }
+  }
+  return Effect.void;
+};
+
 /**
  * Port of Go's `markError` (`pkg/migration/file.go:117-132`): renders a `^` caret
  * line under the error position of the failing statement. `pos` is the server's
@@ -188,6 +292,14 @@ const execMigrationBatch = <E>(
         return mapError(`failed to open migration file: ${message}`, "read");
       }),
     );
+
+    // Still `NewMigrationFromFile`/`parseFile`'s territory (`pkg/migration/file.go:55-70`) —
+    // `parser.SplitAndTrim` runs INSIDE `parseFile`, before `ExecBatch` ever sees the
+    // statements, so a `SUPABASE_SCANNER_BUFFER_SIZE` violation is a "read"-phase
+    // failure like the open failure above, not an "exec"-phase one. See
+    // `checkScannerBufferSize`'s comment for why this is a no-op unless the env var
+    // is explicitly set.
+    yield* checkScannerBufferSize(content, mapError);
 
     // Everything below mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
     // which runs against an already-read file — so every failure from here on is an

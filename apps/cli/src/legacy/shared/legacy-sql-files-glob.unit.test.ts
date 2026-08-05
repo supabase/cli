@@ -120,6 +120,36 @@ describe("legacySqlFilesGlob", () => {
   );
 
   it.effect(
+    "surfaces a stat failure for a LITERAL (no-metacharacter) pattern naming a broken symlink, instead of reporting no match (Go afero.Glob Lstat parity)",
+    () => {
+      // Go's `fs.Glob`/`afero.Glob` no-metacharacter fast path (`match.go:34-40`) probes
+      // via `Lstat` (`OsFs.LstatIfPossible` → `os.Lstat`), which does NOT follow a
+      // symlink — so a LITERAL pattern naming a broken symlink still Lstat-succeeds (the
+      // link itself exists) and is reported as a match; the follow-up `fs.Stat` above is
+      // what then fails with `failed to stat matched file: ...`, exactly like the
+      // wildcard-pattern case the previous test covers. Verified empirically against
+      // `apps/cli-go` (`afero.Glob`/`fs.Stat` scratch probe): a literal broken-symlink
+      // pattern always Globs to a match and always fails the follow-up Stat — never
+      // "no files matched pattern".
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-literal-symlink-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      symlinkSync(join(schemasDir, "does-not-exist.sql"), join(schemasDir, "broken.sql"));
+      return run(["schemas/broken.sql"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual([]);
+            expect(result.warnings).toHaveLength(1);
+            expect(result.warnings[0]).toMatch(/^failed to stat matched file: /);
+            expect(result.warnings[0]).toContain("schemas/broken.sql");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "keeps a bare root ('/') as the directory when a glob pattern's meta character is in the first path component (Go afero.Glob parity)",
     () => {
       // Go's real runtime glob path — `config.Glob.SQLFiles`'s `fs.Glob` call resolves to

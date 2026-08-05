@@ -143,9 +143,27 @@ const globOne = (
     // Absolute patterns resolve against the filesystem root; relative ones are
     // rooted at the workdir.
     const resolve = (p: string): string => (path.isAbsolute(p) ? p : path.join(workdir, p));
-    // No metacharacters: a direct existence check (Go's `fs.Glob` fast path).
+    // No metacharacters: Go's `fs.Glob`/`afero.Glob` fast path (`match.go:34-40`) probes
+    // via `Lstat` (`OsFs.LstatIfPossible` → `os.Lstat`, verified empirically against
+    // `afero@v1.15.0`), which does NOT follow a symlink — so a literal pattern naming a
+    // BROKEN symlink still Lstat-succeeds (the link itself exists) and is reported as a
+    // match; the follow-up `fs.Stat(fsys, fp)` in `legacySqlFilesGlob` below (which DOES
+    // follow it) is what fails, with `failed to stat matched file: ...`. `fs.exists` here
+    // is Effect's `access`-based check (Node's `fs.access`), which follows the symlink
+    // like a normal `Stat` and would wrongly report "no files matched pattern" instead —
+    // verified empirically: `fs.access` on a broken symlink resolves ENOENT while
+    // `fs.lstat` on the same path succeeds. Probe for the entry itself the same
+    // no-follow way `legacyWalkSqlFiles` below already does for a walked child: `readLink`
+    // succeeds only for a symlink (broken or not), so treat that as an Lstat success
+    // before falling back to the normal existence check for everything else.
     if (!META_CHARS.test(pattern)) {
-      const exists = yield* fs.exists(resolve(pattern)).pipe(Effect.orElseSucceed(() => false));
+      const resolved = resolve(pattern);
+      const isSymlink = yield* fs.readLink(resolved).pipe(
+        Effect.map(() => true),
+        Effect.orElseSucceed(() => false),
+      );
+      const exists =
+        isSymlink || (yield* fs.exists(resolved).pipe(Effect.orElseSucceed(() => false)));
       return exists ? [pattern] : [];
     }
     const { dir, file } = splitPath(pattern);

@@ -143,6 +143,27 @@ class AtomicState implements State {
   }
 }
 
+/** The FSM traversal shared by every `legacySplitSql*` entry point below. */
+function splitRaw(sql: string): string[] {
+  let state: State = new ReadyState();
+  const tokens: string[] = [];
+  let acc = "";
+  for (const rune of Array.from(sql)) {
+    acc += rune;
+    const next = state.next(rune, acc);
+    if (next === null) {
+      tokens.push(acc);
+      acc = "";
+      state = new ReadyState();
+    } else {
+      state = next;
+    }
+  }
+  // Trailing non-terminated statement at EOF.
+  if (acc.length > 0) tokens.push(acc);
+  return tokens;
+}
+
 /**
  * Splits `sql` into raw statements (comments/whitespace preserved), then applies
  * the optional transforms to each. Mirrors Go's `parser.Split`.
@@ -151,38 +172,48 @@ export function legacySplitSql(
   sql: string,
   ...transform: ReadonlyArray<(s: string) => string>
 ): string[] {
-  let state: State = new ReadyState();
   const statements: string[] = [];
-  let acc = "";
-  for (const rune of Array.from(sql)) {
-    acc += rune;
-    const next = state.next(rune, acc);
-    if (next === null) {
-      let token = acc;
-      for (const apply of transform) token = apply(token);
-      if (token.length > 0) statements.push(token);
-      acc = "";
-      state = new ReadyState();
-    } else {
-      state = next;
-    }
-  }
-  // Trailing non-terminated statement at EOF.
-  if (acc.length > 0) {
-    let token = acc;
+  for (const raw of splitRaw(sql)) {
+    let token = raw;
     for (const apply of transform) token = apply(token);
     if (token.length > 0) statements.push(token);
   }
   return statements;
 }
 
+/** Go's `parser.SplitAndTrim`'s per-token transform: trim trailing `;` then surrounding whitespace. */
+const legacyTrimStatement = (token: string): string => token.replace(/;+$/u, "").trim();
+
 /** Mirrors Go's `parser.SplitAndTrim`: trim trailing `;` then surrounding whitespace. */
 export function legacySplitAndTrim(sql: string): string[] {
-  return legacySplitSql(
-    sql,
-    (token) => token.replace(/;+$/u, ""),
-    (token) => token.trim(),
-  );
+  return legacySplitSql(sql, legacyTrimStatement);
+}
+
+/** One statement, paired with both its RAW and trimmed forms. */
+export interface LegacySplitSqlToken {
+  /** The exact text `legacySplitSql(sql)` (no transforms) would emit for this statement. */
+  readonly raw: string;
+  /** `legacyTrimStatement(raw)` — what `legacySplitAndTrim` emits, including when empty. */
+  readonly trimmed: string;
+}
+
+/**
+ * Same FSM traversal as {@link legacySplitAndTrim}, but pairs each statement's RAW
+ * (pre-trim) text with its trimmed form instead of discarding the raw text once
+ * emitted. Go's `bufio.Scanner`-based `parser.Split` (`pkg/parser/token.go:81-119`)
+ * enforces `SUPABASE_SCANNER_BUFFER_SIZE` against the untransformed
+ * `scanner.Text()` — the RAW form — and its `bufio.ErrTooLong` message reports
+ * that same raw text for the LAST successfully scanned statement, so a caller
+ * replicating that check (`legacy-migration-apply.ts`'s `execMigrationBatch`)
+ * needs both forms, not just the trimmed one `legacySplitAndTrim` returns.
+ *
+ * Unlike `legacySplitSql`/`legacySplitAndTrim`, this does NOT drop a statement
+ * whose trimmed form is empty — callers that replicate Go's `len(stats)` counter
+ * (which only increments for a non-empty trimmed statement) need to see every raw
+ * token, including the ones `legacySplitAndTrim` itself would filter out.
+ */
+export function legacySplitSqlTokens(sql: string): ReadonlyArray<LegacySplitSqlToken> {
+  return splitRaw(sql).map((raw) => ({ raw, trimmed: legacyTrimStatement(raw) }));
 }
 
 // `(?i)drop\s+` — Go's `dropStatementPattern` (`internal/db/diff/diff.go:100`,
