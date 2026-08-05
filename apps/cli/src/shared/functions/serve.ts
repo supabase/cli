@@ -1507,13 +1507,14 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const projectId = input.config.projectId;
     const containerId = localDockerId("edge_runtime", projectId);
     const networkMode = input.networkId;
-    // Deterministic, persistent host path (matching `start`'s own
-    // `legacyStageStartSecretFiles` convention for Kong/Postgres/Supavisor)
-    // rather than `os.tmpdir()`: `legacyCleanupStartSecrets` (wired into both
-    // `stop` and a failed-`start` rollback) reclaims this same
-    // `<workdir>/supabase/.temp/start-secrets/<containerId>` tree keyed by
-    // container name, so these JWT/service-role-key/secret env artifacts no
-    // longer leak on host disk indefinitely after the container is torn down.
+    // Deterministic, persistent host path (the same `<workdir>/supabase/.temp/start-secrets/`
+    // convention `start`'s own container-lifecycle bring-up used to stage Kong/Postgres/
+    // Supavisor's `secretFiles` on host disk before they moved to `docker cp` delivery —
+    // see `legacyCopyStartSecretFileIntoContainer`'s doc comment, `container-lifecycle.ts`)
+    // rather than `os.tmpdir()`: `legacyCleanupStartSecrets` (wired into both `stop` and a
+    // failed-`start` rollback) reclaims this same `<workdir>/supabase/.temp/start-secrets/
+    // <containerId>` tree keyed by container name, so these JWT/service-role-key/secret env
+    // artifacts no longer leak on host disk indefinitely after the container is torn down.
     const stagingDir = join(input.projectRoot, "supabase", ".temp", "start-secrets", containerId);
     // A single directory-wide `rm` rather than three per-file `.cleanup()` closures (the JWT
     // secrets/env file, the multiline-env script, the serve-main template all live under

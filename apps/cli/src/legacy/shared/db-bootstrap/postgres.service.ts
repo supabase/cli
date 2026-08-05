@@ -38,7 +38,7 @@ const LEGACY_POSTGRES_PASSWORD = "postgres";
 
 /**
  * The exact in-container path Go's PG >= 15 entrypoint heredocs the pgsodium
- * root key to (`start.go:96`) — now a `secretFiles` bind-mount target instead
+ * root key to (`start.go:96`) — now a `secretFiles` `docker cp` target instead
  * (see {@link legacyBuildPostgresStartContainerSpec}), not a heredoc.
  */
 const LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_root.key";
@@ -242,11 +242,12 @@ function legacyPostgresExtraEnv(
  * `Docker.ContainerCreate` over the Engine API directly rather than shelling
  * out. THIS PORT SHELLS OUT to a real `docker create`, so it deliberately
  * diverges here: the pgsodium root key travels via
- * {@link LegacyStartContainerSpec.secretFiles} instead (a HOST temp file,
- * mode `0644` — world-readable, because Postgres's entrypoint drops root and
- * reads this file back as the `postgres` user, and a Linux/Podman bind mount
- * preserves the host file's mode verbatim; see `legacyStageStartSecretFiles`'s
- * doc comment — bind-mounted read-only at that exact path — see
+ * {@link LegacyStartContainerSpec.secretFiles} instead (a short-lived HOST
+ * temp file, mode `0644` — world-readable, because Postgres's entrypoint drops
+ * root and reads this file back as the `postgres` user, and `docker cp`'s tar
+ * transfer preserves the host file's mode verbatim; see
+ * `legacyCopyStartSecretFileIntoContainer`'s doc comment — `docker cp`'d
+ * straight into the container at that exact path — see
  * {@link legacyBuildPostgresStartContainerSpec}), so it never appears in this
  * process's own `docker create` argv (CWE-214/522).
  *

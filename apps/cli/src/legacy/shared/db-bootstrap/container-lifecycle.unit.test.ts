@@ -1,15 +1,6 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, PlatformError, Sink, Stream } from "effect";
@@ -369,26 +360,22 @@ describe("legacyStartContainer", () => {
 
 describe("legacyStartContainer secretFiles", () => {
   it.live(
-    "stages a secretFile as a mode-0644 HOST file (readable by non-root container users) under a mode-0700 deterministic, per-container directory, bind-mounts it read-only at the exact containerPath, keeps the raw content out of argv, and PERSISTS the file after a successful start so a `restartPolicy: unless-stopped` container can survive a host/daemon restart (CWE-214/522)",
+    "docker cp's a secretFile into the created (not yet started) container, strictly between `docker create` and `docker start`, keeping its content out of every spawned process's own argv, then removes the local temp file",
     () => {
       let hostPath: string | undefined;
-      let modeAtCreateTime: number | undefined;
-      let dirModeAtCreateTime: number | undefined;
+      let cpArgs: ReadonlyArray<string> | undefined;
       const mock = mockSpawner((args) => {
-        if (args[0] === "create") {
-          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
-          if (bind !== undefined) {
-            hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
-            modeAtCreateTime = statSync(hostPath).mode & 0o777;
-            dirModeAtCreateTime = statSync(dirname(hostPath)).mode & 0o777;
-          }
-          return { exitCode: 0, stdout: "container-id-789\n" };
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-789\n" };
+        if (args[0] === "cp") {
+          cpArgs = args;
+          hostPath = args[1];
         }
         return { exitCode: 0 };
       });
 
       const spec: LegacyStartContainerSpec = {
         ...baseSpec,
+        binds: [],
         secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
       };
 
@@ -401,49 +388,41 @@ describe("legacyStartContainer secretFiles", () => {
         Effect.map((containerId) => {
           expect(containerId).toBe("container-id-789");
 
+          expect(cpArgs).toEqual(["cp", hostPath, "container-id-789:/etc/kong/kong.yml"]);
+          expect(cpArgs?.some((a) => a.includes("super-secret-content"))).toBe(false);
           const create = mock.spawned.find((a) => a[0] === "create");
           expect(create?.some((a) => a.includes("super-secret-content"))).toBe(false);
 
+          // `docker cp` runs strictly between `docker create` and `docker start` — the
+          // container must already exist for it to have a target, and must not be running
+          // yet so its entrypoint never races the copy.
+          expect(mock.spawned.map((a) => a[0])).toEqual(["create", "cp", "start"]);
+
+          // Delivered straight into the container — nothing persists on host disk afterward.
           expect(hostPath).toBeDefined();
-          expect(modeAtCreateTime).toBe(0o644);
-          expect(dirModeAtCreateTime).toBe(0o700);
-          expect(create).toContain(`${hostPath}:/etc/kong/kong.yml:ro,Z`);
-
-          // Deterministic — rooted in the project's own workdir, not an OS temp dir, and
-          // scoped by container name so sibling services never collide.
-          expect(hostPath).toBe(
-            join(workdir, "supabase", ".temp", "start-secrets", spec.containerName, "secret-0"),
-          );
-
-          // The staged file is left in place after a successful start: it must survive for
-          // the container's whole lifetime so a `restartPolicy: unless-stopped` restart (e.g.
-          // dockerd re-attaching this bind mount after a host reboot, long after this process
-          // has exited) can still read it.
-          expect(existsSync(hostPath ?? "")).toBe(true);
+          expect(existsSync(hostPath ?? "")).toBe(false);
         }),
       );
     },
   );
 
   it.live(
-    "keeps the staged secretFile at HOST mode 0644 even under a restrictive process umask (writeFile's `mode` is only a creation-time hint ANDed with the umask — without the explicit chmod, a 0077 umask would silently narrow the on-disk mode to 0600 and the non-root in-container reader would get EACCES)",
+    "keeps the copied secretFile at HOST mode 0644 even under a restrictive process umask (writeFile's `mode` is only a creation-time hint ANDed with the umask — without the explicit chmod, a 0077 umask would silently narrow the on-disk mode to 0600, and docker cp's mode-preserving tar transfer would carry that into the container, giving the non-root in-container reader EACCES)",
     () => {
       let hostPath: string | undefined;
-      let modeAtCreateTime: number | undefined;
+      let modeAtCopyTime: number | undefined;
       const mock = mockSpawner((args) => {
-        if (args[0] === "create") {
-          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
-          if (bind !== undefined) {
-            hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
-            modeAtCreateTime = statSync(hostPath).mode & 0o777;
-          }
-          return { exitCode: 0, stdout: "container-id-umask\n" };
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-umask\n" };
+        if (args[0] === "cp") {
+          hostPath = args[1];
+          modeAtCopyTime = statSync(hostPath ?? "").mode & 0o777;
         }
         return { exitCode: 0 };
       });
 
       const spec: LegacyStartContainerSpec = {
         ...baseSpec,
+        binds: [],
         secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
       };
 
@@ -462,7 +441,7 @@ describe("legacyStartContainer secretFiles", () => {
           }).pipe(
             Effect.map(() => {
               expect(hostPath).toBeDefined();
-              expect(modeAtCreateTime).toBe(0o644);
+              expect(modeAtCopyTime).toBe(0o644);
             }),
             Effect.ensuring(Effect.sync(() => process.umask(originalUmask))),
           ),
@@ -472,73 +451,14 @@ describe("legacyStartContainer secretFiles", () => {
   );
 
   it.live(
-    "removes any pre-existing directory at the deterministic path before writing fresh files (self-healing across config changes)",
-    () => {
-      const dir = join(workdir, "supabase", ".temp", "start-secrets", baseSpec.containerName);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "stale-leftover-from-a-previous-config"), "old-content");
-
-      const mock = alwaysSucceed("container-id-stale\n");
-      const spec: LegacyStartContainerSpec = {
-        ...baseSpec,
-        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "fresh-content" }],
-      };
-
-      return legacyStartContainer(mock.spawner, spec, {
-        projectId: "proj",
-        isBitbucketPipeline: false,
-        workdir,
-        extraHosts: [],
-      }).pipe(
-        Effect.map(() => {
-          expect(readdirSync(dir)).toEqual(["secret-0"]);
-          expect(readFileSync(join(dir, "secret-0"), "utf8")).toBe("fresh-content");
-        }),
-      );
-    },
-  );
-
-  it.live("cleans up the staged file even when `docker create` fails", () => {
-    let hostPath: string | undefined;
-    const mock = mockSpawner((args) => {
-      if (args[0] === "create") {
-        const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
-        hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
-        return { exitCode: 1, stderr: "no such image\n" };
-      }
-      return { exitCode: 0 };
-    });
-
-    const spec: LegacyStartContainerSpec = {
-      ...baseSpec,
-      binds: [],
-      secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
-    };
-
-    return legacyStartContainer(mock.spawner, spec, {
-      projectId: "proj",
-      isBitbucketPipeline: false,
-      workdir,
-      extraHosts: [],
-    }).pipe(
-      Effect.flip,
-      Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
-        expect(hostPath).toBeDefined();
-        expect(existsSync(hostPath ?? "")).toBe(false);
-      }),
-    );
-  });
-
-  it.live(
-    "cleans up the staged file when `docker create` succeeds but `docker start` fails",
+    "removes the local temp file immediately after a successful `docker cp`, even though `docker start` later fails",
     () => {
       let hostPath: string | undefined;
       const mock = mockSpawner((args) => {
-        if (args[0] === "create") {
-          const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
-          hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
-          return { exitCode: 0, stdout: "container-id-abc\n" };
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-abc\n" };
+        if (args[0] === "cp") {
+          hostPath = args[1];
+          return { exitCode: 0 };
         }
         if (args[0] === "start") {
           return { exitCode: 1, stderr: "container is already stopped\n" };
@@ -562,7 +482,8 @@ describe("legacyStartContainer secretFiles", () => {
         Effect.map((error) => {
           expect(error).toBeInstanceOf(LegacyStartContainerStartError);
           expect(hostPath).toBeDefined();
-          // The container never successfully started, so nothing depends on the file surviving.
+          // Already removed right after its own successful `docker cp` — long before `docker
+          // start` even ran, let alone failed.
           expect(existsSync(hostPath ?? "")).toBe(false);
         }),
       );
@@ -570,26 +491,118 @@ describe("legacyStartContainer secretFiles", () => {
   );
 
   it.live(
-    "cleans up the staged file on a SIGINT-style interruption mid-`docker create`, matching Go's no-orphaned-secrets guarantee",
+    "fails with LegacyStartContainerCreateError when `docker cp` exits non-zero, removes the local temp file, and never invokes `docker start`",
     () => {
-      // Go never writes these secrets to a host file at all (see `legacyStageStartSecretFiles`'s
-      // doc comment), so this is judged on its own correctness/security merits, not Go parity:
-      // a SIGINT landing after staging but before `docker create` returns must not leave a
-      // plaintext secret file behind indefinitely. `Effect.tapError` (the previous wiring) never
-      // sees a pure fiber interrupt — only `Effect.onError` does — same class of gap already
-      // fixed for the top-level bring-up rollback in `start.handler.ts`.
-      const createStarted = Deferred.makeUnsafe<void>();
+      let hostPath: string | undefined;
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-def\n" };
+        if (args[0] === "cp") {
+          hostPath = args[1];
+          return { exitCode: 1, stderr: "Error: No such container: container-id-def\n" };
+        }
+        return { exitCode: 0 };
+      });
+
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        binds: [],
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      };
+
+      return legacyStartContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => {
+          expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
+          expect(error.message).toBe(
+            "failed to create docker container: failed to copy secret file into container: Error: No such container: container-id-def",
+          );
+          expect(hostPath).toBeDefined();
+          expect(existsSync(hostPath ?? "")).toBe(false);
+          expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "never invokes `docker cp` (or writes any local temp file) when `docker create` fails",
+    () => {
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") return { exitCode: 1, stderr: "no such image\n" };
+        return { exitCode: 0 };
+      });
+
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        binds: [],
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      };
+
+      return legacyStartContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => {
+          expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
+          expect(mock.spawned.some((args) => args[0] === "cp")).toBe(false);
+          expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "removes the local temp file on a SIGINT-style interruption mid-`docker cp`, matching Go's no-orphaned-secrets guarantee",
+    () => {
+      // Go never writes these secrets to a host file at all (see
+      // `legacyCopyStartSecretFileIntoContainer`'s doc comment), so this is judged on its own
+      // correctness/security merits, not Go parity: a SIGINT landing after the local temp file
+      // is written but before `docker cp` returns must not leave a plaintext secret file behind
+      // indefinitely. `Effect.tapError` never sees a pure fiber interrupt — only `Effect.onError`/
+      // `Effect.ensuring` (built on `onExit`) do — same class of gap already fixed for the
+      // top-level bring-up rollback in `start.handler.ts`.
+      const cpStarted = Deferred.makeUnsafe<void>();
       const hangForever = Deferred.makeUnsafe<ChildProcessSpawner.ExitCode>();
       let hostPath: string | undefined;
       const encoder = new TextEncoder();
+
+      function succeededHandle(stdout = "") {
+        return Effect.gen(function* () {
+          const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            stdout: Stream.fromIterable(stdout.length > 0 ? [encoder.encode(stdout)] : []),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Deferred.await(exitDeferred),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        });
+      }
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           const args = command._tag === "StandardCommand" ? command.args : [];
           if (args[0] === "create") {
-            const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro,Z"));
-            hostPath = bind?.slice(0, bind.length - ":/etc/kong/kong.yml:ro,Z".length);
-            yield* Deferred.succeed(createStarted, undefined);
+            return yield* succeededHandle("container-id-sigint\n");
+          }
+          if (args[0] === "cp") {
+            hostPath = args[1];
+            yield* Deferred.succeed(cpStarted, undefined);
             // Never resolves on its own — only interruption ends this "process".
             return ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(1),
@@ -605,21 +618,7 @@ describe("legacyStartContainer secretFiles", () => {
               getOutputFd: () => Stream.empty,
             });
           }
-          const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-          yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            stdout: Stream.fromIterable([encoder.encode("")]),
-            stderr: Stream.empty,
-            all: Stream.empty,
-            exitCode: Deferred.await(exitDeferred),
-            isRunning: Effect.succeed(false),
-            stdin: Sink.drain,
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
+          return yield* succeededHandle();
         }),
       );
 
@@ -636,7 +635,7 @@ describe("legacyStartContainer secretFiles", () => {
           workdir,
           extraHosts: [],
         }).pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(createStarted);
+        yield* Deferred.await(cpStarted);
         expect(hostPath).toBeDefined();
         expect(existsSync(hostPath ?? "")).toBe(true);
         yield* Fiber.interrupt(fiber);
@@ -646,18 +645,18 @@ describe("legacyStartContainer secretFiles", () => {
   );
 
   it.live(
-    "maps a staging write failure to LegacyStartContainerCreateError, without ever invoking `docker create`",
+    "maps a local temp-file creation failure to LegacyStartContainerCreateError, without ever invoking `docker cp` or `docker start`",
     () => {
-      const dir = join(workdir, "supabase", ".temp", "start-secrets", baseSpec.containerName);
-      // `dir` itself doesn't exist yet, so the self-healing `rm(dir, ...)` up front is a no-op —
-      // but its PARENT ("start-secrets") is a plain file instead of a directory, which forces
-      // `mkdir(dir, { recursive: true })` to fail with ENOTDIR. This exercises the staging
-      // try/catch's failure branch, which has no other way to fail deterministically from a
-      // unit test.
-      mkdirSync(dirname(dirname(dir)), { recursive: true });
-      writeFileSync(dirname(dir), "not a directory");
+      const previousTmpdir = process.env["TMPDIR"];
+      // Points `os.tmpdir()` at a path whose PARENT doesn't exist, forcing `fs.mkdtemp` to fail
+      // deterministically with ENOENT — the only way to exercise this staging try/catch's
+      // failure branch from a unit test.
+      process.env["TMPDIR"] = join(workdir, "does-not-exist", "nested");
 
-      const mock = mockSpawner(() => ({ exitCode: 0, stdout: "should-not-be-created\n" }));
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-tmp\n" };
+        return { exitCode: 0 };
+      });
       const spec: LegacyStartContainerSpec = {
         ...baseSpec,
         binds: [],
@@ -674,13 +673,17 @@ describe("legacyStartContainer secretFiles", () => {
         Effect.map((error) => {
           expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
           expect(error.message).toMatch(
-            /^failed to create docker container: failed to stage container secret files: /,
+            /^failed to create docker container: failed to stage container secret file: /,
           );
-          expect(mock.spawned.some((args) => args[0] === "create")).toBe(false);
-          // `mkdir` never got far enough to create anything at the per-container path — the
-          // inner catch's own `rm(dir, ...)` cleanup call is a no-op here, but still runs.
-          expect(existsSync(dir)).toBe(false);
+          expect(mock.spawned.some((args) => args[0] === "cp")).toBe(false);
+          expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
         }),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousTmpdir === undefined) delete process.env["TMPDIR"];
+            else process.env["TMPDIR"] = previousTmpdir;
+          }),
+        ),
       );
     },
   );

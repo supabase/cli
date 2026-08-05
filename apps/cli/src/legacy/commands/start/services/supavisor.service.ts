@@ -23,12 +23,12 @@
  * Engine API directly, so that `Cmd` string never becomes a subprocess's own
  * argv. THIS PORT SHELLS OUT to a real `docker create`, so it deliberately
  * diverges: the rendered script travels via
- * {@link LegacyStartContainerSpec.secretFiles} instead (a HOST temp file,
- * mode `0644`, bind-mounted read-only at
+ * {@link LegacyStartContainerSpec.secretFiles} instead (a short-lived HOST
+ * temp file, mode `0644`, `docker cp`'d straight into the container at
  * {@link LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH}) — Supavisor itself
  * runs fully as root in Go's image, so it is unaffected by the non-root
- * bind-mount read issue that motivates `0644` for Kong/Postgres (see
- * `legacyStageStartSecretFiles`'s doc comment); the file mode is simply
+ * read issue that motivates `0644` for Kong/Postgres (see
+ * `legacyCopyStartSecretFileIntoContainer`'s doc comment); the file mode is simply
  * widened here for consistency with the other staged secrets, and
  * {@link legacyBuildSupavisorStartCmd} only ever references that FIXED path —
  * never the secret content itself (CWE-214/522). See that function's doc
@@ -63,7 +63,7 @@ const LEGACY_SUPAVISOR_TRANSACTION_PORT = "6543";
 
 /**
  * The fixed in-container path the rendered `pooler.exs` tenant script is
- * bind-mounted to (see {@link legacyBuildSupavisorContainerSpec}'s
+ * `docker cp`'d to (see {@link legacyBuildSupavisorContainerSpec}'s
  * `secretFiles`) — no Go equivalent, since Go never writes this script to a
  * file at all.
  */

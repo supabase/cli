@@ -6,16 +6,29 @@ import { Effect } from "effect";
 import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
 
 /**
- * Best-effort removal of `legacyStageStartSecretFiles`'s
- * (`legacy/shared/db-bootstrap/container-lifecycle.ts`) per-container
- * staged-secret directories for every container in `containers` — plaintext
- * JWT/TLS/pgsodium/pooler secret material `start` stages on host disk (Kong,
- * Postgres, Supavisor) that otherwise survives indefinitely, since neither
- * `stop` nor a failed-start rollback previously touched
- * `<workdir>/supabase/.temp/start-secrets/`. There is no Go behavior to
- * match here — Go never stages secrets on host disk in the first place (it
- * injects them into `container.Config.Cmd`/`Entrypoint` directly via the
- * Docker Engine API) — this is a TS-port-only hygiene fix.
+ * Best-effort removal of per-container staged-secret directories for every
+ * container in `containers` — plaintext secret/env material some `start`
+ * services stage on host disk that otherwise survives indefinitely, since
+ * neither `stop` nor a failed-start rollback previously touched
+ * `<workdir>/supabase/.temp/start-secrets/`. There is no Go behavior to match
+ * here — Go never stages secrets on host disk in the first place (it injects
+ * them into `container.Config.Cmd`/`Entrypoint` directly via the Docker
+ * Engine API) — this is a TS-port-only hygiene fix.
+ *
+ * As of supabase/cli#6022, Kong/Postgres/Supavisor's own `secretFiles` no
+ * longer stage anything under this tree — `container-lifecycle.ts`'s
+ * `legacyStartContainer` now `docker cp`s them straight into the created
+ * container instead (see `legacyCopyStartSecretFileIntoContainer`'s doc
+ * comment), so a bind mount's host-side path never has to be resolved by a
+ * remote Docker daemon. This module remains load-bearing for Edge Runtime's
+ * OWN, still-host-persisted staging under the exact same tree
+ * (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer` — a `docker run
+ * -d`, not `docker create`+`docker start`, which bind-mounts its env-file/
+ * multiline-env-script/serve-main-template artifacts rather than copying
+ * their content in) — this function has no way to distinguish which
+ * producer staged a given container's directory, nor does it need to: a
+ * directory that was never staged in the first place is a harmless no-op (see
+ * below).
  *
  * Hoisted here (`legacy/shared/`) per `apps/cli/CLAUDE.md`'s "Hoist Before
  * You Duplicate" rule: both `start`'s own rollback (`legacy/shared/db-bootstrap/rollback.ts`) and
@@ -46,9 +59,9 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * `restartPolicy: "unless-stopped"` container a narrower `stop
  * --project-id`/rollback isn't tearing down.
  *
- * Never fails: a directory that was never staged (every service besides
- * Kong/Postgres/Supavisor) is a harmless no-op, and a real deletion error is
- * not worth failing `stop`/rollback over.
+ * Never fails: a directory that was never staged (every service besides Edge
+ * Runtime) is a harmless no-op, and a real deletion error is not worth
+ * failing `stop`/rollback over.
  */
 export function legacyCleanupStartSecrets(
   containers: ReadonlyArray<LegacyContainerIdName>,
