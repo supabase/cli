@@ -225,10 +225,10 @@ const legacyWalkSqlFiles = (
           }
           const statResult = yield* fs.stat(childAbs).pipe(Effect.result);
           if (Result.isFailure(statResult)) {
-            // TOCTOU: this `.sql` child existed a moment ago in `names` (this directory's
+            // TOCTOU: this child existed a moment ago in `names` (this directory's
             // `readDirectory` snapshot) but is gone by the time we stat it here — e.g. removed
-            // by a concurrent process. Go never hits this window: `fs.WalkDir` decides
-            // file-vs-directory from the SAME `DirEntry` its parent `ReadDir` already
+            // by a concurrent process. Go never hits this window for the child's TYPE: `fs.WalkDir`
+            // decides file-vs-directory from the SAME `DirEntry` its parent `ReadDir` already
             // returned and never re-`Stat`s a child, so a `.sql` file that disappears here
             // stays in Go's declared file list, and only the later, real file-open fails
             // loudly. Verified empirically: a scratch `filepath.WalkDir` probe that deletes a
@@ -240,8 +240,34 @@ const legacyWalkSqlFiles = (
             // outcome, and let the real downstream read surface the failure.
             if (childRel.endsWith(".sql")) {
               collected.push(toSlash(childRel));
+              continue;
             }
-            continue;
+            // TOCTOU, directory variant: the vanished entry could equally have been a
+            // SUBDIRECTORY of the matched tree, not a harmless non-`.sql` file — and Go's
+            // outcome for those two cases is NOT the same. For a directory `DirEntry`,
+            // `fs.WalkDir` unconditionally attempts a second `ReadDir` to recurse into it
+            // (`io/fs/walk.go`'s `walkDir`); when the child has since been removed, that
+            // second `ReadDir` fails, and `walkMatchedDir`'s callback propagates the error
+            // unchanged (`if err != nil { return err }`, `config.go:198-199`) — `fs.WalkDir`
+            // returns it, and `walkMatchedDir` wraps it as `failed to walk matched
+            // directory: <cause>`, discarding every file already collected
+            // (`config.go:205-206`). Verified empirically: a scratch `fs.WalkDir` probe that
+            // removes a nested subdirectory between the parent's `ReadDir` and the
+            // subdirectory's own `ReadDir` reproduces exactly this — zero files, error
+            // `failed to walk matched directory: open .../nested: no such file or
+            // directory` — never a silent skip, unlike the vanished-`.sql`-file case above
+            // (round 6). This FileSystem service can't recover the lost entry's type after
+            // the fact — Go's `DirEntry` type came for free from the same `ReadDir` syscall
+            // as the listing, whereas this port's `stat` is a second, separate syscall, so a
+            // raced disappearance here always loses the type along with the entry. Treat any
+            // non-`.sql` disappearance as a potential directory and fail the whole walk the
+            // same way an unreadable still-present directory does (the `readDirectory`
+            // failure above) — matching Go's fail-loud design intent (never silently apply a
+            // partial schema/seed set) rather than risk silently dropping an entire nested
+            // subtree of schema files.
+            return yield* Effect.fail(
+              `failed to walk matched directory: ${legacyErrorMessage(statResult.failure)}`,
+            );
           }
           const childType = statResult.success.type;
           if (childType === "Directory") {

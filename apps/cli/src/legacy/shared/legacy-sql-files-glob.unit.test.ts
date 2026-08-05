@@ -419,6 +419,62 @@ describe("legacySqlFilesGlob", () => {
     },
   );
 
+  it.effect(
+    "fails the whole walk when a non-'.sql' child whose stat fails could have been a subdirectory (Go WalkDir parity)",
+    () => {
+      // Round 6 (test above) established that a `.sql` FILE child racing away between
+      // `readDirectory` and this port's own `stat` call is best-effort included, matching
+      // Go's cached-`DirEntry` behaviour for regular files. But Go's `fs.WalkDir` does NOT
+      // treat every vanished child the same way: for a DIRECTORY `DirEntry`, it unconditionally
+      // attempts a second `ReadDir` to recurse into it; when that child is gone, the second
+      // `ReadDir` fails, and `walkMatchedDir`'s callback propagates the error unchanged
+      // (`if err != nil { return err }`, `config.go:198-199`) — `fs.WalkDir` returns it, and
+      // `walkMatchedDir` wraps it as `failed to walk matched directory: <cause>`, discarding
+      // every file already collected (`config.go:205-206`). Verified empirically with a
+      // scratch `fs.WalkDir` probe against `apps/cli-go`'s real `walkMatchedDir`: removing a
+      // nested subdirectory between the parent's `ReadDir` and the subdirectory's own `ReadDir`
+      // reproduces exactly this — zero files, `failed to walk matched directory: open
+      // .../nested: no such file or directory` — never a silent skip. This port's `stat` call
+      // is a second, separate syscall from the parent's `readDirectory` (unlike Go, which gets
+      // the child's type for free from the SAME syscall as the listing), so a raced
+      // disappearance here always loses the type along with the entry — a non-`.sql` name
+      // could equally have been the now-missing subdirectory, and must fail the same way an
+      // unreadable still-present directory does, not silently vanish along with the files it
+      // may have held.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-dir-race-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      const nestedDir = join(schemasDir, "nested");
+      mkdirSync(nestedDir);
+      writeFileSync(join(nestedDir, "b.sql"), "select 2;");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const racyFs: FileSystem.FileSystem = {
+          ...fs,
+          stat: (p: string) =>
+            p === nestedDir
+              ? Effect.sync(() => rmSync(nestedDir, { recursive: true })).pipe(
+                  Effect.andThen(fs.stat(p)),
+                )
+              : fs.stat(p),
+        };
+        return yield* legacySqlFilesGlob(racyFs, path, ["schemas"], dir);
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual([]);
+            expect(result.warnings).toHaveLength(1);
+            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("still expands a real (non-symlinked) nested directory recursively", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-nested-"));
     const schemasDir = join(dir, "schemas");
