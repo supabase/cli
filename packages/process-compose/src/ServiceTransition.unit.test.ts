@@ -73,7 +73,7 @@ describe("ServiceTransition", () => {
       ],
       RestartTriggered: ["Unhealthy", "Stopped", "Failed"],
       BackoffElapsed: ["Restarting"],
-      HookFailed: ["Starting", "Running", "Healthy"],
+      HookFailed: ["Starting", "Running", "Healthy", "Unhealthy"],
     };
 
     for (const event of Object.values(events)) {
