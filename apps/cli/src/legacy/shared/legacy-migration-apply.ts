@@ -158,6 +158,7 @@ const execMigrationBatch = <E>(
   migrationPath: string,
   mapError: (message: string, phase: "read" | "exec") => E,
   forceNoVersion: boolean,
+  displayPath: string = migrationPath,
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
     // Go's `MigrationFile.ExecBatch` receives an already-read/parsed file (the read
@@ -167,13 +168,26 @@ const execMigrationBatch = <E>(
     // failure below, and needs the same Go prefix so stderr/JSON errors don't surface
     // the bare platform error text. Tagged "read" so callers that attach a suggestion
     // only around execution failures (`apply.go:61-63`) can tell the two apart.
-    const content = yield* fs
-      .readFileString(migrationPath)
-      .pipe(
-        Effect.mapError((error) =>
-          mapError(`failed to open migration file: ${legacyErrorMessage(error)}`, "read"),
-        ),
-      );
+    //
+    // Go opens `fp` — the workdir-RELATIVE form `[db.migrations].schema_paths`/
+    // `[db.seed].sql_paths` already resolved to at config-load time — because Go's
+    // process cwd is always the workdir (`ChangeWorkDir`, `cmd/root.go:104`). This
+    // module deliberately never `process.chdir`s (only `bootstrap` does, as its own
+    // documented one-off), so callers must pass an ABSOLUTE `migrationPath` for the
+    // real read to work — but that means the platform error's embedded path is
+    // absolute too. When it differs from `displayPath` (the caller's Go-equivalent
+    // relative path), substitute it in so the wrapped message still reports the
+    // relative form Go would, not a leaked local temp/absolute path.
+    const content = yield* fs.readFileString(migrationPath).pipe(
+      Effect.mapError((error) => {
+        const rawMessage = legacyErrorMessage(error);
+        const message =
+          displayPath === migrationPath
+            ? rawMessage
+            : rawMessage.split(migrationPath).join(displayPath);
+        return mapError(`failed to open migration file: ${message}`, "read");
+      }),
+    );
 
     // Everything below mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
     // which runs against an already-read file — so every failure from here on is an
@@ -366,6 +380,11 @@ export const legacySeedGlobals = <E>(
  * would print an extra line Go never prints. Callers write the in-memory SQL
  * constant to a temp file first (this module only reads files, like
  * `execMigrationBatch`'s other callers).
+ *
+ * `displayPath`, when given, is the path a read-failure's wrapped message should
+ * report instead of `filePath` — see `execMigrationBatch`'s comment on why the two
+ * can differ (an absolute path is required for the real read, but Go's equivalent
+ * error names the workdir-relative form).
  */
 export const legacyExecSqlFile = <E>(
   session: LegacyDbSession,
@@ -373,7 +392,9 @@ export const legacyExecSqlFile = <E>(
   path: Path.Path,
   filePath: string,
   mapError: (message: string, phase: "read" | "exec") => E,
-): Effect.Effect<void, E> => execMigrationBatch(session, fs, path, filePath, mapError, true);
+  displayPath?: string,
+): Effect.Effect<void, E> =>
+  execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath);
 
 /**
  * Applies Go's EXPERIMENTAL declarative schema-files branch of `apply.MigrateAndSeed`
@@ -428,10 +449,19 @@ export const legacyApplySchemaFiles = <E>(
     }
     for (const file of files) {
       const absolutePath = path.isAbsolute(file) ? file : path.join(workdir, file);
-      yield* legacyExecSqlFile(session, fs, path, absolutePath, (message, phase) =>
-        phase === "exec"
-          ? mapError(message, `See schema file: ${legacyBold(file)}`)
-          : mapError(message),
+      // `file` is already Go's `fp` form (workdir-relative when the declared pattern
+      // was relative, verbatim when absolute) — pass it through as the display path so
+      // a read failure reports it instead of the `absolutePath` the real read needs.
+      yield* legacyExecSqlFile(
+        session,
+        fs,
+        path,
+        absolutePath,
+        (message, phase) =>
+          phase === "exec"
+            ? mapError(message, `See schema file: ${legacyBold(file)}`)
+            : mapError(message),
+        file,
       );
     }
   });

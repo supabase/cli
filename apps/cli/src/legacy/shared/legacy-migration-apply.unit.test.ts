@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -9,6 +9,7 @@ import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
+  legacyApplySchemaFiles,
   legacyIsPipelineIncompatible,
   legacyMarkError,
   legacySeedGlobals,
@@ -463,4 +464,50 @@ describe("legacySeedGlobals", () => {
       Effect.provide(BunServices.layer),
     );
   });
+});
+
+describe("legacyApplySchemaFiles", () => {
+  it.effect(
+    "reports a read failure with the workdir-relative path, not the absolute path used to read it (Go open supabase/... parity)",
+    () => {
+      // Go opens the workdir-relative `fp` from `schema_paths` directly (its process
+      // cwd is always the workdir, `ChangeWorkDir`), so a read failure reports
+      // `open supabase/unreadable.sql: ...`. This module never `process.chdir`s, so
+      // the real read needs an absolute path — but the wrapped read-failure message
+      // must still show the relative `supabase/...` form, not that absolute path. An
+      // unreadable file (a real permission failure, not a missing-path one) reproduces
+      // a genuine read failure while still passing the glob's own stat/type check —
+      // `stat` only needs directory execute permission, not read permission on the
+      // file itself, so this still resolves as a `"File"` match, unlike a directory
+      // (which the glob would instead expand via `legacyWalkSqlFiles`).
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-read-fail-"));
+      const file = join(dir, "supabase", "unreadable.sql");
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      writeFileSync(file, "select 1;");
+      chmodSync(file, 0o000);
+      const { session } = fakeSession();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/unreadable.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("failed to open migration file: ");
+          expect(msg).toContain("supabase/unreadable.sql");
+          expect(msg).not.toContain(dir);
+        }
+        chmodSync(file, 0o644);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 });
