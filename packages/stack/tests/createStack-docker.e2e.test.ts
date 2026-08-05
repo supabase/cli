@@ -32,6 +32,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     stack = await createStack({
       mode: "docker",
+      startupMode: "lazy",
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
       analytics: {},
@@ -111,7 +112,11 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     },
   );
 
-  test("cold-starts analytics through lazy service activation", { timeout: 60_000 }, async () => {
+  test("cold-starts analytics through lazy service activation", { timeout: 180_000 }, async () => {
+    expect(await stack.getServiceStatus("analytics")).toEqual(
+      expect.objectContaining({ status: "Dormant" }),
+    );
+
     await stack.startService("analytics");
 
     const [runningImages, states] = await Promise.all([
