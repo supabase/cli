@@ -141,9 +141,9 @@ const projectIdentityField: LocalStackConfigParityDecision = {
 const mappedFunctionManifest: LocalStackConfigParityDecision = {
   _tag: "mapped",
   presence: "raw-document",
-  mappedBy: "stack-functions-runtime",
+  mappedBy: "start",
   rationale:
-    "The current stack functions runtime resolves every configured function entry, including enablement, JWT verification, paths, static files, and environment values.",
+    "The start launch translator resolves every configured and discovered function entry, including enablement, JWT verification, absolute paths, static files, and per-function environment values.",
 };
 
 const functionConfigParity = {
@@ -155,12 +155,12 @@ const functionConfigParity = {
   env: mappedFunctionManifest,
 } satisfies Record<keyof ProjectConfig["functions"][string], Node>;
 
-const mappedFunctionsDevEdgeRuntime: LocalStackConfigParityDecision = {
+const mappedStartFunctionsEnvironment: LocalStackConfigParityDecision = {
   _tag: "mapped",
   presence: "raw-document",
-  mappedBy: "functions-dev",
+  mappedBy: "start",
   rationale:
-    "The functions-dev Adapter resolves this field and passes it to the stack edge-runtime configuration.",
+    "The start launch translator resolves Edge Runtime secrets into the shared Functions environment before the bundle crosses the daemon reload transport.",
 };
 
 const commandOnlyDatabaseField: LocalStackConfigParityDecision = {
@@ -495,7 +495,7 @@ const localStackConfigParity = {
     policy: mappedCoreTopologyField,
     inspector_port: mappedCoreTopologyField,
     deno_version: unsupportedRuntimeField,
-    secrets: mappedFunctionsDevEdgeRuntime,
+    secrets: mappedStartFunctionsEnvironment,
   } satisfies Record<keyof ProjectConfig["edge_runtime"], Node>,
   functions: {
     "*": functionConfigParity,

@@ -5,6 +5,7 @@ import {
   StateManager,
   daemonLayer,
   stackMetadata,
+  type ResolvedFunctionsBundle,
   type StackMetadata,
 } from "@supabase/stack/effect";
 import { daemonEntryPoint } from "@supabase/stack";
@@ -68,6 +69,15 @@ interface StartVersionStateShape {
 export class StartVersionState extends Context.Service<StartVersionState, StartVersionStateShape>()(
   "supabase/commands/start/StartVersionState",
 ) {}
+
+interface StartFunctionsStateShape {
+  readonly bundle: ResolvedFunctionsBundle | undefined;
+}
+
+export class StartFunctionsState extends Context.Service<
+  StartFunctionsState,
+  StartFunctionsStateShape
+>()("supabase/commands/start/StartFunctionsState") {}
 
 const flags = {
   stack: Flag.string("stack").pipe(
@@ -201,6 +211,7 @@ export const startCommand = Command.make("start", flags).pipe(
 
       return {
         stackLayer,
+        startFunctionsState: StartFunctionsState.of({ bundle: launch.functionsBundle }),
         startVersionState: StartVersionState.of({
           metadata,
           serviceVersionContext,
@@ -210,8 +221,12 @@ export const startCommand = Command.make("start", flags).pipe(
 
     const commandLayer = Layer.unwrap(
       runtimeStateEffect.pipe(
-        Effect.map(({ stackLayer, startVersionState }) =>
-          Layer.mergeAll(stackLayer, Layer.succeed(StartVersionState, startVersionState)),
+        Effect.map(({ stackLayer, startFunctionsState, startVersionState }) =>
+          Layer.mergeAll(
+            stackLayer,
+            Layer.succeed(StartFunctionsState, startFunctionsState),
+            Layer.succeed(StartVersionState, startVersionState),
+          ),
         ),
         Effect.provide(providedRuntimeLayer),
       ),

@@ -4,11 +4,17 @@ import {
   type ProjectConfig,
   type ProjectEnvironment,
 } from "@supabase/config";
-import type { ReadinessPolicy, StackConfig, VersionManifest } from "@supabase/stack/effect";
+import type {
+  ReadinessPolicy,
+  ResolvedFunctionsBundle,
+  StackConfig,
+  VersionManifest,
+} from "@supabase/stack/effect";
 import { Effect, Schema } from "effect";
 import { dirname, join } from "node:path";
 import { legacyParseGoDuration } from "../../shared/config/go-duration.ts";
 import { translateAuthStackConfig } from "./auth-stack-config.ts";
+import { translateStartFunctionsStackConfig } from "./functions-stack-config.ts";
 import {
   excludedStackServices,
   invalidLocalStackConfig,
@@ -58,6 +64,7 @@ export interface LocalStackWarning {
 
 interface ResolvedLocalStackLaunch {
   readonly stackConfig: StackConfig;
+  readonly functionsBundle: ResolvedFunctionsBundle | undefined;
   readonly projectPaths: LocalStackProjectPaths;
   readonly warnings: ReadonlyArray<LocalStackWarning>;
 }
@@ -341,16 +348,27 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
             paths: [],
           }),
   });
+  const configDir =
+    input.loadedProjectConfig === null
+      ? join(input.projectPaths.projectRoot, "supabase")
+      : dirname(input.loadedProjectConfig.path);
   const translatedAuth = yield* translateAuthStackConfig({
     projectConfig,
     rawDocument: input.loadedProjectConfig?.document,
     projectEnvironment: input.projectEnvironment,
-    configDir:
-      input.loadedProjectConfig === null
-        ? join(input.projectPaths.projectRoot, "supabase")
-        : dirname(input.loadedProjectConfig.path),
+    configDir,
     authEnabled: coreConfig.auth !== false,
   });
+  const functionsBundle =
+    coreConfig.edgeRuntime === false
+      ? undefined
+      : yield* translateStartFunctionsStackConfig({
+          loadedProjectConfig: input.loadedProjectConfig,
+          projectEnvironment: input.projectEnvironment,
+          projectRoot: input.projectPaths.projectRoot,
+          configDir,
+          envFilePath: join(configDir, "functions", ".env"),
+        });
   const translatedDatabaseBootstrap = yield* translateDatabaseBootstrapConfig({
     loadedProjectConfig: input.loadedProjectConfig,
     projectEnvironment: input.projectEnvironment,
@@ -410,6 +428,7 @@ export const resolveLocalStackLaunch = Effect.fnUntraced(function* (input: Local
         startupHealthTimeoutMs: postgresStartupTimeoutMs,
       },
     },
+    functionsBundle,
     projectPaths: input.projectPaths,
     warnings: [...diagnostics.warnings, ...databaseWarnings, ...deprecationWarnings],
   } satisfies ResolvedLocalStackLaunch;

@@ -1,4 +1,5 @@
 import { ProjectConfigSchema, type LoadedProjectConfig } from "@supabase/config";
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -11,6 +12,9 @@ import {
 } from "./stack-config.ts";
 
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+
+const resolveLocalStackLaunchWithBun = (input: Parameters<typeof resolveLocalStackLaunch>[0]) =>
+  resolveLocalStackLaunch(input).pipe(Effect.provide(BunServices.layer));
 
 function loaded(document: Record<string, unknown>): LoadedProjectConfig {
   return {
@@ -112,7 +116,7 @@ describe("explicitLocalStackConfigEntries", () => {
 describe("resolveLocalStackLaunch", () => {
   it("maps API and database topology into the stack interface", async () => {
     const result = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
           api: {
@@ -140,7 +144,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("applies environment overrides before CLI exclusions", async () => {
     const result = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({ api: { enabled: false, port: 6101 }, db: { port: 6102 } }),
         projectEnvironment: {
@@ -170,7 +174,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("reports malformed topology overrides by path without retaining their value", async () => {
     const exit = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         projectEnvironment: {
           paths: {
@@ -194,13 +198,13 @@ describe("resolveLocalStackLaunch", () => {
 
   it("only requests Mailpit protocol publication for explicit host ports", async () => {
     const omitted = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({ local_smtp: { enabled: true, port: 6104 } }),
       }),
     );
     const explicit = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
           local_smtp: { enabled: true, port: 6104, smtp_port: 6105, pop3_port: 6106 },
@@ -218,7 +222,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("composes project config, paths, flags, versions, and finite readiness", async () => {
     const result = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
           api: { auto_expose_new_tables: true },
@@ -249,7 +253,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("uses the resolved project environment for the database health timeout", async () => {
     const result = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         projectEnvironment: {
           paths: {
@@ -272,7 +276,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("supports an explicit infinite debugging policy while retaining startup health", async () => {
     const result = await Effect.runPromise(
-      resolveLocalStackLaunch({ ...baseLaunchInput, readiness: "infinite" }),
+      resolveLocalStackLaunchWithBun({ ...baseLaunchInput, readiness: "infinite" }),
     );
 
     expect(result.stackConfig.postgres?.startupHealthTimeoutMs).toBe(120_000);
@@ -281,7 +285,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("fails before stack construction when the health timeout is invalid", async () => {
     const exit = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({ db: { health_timeout: "-1s" } }),
       }).pipe(Effect.exit),
@@ -292,7 +296,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("fails on explicit blocking fields and reports paths without values", async () => {
     const exit = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
           auth: { captcha: { secret: "do-not-leak" } },
@@ -315,7 +319,7 @@ describe("resolveLocalStackLaunch", () => {
 
   it("warns on explicit warning fields using paths only", async () => {
     const result = await Effect.runPromise(
-      resolveLocalStackLaunch({
+      resolveLocalStackLaunchWithBun({
         ...baseLaunchInput,
         loadedProjectConfig: loaded({
           experimental: { s3_secret_key: "do-not-leak" },

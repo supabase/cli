@@ -1,10 +1,14 @@
 import { loadProjectConfig, loadProjectEnvironmentFor } from "@supabase/config/node";
+import { BunServices } from "@effect/platform-bun";
 import { Effect } from "effect";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveLocalStackLaunch } from "./stack-config.ts";
+
+const resolveLocalStackLaunchWithBun = (input: Parameters<typeof resolveLocalStackLaunch>[0]) =>
+  resolveLocalStackLaunch(input).pipe(Effect.provide(BunServices.layer));
 
 describe("local stack launch config", () => {
   it("resolves one project snapshot before translating the launch", async () => {
@@ -37,7 +41,7 @@ describe("local stack launch config", () => {
         projectEnv: projectEnvironment,
       });
       const result = await Effect.runPromise(
-        resolveLocalStackLaunch({
+        resolveLocalStackLaunchWithBun({
           loadedProjectConfig,
           projectEnvironment,
           projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
@@ -125,7 +129,7 @@ describe("local stack launch config", () => {
         projectEnv: projectEnvironment,
       });
       const result = await Effect.runPromise(
-        resolveLocalStackLaunch({
+        resolveLocalStackLaunchWithBun({
           loadedProjectConfig,
           projectEnvironment,
           projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
@@ -193,7 +197,7 @@ describe("local stack launch config", () => {
         projectEnv: projectEnvironment,
       });
       const result = await Effect.runPromise(
-        resolveLocalStackLaunch({
+        resolveLocalStackLaunchWithBun({
           loadedProjectConfig,
           projectEnvironment,
           projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
@@ -278,7 +282,7 @@ describe("local stack launch config", () => {
         projectEnv: projectEnvironment,
       });
       const result = await Effect.runPromise(
-        resolveLocalStackLaunch({
+        resolveLocalStackLaunchWithBun({
           loadedProjectConfig,
           projectEnvironment,
           projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
@@ -318,6 +322,34 @@ describe("local stack launch config", () => {
           paths: ["db.seed.sql_paths"],
         }),
       ]);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not discover or read Functions inputs when Edge Runtime is excluded", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "supabase-local-functions-disabled-"));
+    const supabaseDir = join(projectRoot, "supabase");
+    try {
+      await mkdir(join(supabaseDir, "functions"), { recursive: true });
+      await writeFile(
+        join(supabaseDir, "functions", ".env"),
+        "VALID_SECRET=private-functions-value\ninvalid private-functions-value\n",
+      );
+
+      const result = await Effect.runPromise(
+        resolveLocalStackLaunchWithBun({
+          loadedProjectConfig: null,
+          projectEnvironment: null,
+          projectPaths: { projectRoot, projectStateRoot: join(projectRoot, ".supabase") },
+          mode: "auto",
+          exclude: ["edge-runtime"],
+          runtimeVersions: {},
+        }),
+      );
+
+      expect(result.stackConfig.edgeRuntime).toBe(false);
+      expect(result.functionsBundle).toBeUndefined();
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }

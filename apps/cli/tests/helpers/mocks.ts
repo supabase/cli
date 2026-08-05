@@ -10,6 +10,7 @@ import {
   StackServiceState,
   StateManager,
   StackMetadataNotFoundError,
+  type FunctionsReloadConfig,
   type StackInfo,
   type StackMetadata,
   type StackState,
@@ -614,6 +615,8 @@ export function mockStack(
 ) {
   let started = false;
   let stopped = false;
+  const functionsReloads: FunctionsReloadConfig[] = [];
+  const operations: string[] = [];
   const startDeferred = Deferred.makeUnsafe<void>();
   const stopDeferred = Deferred.makeUnsafe<void>();
   const stateHistory = [...(opts.stateChanges ?? [])];
@@ -653,6 +656,7 @@ export function mockStack(
       start: () =>
         Effect.gen(function* () {
           started = true;
+          operations.push("start");
           if (opts.startError !== undefined) {
             return yield* Effect.fail(opts.startError as never);
           }
@@ -677,7 +681,11 @@ export function mockStack(
       startService: () => Effect.void,
       stopService: () => Effect.void,
       restartService: () => Effect.void,
-      reloadFunctions: () => Effect.void,
+      reloadFunctions: (config) =>
+        Effect.sync(() => {
+          functionsReloads.push(config ?? {});
+          operations.push("reload-functions");
+        }),
       reloadEdgeRuntime: () => Effect.void,
       getState: () =>
         Effect.succeed(
@@ -746,6 +754,8 @@ export function mockStack(
     get stopped() {
       return stopped;
     },
+    functionsReloads,
+    operations,
     emitStateChange(change: { name: string; status: StackServiceState["status"] }) {
       stateHistory.push(change);
       PubSub.publishUnsafe(

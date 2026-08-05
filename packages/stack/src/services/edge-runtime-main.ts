@@ -171,13 +171,22 @@ function fileUrl(path: string) {
   return new URL(`file://${path}`).href;
 }
 
-async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
-  const authError = await verifyRequest(req, config, functionConfig);
-  if (authError) return authError;
+interface FunctionsEnvironmentConfig {
+  readonly env?: Readonly<Record<string, string>>;
+  readonly supabaseUrl: string;
+  readonly publishableKey: string;
+  readonly secretKey: string;
+  readonly dbUrl: string;
+}
 
-  const envVars = Object.entries({
+/** Runtime-owned values intentionally override shared and per-function inputs. */
+export function resolveFunctionEnvironment(
+  config: FunctionsEnvironmentConfig,
+  functionEnv: Readonly<Record<string, string>> | undefined,
+) {
+  return Object.entries({
     ...config.env,
-    ...functionConfig.env,
+    ...functionEnv,
     SUPABASE_URL: config.supabaseUrl,
     SUPABASE_ANON_KEY: config.publishableKey,
     SUPABASE_SERVICE_ROLE_KEY: config.secretKey,
@@ -185,6 +194,13 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
     SUPABASE_PUBLISHABLE_KEYS: JSON.stringify({ default: config.publishableKey }),
     SUPABASE_SECRET_KEYS: JSON.stringify({ default: config.secretKey }),
   });
+}
+
+async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
+  const authError = await verifyRequest(req, config, functionConfig);
+  if (authError) return authError;
+
+  const envVars = resolveFunctionEnvironment(config, functionConfig.env);
 
   try {
     const worker = await EdgeRuntime.userWorkers.create({

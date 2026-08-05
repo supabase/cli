@@ -15,7 +15,7 @@ import {
   resolveFunctionsRuntimeConfig,
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
-import { verifyRequest } from "./services/edge-runtime-main.ts";
+import { resolveFunctionEnvironment, verifyRequest } from "./services/edge-runtime-main.ts";
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-stack-functions-"));
@@ -82,6 +82,29 @@ const authFailureCases = [
 ];
 
 describe("stack Functions runtime config", () => {
+  it("keeps runtime-owned Supabase values above shared and per-function env", () => {
+    expect(
+      Object.fromEntries(
+        resolveFunctionEnvironment(
+          {
+            env: { SHARED: "shared", SUPABASE_URL: "shared-url" },
+            supabaseUrl: "runtime-url",
+            publishableKey: "runtime-publishable",
+            secretKey: "runtime-secret",
+            dbUrl: "runtime-db",
+          },
+          { SHARED: "function", SUPABASE_URL: "function-url" },
+        ),
+      ),
+    ).toMatchObject({
+      SHARED: "function",
+      SUPABASE_URL: "runtime-url",
+      SUPABASE_ANON_KEY: "runtime-publishable",
+      SUPABASE_SERVICE_ROLE_KEY: "runtime-secret",
+      SUPABASE_DB_URL: "runtime-db",
+    });
+  });
+
   it("projects an explicit bundle without project discovery", async () => {
     const root = makeTempProject();
     const stackConfig = await resolveConfig({ functions: makeBundle(root) });

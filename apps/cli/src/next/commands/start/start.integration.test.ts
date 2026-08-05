@@ -5,11 +5,16 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
 import type { StackServiceStatus } from "@supabase/stack";
-import { DEFAULT_VERSIONS, stackMetadata, type StackInfo } from "@supabase/stack/effect";
+import {
+  DEFAULT_VERSIONS,
+  stackMetadata,
+  type ResolvedFunctionsBundle,
+  type StackInfo,
+} from "@supabase/stack/effect";
 import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
 import { resolveLocalStackLaunch } from "../../config/stack-config.ts";
 import { start } from "./start.handler.ts";
-import { StartVersionState } from "./start.command.ts";
+import { StartFunctionsState, StartVersionState } from "./start.command.ts";
 import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
 import type { ResolvedServiceVersionContext } from "../../config/service-version-resolution.ts";
 import {
@@ -141,6 +146,10 @@ function mockStartVersionState(
   );
 }
 
+function mockStartFunctionsState(bundle?: ResolvedFunctionsBundle) {
+  return Layer.succeed(StartFunctionsState, StartFunctionsState.of({ bundle }));
+}
+
 function setupInteractive(
   opts: {
     info?: Partial<StackInfo>;
@@ -163,6 +172,7 @@ function setupInteractive(
     analytics.layer,
     out.layer,
     ink.layer,
+    mockStartFunctionsState(),
     mockStartVersionState(),
   );
   return { layer, stack, out, ink, analytics };
@@ -174,6 +184,7 @@ function setupNonInteractive(
     stateChanges?: Array<{ name: string; status: StackServiceStatus }>;
     startPending?: boolean;
     liveStateChanges?: boolean;
+    functionsBundle?: ResolvedFunctionsBundle;
   } = {},
 ) {
   const stack = mockStack({
@@ -191,6 +202,7 @@ function setupNonInteractive(
     analytics.layer,
     out.layer,
     ink.layer,
+    mockStartFunctionsState(opts.functionsBundle),
     mockStartVersionState(),
   );
   return { layer, stack, out, ink, analytics };
@@ -211,6 +223,36 @@ const waitFor = Effect.fnUntraced(function* (
 });
 
 describe("start", () => {
+  it.live("configures the resolved Functions bundle before detached startup", () => {
+    const bundle: ResolvedFunctionsBundle = {
+      env: { SHARED_SECRET: "private-shared-value" },
+      functions: [
+        {
+          name: "hello",
+          verifyJWT: false,
+          entrypointPath: "/project/supabase/functions/hello/index.ts",
+          importMapPath: null,
+          staticFiles: [],
+          env: { FUNCTION_SECRET: "private-function-value" },
+        },
+      ],
+    };
+    const { layer, stack, out, analytics } = setupNonInteractive({ functionsBundle: bundle });
+
+    return Effect.gen(function* () {
+      yield* start(backgroundFlags);
+
+      expect(stack.functionsReloads).toEqual([{ functions: bundle }]);
+      expect(stack.operations.slice(0, 2)).toEqual(["reload-functions", "start"]);
+      expect(
+        JSON.stringify({ messages: out.messages, analytics: analytics.captured }),
+      ).not.toContain("private-shared-value");
+      expect(
+        JSON.stringify({ messages: out.messages, analytics: analytics.captured }),
+      ).not.toContain("private-function-value");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("runs detached mode in the background and prints connection info", () => {
     const { layer, stack, out, ink, analytics } = setupNonInteractive();
     return Effect.gen(function* () {
@@ -389,6 +431,7 @@ describe("start", () => {
       analytics.layer,
       out.layer,
       ink.layer,
+      mockStartFunctionsState(),
       mockStartVersionState({
         metadata: stackMetadata({
           ports: {
@@ -517,6 +560,7 @@ describe("start", () => {
       analytics.layer,
       out.layer,
       ink.layer,
+      mockStartFunctionsState(),
       mockStartVersionState({
         serviceVersionContext: {
           activeOverrides: [{ service: "storage", version: "1.40.0", source: "local" }],
@@ -557,6 +601,7 @@ describe("start", () => {
       analytics.layer,
       out.layer,
       ink.layer,
+      mockStartFunctionsState(),
       mockStartVersionState({
         serviceVersionContext: {
           activeOverrides: [{ service: "auth", version: "2.180.0", source: "flag" }],

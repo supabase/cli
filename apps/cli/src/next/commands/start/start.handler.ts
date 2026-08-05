@@ -1,9 +1,9 @@
 import { Effect } from "effect";
-import { StateManager, stackMetadata } from "@supabase/stack/effect";
+import { Stack, StateManager, stackMetadata } from "@supabase/stack/effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import type { StartFlags } from "./start.command.ts";
-import { StartVersionState } from "./start.command.ts";
+import { StartFunctionsState, StartVersionState } from "./start.command.ts";
 import { startBackground } from "./flows/background.flow.ts";
 import { startForeground } from "./flows/foreground.flow.ts";
 import { startNonInteractive } from "./flows/non-interactive.flow.ts";
@@ -13,7 +13,9 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
     Effect.gen(function* () {
       const output = yield* Output;
       const analytics = yield* Analytics;
+      const stack = yield* Stack;
       const stateManager = yield* StateManager;
+      const functionsState = yield* StartFunctionsState;
       const startVersionState = yield* StartVersionState;
       const { metadata, serviceVersionContext } = startVersionState;
 
@@ -53,6 +55,10 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
             lastNotifiedUpdateFingerprint: serviceVersionContext.updateFingerprint,
           }),
         );
+      }
+
+      if (functionsState.bundle !== undefined) {
+        yield* stack.reloadFunctions({ functions: functionsState.bundle });
       }
 
       let result: void;
