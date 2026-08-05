@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createStack, type StackHandle } from "../src/node.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
-const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 5_000;
+const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 180_000;
 const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS = 90_000;
 
 function hasDockerDaemon(): boolean {
@@ -70,6 +70,8 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     "runs the core services in Docker containers and serves health endpoints",
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {
+      await Promise.all([stack.startService("postgrest"), stack.startService("auth")]);
+
       const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
       expect(runningImages).toContain("supabase/postgrest");
       expect(runningImages).toContain("supabase/postgres");
@@ -92,10 +94,12 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     "runs the edge runtime in Docker and serves the functions placeholder through the local gateway",
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {
-      const [runningImages, states, functionsRes] = await Promise.all([
+      const functionsRes = await fetch(`${stack.url}/functions/v1/test`);
+      await stack.serviceReady("edge-runtime");
+
+      const [runningImages, states] = await Promise.all([
         Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
         stack.getStatus(),
-        fetch(`${stack.url}/functions/v1/test`),
       ]);
 
       expect(runningImages).toContain("supabase/edge-runtime");
