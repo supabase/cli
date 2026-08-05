@@ -806,6 +806,49 @@ describe("legacy functions download", () => {
     },
   );
 
+  it.live("skips network creation for a container: network mode", () => {
+    // Go's `container.NetworkMode.IsUserDefined()`
+    // (`docker/api/types/container/hostconfig_unix.go:23-25`) explicitly
+    // excludes `IsContainer()` — `--network-id container:redis` attaches to
+    // another container's network stack, so `DockerNetworkCreateIfNotExists`
+    // never inspects or creates a network for it, and the mode is passed
+    // straight through to `docker run --network` (review round on
+    // CLI-1963's `functions download` port).
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+          "--network-id",
+          "container:redis",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toBeUndefined();
+      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      expect(runCommand?.args).toContain("container:redis");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("does not double-prefix an already v-prefixed edge-runtime-version pin", () => {
     // Go's `replaceImageTag` (`pkg/config/utils.go:81-84`) appends the pin
     // file's raw content verbatim after the image's `:`, so a pin already

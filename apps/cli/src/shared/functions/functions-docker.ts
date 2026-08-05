@@ -86,13 +86,29 @@ export const runChildProcess = Effect.fnUntraced(function* (
   return { exitCode, stdout, stderr };
 });
 
+// Go: `container.NetworkMode.IsContainer()` (`docker/api/types/container/hostconfig.go:152-155`,
+// via the unexported `containerID` helper, same file:493-499) — `--network container:<name|id>`
+// (Docker's syntax for attaching to another container's network stack) is recognized by a bare
+// `"container:"` prefix before the first `:`, regardless of what (if anything) follows it.
+function isContainerDockerNetworkMode(networkMode: string) {
+  const separatorIndex = networkMode.indexOf(":");
+  return separatorIndex !== -1 && networkMode.slice(0, separatorIndex) === "container";
+}
+
+// Go: `container.NetworkMode.IsUserDefined()` (`docker/api/types/container/hostconfig_unix.go:23-25`)
+// — `!IsDefault() && !IsBridge() && !IsHost() && !IsNone() && !IsContainer()`. Omitting the
+// `IsContainer()` exclusion would make `DockerNetworkCreateIfNotExists`
+// (`internal/utils/docker.go:63`) run `docker network inspect`/`create` against a
+// `container:<name|id>` mode, which isn't a network name at all — Go passes that mode straight
+// through to the container's `NetworkMode` without ever touching the network subsystem.
 export function isUserDefinedDockerNetwork(networkMode: string) {
   return (
     networkMode.length > 0 &&
     networkMode !== "default" &&
     networkMode !== "bridge" &&
     networkMode !== "host" &&
-    networkMode !== "none"
+    networkMode !== "none" &&
+    !isContainerDockerNetworkMode(networkMode)
   );
 }
 
