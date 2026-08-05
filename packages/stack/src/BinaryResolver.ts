@@ -81,6 +81,7 @@ const legacyCacheRequiredPaths = (
         `${directory}/bin/pg_isready${platformOs === "win32" ? ".exe" : ""}`,
         `${directory}/bin/psql${platformOs === "win32" ? ".exe" : ""}`,
         `${directory}/share/supabase-cli/bin/supabase-postgres-init.sh`,
+        `${directory}/lib`,
       ]
     : [executable];
 };

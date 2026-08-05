@@ -106,6 +106,7 @@ describe("BinaryResolver.legacyCacheRequiredPaths", () => {
         "/cache/postgres/bin/pg_isready",
         "/cache/postgres/bin/psql",
         "/cache/postgres/share/supabase-cli/bin/supabase-postgres-init.sh",
+        "/cache/postgres/lib",
       ],
     );
   });
