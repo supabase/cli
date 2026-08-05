@@ -227,7 +227,7 @@ service and its projected status.
 ### Readiness
 
 ```typescript
-await stack.ready(); // Inherit the stack's finite two-minute default
+await stack.ready(); // Inherit the stack's finite three-minute default
 await stack.ready({ mode: "finite", timeoutMs: 30_000 });
 await stack.ready({ mode: "infinite" }); // Explicit debugging override
 await stack.serviceReady("postgres");

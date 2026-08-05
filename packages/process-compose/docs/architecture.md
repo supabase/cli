@@ -208,8 +208,9 @@ interrupts its lifecycle fiber. The generation finalizer:
 
 Whole-graph stop sets desired state first and then stops dependents before dependencies. The global
 shutdown budget defaults to 60 seconds. If that budget expires, the orchestrator logs the timeout
-and clears all fibers. Services that were running are forced to terminal `Stopped` state with
-`pid: null` and exit code `143`.
+and force-terminates active children before waiting for teardown to finish. Services that were
+running reach terminal `Stopped` state with `pid: null` and exit code `143`; stop does not fail with
+`ShutdownTimeoutError`.
 
 In-process cleanup and orphan supervision solve different failure modes:
 
@@ -219,9 +220,11 @@ In-process cleanup and orphan supervision solve different failure modes:
   managed child exits while cleanup is configured.
 
 `ExternalCleanupAction` supports a shell-free `RunCommand` with an executable, argument array, and
-optional timeout, plus `RemovePath` for filesystem cleanup. The supervisor rejects a malformed
-decoded cleanup contract before spawning the child, while individual execution failures remain
-best-effort. Callers must choose idempotent commands because owner-loss signals can race.
+optional timeout (default 5 seconds), plus `RemovePath` for filesystem cleanup. Cleanup commands
+receive the managed child's sanitized environment, without the supervisor self-dispatch protocol
+variables. The supervisor rejects a malformed decoded cleanup contract before spawning the child,
+while individual execution failures remain best-effort. Callers must choose idempotent commands
+because owner-loss signals can race.
 
 ## Supervisor runtime
 

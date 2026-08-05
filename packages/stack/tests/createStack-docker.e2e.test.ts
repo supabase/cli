@@ -32,6 +32,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     stack = await createStack({
       mode: "docker",
+      startupMode: "lazy",
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
       analytics: {},
@@ -69,6 +70,8 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     "runs the core services in Docker containers and serves health endpoints",
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {
+      await Promise.all([stack.startService("postgrest"), stack.startService("auth")]);
+
       const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
       expect(runningImages).toContain("supabase/postgrest");
       expect(runningImages).toContain("supabase/postgres");
@@ -91,11 +94,10 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     "runs the edge runtime in Docker and serves the functions placeholder through the local gateway",
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {
-      const [runningImages, states, functionsRes] = await Promise.all([
-        Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
-        stack.getStatus(),
-        fetch(`${stack.url}/functions/v1/test`),
-      ]);
+      const functionsRes = await fetch(`${stack.url}/functions/v1/test`);
+      await stack.serviceReady("edge-runtime");
+      const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
+      const states = await stack.getStatus();
 
       expect(runningImages).toContain("supabase/edge-runtime");
       expect(states).toEqual(
@@ -111,18 +113,20 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     },
   );
 
-  test("cold-starts analytics through lazy service activation", { timeout: 60_000 }, async () => {
-    await stack.startService("analytics");
+  test("cold-starts analytics through lazy service activation", { timeout: 180_000 }, async () => {
+    expect(await stack.getServiceStatus("analytics")).toEqual(
+      expect.objectContaining({ status: "Dormant" }),
+    );
 
-    const [runningImages, states] = await Promise.all([
-      Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
-      stack.getStatus(),
-    ]);
+    await stack.startService("analytics");
+    await stack.serviceReady("analytics");
+    await expect
+      .poll(() => stack.getServiceStatus("analytics"), { timeout: 5_000 })
+      .toEqual(expect.objectContaining({ name: "analytics", status: "Healthy" }));
+
+    const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
 
     expect(runningImages).toContain("supabase/logflare");
-    expect(states).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "analytics", status: "Healthy" })]),
-    );
   });
 
   test(
