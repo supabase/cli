@@ -744,30 +744,41 @@ const downloadBody = Effect.fnUntraced(function* (
 });
 
 // Go: `downloadOne` (`apps/cli-go/internal/functions/download/download.go:218-245`)
-// — no `Accept` override (contrast `downloadBody` above, which requests
-// `multipart/form-data` for the server-side path). Go explicitly decodes a
-// brotli `Content-Encoding` itself because Go's `http.Transport` only
-// auto-decodes `gzip`; this TS CLI's transport (`effect/unstable/http`'s
-// `FetchHttpClient`, backed by the platform `fetch`) already transparently
-// decodes `br` per the Fetch spec — while still reporting
-// `Content-Encoding: br` on the exposed `Response.headers` (confirmed
-// empirically: a `fetch()` against a real `Content-Encoding: br` response
-// returns already-decompressed bytes from `arrayBuffer()`). Re-running
-// `brotliDecompressSync` here would therefore throw on already-decoded
-// bytes, so this reads the body as-is and does not re-implement Go's manual
-// decode step. Error prefix ("failed to get function body") is deliberately
-// distinct from `downloadBody`'s ("failed to download function") — the two
-// Go call sites use different wording.
+// sends this request with no `Accept` header set at all (contrast
+// `downloadBody` above, which requests `multipart/form-data` for the
+// server-side path). This operation's generated contract marks its response
+// `kind: "json"` (`packages/api/src/generated/contracts.ts`), so
+// `executeRaw` would otherwise default to `Accept: application/json` here
+// (`buildRequest`'s unconditional `acceptJson` for json-kind operations,
+// `packages/api/src/internal/client.ts`) and risk a negotiated JSON response
+// instead of the raw eszip body — overriding to `*/*` (no preference) is the
+// closest equivalent this API surface has to Go sending no header at all.
+// Go explicitly decodes a brotli `Content-Encoding` itself because Go's
+// `http.Transport` only auto-decodes `gzip`; this TS CLI's transport
+// (`effect/unstable/http`'s `FetchHttpClient`, backed by the platform
+// `fetch`) already transparently decodes `br` per the Fetch spec — while
+// still reporting `Content-Encoding: br` on the exposed `Response.headers`
+// (confirmed empirically: a `fetch()` against a real `Content-Encoding: br`
+// response returns already-decompressed bytes from `arrayBuffer()`).
+// Re-running `brotliDecompressSync` here would therefore throw on
+// already-decoded bytes, so this reads the body as-is and does not
+// re-implement Go's manual decode step. Error prefix ("failed to get
+// function body") is deliberately distinct from `downloadBody`'s ("failed to
+// download function") — the two Go call sites use different wording.
 const downloadEszipBody = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   slug: string,
 ) {
   const response = yield* api
-    .executeRaw(operationDefinitions.v1GetAFunctionBody, {
-      ref: projectRef,
-      function_slug: slug,
-    })
+    .executeRaw(
+      operationDefinitions.v1GetAFunctionBody,
+      {
+        ref: projectRef,
+        function_slug: slug,
+      },
+      { Accept: "*/*" },
+    )
     .pipe(Effect.mapError((error) => mapTransportError("failed to get function body", error)));
 
   if (response.status !== 200) {

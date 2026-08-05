@@ -612,6 +612,45 @@ describe("legacy functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("requests the raw eszip body instead of a negotiated JSON response", () => {
+    // `v1GetAFunctionBody`'s generated contract marks its response
+    // `kind: "json"`, so `executeRaw` would otherwise default to
+    // `Accept: application/json` (`buildRequest`'s unconditional `acceptJson`
+    // for json-kind operations) and risk a negotiated JSON response instead
+    // of the raw eszip body Go's un-overridden request receives (review round
+    // on CLI-1963's `functions download` port).
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      const bodyRequest = api.requests.find((request) => request.url.endsWith("/hello-world/body"));
+      expect(bodyRequest?.headers["accept"]).toBe("*/*");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("uses an explicit --network-id override instead of the derived network name", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
