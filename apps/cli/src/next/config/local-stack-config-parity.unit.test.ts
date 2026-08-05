@@ -7,7 +7,7 @@ describe("localStackConfigParity", () => {
   it("classifies every fixed project-config leaf exactly once", () => {
     const paths = entries.map(({ path }) => path);
 
-    expect(paths).toHaveLength(361);
+    expect(paths).toHaveLength(365);
     expect(new Set(paths).size).toBe(paths.length);
     expect(
       Object.fromEntries(
@@ -17,9 +17,9 @@ describe("localStackConfigParity", () => {
         ]),
       ),
     ).toEqual({
-      mapped: 11,
-      "not-applicable": 9,
-      "unsupported-blocking": 335,
+      mapped: 12,
+      "not-applicable": 10,
+      "unsupported-blocking": 337,
       "unsupported-warning": 6,
     });
   });
@@ -36,12 +36,32 @@ describe("localStackConfigParity", () => {
       "edge_runtime.inspector_port",
       "edge_runtime.policy",
       "edge_runtime.secrets",
+      "functions.*",
       "functions.*.enabled",
       "functions.*.entrypoint",
       "functions.*.env",
       "functions.*.import_map",
       "functions.*.static_files",
       "functions.*.verify_jwt",
+    ]);
+
+    expect(
+      entries.flatMap(({ path, decision }) =>
+        decision._tag === "mapped" ? [`${decision.mappedBy}:${path}`] : [],
+      ),
+    ).toEqual([
+      "start:api.auto_expose_new_tables",
+      "functions-dev:edge_runtime.enabled",
+      "functions-dev:edge_runtime.policy",
+      "functions-dev:edge_runtime.inspector_port",
+      "functions-dev:edge_runtime.secrets",
+      "stack-functions-runtime:functions.*",
+      "stack-functions-runtime:functions.*.enabled",
+      "stack-functions-runtime:functions.*.verify_jwt",
+      "stack-functions-runtime:functions.*.import_map",
+      "stack-functions-runtime:functions.*.entrypoint",
+      "stack-functions-runtime:functions.*.static_files",
+      "stack-functions-runtime:functions.*.env",
     ]);
   });
 
@@ -53,6 +73,7 @@ describe("localStackConfigParity", () => {
     expect(byPath.get("auth.hook.send_email.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("auth.sms.twilio.enabled")?.presence).toBe("raw-document");
     expect(byPath.get("storage.image_transformation.enabled")?.presence).toBe("raw-document");
+    expect(byPath.get("storage.buckets.*")?.presence).toBe("raw-document");
     expect(byPath.get("experimental.webhooks.enabled")?.presence).toBe("raw-document");
   });
 
@@ -71,6 +92,7 @@ describe("localStackConfigParity", () => {
       "experimental.pgdelta.declarative_schema_path",
       "experimental.pgdelta.enabled",
       "experimental.pgdelta.format_options",
+      "project_id",
       "remotes",
     ]);
   });

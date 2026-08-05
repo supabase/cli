@@ -33,10 +33,18 @@ type LocalStackConfigParityDecision =
     };
 
 export interface LocalStackConfigParitySection {
-  readonly [field: string]: LocalStackConfigParityDecision | LocalStackConfigParitySection;
+  readonly [field: string]: Node;
 }
 
-type Node = LocalStackConfigParityDecision | LocalStackConfigParitySection;
+interface LocalStackConfigParityBranch {
+  readonly decision: LocalStackConfigParityDecision;
+  readonly children: LocalStackConfigParitySection;
+}
+
+type Node =
+  | LocalStackConfigParityDecision
+  | LocalStackConfigParityBranch
+  | LocalStackConfigParitySection;
 
 const unsupportedRuntimeField: LocalStackConfigParityDecision = {
   _tag: "unsupported-blocking",
@@ -97,6 +105,13 @@ const commandOnlyDatabaseField: LocalStackConfigParityDecision = {
   presence: "raw-document",
   rationale:
     "This field configures database tooling outside local stack startup and does not belong in StackConfig.",
+};
+
+const projectMetadataField: LocalStackConfigParityDecision = {
+  _tag: "not-applicable",
+  presence: "raw-document",
+  rationale:
+    "The project identifier distinguishes local project directories and is not local stack runtime configuration.",
 };
 
 const remoteOverlayField: LocalStackConfigParityDecision = {
@@ -273,16 +288,22 @@ const authParity = {
     } satisfies Record<keyof NonNullable<ProjectConfig["auth"]["email"]["smtp"]>, Node>,
     template: {
       "*": {
-        subject: unsupportedRuntimeField,
-        content_path: unsupportedRuntimeField,
-      } satisfies Record<keyof ProjectConfig["auth"]["email"]["template"][string], Node>,
+        decision: unsupportedRuntimeField,
+        children: {
+          subject: unsupportedRuntimeField,
+          content_path: unsupportedRuntimeField,
+        } satisfies Record<keyof ProjectConfig["auth"]["email"]["template"][string], Node>,
+      },
     },
     notification: {
       "*": {
-        enabled: unsupportedRuntimeField,
-        subject: unsupportedRuntimeField,
-        content_path: unsupportedRuntimeField,
-      } satisfies Record<keyof ProjectConfig["auth"]["email"]["notification"][string], Node>,
+        decision: unsupportedRuntimeField,
+        children: {
+          enabled: unsupportedRuntimeField,
+          subject: unsupportedRuntimeField,
+          content_path: unsupportedRuntimeField,
+        } satisfies Record<keyof ProjectConfig["auth"]["email"]["notification"][string], Node>,
+      },
     },
   } satisfies Record<keyof ProjectConfig["auth"]["email"], Node>,
   sms: authSmsParity,
@@ -363,7 +384,7 @@ const dbSettingsParity = {
  * classified at the record field itself.
  */
 const localStackConfigParity = {
-  project_id: unsupportedOptionalRuntimeField,
+  project_id: projectMetadataField,
   analytics: {
     enabled: unsupportedRuntimeField,
     port: unsupportedRuntimeField,
@@ -427,7 +448,10 @@ const localStackConfigParity = {
     secrets: mappedFunctionsDevEdgeRuntime,
   } satisfies Record<keyof ProjectConfig["edge_runtime"], Node>,
   functions: {
-    "*": functionConfigParity,
+    "*": {
+      decision: mappedFunctionManifest,
+      children: functionConfigParity,
+    },
   },
   local_smtp: {
     enabled: unsupportedRuntimeField,
@@ -450,11 +474,14 @@ const localStackConfigParity = {
     } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["image_transformation"]>, Node>,
     buckets: {
       "*": {
-        public: unsupportedRuntimeField,
-        file_size_limit: unsupportedRuntimeField,
-        allowed_mime_types: unsupportedRuntimeField,
-        objects_path: unsupportedRuntimeField,
-      } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["buckets"]>[string], Node>,
+        decision: unsupportedRuntimeField,
+        children: {
+          public: unsupportedRuntimeField,
+          file_size_limit: unsupportedRuntimeField,
+          allowed_mime_types: unsupportedRuntimeField,
+          objects_path: unsupportedRuntimeField,
+        } satisfies Record<keyof NonNullable<ProjectConfig["storage"]["buckets"]>[string], Node>,
+      },
     },
     s3_protocol: {
       enabled: unsupportedRuntimeField,
@@ -509,6 +536,10 @@ function isDecision(node: Node): node is LocalStackConfigParityDecision {
   return "_tag" in node;
 }
 
+function isBranch(node: Node): node is LocalStackConfigParityBranch {
+  return "decision" in node && "children" in node;
+}
+
 /** Flattens the nested, compile-checked ledger for diagnostics and tests. */
 export function flattenLocalStackConfigParity(
   section: LocalStackConfigParitySection = localStackConfigParity,
@@ -516,8 +547,15 @@ export function flattenLocalStackConfigParity(
 ): ReadonlyArray<LocalStackConfigParityEntry> {
   return Object.entries(section).flatMap(([field, node]) => {
     const path = prefix === "" ? field : `${prefix}.${field}`;
-    return isDecision(node)
-      ? [{ path, decision: node }]
-      : flattenLocalStackConfigParity(node, path);
+    if (isDecision(node)) {
+      return [{ path, decision: node }];
+    }
+    if (isBranch(node)) {
+      return [
+        { path, decision: node.decision },
+        ...flattenLocalStackConfigParity(node.children, path),
+      ];
+    }
+    return flattenLocalStackConfigParity(node, path);
   });
 }
