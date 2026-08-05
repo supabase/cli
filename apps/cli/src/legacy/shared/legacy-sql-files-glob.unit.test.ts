@@ -221,6 +221,32 @@ describe("legacySqlFilesGlob", () => {
     },
   );
 
+  it.effect(
+    "cleans a '..'-segment matched directory when walking its children (Go path.Join parity)",
+    () => {
+      // Go's `fs.WalkDir` builds each child path via `path.Join(dirname, name)`, and
+      // `path.Join` runs `path.Clean`, which lexically resolves an embedded `..` segment —
+      // not just a bare `.` root or a trailing slash. A matched directory can contain a
+      // `..` anywhere, e.g. `[db.migrations].schema_paths = ["nested/../schemas"]`, and the
+      // walk over its children must record `schemas/a.sql`, not `nested/../schemas/a.sql`.
+      // Verified empirically: `path.Join("/tmp/x/../schemas", "a.sql")` and Node's
+      // `path.join("/tmp/x/../schemas", "a.sql")` both clean to `/tmp/schemas/a.sql`.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-dotdot-segment-"));
+      const schemasDir = join(dir, "schemas");
+      mkdirSync(schemasDir);
+      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
+      return run(["nested/../schemas"], dir).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result.files).toEqual(["schemas/a.sql"]);
+            expect(result.warnings).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("still expands a real (non-symlinked) nested directory recursively", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-nested-"));
     const schemasDir = join(dir, "schemas");
