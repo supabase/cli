@@ -399,6 +399,48 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.third_party.clerk.domain",
   "auth.third_party.workos.enabled",
   "auth.third_party.workos.issuer_url",
+  // Same "throws before a value the caller needs is resolved" bug class as `api.enabled`/
+  // `auth.enabled`/`analytics.*`/`edge_runtime.deno_version` above, just for a much larger set of
+  // fields the doc comment on `legacyResolveLocalConfigValues`'s `remoteOverrideKeys` parameter
+  // used to claim were safe to leave ungated. That claim rested on "their own `legacyEnvOverride*`
+  // calls cannot throw before a value the caller needs has already been resolved" — which doesn't
+  // actually hold: `legacyResolveLocalConfigValues` is a single synchronous function that either
+  // returns its whole object or throws, so ANY unconditional throw anywhere in its body (not just
+  // ones textually positioned before a caller-needed field) aborts the entire call and denies the
+  // shadow every field, including the ones already computed as local variables earlier in the
+  // function. Every dotted key below resolves through `legacyEnvOverrideBool`/`legacyEnvOverrideUint`/
+  // `legacyEnvOverrideAuthPasswordRequirements`, all of which throw on a malformed override — same
+  // as `api.enabled`'s own reasoning, just generalized (review: PRRT_kwDOErm0O86W6R-G).
+  "studio.enabled",
+  "studio.port",
+  "local_smtp.enabled",
+  "local_smtp.port",
+  "auth.enable_signup",
+  "auth.enable_anonymous_sign_ins",
+  "auth.enable_refresh_token_rotation",
+  "auth.refresh_token_reuse_interval",
+  "auth.enable_manual_linking",
+  "auth.minimum_password_length",
+  "auth.password_requirements",
+  "auth.passkey.enabled",
+  "auth.hook.mfa_verification_attempt.enabled",
+  "auth.hook.password_verification_attempt.enabled",
+  "auth.hook.custom_access_token.enabled",
+  "auth.hook.send_sms.enabled",
+  "auth.hook.send_email.enabled",
+  "auth.hook.before_user_created.enabled",
+  "auth.mfa.totp.enroll_enabled",
+  "auth.mfa.totp.verify_enabled",
+  "auth.mfa.phone.enroll_enabled",
+  "auth.mfa.phone.verify_enabled",
+  "auth.mfa.phone.otp_length",
+  "auth.mfa.web_authn.enroll_enabled",
+  "auth.mfa.web_authn.verify_enabled",
+  "auth.mfa.max_enrolled_factors",
+  "auth.captcha.enabled",
+  "auth.email.smtp.enabled",
+  "auth.email.smtp.port",
+  "experimental.webhooks.enabled",
 ];
 
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */

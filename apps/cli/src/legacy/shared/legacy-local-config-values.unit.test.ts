@@ -34,6 +34,7 @@ import {
   legacyResolveAuthExternalProviders,
   legacyResolveAuthExternalUrl,
   legacyResolveAuthHooks,
+  legacyResolveAuthMfa,
   legacyResolveAuthSms,
   legacyResolveConfiguredSigningKeys,
   legacyResolveDbSettingsEnvOverrides,
@@ -1286,6 +1287,36 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(resolved?.secret).toBe("value");
       delete process.env["DOTENV_PRIVATE_KEY"];
     });
+
+    it("suppresses a malformed SUPABASE_AUTH_CAPTCHA_ENABLED when a remote block already set auth.captcha.enabled", () => {
+      // Regression (review: PRRT_kwDOErm0O86W6R-G): same "throws before a value the caller
+      // needs is resolved" bug class as `studio.enabled`/`auth.enabled` above — this function's
+      // own ungated `legacyEnvOverrideBool` call would abort the whole
+      // `legacyResolveLocalConfigValues` caller (and the shadow it feeds) on a malformed
+      // override the remote block should have made irrelevant.
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "not-a-bool";
+      const authDocument = { captcha: { enabled: false } };
+      expect(() =>
+        legacyResolveAuthCaptcha(
+          authDocument,
+          { enabled: false, provider: "hcaptcha", secret: "shh" },
+          undefined,
+          new Set(["auth.captcha.enabled"]),
+        ),
+      ).not.toThrow();
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_CAPTCHA_ENABLED when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "not-a-bool";
+      const authDocument = { captcha: { enabled: false } };
+      expect(() =>
+        legacyResolveAuthCaptcha(
+          authDocument,
+          { enabled: false, provider: "hcaptcha", secret: "shh" },
+          undefined,
+        ),
+      ).toThrow('cannot parse "not-a-bool" as a bool');
+    });
   });
 
   describe("legacyResolveAuthEmail", () => {
@@ -1362,6 +1393,78 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
       const resolved = legacyResolveAuthHooks({}, allHooks, undefined);
       expect(resolved.customAccessToken.enabled).toBe(false);
+    });
+
+    it("suppresses a malformed SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED when a remote block already set that hook's enabled", () => {
+      // Regression (review: PRRT_kwDOErm0O86W6R-G) — same bug class as `studio.enabled` above.
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "not-a-bool";
+      const authDocument = { hook: { custom_access_token: { enabled: false } } };
+      expect(() =>
+        legacyResolveAuthHooks(
+          authDocument,
+          allHooks,
+          undefined,
+          new Set(["auth.hook.custom_access_token.enabled"]),
+        ),
+      ).not.toThrow();
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "not-a-bool";
+      const authDocument = { hook: { custom_access_token: { enabled: false } } };
+      expect(() => legacyResolveAuthHooks(authDocument, allHooks, undefined)).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
+    });
+  });
+
+  describe("legacyResolveAuthMfa — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"];
+    });
+
+    it("suppresses a malformed SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED when a remote block already set auth.mfa.totp.enroll_enabled", () => {
+      // Regression (review: PRRT_kwDOErm0O86W6R-G) — same bug class as `studio.enabled` above:
+      // every `auth.mfa.*` leaf here is unconditionally resolved by
+      // `legacyResolveLocalConfigValues` (inside its `authEnabled` block), so an ungated call
+      // would abort that whole caller on a malformed override the remote block should have made
+      // irrelevant.
+      process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "not-a-bool";
+      const mfa = baseConfig().auth.mfa;
+      expect(() =>
+        legacyResolveAuthMfa(mfa, undefined, new Set(["auth.mfa.totp.enroll_enabled"])),
+      ).not.toThrow();
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "not-a-bool";
+      const mfa = baseConfig().auth.mfa;
+      expect(() => legacyResolveAuthMfa(mfa, undefined)).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
+    });
+  });
+
+  describe("legacyResolveAuthEmailSmtp — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"];
+    });
+
+    it("suppresses a malformed SUPABASE_AUTH_EMAIL_SMTP_ENABLED when a remote block already set auth.email.smtp.enabled", () => {
+      // Regression (review: PRRT_kwDOErm0O86W6R-G) — same bug class as `studio.enabled` above.
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"] = "not-a-bool";
+      const authDocument = { email: { smtp: { enabled: true } } };
+      expect(() =>
+        legacyResolveAuthEmailSmtp(authDocument, undefined, new Set(["auth.email.smtp.enabled"])),
+      ).not.toThrow();
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_EMAIL_SMTP_ENABLED when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"] = "not-a-bool";
+      const authDocument = { email: { smtp: { enabled: true } } };
+      expect(() => legacyResolveAuthEmailSmtp(authDocument, undefined)).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
     });
   });
 
@@ -2819,6 +2922,19 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
       "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
       "SUPABASE_API_ENABLED",
+      "SUPABASE_STUDIO_ENABLED",
+      "SUPABASE_STUDIO_PORT",
+      "SUPABASE_LOCAL_SMTP_ENABLED",
+      "SUPABASE_LOCAL_SMTP_PORT",
+      "SUPABASE_AUTH_ENABLE_SIGNUP",
+      "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
+      "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
+      "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
+      "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
+      "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
+      "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
+      "SUPABASE_AUTH_PASSKEY_ENABLED",
+      "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
     ]) {
       delete process.env[name];
     }
@@ -3140,6 +3256,128 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
       'Invalid config for api.enabled: cannot parse "not-a-bool" as a bool',
     );
+  });
+
+  it("suppresses a malformed SUPABASE_STUDIO_ENABLED when a remote block already set studio.enabled", () => {
+    // Regression (review: PRRT_kwDOErm0O86W6R-G): the doc comment on this function's
+    // `remoteOverrideKeys` parameter used to claim `studio`/`local_smtp`/the auth
+    // enable_signup/-anonymous_sign_ins/refresh-token/manual-linking/password-length/
+    // -requirements group/passkey/hooks/mfa/captcha/email.smtp/experimental.webhooks fields could
+    // stay ungated because their own `legacyEnvOverride*` calls "cannot throw before a value the
+    // caller needs has already been resolved" — that's false: this function either returns its
+    // whole object or throws, so ANY unconditional throw anywhere in its body aborts the entire
+    // call, denying the shadow `dbPort`/`jwtSecret`/etc. too, regardless of textual position.
+    process.env["SUPABASE_STUDIO_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ studio: { enabled: false } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["studio.enabled"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_STUDIO_ENABLED when no remote block matched", () => {
+    process.env["SUPABASE_STUDIO_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ studio: { enabled: false } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      'Invalid config for studio.enabled: cannot parse "not-a-bool" as a bool',
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_STUDIO_PORT when a remote block already set studio.port", () => {
+    process.env["SUPABASE_STUDIO_PORT"] = "not-a-port";
+    const config = baseConfig({ studio: { port: 54323 } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["studio.port"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("suppresses a malformed SUPABASE_LOCAL_SMTP_ENABLED when a remote block already set local_smtp.enabled", () => {
+    process.env["SUPABASE_LOCAL_SMTP_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ local_smtp: { enabled: false } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["local_smtp.enabled"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_LOCAL_SMTP_ENABLED when no remote block matched", () => {
+    process.env["SUPABASE_LOCAL_SMTP_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ local_smtp: { enabled: false } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      'Invalid config for local_smtp.enabled: cannot parse "not-a-bool" as a bool',
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_AUTH_ENABLE_SIGNUP when a remote block already set auth.enable_signup", () => {
+    process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "not-a-bool";
+    const config = baseConfig({ auth: { enable_signup: false } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["auth.enable_signup"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_AUTH_ENABLE_SIGNUP when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "not-a-bool";
+    const config = baseConfig({ auth: { enable_signup: false } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      'Invalid config for auth.enable_signup: cannot parse "not-a-bool" as a bool',
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH when a remote block already set auth.minimum_password_length", () => {
+    process.env["SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH"] = "not-a-number";
+    const config = baseConfig({ auth: { minimum_password_length: 8 } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["auth.minimum_password_length"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("suppresses a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when a remote block already set experimental.webhooks.enabled", () => {
+    process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ experimental: { webhooks: { enabled: true } } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["experimental.webhooks.enabled"]),
+      ),
+    ).not.toThrow();
   });
 });
 

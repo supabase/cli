@@ -597,28 +597,46 @@ function legacyDecryptAuthSecret(
 export function legacyResolveAuthEmailSmtp(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  /**
+   * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
+   * parameter — `auth.email.smtp.enabled`/`.port` are in `LEGACY_ENV_OVERRIDABLE_KEYS`
+   * (`legacy-db-config.toml-read.ts`) because their ungated `legacyEnvOverrideBool`/
+   * `legacyEnvOverridePort` calls below THROW on a malformed override even when a matched remote
+   * block already set them, which would abort the whole caller (`legacyResolveLocalConfigValues`,
+   * and the shadow it feeds) on an env value Go silently ignores. Defaults to empty for
+   * `start.handler.ts`'s callers, which never resolve a `[remotes.<ref>]` block for this read.
+   */
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): (LegacySmtpInput & { readonly senderName: string | undefined }) | undefined {
   const smtpDoc = asRecord(asRecord(authDocument?.["email"])?.["smtp"]);
   if (smtpDoc === undefined) return undefined;
   return {
-    enabled: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_EMAIL_SMTP_ENABLED",
-      smtpDoc["enabled"] === undefined ? true : smtpDoc["enabled"] === true,
-      "auth.email.smtp.enabled",
-      projectEnvValues,
-    ),
+    enabled: remoteOverrideKeys.has("auth.email.smtp.enabled")
+      ? smtpDoc["enabled"] === undefined
+        ? true
+        : smtpDoc["enabled"] === true
+      : legacyEnvOverrideBool(
+          "SUPABASE_AUTH_EMAIL_SMTP_ENABLED",
+          smtpDoc["enabled"] === undefined ? true : smtpDoc["enabled"] === true,
+          "auth.email.smtp.enabled",
+          projectEnvValues,
+        ),
     host:
       legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_SMTP_HOST",
         typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
         projectEnvValues,
       ) ?? "",
-    port: legacyEnvOverridePort(
-      "SUPABASE_AUTH_EMAIL_SMTP_PORT",
-      typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
-      "auth.email.smtp.port",
-      projectEnvValues,
-    ),
+    port: remoteOverrideKeys.has("auth.email.smtp.port")
+      ? typeof smtpDoc["port"] === "number"
+        ? smtpDoc["port"]
+        : 0
+      : legacyEnvOverridePort(
+          "SUPABASE_AUTH_EMAIL_SMTP_PORT",
+          typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
+          "auth.email.smtp.port",
+          projectEnvValues,
+        ),
     user:
       legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_SMTP_USER",
@@ -679,12 +697,23 @@ export function legacyResolveAuthCaptcha(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   captcha: ProjectConfig["auth"]["captcha"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  /**
+   * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
+   * parameter — `auth.captcha.enabled` is in `LEGACY_ENV_OVERRIDABLE_KEYS`
+   * (`legacy-db-config.toml-read.ts`) because the ungated `legacyEnvOverrideBool` call below
+   * THROWS on a malformed override even when a matched remote block already set it, which would
+   * abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on an env
+   * value Go silently ignores. Defaults to empty for `start.handler.ts`'s callers, which never
+   * resolve a `[remotes.<ref>]` block for this config read.
+   */
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyCaptchaInput | undefined {
   const captchaDoc = asRecord(authDocument?.["captcha"]);
   return captcha
     ? {
-        enabled:
-          captchaDoc !== undefined
+        enabled: remoteOverrideKeys.has("auth.captcha.enabled")
+          ? (captcha.enabled ?? false)
+          : captchaDoc !== undefined
             ? legacyEnvOverrideBool(
                 "SUPABASE_AUTH_CAPTCHA_ENABLED",
                 captcha.enabled ?? false,
@@ -1663,6 +1692,16 @@ export function legacyResolveAuthHooks(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   hook: ProjectConfig["auth"]["hook"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  /**
+   * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
+   * parameter — each `auth.hook.<type>.enabled` is in `LEGACY_ENV_OVERRIDABLE_KEYS`
+   * (`legacy-db-config.toml-read.ts`) because the ungated `legacyEnvOverrideBool` call below
+   * THROWS on a malformed override even when a matched remote block already set it, which would
+   * abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on an env
+   * value Go silently ignores. Defaults to empty for `start.handler.ts`'s callers, which never
+   * resolve a `[remotes.<ref>]` block for this config read.
+   */
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyResolvedAuthHooks {
   const hookDocument = asRecord(authDocument?.["hook"]);
   const result = {} as Record<string, LegacyResolvedAuthHook>;
@@ -1670,14 +1709,16 @@ export function legacyResolveAuthHooks(
     const h = hook[hookType];
     const hookSectionPresent = asRecord(hookDocument?.[hookType]) !== undefined;
     const envPrefix = `SUPABASE_AUTH_HOOK_${hookType.toUpperCase()}`;
-    const enabled = hookSectionPresent
-      ? legacyEnvOverrideBool(
-          `${envPrefix}_ENABLED`,
-          h.enabled,
-          `auth.hook.${hookType}.enabled`,
-          projectEnvValues,
-        )
-      : h.enabled;
+    const enabled = remoteOverrideKeys.has(`auth.hook.${hookType}.enabled`)
+      ? h.enabled
+      : hookSectionPresent
+        ? legacyEnvOverrideBool(
+            `${envPrefix}_ENABLED`,
+            h.enabled,
+            `auth.hook.${hookType}.enabled`,
+            projectEnvValues,
+          )
+        : h.enabled;
     const uri =
       (hookSectionPresent
         ? legacyEnvOverride(`${envPrefix}_URI`, h.uri, projectEnvValues)
@@ -1709,41 +1750,63 @@ export function legacyResolveAuthHooks(
 export function legacyResolveAuthMfa(
   mfa: ProjectConfig["auth"]["mfa"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  /**
+   * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
+   * parameter — every throw-capable `auth.mfa.*` leaf below (`enroll_enabled`/`verify_enabled`
+   * per factor, `phone.otp_length`, `max_enrolled_factors`) is in `LEGACY_ENV_OVERRIDABLE_KEYS`
+   * (`legacy-db-config.toml-read.ts`) because its ungated `legacyEnvOverrideBool`/
+   * `legacyEnvOverrideUint` call THROWS on a malformed override even when a matched remote block
+   * already set it, which would abort the whole caller (`legacyResolveLocalConfigValues`, and the
+   * shadow it feeds) on an env value Go silently ignores. `template`/`max_frequency` stay
+   * ungated: plain `legacyEnvOverride` string reads never throw. Defaults to empty for
+   * `start.handler.ts`'s callers, which never resolve a `[remotes.<ref>]` block for this read.
+   */
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ProjectConfig["auth"]["mfa"] {
   return {
     totp: {
-      enroll_enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
-        mfa.totp.enroll_enabled,
-        "auth.mfa.totp.enroll_enabled",
-        projectEnvValues,
-      ),
-      verify_enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
-        mfa.totp.verify_enabled,
-        "auth.mfa.totp.verify_enabled",
-        projectEnvValues,
-      ),
+      enroll_enabled: remoteOverrideKeys.has("auth.mfa.totp.enroll_enabled")
+        ? mfa.totp.enroll_enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
+            mfa.totp.enroll_enabled,
+            "auth.mfa.totp.enroll_enabled",
+            projectEnvValues,
+          ),
+      verify_enabled: remoteOverrideKeys.has("auth.mfa.totp.verify_enabled")
+        ? mfa.totp.verify_enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
+            mfa.totp.verify_enabled,
+            "auth.mfa.totp.verify_enabled",
+            projectEnvValues,
+          ),
     },
     phone: {
-      enroll_enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_MFA_PHONE_ENROLL_ENABLED",
-        mfa.phone.enroll_enabled,
-        "auth.mfa.phone.enroll_enabled",
-        projectEnvValues,
-      ),
-      verify_enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_MFA_PHONE_VERIFY_ENABLED",
-        mfa.phone.verify_enabled,
-        "auth.mfa.phone.verify_enabled",
-        projectEnvValues,
-      ),
-      otp_length: legacyEnvOverrideUint(
-        "SUPABASE_AUTH_MFA_PHONE_OTP_LENGTH",
-        "auth.mfa.phone.otp_length",
-        mfa.phone.otp_length,
-        projectEnvValues,
-      ),
+      enroll_enabled: remoteOverrideKeys.has("auth.mfa.phone.enroll_enabled")
+        ? mfa.phone.enroll_enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_MFA_PHONE_ENROLL_ENABLED",
+            mfa.phone.enroll_enabled,
+            "auth.mfa.phone.enroll_enabled",
+            projectEnvValues,
+          ),
+      verify_enabled: remoteOverrideKeys.has("auth.mfa.phone.verify_enabled")
+        ? mfa.phone.verify_enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_MFA_PHONE_VERIFY_ENABLED",
+            mfa.phone.verify_enabled,
+            "auth.mfa.phone.verify_enabled",
+            projectEnvValues,
+          ),
+      otp_length: remoteOverrideKeys.has("auth.mfa.phone.otp_length")
+        ? mfa.phone.otp_length
+        : legacyEnvOverrideUint(
+            "SUPABASE_AUTH_MFA_PHONE_OTP_LENGTH",
+            "auth.mfa.phone.otp_length",
+            mfa.phone.otp_length,
+            projectEnvValues,
+          ),
       template:
         legacyEnvOverride(
           "SUPABASE_AUTH_MFA_PHONE_TEMPLATE",
@@ -1758,25 +1821,31 @@ export function legacyResolveAuthMfa(
         ) ?? mfa.phone.max_frequency,
     },
     web_authn: {
-      enroll_enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_MFA_WEB_AUTHN_ENROLL_ENABLED",
-        mfa.web_authn.enroll_enabled,
-        "auth.mfa.web_authn.enroll_enabled",
-        projectEnvValues,
-      ),
-      verify_enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_MFA_WEB_AUTHN_VERIFY_ENABLED",
-        mfa.web_authn.verify_enabled,
-        "auth.mfa.web_authn.verify_enabled",
-        projectEnvValues,
-      ),
+      enroll_enabled: remoteOverrideKeys.has("auth.mfa.web_authn.enroll_enabled")
+        ? mfa.web_authn.enroll_enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_MFA_WEB_AUTHN_ENROLL_ENABLED",
+            mfa.web_authn.enroll_enabled,
+            "auth.mfa.web_authn.enroll_enabled",
+            projectEnvValues,
+          ),
+      verify_enabled: remoteOverrideKeys.has("auth.mfa.web_authn.verify_enabled")
+        ? mfa.web_authn.verify_enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_MFA_WEB_AUTHN_VERIFY_ENABLED",
+            mfa.web_authn.verify_enabled,
+            "auth.mfa.web_authn.verify_enabled",
+            projectEnvValues,
+          ),
     },
-    max_enrolled_factors: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_MFA_MAX_ENROLLED_FACTORS",
-      "auth.mfa.max_enrolled_factors",
-      mfa.max_enrolled_factors,
-      projectEnvValues,
-    ),
+    max_enrolled_factors: remoteOverrideKeys.has("auth.mfa.max_enrolled_factors")
+      ? mfa.max_enrolled_factors
+      : legacyEnvOverrideUint(
+          "SUPABASE_AUTH_MFA_MAX_ENROLLED_FACTORS",
+          "auth.mfa.max_enrolled_factors",
+          mfa.max_enrolled_factors,
+          projectEnvValues,
+        ),
   };
 }
 
@@ -2604,18 +2673,25 @@ export function legacyResolveLocalConfigValues(
    * (and every field it DOES return) on an env value Go silently ignores (review:
    * PRRT_kwDOErm0O86W30n6 for `auth.enabled`/`analytics.*`, PRRT_kwDOErm0O86W4gCk for
    * `edge_runtime.deno_version`, PRRT_kwDOErm0O86W5UlV for `api.enabled`) — "not read by the
-   * caller" is not the same as "cannot abort the caller." The dozens of remaining OTHER fields
-   * this function resolves (studio/smtp/passkey/
-   * mfa, the auth `enable_signup`/`enable_anonymous_sign_ins`/refresh-token/
-   * manual-linking/password-length/-requirements group, plus this function's OWN
-   * validation-only `thirdParty` block's non-`enabled` leaves feeding `Auth.ThirdParty.validate()`'s
-   * "at most one enabled" check) are never read by that caller AND their own `legacyEnvOverride*`
-   * calls cannot throw before a value the caller needs has already been resolved — grepped
-   * confirmed no other consumer reads `LegacyLocalConfigValues` beyond those — so they are
-   * deliberately NOT gated here; gating them would be inert (no caller ever passes a non-empty
-   * `remoteOverrideKeys` that could reach them, and none of them can abort resolution of a field
-   * the caller does read) rather than a genuine parity gap. This is NOT the same `third_party` as
-   * {@link legacyResolveLocalJwks}'s/
+   * caller" is not the same as "cannot abort the caller." An earlier version of this comment
+   * claimed the remaining `studio`/`local_smtp`/`passkey`/`mfa`/hooks/`captcha`/`auth.email.smtp`/
+   * `experimental.webhooks`/the auth `enable_signup`/`enable_anonymous_sign_ins`/refresh-token/
+   * manual-linking/password-length/-requirements group could stay ungated because their own
+   * `legacyEnvOverride*` calls "cannot throw before a value the caller needs has already been
+   * resolved" — that reasoning doesn't hold: this function is a single synchronous call that
+   * either returns its whole object or throws, so ANY unconditional throw anywhere in its body
+   * aborts the entire call and denies the shadow every field, including ones already computed as
+   * local variables earlier in the function — textual position relative to a caller-needed field
+   * is irrelevant. All of those fields are now gated the same way as `api.enabled` above and
+   * tracked in `LEGACY_ENV_OVERRIDABLE_KEYS` (review: PRRT_kwDOErm0O86W6R-G). Only the fields
+   * whose own resolution genuinely CANNOT throw stay ungated below: every plain
+   * `legacyEnvOverride` (non-bool/port/uint) string/array read — `studioApiUrl`, `jwtIssuer`,
+   * `additionalRedirectUrls`, the auth hooks' `uri`/`secrets`, the mfa phone factor's
+   * `template`/`max_frequency`, the webauthn `rp_id`/`rp_origins`, the GCP analytics fields, and
+   * this function's OWN validation-only `thirdParty` block's non-`enabled` leaves feeding
+   * `Auth.ThirdParty.validate()`'s "at most one enabled" check — none of `legacyEnvOverride`'s
+   * callers has a Go-observable failure mode, so there is genuinely nothing to abort on. This is
+   * NOT the same `third_party` as {@link legacyResolveLocalJwks}'s/
    * {@link legacyResolveConfiguredSigningKeys}'s own, SEPARATE third-party/signing-keys
    * resolution, which DOES feed the shadow's JWKS document and IS gated (see those functions'
    * own doc comments).
@@ -2805,18 +2881,28 @@ export function legacyResolveLocalConfigValues(
   // Go's `Config.Validate` rejects `studio.port === 0`/`SUPABASE_STUDIO_PORT=0`
   // ONLY when `studio.enabled` (`pkg/config/config.go:1070-1073`) — same
   // enabled-gated pattern as `api.port` above.
-  const studioEnabled = legacyEnvOverrideBool(
-    "SUPABASE_STUDIO_ENABLED",
-    config.studio.enabled,
-    "studio.enabled",
-    projectEnvValues,
-  );
-  const studioPort = legacyEnvOverridePort(
-    "SUPABASE_STUDIO_PORT",
-    config.studio.port,
-    "studio.port",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `apiEnabled`/`apiPort` above — `studio.enabled`/
+  // `studio.port` are now in `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`):
+  // an ungated `legacyEnvOverrideBool`/`legacyEnvOverridePort` call here THROWS on a malformed
+  // `SUPABASE_STUDIO_ENABLED`/`SUPABASE_STUDIO_PORT` even when a matched remote block already
+  // set that field at viper's OVERRIDE tier, which would abort this whole function — and the
+  // shadow it feeds — on an env value Go silently ignores (review: PRRT_kwDOErm0O86W6R-G).
+  const studioEnabled = remoteWins("studio.enabled")
+    ? config.studio.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_STUDIO_ENABLED",
+        config.studio.enabled,
+        "studio.enabled",
+        projectEnvValues,
+      );
+  const studioPort = remoteWins("studio.port")
+    ? config.studio.port
+    : legacyEnvOverridePort(
+        "SUPABASE_STUDIO_PORT",
+        config.studio.port,
+        "studio.port",
+        projectEnvValues,
+      );
   // Go's `Config.Validate` parses `studio.api_url` with `net/url.Parse` right
   // after the port check, still inside `if c.Studio.Enabled`
   // (`pkg/config/config.go:1074-1078`). `config.studio.api_url` is a required
@@ -2832,18 +2918,24 @@ export function legacyResolveLocalConfigValues(
   // (`pkg/config/config.go:235,1081-1083`), so `local_smtp.enabled` and the
   // deprecated `inbucket.enabled` alias are the same underlying flag, not two
   // independent ones.
-  const mailpitEnabled = legacyEnvOverrideBool(
-    "SUPABASE_LOCAL_SMTP_ENABLED",
-    config.local_smtp.enabled,
-    "local_smtp.enabled",
-    projectEnvValues,
-  );
-  const mailpitPort = legacyEnvOverridePort(
-    "SUPABASE_LOCAL_SMTP_PORT",
-    config.local_smtp.port,
-    "local_smtp.port",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `studioEnabled`/`studioPort` above — `local_smtp.enabled`/
+  // `local_smtp.port` are now in `LEGACY_ENV_OVERRIDABLE_KEYS` for the identical reason.
+  const mailpitEnabled = remoteWins("local_smtp.enabled")
+    ? config.local_smtp.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_LOCAL_SMTP_ENABLED",
+        config.local_smtp.enabled,
+        "local_smtp.enabled",
+        projectEnvValues,
+      );
+  const mailpitPort = remoteWins("local_smtp.port")
+    ? config.local_smtp.port
+    : legacyEnvOverridePort(
+        "SUPABASE_LOCAL_SMTP_PORT",
+        config.local_smtp.port,
+        "local_smtp.port",
+        projectEnvValues,
+      );
   // Same remote-over-env precedence as `apiPort`/`dbPort`/`rootKey` above — `jwtSecret` reaches
   // the shadow's own Postgres/fresh-DB-setup spec (`legacyBuildLocalDbContainerInputs`).
   const jwtSecret = resolveJwtSecret(
@@ -2935,46 +3027,63 @@ export function legacyResolveLocalConfigValues(
     additionalRedirectUrlsOverride !== undefined
       ? additionalRedirectUrlsOverride.split(",")
       : config.auth.additional_redirect_urls;
-  const enableSignup = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLE_SIGNUP",
-    config.auth.enable_signup,
-    "auth.enable_signup",
-    projectEnvValues,
-  );
-  const enableAnonymousSignIns = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
-    config.auth.enable_anonymous_sign_ins,
-    "auth.enable_anonymous_sign_ins",
-    projectEnvValues,
-  );
-  const enableRefreshTokenRotation = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
-    config.auth.enable_refresh_token_rotation,
-    "auth.enable_refresh_token_rotation",
-    projectEnvValues,
-  );
-  const refreshTokenReuseInterval = legacyEnvOverrideUint(
-    "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
-    "auth.refresh_token_reuse_interval",
-    config.auth.refresh_token_reuse_interval,
-    projectEnvValues,
-  );
-  const enableManualLinking = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
-    config.auth.enable_manual_linking,
-    "auth.enable_manual_linking",
-    projectEnvValues,
-  );
-  const minimumPasswordLength = legacyEnvOverrideUint(
-    "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
-    "auth.minimum_password_length",
-    config.auth.minimum_password_length,
-    projectEnvValues,
-  );
-  const passwordRequirements = legacyEnvOverrideAuthPasswordRequirements(
-    config.auth.password_requirements,
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `studioEnabled`/`mailpitEnabled` above, for the exact same
+  // "throws before a value the caller needs is resolved" reason — every field in this group is
+  // now in `LEGACY_ENV_OVERRIDABLE_KEYS`.
+  const enableSignup = remoteWins("auth.enable_signup")
+    ? config.auth.enable_signup
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_SIGNUP",
+        config.auth.enable_signup,
+        "auth.enable_signup",
+        projectEnvValues,
+      );
+  const enableAnonymousSignIns = remoteWins("auth.enable_anonymous_sign_ins")
+    ? config.auth.enable_anonymous_sign_ins
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
+        config.auth.enable_anonymous_sign_ins,
+        "auth.enable_anonymous_sign_ins",
+        projectEnvValues,
+      );
+  const enableRefreshTokenRotation = remoteWins("auth.enable_refresh_token_rotation")
+    ? config.auth.enable_refresh_token_rotation
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
+        config.auth.enable_refresh_token_rotation,
+        "auth.enable_refresh_token_rotation",
+        projectEnvValues,
+      );
+  const refreshTokenReuseInterval = remoteWins("auth.refresh_token_reuse_interval")
+    ? config.auth.refresh_token_reuse_interval
+    : legacyEnvOverrideUint(
+        "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
+        "auth.refresh_token_reuse_interval",
+        config.auth.refresh_token_reuse_interval,
+        projectEnvValues,
+      );
+  const enableManualLinking = remoteWins("auth.enable_manual_linking")
+    ? config.auth.enable_manual_linking
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
+        config.auth.enable_manual_linking,
+        "auth.enable_manual_linking",
+        projectEnvValues,
+      );
+  const minimumPasswordLength = remoteWins("auth.minimum_password_length")
+    ? config.auth.minimum_password_length
+    : legacyEnvOverrideUint(
+        "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
+        "auth.minimum_password_length",
+        config.auth.minimum_password_length,
+        projectEnvValues,
+      );
+  const passwordRequirements = remoteWins("auth.password_requirements")
+    ? config.auth.password_requirements
+    : legacyEnvOverrideAuthPasswordRequirements(
+        config.auth.password_requirements,
+        projectEnvValues,
+      );
   // `LoadedProjectConfig.document` (the raw, pre-schema-default TOML `config` was decoded from) —
   // hoisted here (rather than inside the `authEnabled` block below, where it used to live) because
   // the captcha presence check right below needs it too. `undefined` for callers that haven't
@@ -2984,6 +3093,7 @@ export function legacyResolveLocalConfigValues(
     authDocument,
     config.auth.captcha,
     projectEnvValues,
+    remoteOverrideKeys,
   );
   // Go's `generateJWT` (`apikeys.go:77`) signs asymmetrically whenever
   // `len(a.SigningKeysPath) > 0 && len(a.SigningKeys) > 0` — NOT gated on `auth.enabled`. Since
@@ -3038,8 +3148,13 @@ export function legacyResolveLocalConfigValues(
     // being present (`passkeyDoc`/`webauthnDoc !== undefined`), matching Go's `AutomaticEnv`
     // (which only intercepts keys already present in the merged config) — an absent
     // `[auth.passkey]`/`[auth.webauthn]` section is never synthesized from an env override alone.
-    const passkeyEnabled =
-      passkeyDoc !== undefined
+    // Same remote-over-env precedence as `studioEnabled`/`authEnabled` above — `auth.passkey.enabled`
+    // is in `LEGACY_ENV_OVERRIDABLE_KEYS` because the ungated `legacyEnvOverrideBool` call below
+    // THROWS on a malformed override even when a matched remote block already set it, which would
+    // abort this whole function (and the shadow it feeds) on an env value Go silently ignores.
+    const passkeyEnabled = remoteWins("auth.passkey.enabled")
+      ? legacyRawUnmodeledBool(passkeyDoc?.["enabled"], "auth.passkey.enabled")
+      : passkeyDoc !== undefined
         ? legacyEnvOverrideBool(
             "SUPABASE_AUTH_PASSKEY_ENABLED",
             legacyRawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
@@ -3084,7 +3199,12 @@ export function legacyResolveLocalConfigValues(
     // `legacyResolveAuthHooks`'s unfiltered result so this validation path and
     // `resolveGotrueEnvInput`'s actual GoTrue env resolve the exact same
     // per-hook override values (see that function's doc comment).
-    const resolvedHooks = legacyResolveAuthHooks(authDocument, config.auth.hook, projectEnvValues);
+    const resolvedHooks = legacyResolveAuthHooks(
+      authDocument,
+      config.auth.hook,
+      projectEnvValues,
+      remoteOverrideKeys,
+    );
     const hooks: Array<LegacyHookInput> = LEGACY_HOOK_TYPE_ORDER.filter(
       (hookType) => resolvedHooks[LEGACY_HOOK_TYPE_TO_CAMEL[hookType]].enabled,
     ).map((hookType) => {
@@ -3095,7 +3215,7 @@ export function legacyResolveLocalConfigValues(
     // Derived from `legacyResolveAuthMfa`'s unfiltered result so this validation path and
     // `resolveGotrueEnvInput`'s actual GoTrue env resolve the exact same per-factor override
     // values (see that function's doc comment) — same precedent as `hooks` above.
-    const resolvedMfa = legacyResolveAuthMfa(config.auth.mfa, projectEnvValues);
+    const resolvedMfa = legacyResolveAuthMfa(config.auth.mfa, projectEnvValues, remoteOverrideKeys);
     const mfa: ReadonlyArray<LegacyMfaFactorInput> = [
       {
         label: "totp",
@@ -3124,7 +3244,11 @@ export function legacyResolveLocalConfigValues(
 
     // Go's `[auth.email.smtp]` presence-based `enabled` default — see
     // {@link legacyResolveAuthEmailSmtp}'s doc comment.
-    const resolvedSmtp = legacyResolveAuthEmailSmtp(authDocument, projectEnvValues);
+    const resolvedSmtp = legacyResolveAuthEmailSmtp(
+      authDocument,
+      projectEnvValues,
+      remoteOverrideKeys,
+    );
     const smtp: LegacySmtpInput | undefined =
       resolvedSmtp === undefined
         ? undefined
@@ -3358,12 +3482,19 @@ export function legacyResolveLocalConfigValues(
   // resolver just never got the equivalent treatment. A malformed JSON override needs no separate
   // error path here: it flows through unchanged and `legacyValidateResolvedConfig`'s existing
   // `isValidJson` check reports it the same way it already reports a malformed TOML-sourced value.
-  const webhooksEnabled = legacyEnvOverrideBool(
-    "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
-    config.experimental.webhooks?.enabled === true,
-    "experimental.webhooks.enabled",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `studioEnabled`/`authEnabled` above — `experimental.
+  // webhooks.enabled` is in `LEGACY_ENV_OVERRIDABLE_KEYS` because the ungated
+  // `legacyEnvOverrideBool` call below THROWS on a malformed override even when a matched remote
+  // block already set it, which would abort this whole function (and the shadow it feeds) on an
+  // env value Go silently ignores.
+  const webhooksEnabled = remoteWins("experimental.webhooks.enabled")
+    ? config.experimental.webhooks?.enabled === true
+    : legacyEnvOverrideBool(
+        "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
+        config.experimental.webhooks?.enabled === true,
+        "experimental.webhooks.enabled",
+        projectEnvValues,
+      );
   const pgdeltaFormatOptions =
     legacyEnvOverride(
       "SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS",
