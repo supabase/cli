@@ -2818,6 +2818,7 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_ANALYTICS_ENABLED",
       "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
       "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
+      "SUPABASE_API_ENABLED",
     ]) {
       delete process.env[name];
     }
@@ -3108,6 +3109,36 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
     const config = baseConfig({ edge_runtime: { deno_version: 2 } });
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
       "Failed reading config: Invalid edge_runtime.deno_version: abc.",
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_API_ENABLED when a remote block already set api.enabled", () => {
+    // Regression (review: PRRT_kwDOErm0O86W5UlV): same class of gap as `auth.enabled`/
+    // `analytics.enabled`/`edge_runtime.deno_version` above — `api.enabled` is also in
+    // `LEGACY_ENV_OVERRIDABLE_KEYS` and `apiEnabled` is never read by the shadow's own
+    // container inputs (unlike its siblings `apiTlsEnabled`/`apiPort`, which feed `apiUrl`),
+    // but an ungated `legacyEnvOverrideBool` call still aborts this whole function — denying
+    // it `apiPort`/`apiUrl`/`dbPort`/`rootKey`/etc. too — on a malformed override the remote
+    // block should have made irrelevant.
+    process.env["SUPABASE_API_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ api: { enabled: false } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["api.enabled"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_API_ENABLED when no remote block matched", () => {
+    process.env["SUPABASE_API_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ api: { enabled: false } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      'Invalid config for api.enabled: cannot parse "not-a-bool" as a bool',
     );
   });
 });

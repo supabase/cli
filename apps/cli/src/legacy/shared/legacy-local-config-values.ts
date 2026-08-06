@@ -2594,16 +2594,18 @@ export function legacyResolveLocalConfigValues(
    * OTHER shadow-bootstrap fields (review: PRRT_kwDOErm0O86W2tRi, following on from
    * PRRT_kwDOErm0O86W2LL4's fix to those two). Defaults to empty: `db start`/`db reset`/
    * `status`/`stop` never resolve a remote block for this config read (they never pass a
-   * `projectRef`), so they are unaffected. `auth.enabled`/`edge_runtime.deno_version`/
-   * `analytics.enabled`/`analytics.backend`/every `auth.third_party.*.enabled` are ALSO gated
-   * below even though their resolved values are never part of the returned
-   * `LegacyLocalConfigValues` — each one's `legacyEnvOverride*` call THROWS on a malformed
-   * override (`legacyEnvOverrideBool`/`legacyEnvOverrideDenoVersion`/`envOverrideAnalyticsBackend`)
+   * `projectRef`), so they are unaffected. `api.enabled`/`auth.enabled`/
+   * `edge_runtime.deno_version`/`analytics.enabled`/`analytics.backend`/every
+   * `auth.third_party.*.enabled` are ALSO gated below even though their resolved values are
+   * never part of the returned `LegacyLocalConfigValues` — each one's `legacyEnvOverride*` call
+   * THROWS on a malformed override
+   * (`legacyEnvOverrideBool`/`legacyEnvOverrideDenoVersion`/`envOverrideAnalyticsBackend`)
    * even when the remote block already set that field, which would abort this entire function
    * (and every field it DOES return) on an env value Go silently ignores (review:
    * PRRT_kwDOErm0O86W30n6 for `auth.enabled`/`analytics.*`, PRRT_kwDOErm0O86W4gCk for
-   * `edge_runtime.deno_version`) — "not read by the caller" is not the same as "cannot abort the
-   * caller." The dozens of remaining OTHER fields this function resolves (studio/smtp/passkey/
+   * `edge_runtime.deno_version`, PRRT_kwDOErm0O86W5UlV for `api.enabled`) — "not read by the
+   * caller" is not the same as "cannot abort the caller." The dozens of remaining OTHER fields
+   * this function resolves (studio/smtp/passkey/
    * mfa, the auth `enable_signup`/`enable_anonymous_sign_ins`/refresh-token/
    * manual-linking/password-length/-requirements group, plus this function's OWN
    * validation-only `thirdParty` block's non-`enabled` leaves feeding `Auth.ThirdParty.validate()`'s
@@ -2661,12 +2663,26 @@ export function legacyResolveLocalConfigValues(
   // Go's TLS cert/key validation nests entirely inside `if c.Api.Enabled`
   // (`config.go:1006,1010`) — mirroring `authEnabled` below, gate on the
   // POST-`SUPABASE_API_ENABLED`-override value, not raw `config.api.enabled`.
-  const apiEnabled = legacyEnvOverrideBool(
-    "SUPABASE_API_ENABLED",
-    config.api.enabled,
-    "api.enabled",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `apiTlsEnabled`/`apiPort` above and `authEnabled` below
+  // — `api.enabled` is now in `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`)
+  // and that reader's own resolver already gates it (`legacyBlockProvidesKey(block,
+  // "api.enabled")`); this resolver must match, since an ungated `legacyEnvOverrideBool` call
+  // THROWS on a malformed `SUPABASE_API_ENABLED` even when a matched remote block already set
+  // `api.enabled` at viper's OVERRIDE tier — a value Go's `Validate` never even evaluates the
+  // env var for in that case — which would otherwise abort this whole function (and the shadow
+  // it feeds via `legacyBuildLocalDbContainerInputs`, denying it `apiPort`/`apiUrl`/`dbPort`/
+  // `rootKey`/etc.) on an env value Go silently ignores. `apiEnabled`'s own resolved value is
+  // never part of the returned `LegacyLocalConfigValues` — same "throws before caller-needed
+  // fields are resolved" rationale as `authEnabled`/`analytics.*`/`edge_runtime.deno_version`
+  // below, not the "value is consumed downstream" rationale `apiTlsEnabled`/`apiPort` above have.
+  const apiEnabled = remoteWins("api.enabled")
+    ? config.api.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_API_ENABLED",
+        config.api.enabled,
+        "api.enabled",
+        projectEnvValues,
+      );
   const apiTlsCertPath = legacyEnvOverride(
     "SUPABASE_API_TLS_CERT_PATH",
     config.api.tls.cert_path,

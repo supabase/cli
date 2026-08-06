@@ -307,6 +307,14 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.seed.enabled",
   "db.seed.sql_paths",
   "auth.enabled",
+  // Not read by THIS reader's own resolved fields (nor by `apiUrl`'s own `api.port`/
+  // `api.tls.enabled`/`api.external_url` inputs, unlike those three) — tracked purely because
+  // `legacyResolveLocalConfigValues`'s `legacyEnvOverrideBool("SUPABASE_API_ENABLED", ...)`
+  // call THROWS on a malformed override, which would abort resolution of the caller-needed
+  // fields it computes afterward (`apiPort`/`apiUrl`/`dbPort`/`rootKey`/etc.) — same
+  // "throws before a value the caller needs is resolved" rationale as `auth.enabled` above and
+  // `analytics.enabled`/`edge_runtime.deno_version` below (review: PRRT_kwDOErm0O86W5UlV).
+  "api.enabled",
   "edge_runtime.deno_version",
   "experimental.pgdelta.enabled",
   "experimental.pgdelta.declarative_schema_path",
