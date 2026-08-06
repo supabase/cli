@@ -259,9 +259,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
         // regardless of --no-cache (the warm is skipped, the line is not). It prints
         // `utils.GetDeclarativeDir()` — the relative dir above, never a resolved
-        // absolute path, because Go chdirs into the workdir (CLI-1980). NOTE:
-        // `generate`'s port of this same Go line still prints the absolute dir
-        // today — a follow-up candidate for the same relative-dir treatment.
+        // absolute path, because Go chdirs into the workdir (CLI-1980).
         yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
       }
 

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { createHmac } from "node:crypto";
-import { Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
@@ -43,6 +43,7 @@ const defaultConfig: ResolvedStackConfig = {
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
   mode: "native",
+  startupMode: "eager",
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
   apiPort: 54321,
@@ -99,23 +100,31 @@ const edgeRuntimeConfig: ResolvedStackConfig = {
   },
 };
 
-function setupLayer(config: ResolvedStackConfig = defaultConfig) {
+const noopPortLease = (ports: AllocatedPorts): PortLease => ({
+  ports,
+  reserve: () => Effect.void,
+  release: () => Effect.void,
+  releaseAll: Effect.void,
+});
+
+function setupLayer(
+  config: ResolvedStackConfig = defaultConfig,
+  portLease: PortLease = noopPortLease(config.ports),
+  spawner = mockChildProcessSpawner(),
+) {
   const resolver = mockBinaryResolver();
-  const spawner = mockChildProcessSpawner();
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
-  );
-
-  const layer = Stack.layer(config).pipe(
-    Layer.provide(coordinatorLayer),
     Layer.provide(spawner.layer),
     Layer.provide(BunServices.layer),
   );
 
-  return { layer, resolver, spawner };
+  const layer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
+
+  return { coordinatorLayer, layer, resolver, spawner };
 }
 
 describe("Stack", () => {
@@ -128,6 +137,8 @@ describe("Stack", () => {
 
       expect(info.url).toBe("http://127.0.0.1:54321");
       expect(info.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
+      expect(info.serviceEndpoints.auth).toBe("http://127.0.0.1:54321/auth/v1");
+      expect(info.serviceEndpoints.postgrest).toBe("http://127.0.0.1:54321/rest/v1");
     }).pipe(Effect.provide(layer));
   });
 
@@ -139,7 +150,7 @@ describe("Stack", () => {
       const info = yield* stack.getInfo();
 
       expect(info.serviceEndpoints.functions).toBe("http://127.0.0.1:54321/functions/v1");
-      expect(info.serviceEndpoints.edge_runtime).toBe("http://127.0.0.1:54325");
+      expect(info.serviceEndpoints.edge_runtime).toBe("http://127.0.0.1:54321/functions/v1");
     }).pipe(Effect.provide(layer));
   });
 
@@ -294,7 +305,10 @@ describe("Stack", () => {
     });
     const spawner = mockChildProcessSpawner();
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-    const coordinatorLayer = StackLifecycleCoordinator.layer(defaultConfig).pipe(
+    const coordinatorLayer = StackLifecycleCoordinator.layer(
+      defaultConfig,
+      noopPortLease(defaultConfig.ports),
+    ).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(StackMetadataPersistence.noop),
@@ -376,7 +390,10 @@ describe("Stack", () => {
     const resolver = mockBinaryResolver({ failServices: ["postgres", "postgrest", "auth"] });
     const spawner = mockChildProcessSpawner({ exitCode: 1 });
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-    const coordinatorLayer = StackLifecycleCoordinator.layer(defaultConfig).pipe(
+    const coordinatorLayer = StackLifecycleCoordinator.layer(
+      defaultConfig,
+      noopPortLease(defaultConfig.ports),
+    ).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(StackMetadataPersistence.noop),
@@ -396,5 +413,385 @@ describe("Stack", () => {
       const startedContainers = spawner.spawned.filter((record) => record.args[0] === "run");
       expect(startedContainers).toEqual([]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("lazy startup starts direct services without starting HTTP backends", () => {
+    const { layer, spawner } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+      yield* stack.waitAllReady();
+
+      expect(
+        spawner.spawned.some((record) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"bash"'),
+          ),
+        ),
+      ).toBe(true);
+      expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
+      expect(spawner.spawned.some((record) => record.command.endsWith("/postgrest"))).toBe(false);
+
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("lazy activation honors explicitly stopped transitive dependencies", () => {
+    const config: ResolvedStackConfig = {
+      ...defaultConfig,
+      mode: "auto",
+      startupMode: "lazy",
+      storage: {
+        port: defaultPorts.storagePort,
+        dataDir: "/tmp/supabase/storage",
+        fileSizeLimit: "50MiB",
+        s3ProtocolEnabled: true,
+        version: DEFAULT_VERSIONS.storage,
+      },
+      imgproxy: {
+        port: defaultPorts.imgproxyPort,
+        version: DEFAULT_VERSIONS.imgproxy,
+      },
+    };
+    const { coordinatorLayer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      yield* coordinator.stopService("imgproxy");
+
+      const error = yield* coordinator.activateService("storage").pipe(Effect.flip);
+
+      expect(error._tag).toBe("StackBuildError");
+      if (error._tag === "StackBuildError") {
+        expect(error.detail).toContain("imgproxy was explicitly stopped");
+      }
+      yield* coordinator.stop();
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("lazy readiness includes an activation that is still starting", () =>
+    Effect.gen(function* () {
+      const spawnStarted = yield* Deferred.make<void>();
+      const spawner = mockChildProcessSpawner({
+        beforeSpawn: (record) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+          )
+            ? Deferred.succeed(spawnStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
+      const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+      const { coordinatorLayer } = setupLayer(config, noopPortLease(config.ports), spawner);
+
+      yield* Effect.gen(function* () {
+        const coordinator = yield* StackLifecycleCoordinator;
+        yield* coordinator.start();
+        expect((yield* coordinator.getState("auth")).status).toBe("Dormant");
+        const activeStateFiber = yield* coordinator.allStateChanges().pipe(
+          Stream.filter((state) => state.name === "auth" && state.status !== "Dormant"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const activationFiber = yield* coordinator
+          .activateService("auth")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(spawnStarted);
+        expect((yield* Fiber.join(activeStateFiber))._tag).toBe("Some");
+        expect((yield* coordinator.getState("auth")).status).not.toBe("Dormant");
+
+        const readyFiber = yield* coordinator
+          .waitAllReady()
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(readyFiber.pollUnsafe()).toBeUndefined();
+
+        yield* coordinator.stop().pipe(Effect.timeout("1 second"));
+        yield* Fiber.interrupt(readyFiber);
+        yield* Fiber.interrupt(activationFiber);
+      }).pipe(Effect.provide(coordinatorLayer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live(
+    "healthy activation stays available while a manual service start waits for readiness",
+    () =>
+      Effect.gen(function* () {
+        const authSpawnStarted = yield* Deferred.make<void>();
+        const spawner = mockChildProcessSpawner({
+          beforeSpawn: (record) =>
+            record.args.some((arg) =>
+              Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+            )
+              ? Deferred.succeed(authSpawnStarted, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+        });
+        const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+        const { coordinatorLayer } = setupLayer(config, noopPortLease(config.ports), spawner);
+
+        yield* Effect.gen(function* () {
+          const coordinator = yield* StackLifecycleCoordinator;
+          yield* coordinator.start();
+          const manualStart = yield* coordinator
+            .startService("auth")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(authSpawnStarted);
+
+          const activationCompleted = yield* Effect.race(
+            coordinator.activateService("postgres").pipe(Effect.as(true)),
+            Effect.sleep("200 millis").pipe(Effect.as(false)),
+          );
+
+          yield* Fiber.interrupt(manualStart);
+          expect(activationCompleted).toBe(true);
+          yield* coordinator.stop();
+        }).pipe(Effect.provide(coordinatorLayer));
+      }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live("begins independent eager services before waiting for their readiness", () =>
+    Effect.gen(function* () {
+      const postgresReleaseStarted = yield* Deferred.make<void>();
+      const allowPostgresRelease = yield* Deferred.make<void>();
+      const mailpitReleaseStarted = yield* Deferred.make<void>();
+      const config = {
+        ...defaultConfig,
+        mode: "auto",
+        startupMode: "lazy",
+        mailpit: {
+          port: defaultPorts.mailpitPort,
+          smtpPort: defaultPorts.mailpitSmtpPort,
+          pop3Port: defaultPorts.mailpitPop3Port,
+          version: DEFAULT_VERSIONS.mailpit,
+          adminEmail: "admin@example.com",
+          senderName: "Admin",
+        },
+      } satisfies ResolvedStackConfig;
+      const lease: PortLease = {
+        ports: config.ports,
+        reserve: () => Effect.void,
+        release: (fields) =>
+          fields.includes("dbPort")
+            ? Deferred.succeed(postgresReleaseStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowPostgresRelease)),
+              )
+            : fields.includes("mailpitPort")
+              ? Deferred.succeed(mailpitReleaseStarted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        releaseAll: Effect.void,
+      };
+      const { coordinatorLayer } = setupLayer(config, lease);
+
+      yield* Effect.gen(function* () {
+        const coordinator = yield* StackLifecycleCoordinator;
+        const starting = yield* coordinator
+          .start()
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(postgresReleaseStarted);
+
+        const mailpitBeganConcurrently = yield* Effect.race(
+          Deferred.await(mailpitReleaseStarted).pipe(Effect.as(true)),
+          Effect.sleep("200 millis").pipe(Effect.as(false)),
+        );
+        yield* Deferred.succeed(allowPostgresRelease, undefined);
+        yield* Fiber.interrupt(starting);
+
+        expect(mailpitBeganConcurrently).toBe(true);
+        yield* coordinator.stop();
+      }).pipe(Effect.provide(coordinatorLayer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live("dispose cancels an in-flight lazy activation", () =>
+    Effect.gen(function* () {
+      const spawnStarted = yield* Deferred.make<void>();
+      const allowSpawn = yield* Deferred.make<void>();
+      const spawner = mockChildProcessSpawner({
+        beforeSpawn: (record) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+          )
+            ? Deferred.succeed(spawnStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowSpawn)),
+              )
+            : Effect.void,
+      });
+      const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+      const { coordinatorLayer } = setupLayer(config, noopPortLease(config.ports), spawner);
+
+      yield* Effect.gen(function* () {
+        const coordinator = yield* StackLifecycleCoordinator;
+        yield* coordinator.start();
+        const activationFiber = yield* coordinator
+          .activateService("auth")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(spawnStarted);
+
+        const disposeFiber = yield* coordinator
+          .dispose()
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.join(disposeFiber);
+        yield* Deferred.succeed(allowSpawn, undefined);
+        yield* Effect.sleep("20 millis");
+        yield* Fiber.interrupt(activationFiber);
+
+        expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
+
+        const error = yield* coordinator.activateService("auth").pipe(Effect.flip);
+        expect(error._tag).toBe("StackNotRunningError");
+      }).pipe(Effect.provide(coordinatorLayer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live("does not revive stopped lazy dependents when restarting a dependency", () => {
+    return Effect.gen(function* () {
+      const authHealthServer = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.serve({
+            port: 0,
+            fetch: () => new Response("ok"),
+          }),
+        ),
+        (server) => Effect.sync(() => server.stop(true)),
+      );
+      const authPort = authHealthServer.port;
+      if (authPort === undefined) {
+        throw new Error("Expected the auth health test server to bind a TCP port");
+      }
+      const authConfig = defaultConfig.auth;
+      if (authConfig === false) {
+        throw new Error("Expected auth to be enabled in the default test config");
+      }
+      const { coordinatorLayer, spawner } = setupLayer({
+        ...defaultConfig,
+        startupMode: "lazy",
+        ports: { ...defaultPorts, authPort },
+        auth: { ...authConfig, port: authPort },
+      });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* StackLifecycleCoordinator;
+        const isAuthStart = (record: { readonly args: ReadonlyArray<string> }) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+          );
+        yield* coordinator.start();
+        yield* coordinator.activateService("auth");
+        const initialAuthStarts = spawner.spawned.filter(isAuthStart).length;
+        expect(initialAuthStarts).toBeGreaterThan(0);
+
+        yield* coordinator.stopService("postgres");
+        yield* coordinator.restartService("postgres");
+        yield* coordinator.waitAllReady();
+
+        expect(spawner.spawned.filter(isAuthStart)).toHaveLength(initialAuthStarts);
+        expect((yield* coordinator.getState("auth")).status).toBe("Stopped");
+        yield* coordinator.stop();
+      }).pipe(Effect.provide(coordinatorLayer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds"));
+  });
+
+  it.live("lazy readiness fails fast before a service is activated", () => {
+    const { layer } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const beforeStart = yield* stack.waitAllReady().pipe(Effect.flip);
+      expect(beforeStart._tag).toBe("StackBuildError");
+
+      yield* stack.start();
+      const authNotActivated = yield* stack.waitReady("auth").pipe(Effect.flip);
+      expect(authNotActivated._tag).toBe("ServiceReadyError");
+
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("keeps unactivated services dormant after a stop and start cycle", () => {
+    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const { coordinatorLayer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      expect((yield* coordinator.getState("auth")).status).toBe("Dormant");
+
+      yield* coordinator.stop();
+      yield* coordinator.start();
+
+      expect((yield* coordinator.getState("auth")).status).toBe("Dormant");
+      yield* coordinator.stop();
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("rejects a cached activation after the stack has stopped", () => {
+    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const { coordinatorLayer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      yield* coordinator.stop();
+
+      const error = yield* coordinator.activateService("postgres").pipe(Effect.flip);
+      expect(error._tag).toBe("StackNotRunningError");
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("preserves an explicitly stopped service across a stack restart", () => {
+    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const { coordinatorLayer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      yield* coordinator.start();
+      const stoppedState = yield* coordinator.allStateChanges().pipe(
+        Stream.filter((state) => state.name === "auth" && state.status === "Stopped"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* coordinator.stopService("auth");
+      expect((yield* Fiber.join(stoppedState))._tag).toBe("Some");
+      expect((yield* coordinator.getState("auth")).status).toBe("Stopped");
+
+      yield* coordinator.stop();
+      yield* coordinator.start();
+
+      expect((yield* coordinator.getState("auth")).status).toBe("Stopped");
+      yield* coordinator.stop();
+    }).pipe(Effect.provide(coordinatorLayer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("releases only the ports in a lazy service dependency closure", () => {
+    const released = new Set<PortField>();
+    const lease: PortLease = {
+      ports: defaultPorts,
+      reserve: () => Effect.void,
+      release: (fields) =>
+        Effect.sync(() => {
+          for (const field of fields) released.add(field);
+        }),
+      releaseAll: Effect.void,
+    };
+    const { layer } = setupLayer({ ...defaultConfig, startupMode: "lazy" }, lease);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+
+      expect(released.has("dbPort")).toBe(true);
+      expect(released.has("authPort")).toBe(false);
+      expect(released.has("postgrestPort")).toBe(false);
+
+      const startFiber = yield* stack
+        .startService("auth")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.sleep("50 millis");
+      expect(released.has("authPort")).toBe(true);
+      expect(released.has("postgrestPort")).toBe(false);
+
+      yield* Fiber.interrupt(startFiber);
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 });

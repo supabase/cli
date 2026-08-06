@@ -44,6 +44,16 @@ import {
 const warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
 Run ${legacyAqua("supabase db reset")} to verify that the new migration does not generate errors.`;
 
+// TS-only deprecation notice (CLI-1960): `--use-pg-schema` wraps the in-process
+// Go library `stripe/pg-schema-diff` (`apps/cli-go/internal/db/diff/pgschema.go`),
+// which has no TS/container equivalent — a keep-in-Go exception, not a pending
+// port (see SIDE_EFFECTS.md). The flag itself is now deprecated in favor of the
+// pg-delta engine. This is additive to (and prints before) Go's own
+// "experimental" warning (`cmd/db.go:121`), which the delegated child still
+// prints unchanged. No removal timeline is promised: actual removal is out of
+// scope for CLI-1960.
+const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
+
 /**
  * Rebuilds the `db diff` argv for the pgAdmin / pg-schema delegate path. Flags
  * stay flags (the Go-proxy channel-parity rule). The explicit `--from`/`--to` and
@@ -323,9 +333,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       return;
     }
     if (usePgSchema) {
-      // The delegated Go `db diff --use-pg-schema` prints the experimental
-      // warning itself in its RunE (`cmd/db.go`), so don't pre-print it here —
-      // doing so would double the warning. Mirror the --use-pgadmin branch above.
+      // CLI-1960: TS-only deprecation notice, printed before delegating (in both
+      // text and machine output modes — diagnostics stay stderr-only per CLI-1546).
+      // The delegated Go `db diff --use-pg-schema` still prints its own experimental
+      // warning itself in its RunE (`cmd/db.go`); this is additive, not a
+      // replacement, so don't drop it. Mirror the --use-pgadmin branch above.
+      yield* output.raw(`${warnPgSchemaDeprecated}\n`, "stderr");
       yield* delegateDiff("pg-schema");
       return;
     }

@@ -153,8 +153,8 @@ export const resolveStackSummary = (opts: {
 /**
  * Stop a running daemon by name or working directory.
  * Sends POST /stop to the daemon's Unix socket and waits for it to exit.
- * The daemon owns its own state cleanup; this function only removes stale
- * state after confirming the process is no longer alive.
+ * Removes the live-state pointer only after confirming the process is no
+ * longer alive. Durable stack metadata is retained.
  */
 export const stopDaemon = (opts: {
   name?: string;
@@ -187,6 +187,7 @@ export const stopDaemon = (opts: {
         ),
         Effect.ignore,
       );
+      yield* stateManager.remove(state.name);
       return;
     }
 
@@ -211,7 +212,6 @@ export const stopDaemon = (opts: {
       return yield* new DaemonStillRunningError({ name: state.name, pid: state.pid });
     }
 
-    // Clean up any state the daemon did not remove for itself.
     yield* stateManager.remove(state.name);
   });
 

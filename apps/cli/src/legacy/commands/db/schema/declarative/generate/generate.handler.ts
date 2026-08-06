@@ -28,7 +28,10 @@ import {
   type LegacyDeclarativeRunContext,
   legacyGenerateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
-import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.write.ts";
+import {
+  legacyDeclarativeSchemaWrittenLine,
+  legacyWriteDeclarativeSchemas,
+} from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import {
   type LegacyLocalConn,
@@ -114,14 +117,14 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         }
       }
 
-      // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
-      // used as-is: Go's config resolver only prefixes the workdir onto a RELATIVE path
-      // (`config.resolve`), leaving an absolute path unchanged. `path.join(workdir, abs)`
-      // would mangle `/repo` + `/abs` into `/repo/abs`.
-      const declarativeDir = path.resolve(
-        cliConfig.workdir,
-        legacyResolveDeclarativeDir(path, toml.pgDelta),
-      );
+      // Go prints `utils.GetDeclarativeDir()` verbatim (`declarative.go:156`,
+      // `db_schema_declarative.go:268`) — the config value, relative unless a user
+      // configures an absolute `declarative_schema_path` — so user-facing renders use
+      // `declarativeDirRel`. File I/O needs the resolved dir: `path.resolve` (not
+      // `path.join`) so an absolute config value is used as-is, matching Go's
+      // `config.resolve`, which only prefixes the workdir onto a RELATIVE path.
+      const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
+      const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const local: LegacyLocalConn = { port: toml.port, password: toml.password };
 
@@ -180,7 +183,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
             output,
             yes,
             `Declarative schema already exists at ${legacyBold(
-              declarativeDir,
+              declarativeDirRel,
             )}. Regenerate from database? This will overwrite existing files.`,
             false,
           );
@@ -272,7 +275,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           ...(linkedProjectRef !== undefined ? { projectRef: linkedProjectRef } : {}),
         });
       }
-      yield* output.raw(`Declarative schema written to ${legacyBold(declarativeDir)}\n`, "stderr");
+      yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
     }).pipe(
       // Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,214-234`)
       // writes the linked-project cache (`GET /v1/projects/{ref}` →

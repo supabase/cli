@@ -1,7 +1,9 @@
 import { Data, Effect, Layer, Schema, Context } from "effect";
 import { FileSystem, Path } from "effect";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { link, unlink, writeFile } from "node:fs/promises";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
 import {
   PartialVersionManifestSchema,
@@ -14,7 +16,6 @@ import {
   defaultManagedProjectsRoot,
   defaultManagedProjectStacksRoot,
   defaultManagedRuntimeRoot,
-  socketPathForRuntimeRoot,
 } from "./paths.ts";
 import { basename, dirname, join } from "node:path";
 
@@ -41,7 +42,7 @@ export interface StackState {
   readonly services: PartialVersionManifest;
 }
 
-const StackStateSchema = Schema.Struct({
+export const StackStateSchema = Schema.Struct({
   pid: Schema.Number,
   name: Schema.String,
   projectDir: Schema.String,
@@ -125,6 +126,13 @@ export class StackAlreadyRunningError extends Data.TaggedError("StackAlreadyRunn
   readonly name: string;
   readonly pid: number;
   readonly message: string;
+}> {}
+
+export class StateClaimError extends Data.TaggedError("StateClaimError")<{
+  readonly name: string;
+  readonly path: string;
+  readonly reason: "already-claimed" | "io-error";
+  readonly cause: unknown;
 }> {}
 
 interface StateManagerPaths {
@@ -331,6 +339,47 @@ function makeWrite(deps: StateManagerDeps) {
     }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
 }
 
+function makeClaim(deps: StateManagerDeps) {
+  return (state: StackState): Effect.Effect<void, StateClaimError> =>
+    Effect.gen(function* () {
+      const dir = deps.stackDir(state.name);
+      yield* deps.fs.makeDirectory(dir, { recursive: true });
+      const statePath = deps.stateFile(state.name);
+      const temporaryPath = `${statePath}.claim-${process.pid}-${randomUUID()}`;
+      yield* Effect.tryPromise({
+        try: async () => {
+          await writeFile(temporaryPath, encodePrettyJson(encodeStackState(state)), { flag: "wx" });
+          try {
+            await link(temporaryPath, statePath);
+          } finally {
+            await unlink(temporaryPath).catch(() => undefined);
+          }
+        },
+        catch: (cause) =>
+          new StateClaimError({
+            name: state.name,
+            path: statePath,
+            reason:
+              cause instanceof Error && "code" in cause && cause.code === "EEXIST"
+                ? "already-claimed"
+                : "io-error",
+            cause,
+          }),
+      });
+    }).pipe(
+      Effect.catchTag("PlatformError", (cause) =>
+        Effect.fail(
+          new StateClaimError({
+            name: state.name,
+            path: deps.stateFile(state.name),
+            reason: "io-error",
+            cause,
+          }),
+        ),
+      ),
+    );
+}
+
 function makeRead(deps: StateManagerDeps) {
   return (name: string): Effect.Effect<StackState, StateNotFoundError | InvalidStackStateError> =>
     Effect.gen(function* () {
@@ -441,6 +490,11 @@ function makeScanMetadata(deps: StateManagerDeps) {
 }
 
 function makeRemove(deps: StateManagerDeps) {
+  const remove = makeRemoveUnlocked(deps);
+  return (name: string): Effect.Effect<void> => remove(name);
+}
+
+function makeRemoveUnlocked(deps: StateManagerDeps) {
   return (name: string): Effect.Effect<void> =>
     Effect.gen(function* () {
       yield* deps.fs.remove(deps.stateFile(name)).pipe(Effect.ignore);
@@ -448,10 +502,7 @@ function makeRemove(deps: StateManagerDeps) {
 
       const dir = deps.stackDir(name);
       const exists = yield* deps.fs.exists(dir);
-      if (!exists) {
-        return;
-      }
-
+      if (!exists) return;
       const entries = yield* deps.fs.readDirectory(dir);
       if (entries.length === 0) {
         yield* deps.fs.remove(dir, { recursive: true }).pipe(Effect.ignore);
@@ -591,10 +642,10 @@ export class StateManager extends Context.Service<
     readonly stackDir: (name: string) => string;
     readonly dataDir: (name: string) => string;
     readonly runtimeDir: (name: string) => string;
-    readonly socketPath: (name: string) => string;
     readonly metadataFile: (name: string) => string;
     readonly stackExists: (name: string) => Effect.Effect<boolean>;
     readonly write: (state: StackState) => Effect.Effect<void>;
+    readonly claim: (state: StackState) => Effect.Effect<void, StateClaimError>;
     readonly read: (
       name: string,
     ) => Effect.Effect<StackState, StateNotFoundError | InvalidStackStateError>;
@@ -638,7 +689,6 @@ export class StateManager extends Context.Service<
         const stackDir = (name: string) => stackDirForName(name);
         const dataDir = (name: string) => path.join(stackDir(name), "data");
         const runtimeDir = (name: string) => paths.runtimeDirForStack(name);
-        const socketPath = (name: string) => socketPathForRuntimeRoot(runtimeDir(name));
         const stateFile = (name: string) => path.join(stackDir(name), "state.json");
         const metadataFile = (name: string) => path.join(stackDir(name), "stack.json");
 
@@ -650,6 +700,8 @@ export class StateManager extends Context.Service<
           metadataFile,
           runtimeDir,
         };
+        const read = makeRead(deps);
+        const remove = makeRemove(deps);
         const scan = makeScan(deps);
         const writeMetadata = makeWriteMetadata(deps);
         const readMetadata = makeReadMetadata(deps);
@@ -658,17 +710,17 @@ export class StateManager extends Context.Service<
           stackDir,
           dataDir,
           runtimeDir,
-          socketPath,
           metadataFile,
           stackExists: makeStackExists(deps),
           write: makeWrite(deps),
-          read: makeRead(deps),
+          claim: makeClaim(deps),
+          read,
           scan,
           writeMetadata,
           updateMetadata: makeUpdateMetadata(readMetadata, writeMetadata),
           readMetadata,
           scanMetadata: makeScanMetadata(deps),
-          remove: makeRemove(deps),
+          remove,
           deleteStack: makeDeleteStack(deps),
           resolve: makeResolve(path, scan),
           isAlive: makeIsAlive(),
@@ -677,5 +729,3 @@ export class StateManager extends Context.Service<
     );
   }
 }
-
-export type StateManagerService = typeof StateManager.Service;
