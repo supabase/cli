@@ -126,7 +126,7 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 		return err
 	}
 	// 4. Reload Kong to refresh DNS cache for the new Edge Runtime container IP.
-	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload"}, os.Stderr, os.Stderr); err != nil {
+	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"}, os.Stderr, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: failed to reload Kong:", err)
 	}
 	return nil

@@ -1338,17 +1338,14 @@ const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: stri
 const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
-  // Bare `kong reload`, exactly Go's `restartEdgeRuntime`
-  // (`internal/functions/serve/serve.go:129`). The `--nginx-conf
-  // /home/kong/custom_nginx.template` argument belongs to `start`'s Kong
-  // bring-up entrypoint (`internal/start/start.go:589-592`, mirrored by
-  // `legacy/commands/start/services/kong.service.ts`) — `kong reload` reuses
-  // the prefix configuration that bring-up already prepared, so passing the
-  // template again here is not part of Go's serve path.
-  const result = yield* runChildProcess("docker", ["exec", kongId, "kong", "reload"], {
-    stdout: "ignore",
-    stderr: "pipe",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  // Reload re-renders nginx.conf from Kong's default template, so it needs the
+  // template bring-up wrote (`kong.service.ts`, Go's `start.go:589-592`) handed
+  // back — otherwise it drops that template's `email_templates` server (#6059).
+  const result = yield* runChildProcess(
+    "docker",
+    ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
+    { stdout: "ignore", stderr: "pipe" },
+  ).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
 
   if (result.exitCode !== 0) {
     const suffix = result.stderr.trim().length > 0 ? ` ${result.stderr.trim()}` : "";
