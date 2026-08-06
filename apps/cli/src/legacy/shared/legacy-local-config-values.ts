@@ -817,11 +817,20 @@ function loadSigningKeys(workdir: string, signingKeysPath: string): ReadonlyArra
  * utils.Config.Auth.SigningKeys`) so the two resolvers can never disagree on
  * which signing key(s) apply — a prerequisite for GoTrue-issued tokens to
  * verify against the published JWKS at all.
+ *
+ * `remoteOverrideKeys` (default empty, so `supabase start`/`legacyResolveLocalConfigValues`'s
+ * OTHER callers see exactly the same behavior as before): `auth.signing_keys_path` set at
+ * viper's OVERRIDE tier by a matched remote block must win over a conflicting
+ * `SUPABASE_AUTH_SIGNING_KEYS_PATH` — this resolver's caller `legacyResolveLocalJwks` feeds the
+ * shadow's PG15+ one-shot auth-migration job on the `db diff --linked`/`db pull` path (CLI-1956,
+ * review: PRRT_kwDOErm0O86W3Ox_), and `legacyResolveLocalConfigValues`'s own `signingKey` (used
+ * to sign `anonKey`/`serviceRoleKey`, already remote-gated fields) reaches the same shadow.
  */
 export function legacyResolveConfiguredSigningKeys(
   config: ProjectConfig,
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ReadonlyArray<LegacyJwk> | undefined {
   const authEnabled = legacyEnvOverrideBool(
     "SUPABASE_AUTH_ENABLED",
@@ -829,11 +838,13 @@ export function legacyResolveConfiguredSigningKeys(
     "auth.enabled",
     projectEnvValues,
   );
-  const signingKeysPath = legacyEnvOverride(
-    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-    config.auth.signing_keys_path,
-    projectEnvValues,
-  );
+  const signingKeysPath = remoteOverrideKeys.has("auth.signing_keys_path")
+    ? config.auth.signing_keys_path
+    : legacyEnvOverride(
+        "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+        config.auth.signing_keys_path,
+        projectEnvValues,
+      );
   return authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
     ? loadSigningKeys(workdir, signingKeysPath)
     : undefined;
@@ -1548,15 +1559,28 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * this single standalone helper instead of independent per-caller derivations. Hoisted here (was
  * private to `start/start.handler.ts`) once `db/start/start.handler.ts`'s own native container
  * bootstrap became a third caller — see `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ *
+ * `remoteOverrideKeys` (default empty, so `db start`/`supabase start` — which never resolve a
+ * `[remotes.<ref>]` block for this config read — see exactly the same behavior as before):
+ * `auth.external_url` set at viper's OVERRIDE tier by a matched remote block
+ * (`apps/cli-go/pkg/config/config.go:635-640`) must win over a conflicting
+ * `SUPABASE_AUTH_EXTERNAL_URL`, matching the `db.root_key`/`auth.jwt_secret`-style gates already
+ * applied elsewhere in this file — `db diff --linked`/`db pull` (CLI-1956) pass the set their
+ * sibling `legacyReadDbToml` call already computed, via `legacyBuildLocalDbContainerInputs`
+ * (review: PRRT_kwDOErm0O86W3Ox_).
  */
 export function legacyResolveAuthExternalUrl(
   document: Readonly<Record<string, unknown>> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): string | undefined {
   const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
+  const configuredAuthExternalUrl =
+    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined;
+  if (remoteOverrideKeys.has("auth.external_url")) return configuredAuthExternalUrl;
   return legacyEnvOverride(
     "SUPABASE_AUTH_EXTERNAL_URL",
-    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
+    configuredAuthExternalUrl,
     projectEnvValues,
   );
 }
@@ -2543,16 +2567,23 @@ export function legacyResolveLocalConfigValues(
    * this function's shadow-consuming caller (`legacyBuildLocalDbContainerInputs`) actually
    * threads onward (`dbPort`/`rootKey`/`jwtSecret`/`authJwtExpiry`/`authSiteUrl`/`anonKey`/
    * `serviceRoleKey`, plus `apiUrl`'s own `api.port`/`api.tls.enabled`/`api.external_url`
-   * inputs) must NOT re-apply a `SUPABASE_*` value for a field the remote block already set —
-   * same gate `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` already
-   * apply for the OTHER shadow-bootstrap fields (review: PRRT_kwDOErm0O86W2tRi, following on
-   * from PRRT_kwDOErm0O86W2LL4's fix to those two). Defaults to empty: `db start`/`db reset`/
+   * inputs, plus `signingKeysPath`'s `auth.signing_keys_path` gate feeding the `signingKey` that
+   * signs `anonKey`/`serviceRoleKey` — review: PRRT_kwDOErm0O86W3Ox_) must NOT re-apply a
+   * `SUPABASE_*` value for a field the remote block already set — same gate
+   * `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` already apply for the
+   * OTHER shadow-bootstrap fields (review: PRRT_kwDOErm0O86W2tRi, following on from
+   * PRRT_kwDOErm0O86W2LL4's fix to those two). Defaults to empty: `db start`/`db reset`/
    * `status`/`stop` never resolve a remote block for this config read (they never pass a
    * `projectRef`), so they are unaffected. The dozens of OTHER fields this function resolves
-   * (studio/smtp/passkey/mfa/analytics/third_party/...) are never read by that caller — grepped
-   * confirmed no other consumer reads `LegacyLocalConfigValues` beyond those — so they are
-   * deliberately NOT gated here; gating them would be inert (no caller ever passes a non-empty
-   * `remoteOverrideKeys` that could reach them) rather than a genuine parity gap.
+   * (studio/smtp/passkey/mfa/analytics, plus this function's OWN validation-only `thirdParty`
+   * block feeding `Auth.ThirdParty.validate()`'s "at most one enabled" check) are never read by
+   * that caller — grepped confirmed no other consumer reads `LegacyLocalConfigValues` beyond
+   * those — so they are deliberately NOT gated here; gating them would be inert (no caller ever
+   * passes a non-empty `remoteOverrideKeys` that could reach them) rather than a genuine parity
+   * gap. This is NOT the same `third_party` as {@link legacyResolveLocalJwks}'s/
+   * {@link legacyResolveConfiguredSigningKeys}'s own, SEPARATE third-party/signing-keys
+   * resolution, which DOES feed the shadow's JWKS document and IS gated (see those functions'
+   * own doc comments).
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyLocalConfigValues {
@@ -2774,11 +2805,16 @@ export function legacyResolveLocalConfigValues(
       projectEnvValues,
     ),
   );
-  const signingKeysPath = legacyEnvOverride(
-    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-    config.auth.signing_keys_path,
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `jwtSecret` above — `signingKeysPath` gates whether
+  // {@link legacyResolveConfiguredSigningKeys} below produces an asymmetric `signingKey`, which
+  // feeds `anonKey`/`serviceRoleKey` (already remote-gated fields the shadow's setup consumes).
+  const signingKeysPath = remoteWins("auth.signing_keys_path")
+    ? config.auth.signing_keys_path
+    : legacyEnvOverride(
+        "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+        config.auth.signing_keys_path,
+        projectEnvValues,
+      );
   // Gated on `auth.enabled` to match Go's `Validate` (`pkg/config/config.go:1036,1059-1065`):
   // the signing-keys file read lives entirely inside `if c.Auth.Enabled`, so a
   // disabled auth section never opens/parses `signing_keys_path`, even a stale
@@ -2901,9 +2937,12 @@ export function legacyResolveLocalConfigValues(
   // with the default key, not silently fall back to symmetric HS256.
   const signingKey =
     signingKeysPath !== undefined && signingKeysPath.length > 0
-      ? (legacyResolveConfiguredSigningKeys(config, workdir, projectEnvValues) ?? [
-          LEGACY_DEFAULT_SIGNING_KEY,
-        ])[0]
+      ? (legacyResolveConfiguredSigningKeys(
+          config,
+          workdir,
+          projectEnvValues,
+          remoteOverrideKeys,
+        ) ?? [LEGACY_DEFAULT_SIGNING_KEY])[0]
       : undefined;
   // Go's `Config.Validate` runs passkey/webauthn validation, then
   // `Auth.Hook.validate()`, then `Auth.MFA.validate()`, then
@@ -3433,18 +3472,30 @@ export function legacyResolveLocalConfigValues(
  * enabled, an enabled provider is missing a required field, or the remote JWKS fetch (OIDC
  * discovery or the JWKS document itself) fails — matching Go's `ResolveJWKS` returning that error
  * outright, propagated here as this file's own error type rather than a bare `Error`.
+ *
+ * `remoteOverrideKeys` (default empty, so `start.handler.ts`'s `supabase start` caller sees
+ * exactly the same behavior as before): every `auth.signing_keys_path`/`auth.third_party.*`
+ * field a matched `[remotes.<ref>]` block set at viper's OVERRIDE tier
+ * (`apps/cli-go/pkg/config/config.go:635-640`) must win over a conflicting `SUPABASE_AUTH_*`
+ * value — this function feeds the shadow's PG15+ one-shot auth-migration job's `jwks` input on
+ * the `db diff --linked`/`db pull` path (CLI-1956), via `legacyBuildLocalDbContainerInputs`
+ * (review: PRRT_kwDOErm0O86W3Ox_).
  */
 export async function legacyResolveLocalJwks(
   config: ProjectConfig,
   workdir: string,
   jwtSecret: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): Promise<string> {
-  const signingKeysPath = legacyEnvOverride(
-    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-    config.auth.signing_keys_path,
-    projectEnvValues,
-  );
+  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
+  const signingKeysPath = remoteWins("auth.signing_keys_path")
+    ? config.auth.signing_keys_path
+    : legacyEnvOverride(
+        "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+        config.auth.signing_keys_path,
+        projectEnvValues,
+      );
   // Go's `a.SigningKeys` is UNCONDITIONALLY seeded with the single default ES256 key at
   // `NewConfig()` time (`pkg/config/config.go:504-515`) — every resolved config carries it,
   // regardless of `auth.enabled`. It is only ever REPLACED by a configured
@@ -3459,6 +3510,7 @@ export async function legacyResolveLocalJwks(
     config,
     workdir,
     projectEnvValues,
+    remoteOverrideKeys,
   ) ?? [LEGACY_DEFAULT_SIGNING_KEY];
 
   // Same fixed provider order + `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides as the
@@ -3466,82 +3518,107 @@ export async function legacyResolveLocalJwks(
   // but built as a `ThirdPartyProvidersLike` (every provider's full field set, including auth0's
   // `tenant_region`) rather than `LegacyThirdPartyInput` (a validation-only shape with no
   // `tenant_region` field) — {@link resolveThirdPartyIssuerUrl} needs the full set to build the
-  // issuer URL, not just validate presence.
+  // issuer URL, not just validate presence. Each field below prefers the remote-set value over a
+  // conflicting env override, same as {@link legacyResolveDbSettingsEnvOverrides}'s per-field gate.
   const thirdParty: ThirdPartyProvidersLike = {
     firebase: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        config.auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        projectEnvValues,
-      ),
-      project_id: legacyEnvOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-        config.auth.third_party.firebase.project_id,
-        projectEnvValues,
-      ),
+      enabled: remoteWins("auth.third_party.firebase.enabled")
+        ? config.auth.third_party.firebase.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+            config.auth.third_party.firebase.enabled,
+            "auth.third_party.firebase.enabled",
+            projectEnvValues,
+          ),
+      project_id: remoteWins("auth.third_party.firebase.project_id")
+        ? config.auth.third_party.firebase.project_id
+        : legacyEnvOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+            config.auth.third_party.firebase.project_id,
+            projectEnvValues,
+          ),
     },
     auth0: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        config.auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        projectEnvValues,
-      ),
-      tenant: legacyEnvOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-        config.auth.third_party.auth0.tenant,
-        projectEnvValues,
-      ),
-      tenant_region: legacyEnvOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
-        config.auth.third_party.auth0.tenant_region,
-        projectEnvValues,
-      ),
+      enabled: remoteWins("auth.third_party.auth0.enabled")
+        ? config.auth.third_party.auth0.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+            config.auth.third_party.auth0.enabled,
+            "auth.third_party.auth0.enabled",
+            projectEnvValues,
+          ),
+      tenant: remoteWins("auth.third_party.auth0.tenant")
+        ? config.auth.third_party.auth0.tenant
+        : legacyEnvOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+            config.auth.third_party.auth0.tenant,
+            projectEnvValues,
+          ),
+      tenant_region: remoteWins("auth.third_party.auth0.tenant_region")
+        ? config.auth.third_party.auth0.tenant_region
+        : legacyEnvOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
+            config.auth.third_party.auth0.tenant_region,
+            projectEnvValues,
+          ),
     },
     aws_cognito: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        config.auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        projectEnvValues,
-      ),
-      user_pool_id: legacyEnvOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-        config.auth.third_party.aws_cognito.user_pool_id,
-        projectEnvValues,
-      ),
-      user_pool_region: legacyEnvOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-        config.auth.third_party.aws_cognito.user_pool_region,
-        projectEnvValues,
-      ),
+      enabled: remoteWins("auth.third_party.aws_cognito.enabled")
+        ? config.auth.third_party.aws_cognito.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+            config.auth.third_party.aws_cognito.enabled,
+            "auth.third_party.aws_cognito.enabled",
+            projectEnvValues,
+          ),
+      user_pool_id: remoteWins("auth.third_party.aws_cognito.user_pool_id")
+        ? config.auth.third_party.aws_cognito.user_pool_id
+        : legacyEnvOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+            config.auth.third_party.aws_cognito.user_pool_id,
+            projectEnvValues,
+          ),
+      user_pool_region: remoteWins("auth.third_party.aws_cognito.user_pool_region")
+        ? config.auth.third_party.aws_cognito.user_pool_region
+        : legacyEnvOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+            config.auth.third_party.aws_cognito.user_pool_region,
+            projectEnvValues,
+          ),
     },
     clerk: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        config.auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        projectEnvValues,
-      ),
-      domain: legacyEnvOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-        config.auth.third_party.clerk.domain,
-        projectEnvValues,
-      ),
+      enabled: remoteWins("auth.third_party.clerk.enabled")
+        ? config.auth.third_party.clerk.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+            config.auth.third_party.clerk.enabled,
+            "auth.third_party.clerk.enabled",
+            projectEnvValues,
+          ),
+      domain: remoteWins("auth.third_party.clerk.domain")
+        ? config.auth.third_party.clerk.domain
+        : legacyEnvOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+            config.auth.third_party.clerk.domain,
+            projectEnvValues,
+          ),
     },
     workos: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        config.auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        projectEnvValues,
-      ),
-      issuer_url: legacyEnvOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-        config.auth.third_party.workos.issuer_url,
-        projectEnvValues,
-      ),
+      enabled: remoteWins("auth.third_party.workos.enabled")
+        ? config.auth.third_party.workos.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+            config.auth.third_party.workos.enabled,
+            "auth.third_party.workos.enabled",
+            projectEnvValues,
+          ),
+      issuer_url: remoteWins("auth.third_party.workos.issuer_url")
+        ? config.auth.third_party.workos.issuer_url
+        : legacyEnvOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+            config.auth.third_party.workos.issuer_url,
+            projectEnvValues,
+          ),
     },
   };
 

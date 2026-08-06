@@ -32,8 +32,10 @@ import {
   legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
   legacyResolveAuthExternalProviders,
+  legacyResolveAuthExternalUrl,
   legacyResolveAuthHooks,
   legacyResolveAuthSms,
+  legacyResolveConfiguredSigningKeys,
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
@@ -2811,9 +2813,42 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_AUTH_ANON_KEY",
       "SUPABASE_AUTH_SERVICE_ROLE_KEY",
       "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
+      "SUPABASE_AUTH_SIGNING_KEYS_PATH",
     ]) {
       delete process.env[name];
     }
+  });
+
+  const tempRoot = useLegacyTempWorkdir("supabase-remote-signing-keys-test-");
+
+  it("prefers a remote-set auth.signing_keys_path over a conflicting SUPABASE_AUTH_SIGNING_KEYS_PATH", () => {
+    // Regression (review: PRRT_kwDOErm0O86W3Ox_): `legacyResolveConfiguredSigningKeys` — shared
+    // by this function's own `anonKey`/`serviceRoleKey` asymmetric signing and by
+    // `legacyResolveLocalJwks` — used to reapply a conflicting env override even when a remote
+    // block already set `auth.signing_keys_path`, which would have pointed the shadow's
+    // asymmetric signing at the wrong (env-supplied) file.
+    writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
+    process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        tempRoot.current,
+        undefined,
+        undefined,
+        new Set(["auth.signing_keys_path"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a missing SUPABASE_AUTH_SIGNING_KEYS_PATH override when no remote block matched", () => {
+    writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
+    process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+      "failed to read signing keys: ",
+    );
   });
 
   it("suppresses a malformed SUPABASE_DB_MAJOR_VERSION when a remote block already set db.major_version", () => {
@@ -3201,5 +3236,139 @@ describe("legacyResolveLocalJwks", () => {
         "oidc discovery failed",
       );
     });
+  });
+
+  describe("remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+    // Go's `mergeRemoteConfig` installs every matched `[remotes.<ref>]` leaf at viper's OVERRIDE
+    // tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:635-640`) — regression
+    // coverage for review PRRT_kwDOErm0O86W3Ox_, which found `auth.signing_keys_path`/
+    // `auth.third_party.*` reapplying a conflicting `SUPABASE_AUTH_*` env value even after a
+    // matched remote block set them.
+    afterEach(() => {
+      for (const name of [
+        "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+      ]) {
+        delete process.env[name];
+      }
+    });
+
+    it("prefers a remote-set auth.signing_keys_path over a conflicting SUPABASE_AUTH_SIGNING_KEYS_PATH", async () => {
+      writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
+      process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
+      const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+      const jwks = await legacyResolveLocalJwks(
+        config,
+        tempRoot.current,
+        "a".repeat(32),
+        undefined,
+        new Set(["auth.signing_keys_path"]),
+      );
+      const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+      expect(parsed.keys).toHaveLength(1);
+      expect(parsed.keys[0]).toMatchObject({ kty: "RSA", kid: "test-rsa-kid" });
+    });
+
+    it("still rejects a missing SUPABASE_AUTH_SIGNING_KEYS_PATH override when no remote block matched", async () => {
+      writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
+      process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
+      const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+      await expect(
+        legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32)),
+      ).rejects.toThrow("failed to read signing keys: ");
+    });
+
+    it("prefers a remote-set auth.third_party.workos.* over conflicting env overrides", async () => {
+      const remoteKeys = [{ kty: "RSA", kid: "remote-key", n: "abc", e: "AQAB" }];
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://remote-issuer.example/.well-known/openid-configuration") {
+          return new Response(
+            JSON.stringify({ jwks_uri: "https://remote-issuer.example/jwks.json" }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url === "https://remote-issuer.example/jwks.json") {
+          return new Response(JSON.stringify({ keys: remoteKeys }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
+      process.env["SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED"] = "false";
+      process.env["SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL"] =
+        "https://env-should-not-win.test";
+      const config = baseConfig({
+        auth: {
+          third_party: { workos: { enabled: true, issuer_url: "https://remote-issuer.example" } },
+        },
+      });
+      const jwks = await legacyResolveLocalJwks(
+        config,
+        WORKDIR,
+        "a".repeat(32),
+        undefined,
+        new Set(["auth.third_party.workos.enabled", "auth.third_party.workos.issuer_url"]),
+      );
+      const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+      expect(parsed.keys.some((key) => key["kid"] === "remote-key")).toBe(true);
+      fetchMock.mockRestore();
+    });
+  });
+});
+
+describe("legacyResolveAuthExternalUrl — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+  afterEach(() => {
+    delete process.env["SUPABASE_AUTH_EXTERNAL_URL"];
+  });
+
+  it("prefers a remote-set auth.external_url over a conflicting SUPABASE_AUTH_EXTERNAL_URL", () => {
+    process.env["SUPABASE_AUTH_EXTERNAL_URL"] = "https://env-should-not-win.test";
+    const document = { auth: { external_url: "https://remote.test" } };
+    expect(legacyResolveAuthExternalUrl(document, undefined, new Set(["auth.external_url"]))).toBe(
+      "https://remote.test",
+    );
+  });
+
+  it("still applies SUPABASE_AUTH_EXTERNAL_URL when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_EXTERNAL_URL"] = "https://env-wins.test";
+    const document = { auth: { external_url: "https://configured.test" } };
+    expect(legacyResolveAuthExternalUrl(document, undefined)).toBe("https://env-wins.test");
+  });
+});
+
+describe("legacyResolveConfiguredSigningKeys — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+  const tempRoot = useLegacyTempWorkdir("supabase-configured-signing-keys-test-");
+
+  afterEach(() => {
+    delete process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"];
+  });
+
+  it("prefers a remote-set auth.signing_keys_path over a conflicting SUPABASE_AUTH_SIGNING_KEYS_PATH", () => {
+    const jwk = generateRsaJwk();
+    writeSigningKeys(tempRoot.current, [jwk]);
+    process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    const keys = legacyResolveConfiguredSigningKeys(
+      config,
+      tempRoot.current,
+      undefined,
+      new Set(["auth.signing_keys_path"]),
+    );
+    expect(keys).toHaveLength(1);
+    expect(keys?.[0]).toMatchObject({ kid: "test-rsa-kid" });
+  });
+
+  it("still reads the env-overridden path when no remote block matched", () => {
+    const jwk = generateRsaJwk();
+    writeSigningKeys(tempRoot.current, [jwk]);
+    process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    expect(() => legacyResolveConfiguredSigningKeys(config, tempRoot.current, undefined)).toThrow(
+      "failed to read signing keys: ",
+    );
   });
 });

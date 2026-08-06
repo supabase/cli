@@ -372,6 +372,25 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.site_url",
   "auth.anon_key",
   "auth.service_role_key",
+  // Not read by ANY of the resolvers above — these feed `legacyResolveLocalJwks`'s/
+  // `legacyResolveAuthExternalUrl`'s/`legacyResolveConfiguredSigningKeys`'s own fields
+  // instead, which the shadow's PG15+ one-shot auth-migration job also consumes on the
+  // same `db diff --linked`/`db pull` path (review: PRRT_kwDOErm0O86W3Ox_) — same
+  // override-tier gap as the two blocks above, just for THOSE resolvers' reachable subset.
+  "auth.signing_keys_path",
+  "auth.external_url",
+  "auth.third_party.firebase.enabled",
+  "auth.third_party.firebase.project_id",
+  "auth.third_party.auth0.enabled",
+  "auth.third_party.auth0.tenant",
+  "auth.third_party.auth0.tenant_region",
+  "auth.third_party.aws_cognito.enabled",
+  "auth.third_party.aws_cognito.user_pool_id",
+  "auth.third_party.aws_cognito.user_pool_region",
+  "auth.third_party.clerk.enabled",
+  "auth.third_party.clerk.domain",
+  "auth.third_party.workos.enabled",
+  "auth.third_party.workos.issuer_url",
 ];
 
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */

@@ -248,11 +248,22 @@ export const legacyBuildLocalDbContainerInputs = (
       // `Realtime.Enabled` (`internal/db/start/start.go:337-341`) — `legacyRunFreshDbSetup` only
       // evaluates this Effect when reached AND `realtimeEnabledForSetup`.
       jwks: Effect.tryPromise({
-        try: () => legacyResolveLocalJwks(config, workdir, values.jwtSecret, projectEnvValues),
+        try: () =>
+          legacyResolveLocalJwks(
+            config,
+            workdir,
+            values.jwtSecret,
+            projectEnvValues,
+            remoteOverrideKeys,
+          ),
         catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
       }),
       apiUrl: values.apiUrl,
-      authExternalUrl: legacyResolveAuthExternalUrl(loaded?.document, projectEnvValues),
+      authExternalUrl: legacyResolveAuthExternalUrl(
+        loaded?.document,
+        projectEnvValues,
+        remoteOverrideKeys,
+      ),
       siteUrl: values.authSiteUrl,
       anonKey: values.anonKey,
       serviceRoleKey: values.serviceRoleKey,
