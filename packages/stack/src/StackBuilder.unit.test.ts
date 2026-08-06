@@ -5,7 +5,7 @@ import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
 import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
@@ -47,6 +47,7 @@ const baseConfig: ResolvedStackConfig = {
   projectDir: "/tmp/supabase-project",
   mode: "auto",
   startupMode: "eager",
+  readiness: DEFAULT_STACK_READINESS_POLICY,
   jwtSecret: testJwtSecret,
   ports: basePorts,
   apiPort: 3000,

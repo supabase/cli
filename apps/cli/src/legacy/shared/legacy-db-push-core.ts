@@ -6,9 +6,9 @@ import { Output } from "../../shared/output/output.service.ts";
 import {
   legacyListLocalMigrations,
   legacyTryCacheMigrationsCatalog,
-} from "../commands/db/shared/legacy-pgdelta.cache.ts";
-import { type LegacyPgDeltaContext } from "../commands/db/shared/legacy-pgdelta.ts";
-import { legacyParseBoolEnv } from "../commands/db/shared/legacy-diff-engine.ts";
+} from "./legacy-pgdelta.cache.ts";
+import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+import { legacyParseBoolEnv } from "./legacy-diff-engine.ts";
 import {
   LEGACY_ERR_MISSING_LOCAL,
   LEGACY_ERR_MISSING_REMOTE,

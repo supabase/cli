@@ -198,10 +198,11 @@ service and its projected status.
 ### Readiness
 
 ```typescript
-await stack.ready(); // Wait for all services
-await stack.ready({ timeout: 30_000 }); // With timeout (ms)
-await stack.serviceReady("postgres"); // Wait for one service
-await stack.serviceReady("auth", { timeout: 10_000 });
+await stack.ready(); // Inherit the stack's finite two-minute default
+await stack.ready({ mode: "finite", timeoutMs: 30_000 });
+await stack.ready({ mode: "infinite" }); // Explicit debugging override
+await stack.serviceReady("postgres");
+await stack.serviceReady("auth", { mode: "finite", timeoutMs: 10_000 });
 ```
 
 In eager mode, `start()` blocks until every enabled service is ready. In lazy mode it waits only
@@ -276,8 +277,8 @@ await prefetch({ versions: { postgres: "17.4.1.045" } });
 ## Service Versions
 
 Default versions are used when no per-service `version` field is specified. The authoritative,
-exhaustive values are exported as `DEFAULT_VERSIONS` and live in
-[`src/versions.ts`](./src/versions.ts); they are intentionally not copied into this README.
+exhaustive values live in [`src/ServiceCatalog.ts`](./src/ServiceCatalog.ts) and are exported as
+the derived `DEFAULT_VERSIONS` manifest; they are intentionally not copied into this README.
 
 Override versions per service:
 

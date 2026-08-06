@@ -2,6 +2,7 @@ package reset
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -498,9 +499,23 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/exec").
 			Reply(http.StatusServiceUnavailable)
+		// The reload must carry bring-up's template — see reloadKong (#6059).
+		execPath := "/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/exec"
+		observed := 0
+		gock.Observe(func(r *http.Request, mock gock.Mock) {
+			if r.URL.Path != execPath {
+				return
+			}
+			observed += 1
+			var body container.ExecOptions
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, []string{"kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"}, body.Cmd)
+		})
+		t.Cleanup(func() { gock.Observe(nil) })
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
+		assert.Equal(t, 1, observed)
 		assert.ErrorContains(t, err, "failed to reload kong")
 		assert.Contains(t, utils.CmdSuggestion, "API routes may return 502")
 		assert.Contains(t, utils.CmdSuggestion, "docker restart test-kong")

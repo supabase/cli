@@ -47,7 +47,6 @@ describe("extractCommandPath", () => {
 describe("shouldUseGlobalSignalInterrupt", () => {
   it("opts out for self-managed signal commands, even behind global flags", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "serve"])).toBe(false);
-    expect(shouldUseGlobalSignalInterrupt(["db", "start"])).toBe(false);
     // `db reset` drives the bootstrap seam (holds signals for the Go child), so it must not
     // be wrapped in the global handler either.
     expect(shouldUseGlobalSignalInterrupt(["db", "reset"])).toBe(false);
@@ -56,11 +55,12 @@ describe("shouldUseGlobalSignalInterrupt", () => {
     ).toBe(false);
   });
 
-  it("opts in for ordinary commands, including native start (it installs no signal handling of its own, so the global wrapper's rollback-on-interrupt is the only thing that runs legacyRollbackStart on Ctrl-C)", () => {
+  it("opts in for ordinary commands, including native start/db start (each installs no signal handling of its own, so the global wrapper's rollback-on-interrupt is the only thing that runs legacyRollbackStart on Ctrl-C)", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "list"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["db", "push"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["projects", "list"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(true);
+    expect(shouldUseGlobalSignalInterrupt(["db", "start"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt([])).toBe(true);
   });
 

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { Duration, Effect } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
 
 /**
  * Force-remove Docker containers by name. Best-effort safety net —

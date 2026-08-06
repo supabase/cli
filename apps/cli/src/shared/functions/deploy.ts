@@ -1630,7 +1630,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
         ...(bundleOnly ? { bundleOnly: true } : {}),
         body: {
           metadata,
-          ...(files.length > 0 ? { file: files } : {}),
+          file: files,
         },
       })
       .pipe(

@@ -3,7 +3,6 @@ import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
 import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
-import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
 import { generateJwks } from "./JwtGenerator.ts";
 import {
   detectPlatform,
@@ -11,7 +10,6 @@ import {
   dockerNetworkArgs,
   dockerPortMapArgs,
 } from "./Platform.ts";
-import type { ServiceResolution } from "./resolve.ts";
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
@@ -38,271 +36,12 @@ import {
   dependencyTimeoutSecondsForServices,
   POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
 } from "./services/health-budgets.ts";
-import type { PreparedStackArtifacts } from "./StackPreparation.ts";
+import type { PreparedStackArtifacts, ServiceResolution } from "./StackPreparation.ts";
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
-import type { ServiceName, VersionManifest } from "./versions.ts";
-
-export interface PostgresConfig {
-  readonly port?: number;
-  readonly dataDir?: string;
-  readonly version?: string;
-  /**
-   * When true (default), the bundled initial schema GRANTs that expose new tables, views,
-   * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
-   * `service_role`) are kept in place. When false, those default privileges are revoked so the
-   * local stack matches the new cloud default and requires explicit GRANTs to surface entities
-   * through the Data API.
-   */
-  readonly autoExposeNewTables?: boolean;
-}
-
-export interface PostgrestConfig {
-  readonly schemas?: ReadonlyArray<string>;
-  readonly extraSearchPath?: ReadonlyArray<string>;
-  readonly maxRows?: number;
-  readonly version?: string;
-}
-
-export interface AuthConfig {
-  readonly port?: number;
-  readonly siteUrl?: string;
-  readonly jwtExpiry?: number;
-  readonly externalUrl?: string;
-  readonly version?: string;
-}
-
-export interface RealtimeConfig {
-  readonly port?: number;
-  readonly version?: string;
-  readonly tenantId?: string;
-  readonly encryptionKey?: string;
-  readonly secretKeyBase?: string;
-  readonly maxHeaderLength?: number;
-}
-
-export interface EdgeRuntimeConfig {
-  readonly enabled?: boolean;
-  readonly port?: number;
-  readonly inspectorPort?: number;
-  readonly policy?: "oneshot" | "per_worker";
-  readonly version?: string;
-  readonly env?: Readonly<Record<string, string>>;
-}
-
-export interface StorageConfig {
-  readonly port?: number;
-  readonly dataDir?: string;
-  readonly fileSizeLimit?: string;
-  readonly s3ProtocolEnabled?: boolean;
-  readonly version?: string;
-}
-
-export interface ImgproxyConfig {
-  readonly port?: number;
-  readonly version?: string;
-}
-
-export interface MailpitConfig {
-  readonly port?: number;
-  readonly smtpPort?: number;
-  readonly pop3Port?: number;
-  readonly version?: string;
-  readonly adminEmail?: string;
-  readonly senderName?: string;
-}
-
-export interface PgmetaConfig {
-  readonly port?: number;
-  readonly version?: string;
-}
-
-export interface StudioConfig {
-  readonly port?: number;
-  readonly apiUrl?: string;
-  readonly version?: string;
-}
-
-export interface AnalyticsConfig {
-  readonly port?: number;
-  readonly version?: string;
-  readonly backend?: "postgres" | "bigquery";
-  readonly apiKey?: string;
-}
-
-export interface VectorConfig {
-  readonly version?: string;
-}
-
-export interface PoolerConfig {
-  readonly port?: number;
-  readonly apiPort?: number;
-  readonly mode?: "transaction" | "session";
-  readonly version?: string;
-  readonly tenantId?: string;
-  readonly encryptionKey?: string;
-  readonly secretKeyBase?: string;
-  readonly defaultPoolSize?: number;
-  readonly maxClientConn?: number;
-}
-
-export interface StackConfig {
-  readonly cacheRoot?: string;
-  readonly stackRoot?: string;
-  readonly runtimeRoot?: string;
-  readonly projectDir?: string;
-  readonly mode?: "native" | "auto" | "docker";
-  /** Start all services immediately, or defer proxied services until first use. */
-  readonly startupMode?: "eager" | "lazy";
-  readonly jwtSecret?: string;
-  readonly port?: number;
-  readonly publishableKey?: string;
-  readonly secretKey?: string;
-  readonly functions?: FunctionsConfig | false;
-  readonly postgres?: PostgresConfig;
-  readonly postgrest?: PostgrestConfig | false;
-  readonly auth?: AuthConfig | false;
-  readonly edgeRuntime?: EdgeRuntimeConfig | false;
-  readonly realtime?: RealtimeConfig | false;
-  readonly storage?: StorageConfig | false;
-  readonly imgproxy?: ImgproxyConfig | false;
-  readonly mailpit?: MailpitConfig | false;
-  readonly pgmeta?: PgmetaConfig | false;
-  readonly studio?: StudioConfig | false;
-  readonly analytics?: AnalyticsConfig | false;
-  readonly vector?: VectorConfig | false;
-  readonly pooler?: PoolerConfig | false;
-}
-
-export interface ResolvedPostgresConfig {
-  readonly port: number;
-  readonly dataDir: string;
-  readonly version: string;
-  readonly autoExposeNewTables: boolean;
-}
-
-export interface ResolvedPostgrestConfig {
-  readonly port: number;
-  readonly adminPort: number;
-  readonly schemas: ReadonlyArray<string>;
-  readonly extraSearchPath: ReadonlyArray<string>;
-  readonly maxRows: number;
-  readonly version: string;
-}
-
-export interface ResolvedAuthConfig {
-  readonly port: number;
-  readonly siteUrl: string;
-  readonly jwtExpiry: number;
-  readonly externalUrl: string;
-  readonly version: string;
-}
-
-export interface ResolvedRealtimeConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly tenantId: string;
-  readonly encryptionKey: string;
-  readonly secretKeyBase: string;
-  readonly maxHeaderLength: number;
-}
-
-export interface ResolvedEdgeRuntimeConfig {
-  readonly enabled: boolean;
-  readonly port: number;
-  readonly inspectorPort: number;
-  readonly policy: "oneshot" | "per_worker";
-  readonly version: string;
-  readonly env: Readonly<Record<string, string>>;
-}
-
-export interface ResolvedStorageConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly dataDir: string;
-  readonly fileSizeLimit: string;
-  readonly s3ProtocolEnabled: boolean;
-}
-
-export interface ResolvedImgproxyConfig {
-  readonly port: number;
-  readonly version: string;
-}
-
-export interface ResolvedMailpitConfig {
-  readonly port: number;
-  readonly smtpPort: number;
-  readonly pop3Port: number;
-  readonly version: string;
-  readonly adminEmail: string;
-  readonly senderName: string;
-}
-
-export interface ResolvedPgmetaConfig {
-  readonly port: number;
-  readonly version: string;
-}
-
-export interface ResolvedStudioConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly apiUrl: string;
-}
-
-export interface ResolvedAnalyticsConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly backend: "postgres" | "bigquery";
-  readonly apiKey: string;
-}
-
-export interface ResolvedVectorConfig {
-  readonly version: string;
-}
-
-export interface ResolvedPoolerConfig {
-  readonly port: number;
-  readonly apiPort: number;
-  readonly mode: "transaction" | "session";
-  readonly version: string;
-  readonly tenantId: string;
-  readonly encryptionKey: string;
-  readonly secretKeyBase: string;
-  readonly defaultPoolSize: number;
-  readonly maxClientConn: number;
-}
-
-export interface ResolvedStackConfig {
-  readonly cacheRoot: string;
-  readonly stackRoot: string;
-  readonly runtimeRoot: string;
-  readonly projectDir: string;
-  readonly mode: "native" | "auto" | "docker";
-  readonly startupMode: "eager" | "lazy";
-  readonly jwtSecret: string;
-  readonly ports: AllocatedPorts;
-  readonly apiPort: number;
-  readonly dbPort: number;
-  readonly publishableKey: string;
-  readonly secretKey: string;
-  readonly functions: ResolvedFunctionsConfig | false;
-  readonly autoManagedPaths: ReadonlyArray<string>;
-  readonly anonJwt: string;
-  readonly serviceRoleJwt: string;
-  readonly postgres: ResolvedPostgresConfig;
-  readonly postgrest: ResolvedPostgrestConfig | false;
-  readonly auth: ResolvedAuthConfig | false;
-  readonly edgeRuntime: ResolvedEdgeRuntimeConfig | false;
-  readonly realtime: ResolvedRealtimeConfig | false;
-  readonly storage: ResolvedStorageConfig | false;
-  readonly imgproxy: ResolvedImgproxyConfig | false;
-  readonly mailpit: ResolvedMailpitConfig | false;
-  readonly pgmeta: ResolvedPgmetaConfig | false;
-  readonly studio: ResolvedStudioConfig | false;
-  readonly analytics: ResolvedAnalyticsConfig | false;
-  readonly vector: ResolvedVectorConfig | false;
-  readonly pooler: ResolvedPoolerConfig | false;
-}
+import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
+import type { VersionManifest } from "./versions.ts";
 
 export interface BuildResult {
   readonly graph: ResolvedGraph;
@@ -310,18 +49,9 @@ export interface BuildResult {
   readonly serviceProjection: StackServiceProjectionCatalog;
 }
 
-const dockerOnlyServices = [
-  "edge-runtime",
-  "realtime",
-  "storage",
-  "imgproxy",
-  "mailpit",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "vector",
-  "pooler",
-] as const;
+const dockerOnlyServices = SERVICE_NAMES.filter(
+  (service) => serviceMetadata(service).runtimeSupport === "docker-only",
+);
 
 const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDependency> =>
   hasPostgresInit
@@ -372,10 +102,8 @@ const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
       path.startsWith(`${managedPath}\\`),
   );
 
-const resolvedConfigForService = (
-  config: ResolvedStackConfig,
-  service: Exclude<ServiceName, "postgres">,
-) => (service === "edge-runtime" ? config.edgeRuntime : config[service]);
+const resolvedConfigForService = (config: ResolvedStackConfig, service: ServiceName) =>
+  config[serviceMetadata(service).configKey];
 
 export const validateResolvedConfig = (
   config: ResolvedStackConfig,
@@ -419,66 +147,21 @@ export const validateResolvedConfig = (
     }
   });
 
-export const enabledServicesForConfig = (
-  config: ResolvedStackConfig,
-): ReadonlyArray<ServiceName> => {
-  const services: ServiceName[] = ["postgres"];
+export const enabledServicesForConfig = (config: ResolvedStackConfig): ReadonlyArray<ServiceName> =>
+  SERVICE_NAMES.filter(
+    (service) => service === "postgres" || resolvedConfigForService(config, service) !== false,
+  );
 
-  if (config.postgrest !== false) {
-    services.push("postgrest");
+export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionManifest> => {
+  const versions: Partial<Record<ServiceName, string>> = {};
+  for (const service of enabledServicesForConfig(config)) {
+    const serviceConfig = resolvedConfigForService(config, service);
+    if (serviceConfig !== false) {
+      versions[service] = serviceConfig.version;
+    }
   }
-  if (config.auth !== false) {
-    services.push("auth");
-  }
-  if (config.edgeRuntime !== false) {
-    services.push("edge-runtime");
-  }
-  if (config.realtime !== false) {
-    services.push("realtime");
-  }
-  if (config.storage !== false) {
-    services.push("storage");
-  }
-  if (config.imgproxy !== false) {
-    services.push("imgproxy");
-  }
-  if (config.mailpit !== false) {
-    services.push("mailpit");
-  }
-  if (config.pgmeta !== false) {
-    services.push("pgmeta");
-  }
-  if (config.studio !== false) {
-    services.push("studio");
-  }
-  if (config.analytics !== false) {
-    services.push("analytics");
-  }
-  if (config.vector !== false) {
-    services.push("vector");
-  }
-  if (config.pooler !== false) {
-    services.push("pooler");
-  }
-
-  return services;
+  return versions;
 };
-
-export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionManifest> => ({
-  postgres: config.postgres.version,
-  ...(config.postgrest === false ? {} : { postgrest: config.postgrest.version }),
-  ...(config.auth === false ? {} : { auth: config.auth.version }),
-  ...(config.edgeRuntime === false ? {} : { "edge-runtime": config.edgeRuntime.version }),
-  ...(config.realtime === false ? {} : { realtime: config.realtime.version }),
-  ...(config.storage === false ? {} : { storage: config.storage.version }),
-  ...(config.imgproxy === false ? {} : { imgproxy: config.imgproxy.version }),
-  ...(config.mailpit === false ? {} : { mailpit: config.mailpit.version }),
-  ...(config.pgmeta === false ? {} : { pgmeta: config.pgmeta.version }),
-  ...(config.studio === false ? {} : { studio: config.studio.version }),
-  ...(config.analytics === false ? {} : { analytics: config.analytics.version }),
-  ...(config.vector === false ? {} : { vector: config.vector.version }),
-  ...(config.pooler === false ? {} : { pooler: config.pooler.version }),
-});
 
 const requirePreparedResolution = (
   prepared: PreparedStackArtifacts,

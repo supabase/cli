@@ -1,10 +1,13 @@
 /**
- * Transcribed verbatim from `apps/cli-go/internal/start/templates/pooler.exs`
+ * Transcribed verbatim from the former `apps/cli-go/internal/start/templates/pooler.exs`
  * (Go `//go:embed templates/pooler.exs`, parsed as a `text/template` named
- * `poolerTenant`, `apps/cli-go/internal/start/start.go:155-158`). Do not
- * hand-edit the Elixir body — re-transcribe from the Go source if it changes.
+ * `poolerTenant`, `apps/cli-go/internal/start/start.go:155-158`). `internal/start`
+ * (including this template) was deleted outright as unreachable from the TS CLI
+ * (CLI-1966); the last commit with it intact is a253ccba25c21356ccd33044c4474aecb77d1ae4
+ * (https://github.com/supabase/cli/blob/a253ccba25c21356ccd33044c4474aecb77d1ae4/apps/cli-go/internal/start/templates/pooler.exs).
+ * Do not hand-edit the Elixir body — this is now the sole source of truth.
  *
- * Placeholders (`{{ .Field }}`) are Go's `poolerTenant` struct fields
+ * Placeholders (`{{ .Field }}`) were Go's `poolerTenant` struct fields
  * (`start.go:144-153`): DbHost, DbPort, DbDatabase, DbPassword, ExternalId,
  * ModeType, DefaultMaxClients, DefaultPoolSize. Rendered by
  * `lib/template-render.ts`.

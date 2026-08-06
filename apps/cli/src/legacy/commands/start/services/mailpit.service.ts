@@ -11,7 +11,7 @@
  */
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
 /**
  * `utils.InbucketAliases[0]` (`apps/cli-go/internal/utils/config.go:39`) — also
