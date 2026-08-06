@@ -293,9 +293,11 @@ function setup(
   });
 
   const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const registryEnvAtRunTime: Array<string | undefined> = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCalls.push(runOpts);
+      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
       if (opts.catalogExportFailWith !== undefined) {
         return Effect.fail(
           new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
@@ -345,7 +347,17 @@ function setup(
     telemetry.layer,
     linkedCache.layer,
   );
-  return { layer, out, conn, seam, telemetry, linkedCache, resolver, edgeRunCalls };
+  return {
+    layer,
+    out,
+    conn,
+    seam,
+    telemetry,
+    linkedCache,
+    resolver,
+    edgeRunCalls,
+    registryEnvAtRunTime,
+  };
 }
 
 const migrationFile = (version: string, body = "create table t ();") => ({
@@ -806,6 +818,42 @@ describe("legacy db reset", () => {
         expect(out.stderrText).not.toContain("failed to cache migrations catalog");
         expect(edgeRunCalls).toHaveLength(1);
       });
+    },
+  );
+
+  it.live(
+    "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
+    () => {
+      // Go's `loadNestedEnv` (`os.Setenv`) makes a `supabase/.env`-only
+      // `SUPABASE_INTERNAL_IMAGE_REGISTRY` visible to the WHOLE reset run, including
+      // the pg-delta catalog export the reset handler triggers after a successful
+      // remote reset (review CLI-1958 round 18) — mirroring `db push`'s own
+      // `legacyApplyProjectEnv(projectEnv)` scoping (same-named test in
+      // `push.integration.test.ts`). Without that scoping, this reads only real
+      // `process.env` and falls back to the default registry instead.
+      const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+      delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+      const { layer, registryEnvAtRunTime } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+        },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
+        // The finalizer reverted it — never leaks into the surrounding process.
+        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+            else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+          }),
+        ),
+      );
     },
   );
 

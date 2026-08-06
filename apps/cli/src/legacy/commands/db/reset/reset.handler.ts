@@ -15,6 +15,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { redactLegacyConnectionString } from "../../../shared/legacy-db-config.parse.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
+  legacyApplyProjectEnv,
   legacyCheckDbToml,
   legacyLoadProjectEnv,
   legacyResolveSeedSqlPath,
@@ -107,6 +108,16 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
+    // Go's `loadNestedEnv` (`os.Setenv`) makes every project-`.env` key visible to the
+    // WHOLE reset run, not just the flag-gate reads above — in particular
+    // `legacyGetRegistryImageUrl` / `legacyPgDeltaNpmRegistryOption` read
+    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY` straight from
+    // `process.env` for the pg-delta catalog export below (review CLI-1958). `db push`
+    // (`push.handler.ts`) scopes this the same way, as the first statement of its own
+    // `body` — mirror that exactly so a private/air-gapped registry configured only in
+    // `supabase/.env` reaches the catalog export instead of silently falling back to the
+    // default registries.
+    yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
     // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local").
     if (target.setFlags.length > 1) {
@@ -474,5 +485,8 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    // Closes the `Scope` `legacyApplyProjectEnv` (above) acquires its `process.env`
+    // reverts against — mirrors `push.handler.ts`'s own `body.pipe(..., Effect.scoped)`.
+    Effect.scoped,
   );
 });
