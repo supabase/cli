@@ -3,10 +3,10 @@ import { Context, Effect, FileSystem, type Layer, ManagedRuntime, Path, Stream }
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
-import { ApiProxy } from "./ApiProxy.ts";
 import { toStackError } from "./errors.ts";
 import type { FunctionsReloadConfig } from "./functions.ts";
 import { foregroundLayer } from "./layers.ts";
+import { LocalStackLifecycle } from "./LocalStack.ts";
 import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
 import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { Stack } from "./Stack.ts";
@@ -30,16 +30,17 @@ interface PlatformFactoryOptions {
 
 export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
 
-/** @internal Converts foreground operation failures and closes the runtime after terminal timeouts. */
+/** @internal Converts operation failures and closes a terminal foreground runtime. */
 export async function runForegroundOperation<A>(
   operation: Promise<A>,
+  isDisposed: () => Promise<boolean>,
   dispose: () => Promise<void>,
 ): Promise<A> {
   try {
     return await operation;
   } catch (error: unknown) {
     const stackError = toStackError(error);
-    if (stackError.code === "STACK_READINESS_TIMEOUT") {
+    if (await isDisposed()) {
       await dispose();
     }
     throw stackError;
@@ -109,7 +110,7 @@ export async function createStack(
     try {
       const services = await runtime.context();
       const localStack = Context.get(services, Stack);
-      const apiProxy = Context.get(services, ApiProxy);
+      const lifecycle = Context.get(services, LocalStackLifecycle);
       const info = await runtime.runPromise(localStack.getInfo());
 
       let disposal: Promise<void> | undefined;
@@ -118,12 +119,16 @@ export async function createStack(
         return disposal;
       };
       const run = <A>(effect: Effect.Effect<A, unknown>) =>
-        runForegroundOperation(runtime.runPromise(effect), gracefulDispose);
+        runForegroundOperation(
+          runtime.runPromise(effect),
+          () => runtime.runPromise(lifecycle.isDisposed),
+          gracefulDispose,
+        );
 
-      // A terminal lazy-activation timeout disposes LocalStack. Close the
-      // foreground runtime as well so the public API port cannot outlive it.
+      // LocalStack owns terminality. When it disposes, close the enclosing
+      // runtime as well so the public API port cannot outlive the stack.
       void runtime
-        .runPromise(apiProxy.awaitTerminalFailure)
+        .runPromise(lifecycle.awaitDisposed)
         .then(gracefulDispose)
         .catch(() => {});
 

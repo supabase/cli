@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
+import type { Layer } from "effect";
 import * as bunRoot from "./bun.ts";
 import * as bunEffect from "./effect-bun.ts";
 import * as nodeEffect from "./effect-node.ts";
 import * as nodeRoot from "./node.ts";
 import type { StackHandle } from "./createStack.ts";
+import type { Stack } from "./Stack.ts";
 import * as testing from "./testing.ts";
 
 const INTERNAL_EFFECT_EXPORTS = [
@@ -54,6 +56,9 @@ describe("@supabase/stack entrypoints", () => {
   });
 
   it("binds consumer Effect layers without exposing implementation tags", () => {
+    expectTypeOf(nodeEffect.foregroundLayer).returns.toEqualTypeOf<Layer.Layer<Stack>>();
+    expectTypeOf(bunEffect.foregroundLayer).returns.toEqualTypeOf<Layer.Layer<Stack>>();
+
     for (const entrypoint of [nodeEffect, bunEffect]) {
       expect(entrypoint).toHaveProperty("connectLayer");
       expect(entrypoint).toHaveProperty("daemonLayer");
