@@ -2790,6 +2790,174 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 });
 
+describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+  // Go's `mergeRemoteConfig` installs every matched `[remotes.<ref>]` leaf at viper's OVERRIDE
+  // tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:635-640`) — so once a remote
+  // block sets a field, a conflicting `SUPABASE_*` env var must never be consulted for it.
+  // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` already gated this
+  // (review: PRRT_kwDOErm0O86W2LL4); this covers the remaining leaves this resolver derives
+  // that the shadow's own container/setup spec also consumes (review: PRRT_kwDOErm0O86W2tRi).
+  afterEach(() => {
+    for (const name of [
+      "SUPABASE_DB_MAJOR_VERSION",
+      "SUPABASE_AUTH_JWT_SECRET",
+      "SUPABASE_DB_ROOT_KEY",
+      "SUPABASE_API_PORT",
+      "SUPABASE_API_TLS_ENABLED",
+      "SUPABASE_API_EXTERNAL_URL",
+      "SUPABASE_DB_PORT",
+      "SUPABASE_AUTH_SITE_URL",
+      "SUPABASE_AUTH_JWT_EXPIRY",
+      "SUPABASE_AUTH_ANON_KEY",
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
+    ]) {
+      delete process.env[name];
+    }
+  });
+
+  it("suppresses a malformed SUPABASE_DB_MAJOR_VERSION when a remote block already set db.major_version", () => {
+    // Regression (review: PRRT_kwDOErm0O86W2tRi): this function validates `db.major_version`
+    // early but has no `majorVersion` field on its own return type (the shadow's actually-
+    // consumed value comes from the already-gated `legacyResolveDbBootstrapConfig`) — before
+    // this fix, the validate-only read here still decoded a conflicting env var unconditionally,
+    // so a malformed value the remote block should have made irrelevant failed config loading
+    // outright instead of the command proceeding on the remote's value, matching Go.
+    process.env["SUPABASE_DB_MAJOR_VERSION"] = "abc";
+    const config = baseConfig({ db: { major_version: 14 } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["db.major_version"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_DB_MAJOR_VERSION when no remote block matched", () => {
+    process.env["SUPABASE_DB_MAJOR_VERSION"] = "abc";
+    const config = baseConfig({ db: { major_version: 14 } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      "Invalid db.major_version: abc",
+    );
+  });
+
+  it("prefers a remote-set auth.jwt_secret over a conflicting SUPABASE_AUTH_JWT_SECRET", () => {
+    process.env["SUPABASE_AUTH_JWT_SECRET"] = "env-supplied-secret-value-1234567890";
+    const config = baseConfig({ auth: { jwt_secret: "remote-supplied-secret-1234567890" } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["auth.jwt_secret"]),
+    );
+    expect(values.jwtSecret).toBe("remote-supplied-secret-1234567890");
+  });
+
+  it("prefers a remote-set db.root_key over a conflicting SUPABASE_DB_ROOT_KEY", () => {
+    process.env["SUPABASE_DB_ROOT_KEY"] = "env-root-key";
+    const config = baseConfig();
+    const document = { db: { root_key: "remote-root-key" } };
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      document,
+      new Set(["db.root_key"]),
+    );
+    expect(values.rootKey).toBe("remote-root-key");
+  });
+
+  it("prefers remote-set api.port/api.tls.enabled/api.external_url over conflicting env overrides", () => {
+    process.env["SUPABASE_API_PORT"] = "9999";
+    process.env["SUPABASE_API_TLS_ENABLED"] = "true";
+    process.env["SUPABASE_API_EXTERNAL_URL"] = "https://env-should-not-win.test";
+    const config = baseConfig({ api: { port: 54321, external_url: "", tls: { enabled: false } } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["api.port", "api.tls.enabled", "api.external_url"]),
+    );
+    expect(values.apiUrl).toBe("http://127.0.0.1:54321");
+  });
+
+  it("prefers a remote-set db.port over a conflicting SUPABASE_DB_PORT", () => {
+    process.env["SUPABASE_DB_PORT"] = "9999";
+    const config = baseConfig({ db: { port: 54322 } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["db.port"]),
+    );
+    expect(values.dbPort).toBe(54322);
+    expect(values.dbUrl).toContain(":54322/postgres");
+  });
+
+  it("prefers remote-set auth.site_url/auth.jwt_expiry over conflicting env overrides", () => {
+    process.env["SUPABASE_AUTH_SITE_URL"] = "https://env-should-not-win.test";
+    process.env["SUPABASE_AUTH_JWT_EXPIRY"] = "9999";
+    const config = baseConfig({ auth: { site_url: "https://remote.test", jwt_expiry: 3600 } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["auth.site_url", "auth.jwt_expiry"]),
+    );
+    expect(values.authSiteUrl).toBe("https://remote.test");
+    expect(values.authJwtExpiry).toBe(3600);
+  });
+
+  it("prefers remote-set auth.anon_key/auth.service_role_key over conflicting env overrides", () => {
+    process.env["SUPABASE_AUTH_ANON_KEY"] = "env-anon-key";
+    process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = "env-service-role-key";
+    const config = baseConfig({
+      auth: { anon_key: "remote-anon-key", service_role_key: "remote-service-role-key" },
+    });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["auth.anon_key", "auth.service_role_key"]),
+    );
+    expect(values.anonKey).toBe("remote-anon-key");
+    expect(values.serviceRoleKey).toBe("remote-service-role-key");
+  });
+
+  it("suppresses a malformed SUPABASE_DB_SETTINGS_MAX_CONNECTIONS when the remote block set db.settings.max_connections", () => {
+    // Same validate-only shape as `db.major_version` above — `legacyResolveDbSettingsEnvOverrides`
+    // is threaded `remoteOverrideKeys` here too, not just at its OWN (already-gated) call site
+    // in `legacyResolveDbBootstrapConfig`.
+    process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "not-a-number";
+    const config = baseConfig({ db: { settings: { max_connections: 100 } } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["db.settings.max_connections"]),
+      ),
+    ).not.toThrow();
+  });
+});
+
 describe("legacyResolveLocalJwks", () => {
   const tempRoot = useLegacyTempWorkdir("supabase-local-jwks-test-");
 

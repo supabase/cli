@@ -2535,7 +2535,28 @@ export function legacyResolveLocalConfigValues(
    * guessed at.
    */
   document: Readonly<Record<string, unknown>> | undefined = undefined,
+  /**
+   * Config keys a matched `[remotes.<ref>]` block contributed at viper's OVERRIDE tier (Go's
+   * `v.Set`, applied ABOVE `AutomaticEnv` — `apps/cli-go/pkg/config/config.go:635-640`) — see
+   * `legacy-db-config.toml-read.ts`'s `LegacyRemoteOverride.remoteOverrideKeys` doc comment for
+   * the full precedence rationale. Every `legacyEnvOverride*` call below that resolves a field
+   * this function's shadow-consuming caller (`legacyBuildLocalDbContainerInputs`) actually
+   * threads onward (`dbPort`/`rootKey`/`jwtSecret`/`authJwtExpiry`/`authSiteUrl`/`anonKey`/
+   * `serviceRoleKey`, plus `apiUrl`'s own `api.port`/`api.tls.enabled`/`api.external_url`
+   * inputs) must NOT re-apply a `SUPABASE_*` value for a field the remote block already set —
+   * same gate `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` already
+   * apply for the OTHER shadow-bootstrap fields (review: PRRT_kwDOErm0O86W2tRi, following on
+   * from PRRT_kwDOErm0O86W2LL4's fix to those two). Defaults to empty: `db start`/`db reset`/
+   * `status`/`stop` never resolve a remote block for this config read (they never pass a
+   * `projectRef`), so they are unaffected. The dozens of OTHER fields this function resolves
+   * (studio/smtp/passkey/mfa/analytics/third_party/...) are never read by that caller — grepped
+   * confirmed no other consumer reads `LegacyLocalConfigValues` beyond those — so they are
+   * deliberately NOT gated here; gating them would be inert (no caller ever passes a non-empty
+   * `remoteOverrideKeys` that could reach them) rather than a genuine parity gap.
+   */
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyLocalConfigValues {
+  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
   // Go's `Config.Validate` checks `ProjectId` FIRST, before every other field
   // (`pkg/config/config.go:990-991`) — see this function's `@throws` doc above
   // for why a workdir basename that sanitizes to `""` fails here even when
@@ -2561,12 +2582,18 @@ export function legacyResolveLocalConfigValues(
   // `legacyResolveApiExternalUrl`'s own `external_url`-wins-else-
   // `scheme://host:port` derivation (which picks `https` vs `http` from
   // `tls.enabled`) must be the overridden ones too.
-  const apiTlsEnabled = legacyEnvOverrideBool(
-    "SUPABASE_API_TLS_ENABLED",
-    config.api.tls.enabled,
-    "api.tls.enabled",
-    projectEnvValues,
-  );
+  // A matched remote block's `api.tls.enabled` was installed at viper's OVERRIDE tier (above
+  // `AutomaticEnv`), so it must win over a conflicting `SUPABASE_API_TLS_ENABLED` — this field
+  // reaches `apiUrl`/`restUrl`/etc, which the shadow's own `db diff --linked`/`db pull` setup
+  // input consumes (`legacyBuildLocalDbContainerInputs`).
+  const apiTlsEnabled = remoteWins("api.tls.enabled")
+    ? config.api.tls.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_API_TLS_ENABLED",
+        config.api.tls.enabled,
+        "api.tls.enabled",
+        projectEnvValues,
+      );
   // Go's TLS cert/key validation nests entirely inside `if c.Api.Enabled`
   // (`config.go:1006,1010`) — mirroring `authEnabled` below, gate on the
   // POST-`SUPABASE_API_ENABLED`-override value, not raw `config.api.enabled`.
@@ -2594,19 +2621,16 @@ export function legacyResolveLocalConfigValues(
   // below, which has no `enabled` gate. Resolved once into a named const so the
   // check and the URL derivation below share the same overridden value instead
   // of calling `legacyEnvOverridePort` twice.
-  const apiPort = legacyEnvOverridePort(
-    "SUPABASE_API_PORT",
-    config.api.port,
-    "api.port",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `apiTlsEnabled` above.
+  const apiPort = remoteWins("api.port")
+    ? config.api.port
+    : legacyEnvOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues);
   const apiExternalUrl = legacyResolveApiExternalUrl(
     {
-      external_url: legacyEnvOverride(
-        "SUPABASE_API_EXTERNAL_URL",
-        config.api.external_url,
-        projectEnvValues,
-      ),
+      // Same remote-over-env precedence as `apiTlsEnabled`/`apiPort` above.
+      external_url: remoteWins("api.external_url")
+        ? config.api.external_url
+        : legacyEnvOverride("SUPABASE_API_EXTERNAL_URL", config.api.external_url, projectEnvValues),
       port: apiPort,
       tls: { enabled: apiTlsEnabled },
     },
@@ -2618,15 +2642,22 @@ export function legacyResolveLocalConfigValues(
   // exact message (`pkg/config/config.go:1031-1032`) before `status`/`stop`
   // render anything, same wording already used for the `db query`/`test db`
   // path (`legacy-db-config.toml-read.ts:1380`).
-  const dbPort = legacyEnvOverridePort(
-    "SUPABASE_DB_PORT",
-    config.db.port,
-    "db.port",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `apiPort`/`apiTlsEnabled` above — `dbPort` also reaches
+  // `dbUrl`, consumed by the shadow's own `db diff --linked`/`db pull` setup input.
+  const dbPort = remoteWins("db.port")
+    ? config.db.port
+    : legacyEnvOverridePort("SUPABASE_DB_PORT", config.db.port, "db.port", projectEnvValues);
   // Go's `Config.Validate` checks `db.major_version` right after `db.port`
-  // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
-  const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
+  // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate). Validate-only here
+  // (this function's return type has no `majorVersion` field — the shadow's own resolved value
+  // comes from `legacyResolveDbBootstrapConfig`, which already gates it) — but a matched
+  // remote's `db.major_version` must still suppress a conflicting `SUPABASE_DB_MAJOR_VERSION`
+  // here too, otherwise a malformed env value the remote block should have made irrelevant
+  // fails this validate-only read outright before the (correctly gated) real value is ever
+  // reached (review: PRRT_kwDOErm0O86W2tRi).
+  const majorVersion = remoteWins("db.major_version")
+    ? config.db.major_version
+    : legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
   // Go's `flags.LoadConfig` applies every `SUPABASE_DB_SETTINGS_*` override unconditionally
   // during `Config.Load` (`config.go:576-586`), BEFORE `start`/`status`/`stop` do anything else
   // (`internal/start/start.go:51` runs before `AssertSupabaseDbIsRunning` at line 54; `status.
@@ -2635,20 +2666,25 @@ export function legacyResolveLocalConfigValues(
   // `start.handler.ts`'s `bringUp` after Postgres may already be created. Validate-only: the
   // actual resolved settings `start` needs are recomputed at their own call site (same
   // "validate early, recompute at point of use" split already used for those three fields).
-  legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues);
+  // `remoteOverrideKeys` threaded through so a matched remote's `db.settings.*` value doesn't
+  // fail this validate-only read the same way `majorVersion` above doesn't.
+  legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues, remoteOverrideKeys);
   // Same gap for `db.network_restrictions.enabled` — `[db.network_restrictions]` ships
   // uncommented in Go's default template (unlike the commented-out `[db.ssl_enforcement]`) and
   // `NetworkRestrictions` is a plain, non-pointer `db` struct field, so Viper always registers a
   // default and decodes a malformed `SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED` override
   // unconditionally during `Config.Load` — same bucket as `db.port`/`db.major_version` above, not
   // the presence-gated `db.ssl_enforcement`/`auth.sms.twilio`/`auth.external.apple` cases.
-  // Validate-only: `start` doesn't otherwise consume this field (only `config push` does).
-  legacyEnvOverrideBool(
-    "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED",
-    config.db.network_restrictions.enabled,
-    "db.network_restrictions.enabled",
-    projectEnvValues,
-  );
+  // Validate-only: `start` doesn't otherwise consume this field (only `config push` does). Same
+  // remote-over-env precedence as `majorVersion` above.
+  if (!remoteWins("db.network_restrictions.enabled")) {
+    legacyEnvOverrideBool(
+      "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED",
+      config.db.network_restrictions.enabled,
+      "db.network_restrictions.enabled",
+      projectEnvValues,
+    );
+  }
   // `db.root_key` isn't modeled in `@supabase/config`'s schema (every other
   // `db.*` field is), so it's read off the raw pre-schema document — same
   // presence-based pattern as `authDocument` below. Go writes the
@@ -2670,7 +2706,14 @@ export function legacyResolveLocalConfigValues(
       "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
     );
   }
-  const rawRootKey = legacyEnvOverride("SUPABASE_DB_ROOT_KEY", rawRootKeyValue, projectEnvValues);
+  // Same remote-over-env precedence as `apiPort`/`dbPort` above — `rootKey` reaches the
+  // shadow's own Postgres container spec (`legacyBuildLocalDbContainerInputs`). `rawRootKeyValue`
+  // already reflects a matched remote's `db.root_key` (`document` is the remote-merged raw doc —
+  // see `LoadedProjectConfig.document`'s own doc comment), so `remoteWins` here just means
+  // "don't let a conflicting `SUPABASE_DB_ROOT_KEY` clobber that already-merged value."
+  const rawRootKey = remoteWins("db.root_key")
+    ? rawRootKeyValue
+    : legacyEnvOverride("SUPABASE_DB_ROOT_KEY", rawRootKeyValue, projectEnvValues);
   const rootKey =
     rawRootKey === undefined || rawRootKey.length === 0
       ? LEGACY_POSTGRES_DEFAULT_ROOT_KEY
@@ -2721,9 +2764,13 @@ export function legacyResolveLocalConfigValues(
     "local_smtp.port",
     projectEnvValues,
   );
+  // Same remote-over-env precedence as `apiPort`/`dbPort`/`rootKey` above — `jwtSecret` reaches
+  // the shadow's own Postgres/fresh-DB-setup spec (`legacyBuildLocalDbContainerInputs`).
   const jwtSecret = resolveJwtSecret(
     legacyDecryptAuthSecret(
-      legacyEnvOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
+      remoteWins("auth.jwt_secret")
+        ? config.auth.jwt_secret
+        : legacyEnvOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
       projectEnvValues,
     ),
   );
@@ -2752,9 +2799,12 @@ export function legacyResolveLocalConfigValues(
   // `@supabase/config`'s schema only defaults `site_url` when the key is ABSENT
   // (`Schema.withDecodingDefaultKey`), so an explicit `site_url = ""` decodes as
   // `""` with no schema-level error, same gap as `db.port === 0` above.
-  const siteUrl =
-    legacyEnvOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
-    config.auth.site_url;
+  // Same remote-over-env precedence as `jwtSecret` above — `siteUrl` reaches the shadow's own
+  // fresh-DB-setup spec (`legacyBuildLocalDbContainerInputs`'s `authSiteUrl`).
+  const siteUrl = remoteWins("auth.site_url")
+    ? config.auth.site_url
+    : (legacyEnvOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
+      config.auth.site_url);
   // Go's `start.go` builds GoTrue's env straight off `utils.Config.Auth.*`
   // with no local override logic of its own (`start.go:1365-1405`) — the
   // override happens earlier, generically, via Viper's `AutomaticEnv`
@@ -2766,12 +2816,16 @@ export function legacyResolveLocalConfigValues(
     config.auth.jwt_issuer,
     projectEnvValues,
   );
-  const jwtExpiry = legacyEnvOverrideUint(
-    "SUPABASE_AUTH_JWT_EXPIRY",
-    "auth.jwt_expiry",
-    config.auth.jwt_expiry,
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `siteUrl` above — `jwtExpiry` reaches the shadow's own
+  // Postgres container spec (`legacyBuildLocalDbContainerInputs`'s `authJwtExpiry`).
+  const jwtExpiry = remoteWins("auth.jwt_expiry")
+    ? config.auth.jwt_expiry
+    : legacyEnvOverrideUint(
+        "SUPABASE_AUTH_JWT_EXPIRY",
+        "auth.jwt_expiry",
+        config.auth.jwt_expiry,
+        projectEnvValues,
+      );
   // Go decodes `additional_redirect_urls` (a `[]string`) through the same
   // `StringToSliceHookFunc(",")` mapstructure hook as every other Go
   // string-slice field (`config.go:775-784`) — same comma-split-override
@@ -3292,9 +3346,14 @@ export function legacyResolveLocalConfigValues(
       defaultSecretKey,
     ),
     jwtSecret,
+    // Same remote-over-env precedence as `jwtSecret`/`siteUrl` above — `anonKey`/
+    // `serviceRoleKey` reach the shadow's own fresh-DB-setup spec
+    // (`legacyBuildLocalDbContainerInputs`).
     anonKey: resolveSignedKey(
       legacyDecryptAuthSecret(
-        legacyEnvOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
+        remoteWins("auth.anon_key")
+          ? config.auth.anon_key
+          : legacyEnvOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
         projectEnvValues,
       ),
       jwtSecret,
@@ -3303,11 +3362,13 @@ export function legacyResolveLocalConfigValues(
     ),
     serviceRoleKey: resolveSignedKey(
       legacyDecryptAuthSecret(
-        legacyEnvOverride(
-          "SUPABASE_AUTH_SERVICE_ROLE_KEY",
-          config.auth.service_role_key,
-          projectEnvValues,
-        ),
+        remoteWins("auth.service_role_key")
+          ? config.auth.service_role_key
+          : legacyEnvOverride(
+              "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+              config.auth.service_role_key,
+              projectEnvValues,
+            ),
         projectEnvValues,
       ),
       jwtSecret,

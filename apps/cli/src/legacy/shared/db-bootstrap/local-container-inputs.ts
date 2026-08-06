@@ -115,10 +115,12 @@ export const legacyBuildLocalDbContainerInputs = (
   // already computed for the SAME matched `[remotes.<ref>]` block (`@supabase/config`'s
   // `loadProjectConfig`, used by `legacyLoadLocalProjectContext` just above, merges the
   // remote block's VALUES but tracks none of which keys it set) — threaded into
-  // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` below so a
-  // remote-set field (e.g. `db.major_version`) isn't re-overridden by a conflicting
-  // `SUPABASE_*` env var. Go's `mergeRemoteConfig` installs remote leaves at viper's
-  // OVERRIDE tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:635-640`).
+  // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` AND
+  // `legacyResolveLocalConfigValues` below so a remote-set field (e.g. `db.major_version`,
+  // `auth.jwt_secret`, `db.root_key`) isn't re-overridden by a conflicting `SUPABASE_*` env
+  // var (review: PRRT_kwDOErm0O86W2LL4, PRRT_kwDOErm0O86W2tRi). Go's `mergeRemoteConfig`
+  // installs remote leaves at viper's OVERRIDE tier, above `AutomaticEnv`
+  // (`apps/cli-go/pkg/config/config.go:635-640`).
   // `db start`/`db reset` never pass a `projectRef` above, so they never need this either.
   remoteOverrideKeys?: ReadonlySet<string>,
 ): Effect.Effect<
@@ -146,6 +148,7 @@ export const legacyBuildLocalDbContainerInputs = (
           workdir,
           projectEnvValues,
           loaded?.document,
+          remoteOverrideKeys,
         ),
       catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
     });

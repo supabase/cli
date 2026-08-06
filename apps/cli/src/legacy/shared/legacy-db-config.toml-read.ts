@@ -356,6 +356,22 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.settings.wal_keep_size",
   "db.settings.wal_sender_timeout",
   "db.settings.work_mem",
+  "db.network_restrictions.enabled",
+  // Not read by `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` above —
+  // these feed `legacyResolveLocalConfigValues`'s OWN fields instead (`apiUrl`/`dbUrl`/
+  // `dbPort`/`rootKey`/`jwtSecret`/`authSiteUrl`/`authJwtExpiry`/`anonKey`/`serviceRoleKey`),
+  // which the shadow's container spec/fresh-DB setup input also consume on the same
+  // `db diff --linked`/`db pull` path (review: PRRT_kwDOErm0O86W2tRi) — same override-tier
+  // gap as the block above, just for that resolver's reachable subset instead of this one's.
+  "db.root_key",
+  "api.port",
+  "api.tls.enabled",
+  "api.external_url",
+  "auth.jwt_secret",
+  "auth.jwt_expiry",
+  "auth.site_url",
+  "auth.anon_key",
+  "auth.service_role_key",
 ];
 
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */
