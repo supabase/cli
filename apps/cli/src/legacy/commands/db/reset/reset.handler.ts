@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
@@ -12,6 +12,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { redactLegacyConnectionString } from "../../../shared/legacy-db-config.parse.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
   legacyCheckDbToml,
@@ -20,17 +21,27 @@ import {
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import {
+  legacyResolveLocalProjectId,
+  legacySanitizeProjectId,
+} from "../../../shared/legacy-docker-ids.ts";
+import {
   legacyApplyMigrations,
   legacyApplySchemaFiles,
 } from "../../../shared/legacy-migration-apply.ts";
 import { legacyParseMigrationVersion } from "../../../shared/legacy-migration-timestamp.format.ts";
+import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
-import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
+import { legacyParseBoolEnv } from "../shared/legacy-diff-engine.ts";
+import {
+  legacyListLocalMigrations,
+  legacyTryCacheMigrationsCatalog,
+} from "../shared/legacy-pgdelta.cache.ts";
+import { type LegacyPgDeltaContext } from "../shared/legacy-pgdelta.ts";
 import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyGetPendingSeeds, legacySeedData } from "../../../shared/legacy-seed-ops.ts";
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
@@ -403,7 +414,47 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           const seeds = yield* legacyGetPendingSeeds(session, fs, path, seedPaths, workdir);
           yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
         }
-        // Go's best-effort pgcache catalog warning is not ported (no output impact).
+
+        // Go's `down.ResetAll` (`internal/migration/down/down.go:48-61`) — the function
+        // `resetRemote` delegates to — best-effort caches the migrations catalog for
+        // pg-delta right after `apply.MigrateAndSeed` succeeds, warning (never failing
+        // the reset) on error. `pgcache.TryCacheMigrationsCatalog` itself no-ops when
+        // `resolvedVersion` is non-empty (`len(version) > 0`, `pgcache/cache.go:73`) —
+        // a versioned reset (`--version`/`--last`) never refreshes the cache — so gate
+        // the call the same way rather than threading that check into the shared
+        // native helper (already used by `db push`, which has no version concept).
+        const cacheEnabled =
+          resolvedVersion === "" &&
+          (toml.pgDelta.enabled ||
+            legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")));
+        const pgDeltaCtx: LegacyPgDeltaContext = {
+          projectId: legacySanitizeProjectId(
+            legacyResolveLocalProjectId(
+              Option.getOrUndefined(cliConfig.projectId),
+              Option.getOrUndefined(toml.projectId) ??
+                (linkedRef !== undefined && linkedRef !== "" ? linkedRef : undefined),
+              workdir,
+            ),
+          ),
+          cwd: workdir,
+          npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+          denoVersion: toml.denoVersion,
+        };
+        yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
+          enabled: cacheEnabled,
+          targetUrl: legacyToPostgresURL(cfg.conn),
+          conn: cfg.conn,
+          isLocal: false,
+          migrationsDir,
+          nowMillis: yield* Clock.currentTimeMillis,
+        }).pipe(
+          Effect.catch((error) =>
+            output.raw(
+              `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
+              "stderr",
+            ),
+          ),
+        );
       }),
     );
 

@@ -43,6 +43,12 @@ import {
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
+import {
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
 import { legacyDbReset } from "./reset.handler.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
@@ -251,6 +257,10 @@ function setup(
     running?: boolean;
     storageReady?: boolean;
     awaitStorageReadyExitCode?: number;
+    // pg-delta migrations-catalog cache (Go's `down.ResetAll` → `pgcache.TryCacheMigrationsCatalog`,
+    // wired into the remote-reset path after a successful migrate/schema-files + seed).
+    catalogStdout?: string;
+    catalogExportFailWith?: string;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -282,9 +292,28 @@ function setup(
     resolveFails: opts.resolveFails,
   });
 
+  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      edgeRunCalls.push(runOpts);
+      if (opts.catalogExportFailWith !== undefined) {
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
+        );
+      }
+      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
+    },
+  });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
+
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
+    edge,
+    sslProbe,
     seam.layer,
     resolver.layer,
     mockLegacyCliConfig({ workdir }),
@@ -316,7 +345,7 @@ function setup(
     telemetry.layer,
     linkedCache.layer,
   );
-  return { layer, out, conn, seam, telemetry, linkedCache, resolver };
+  return { layer, out, conn, seam, telemetry, linkedCache, resolver, edgeRunCalls };
 }
 
 const migrationFile = (version: string, body = "create table t ();") => ({
@@ -754,6 +783,96 @@ describe("legacy db reset", () => {
       expect(conn.execs).toHaveLength(0);
     });
   });
+
+  it.live(
+    "caches the migrations catalog after a successful remote reset with SUPABASE_EXPERIMENTAL_PG_DELTA set",
+    () => {
+      // Go's `down.ResetAll` (`internal/migration/down/down.go:48-61`, the function
+      // `resetRemote` delegates to) best-effort caches the pg-delta migrations
+      // catalog right after `apply.MigrateAndSeed` succeeds — gated on
+      // `pgcache.ShouldCacheMigrationsCatalog()` (`experimental.pgdelta.enabled` OR
+      // the legacy `SUPABASE_EXPERIMENTAL_PG_DELTA` env switch), independent of
+      // `--experimental`'s own schema-files gate.
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n",
+        },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+      });
+    },
+  );
+
+  it.live("warns without failing the reset when the migrations-catalog cache write fails", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+      catalogExportFailWith: "edge-runtime script produced no output",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain(
+        "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+      );
+    });
+  });
+
+  it.live(
+    "falls back to the linked project ref for the pg-delta cache when config.toml has no project_id",
+    () => {
+      // Go's `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` BEFORE
+      // `Config.Load` runs, so on the linked remote path an absent `project_id`
+      // retains the linked ref rather than falling to the workdir basename.
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: "[experimental.pgdelta]\nenabled = true\n",
+        ref: LEGACY_VALID_REF,
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+      });
+    },
+  );
+
+  it.live(
+    "skips the migrations-catalog cache for a versioned remote reset even with pg-delta caching enabled",
+    () => {
+      // `pgcache.TryCacheMigrationsCatalog` no-ops on any non-empty `version`
+      // (`pgcache/cache.go:73`, `len(version) > 0`) — a `--version`/`--last` reset
+      // never refreshes the cache, unlike a full (versionless) reset.
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: {
+          ...migrationFile("20240101000000"),
+          ...migrationFile("20240202000000"),
+        },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({
+          ...DEFAULT_FLAGS,
+          linked: true,
+          version: Option.some("20240101000000"),
+        }).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(0);
+      });
+    },
+  );
 
   it.live("drops schemas and applies migrations + seed on a confirmed remote reset", () => {
     const { layer, out, conn, linkedCache } = setup(tmp.current, {
