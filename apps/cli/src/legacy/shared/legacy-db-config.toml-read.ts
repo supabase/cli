@@ -105,6 +105,20 @@ interface LegacyDbTomlValues {
    * `--experimental` declarative-schema-files branch of `legacyMigrateAndSeed`.
    */
   readonly schemaPaths: ReadonlyArray<string>;
+  /**
+   * `[db.migrations] schema_paths`, RAW patterns — the SAME env/remote-override
+   * resolution as {@link schemaPaths} above (`SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`,
+   * remote-override tiering), but WITHOUT the `supabase/`-prefix + `path.Join`/`path.Clean`
+   * step (`config.go:976-979`) — Go's `utils.Config.Db.Migrations.SchemaPaths` pre-that-
+   * resolution form. `legacyPrepareShadowSource`'s `schemaPaths` input (`db diff`/`db pull`'s
+   * shadow-provisioning prelude) does that join itself (`legacyResolveSeedSqlPath`), so it
+   * needs THIS raw form — passing {@link schemaPaths} there would double-join a relative
+   * pattern (`supabase/supabase/...`). The `@supabase/config`-backed
+   * `context.config.db.migrations.schema_paths` these two callers used before is a DIFFERENT
+   * raw form: correct patterns, but never `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`-overridden
+   * (`@supabase/config` has no viper-`AutomaticEnv` equivalent) — review: PRRT_kwDOErm0O86XDr4S.
+   */
+  readonly schemaPathPatterns: ReadonlyArray<string>;
   /** `[db.seed]` enabled + supabase-prefixed `sql_paths` globs — used by `down`. */
   readonly seed: LegacyDbSeedTomlConfig;
   /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
@@ -2137,6 +2151,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     },
     migrationsEnabled,
     schemaPaths,
+    schemaPathPatterns,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote,
