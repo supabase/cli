@@ -81,10 +81,29 @@ describe("foreground operation lifecycle", () => {
     );
 
     await expect(
-      runForegroundOperation(operation, async () => {
-        disposeCount += 1;
-      }),
+      runForegroundOperation(
+        operation,
+        async () => true,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
     ).rejects.toMatchObject({ code: "STACK_READINESS_TIMEOUT" });
+    expect(disposeCount).toBe(1);
+  });
+
+  it("disposes the foreground runtime after another terminal start failure", async () => {
+    let disposeCount = 0;
+
+    await expect(
+      runForegroundOperation(
+        Promise.reject(new Error("service startup failed")),
+        async () => true,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
+    ).rejects.toMatchObject({ code: "UNKNOWN" });
     expect(disposeCount).toBe(1);
   });
 
@@ -92,9 +111,13 @@ describe("foreground operation lifecycle", () => {
     let disposeCount = 0;
 
     await expect(
-      runForegroundOperation(Promise.reject(new Error("failed")), async () => {
-        disposeCount += 1;
-      }),
+      runForegroundOperation(
+        Promise.reject(new Error("failed")),
+        async () => false,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
     ).rejects.toMatchObject({ code: "UNKNOWN" });
     expect(disposeCount).toBe(0);
   });
