@@ -48,6 +48,7 @@ import type { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.t
 import {
   collectText,
   legacyDescribeContainerCliFailure,
+  legacyIsContainerNotFoundMessage,
   spawnContainerCli,
 } from "../legacy-container-cli.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
@@ -269,9 +270,16 @@ const legacyCleanupShadowSecretDir = (
  * prints, so this catches {@link spawnContainerCli}/exit-code-collection failures the same way
  * {@link legacyRestartSatelliteService} does (`restart-services.ts`), via
  * {@link legacyDescribeContainerCliFailure}, rather than discarding them unreported. Also
- * reclaims the shadow's staged secret directory (see {@link legacyCleanupShadowSecretDir}),
- * since nothing else in this codebase can find it once the container is gone (`secretDirId` is
- * randomized per shadow, not the container's name).
+ * reclaims the shadow's staged secret directory (see {@link legacyCleanupShadowSecretDir}) —
+ * but ONLY once the container is confirmed gone (removal succeeded, or it was already absent),
+ * never on a genuine removal failure (daemon disconnected, CLI missing, an unrecognized
+ * error). {@link legacyCreateShadowDatabase}'s own doc comment explains why the secret
+ * directory (the PG15+ pgsodium root-key bind source) must outlive `docker start` by seconds so
+ * Postgres's entrypoint can still read it — that same invariant means it must ALSO outlive a
+ * shadow that `docker rm` failed to actually remove: a still-running (or later-restarted)
+ * orphan would find its bind source deleted out from under it. `secretDirId` is randomized per
+ * shadow, not keyed off the container's name, so this reclaim (once safe) is the only path
+ * that can find it.
  */
 export const legacyRemoveShadowDatabase = (
   spawner: Spawner,
@@ -279,6 +287,7 @@ export const legacyRemoveShadowDatabase = (
 ): Effect.Effect<void, never, Output> =>
   Effect.gen(function* () {
     const { containerId, secretDirId, workdir } = input;
+    let containerGone = containerId.length === 0;
     if (containerId.length > 0) {
       const failureMessage = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -302,8 +311,12 @@ export const legacyRemoveShadowDatabase = (
           "stderr",
         );
       }
+      containerGone =
+        failureMessage === undefined || legacyIsContainerNotFoundMessage(failureMessage);
     }
-    yield* legacyCleanupShadowSecretDir(secretDirId, workdir);
+    if (containerGone) {
+      yield* legacyCleanupShadowSecretDir(secretDirId, workdir);
+    }
   });
 
 /** A live shadow database left running for the caller to diff against and remove. Mirrors Go's `ShadowSource`. */

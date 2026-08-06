@@ -98,6 +98,34 @@ function mockSpawner() {
   return { spawner, spawned };
 }
 
+/** Fakes `docker rm` with a caller-controlled exit code/stderr, for the failure-path tests below. */
+function mockRmSpawner(result: { exitCode: number; stderr?: string }) {
+  const spawned: Array<ReadonlyArray<string>> = [];
+  const encoder = new TextEncoder();
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawned.push(args);
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        stdout: Stream.empty,
+        stderr: Stream.fromIterable(
+          result.stderr !== undefined ? [encoder.encode(result.stderr)] : [],
+        ),
+        all: Stream.empty,
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+        isRunning: Effect.succeed(false),
+        stdin: Sink.drain,
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  return { spawner, spawned };
+}
+
 function baseCreateInput(
   overrides: Partial<LegacyCreateShadowDatabaseInput> = {},
 ): LegacyCreateShadowDatabaseInput {
@@ -180,6 +208,66 @@ describe("legacyCreateShadowDatabase / legacyRemoveShadowDatabase", () => {
     () => {
       const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
       const mock = mockSpawner();
+      const secretDir = join(workdir, "supabase", ".temp", "start-secrets", "shadow-abc123");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(secretDir, { recursive: true });
+        yield* fs.writeFileString(path.join(secretDir, "secret-0"), "root-key");
+        yield* legacyRemoveShadowDatabase(mock.spawner, {
+          containerId: "shadow-container-id-0123456789abcdef",
+          secretDirId: "shadow-abc123",
+          workdir,
+        });
+        const stillExists = yield* fs.exists(secretDir);
+        expect(stillExists).toBe(false);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
+    },
+  );
+
+  it.effect(
+    "retains the staged secret directory when docker rm fails for a reason other than the container being absent (review: PRRT_kwDOErm0O86W7n95)",
+    () => {
+      // The container might still be alive (daemon disconnected mid-remove, a transient CLI
+      // error, ...) — deleting the PG15+ pgsodium root-key bind source out from under a
+      // surviving shadow would break its ability to restart, per `legacyCreateShadowDatabase`'s
+      // own doc comment on why this directory must outlive `docker start` in the first place.
+      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+      const mock = mockRmSpawner({
+        exitCode: 1,
+        stderr: "Error: Cannot connect to the Docker daemon\n",
+      });
+      const secretDir = join(workdir, "supabase", ".temp", "start-secrets", "shadow-abc123");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(secretDir, { recursive: true });
+        yield* fs.writeFileString(path.join(secretDir, "secret-0"), "root-key");
+        yield* legacyRemoveShadowDatabase(mock.spawner, {
+          containerId: "shadow-container-id-0123456789abcdef",
+          secretDirId: "shadow-abc123",
+          workdir,
+        });
+        const stillExists = yield* fs.exists(secretDir);
+        expect(stillExists).toBe(true);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
+    },
+  );
+
+  it.effect(
+    "still reclaims the staged secret directory when docker rm reports the container already absent (review: PRRT_kwDOErm0O86W7n95)",
+    () => {
+      // A "No such container" failure from `docker rm` means the container is CONFIRMED gone
+      // already (e.g. removed by something else, or a race with a prior cleanup) — the shadow
+      // can't restart if it doesn't exist, so it's safe to reclaim the secret directory here,
+      // same as the exit-0 success path above.
+      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+      const mock = mockRmSpawner({
+        exitCode: 1,
+        stderr: "Error: No such container: shadow-container-id-0123456789abcdef\n",
+      });
       const secretDir = join(workdir, "supabase", ".temp", "start-secrets", "shadow-abc123");
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
