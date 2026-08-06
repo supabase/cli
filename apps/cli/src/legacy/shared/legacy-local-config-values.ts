@@ -936,8 +936,10 @@ export type LegacyResolvedAuthEmail = Omit<
  * file. An env override always wins outright when set (Go's Viper `AutomaticEnv` precedence over
  * config.toml), regardless of the raw document.
  *
- * `start.go:544-558` (Kong `mountEmailTemplates`) and `start.go:668-694,1376-1406` (GoTrue's
- * mailer/OTP/signup env) both read `utils.Config.Auth.Email.*` post-override — this resolves the
+ * Former `internal/start/start.go:544-558` (Kong `mountEmailTemplates`) and
+ * `start.go:668-694,1376-1406` (GoTrue's mailer/OTP/signup env) — deleted as
+ * unreachable in CLI-1966, last present at commit a253ccba2 — both read
+ * `utils.Config.Auth.Email.*` post-override — this resolves the
  * SAME effective value for both `buildKongEmailTemplateMounts` and `resolveGotrueEnvInput` in
  * `start.handler.ts`.
  */
@@ -1495,7 +1497,8 @@ export type LegacyResolvedAuthHooks = {
  * `auth.hook.<type>.*` is Viper-bound like every other nested field
  * (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
  * `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS` overrides apply before
- * Go builds `GOTRUE_HOOK_*` (`internal/start/start.go:746-792`) — Go has no
+ * Go builds `GOTRUE_HOOK_*` (formerly `internal/start/start.go:746-792`, deleted
+ * as unreachable in CLI-1966; last present at commit a253ccba2) — Go has no
  * separate "raw" vs. "effective" hook value, so a hook enabled/retargeted
  * purely through env vars must reach GoTrue too, not just validation.
  * `@supabase/config`'s hook schema always decodes a `{ enabled: false }`
@@ -1647,7 +1650,9 @@ const LEGACY_SMS_PROVIDER_ORDER = [
  * Go's `Auth.Sms.<provider>.*` is Viper-bound like every other nested field once
  * `[auth.sms.<provider>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
  * `config.go:581-586`), so `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED`/`_<FIELD>` overrides must reach
- * GoTrue's actual container env (`start.go:696-733`), not just `Config.Validate` — same
+ * GoTrue's actual container env (formerly `internal/start/start.go:696-733`,
+ * deleted as unreachable in CLI-1966; last present at commit a253ccba2), not
+ * just `Config.Validate` — same
  * "validates but doesn't use" gap already fixed for `auth.hook`/`auth.captcha`/`auth.external`/
  * `auth.mfa`. Hoisted so both {@link validateAuthSmsProviders} and `start.handler.ts`'s
  * `resolveGotrueEnvInput` resolve the SAME effective per-provider values — same precedent as
@@ -1875,8 +1880,9 @@ export interface LegacyResolvedAuthExternalProvider {
 }
 
 /**
- * Go's `appendGotrueExternalProviderEnv` presence-filtering (`start.go:1442-
- * 1462`): Go's `Auth.External` is a genuine `map[string]provider{}` containing
+ * Go's `appendGotrueExternalProviderEnv` presence-filtering (formerly
+ * `internal/start/start.go:1442-1462`, deleted as unreachable in CLI-1966;
+ * last present at commit a253ccba2): Go's `Auth.External` is a genuine `map[string]provider{}` containing
  * only the providers a user's `config.toml` actually mentions, but
  * `@supabase/config`'s schema always decodes a fixed set of ~19 known
  * providers, each defaulting `enabled: false` regardless of TOML presence — so
@@ -2263,7 +2269,8 @@ export function legacyResolveLocalConfigValues(
   const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
   // Go's `flags.LoadConfig` applies every `SUPABASE_DB_SETTINGS_*` override unconditionally
   // during `Config.Load` (`config.go:576-586`), BEFORE `start`/`status`/`stop` do anything else
-  // (`internal/start/start.go:51` runs before `AssertSupabaseDbIsRunning` at line 54; `status.
+  // (formerly `internal/start/start.go:51`, ran before `AssertSupabaseDbIsRunning` at line 54;
+  // deleted as unreachable in CLI-1966, last present at commit a253ccba2; `status.
   // Run`/`stop.Run` load config first too) — so a malformed override must fail here, the same
   // point `majorVersion`/`denoVersion`/`orioledbVersion` are already validated, not deep inside
   // `start.handler.ts`'s `bringUp` after Postgres may already be created. Validate-only: the
@@ -2389,8 +2396,9 @@ export function legacyResolveLocalConfigValues(
   const siteUrl =
     legacyEnvOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
     config.auth.site_url;
-  // Go's `start.go` builds GoTrue's env straight off `utils.Config.Auth.*`
-  // with no local override logic of its own (`start.go:1365-1405`) — the
+  // Go's `start.go` built GoTrue's env straight off `utils.Config.Auth.*`
+  // with no local override logic of its own (formerly `internal/start/start.go:1365-1405`,
+  // deleted as unreachable in CLI-1966; last present at commit a253ccba2) — the
   // override happens earlier, generically, via Viper's `AutomaticEnv`
   // (`config.go:585-586`), so every flat `auth.*` scalar Go feeds into
   // GoTrue's env must go through the same override resolution `siteUrl`
@@ -2976,7 +2984,8 @@ export function legacyResolveLocalConfigValues(
 
 /**
  * Go's `(a *auth) ResolveJWKS(ctx)` (`apps/cli-go/pkg/config/config.go:1727-1806`) — reached only
- * from the future native `start` port (`internal/start/start.go:274-277`: a fetch failure there
+ * from the future native `start` port (formerly `internal/start/start.go:274-277`, deleted as
+ * unreachable in CLI-1966, last present at commit a253ccba2: a fetch failure there
  * fails the whole `start` command outright). Deliberately NOT folded into
  * {@link LegacyLocalConfigValues}/{@link legacyResolveLocalConfigValues}: that resolver is
  * synchronous and runs on every `stop`/`status` invocation (see `legacy-status-values.ts`/
@@ -2988,8 +2997,9 @@ export function legacyResolveLocalConfigValues(
  * `resolveLocalAuthArtifacts`/`finalizeAuthArtifacts` pair in
  * `shared/functions/serve.ts` (Go's equivalent call site for THAT pair is
  * `internal/functions/serve/`, out of scope for this port) — deliberately NOT copied here:
- *  - a remote-JWKS fetch failure is a hard, propagating error here (matching `start.go:274-277`
- *    returning the error outright); `serve.ts` instead swallows the failure and continues with
+ *  - a remote-JWKS fetch failure is a hard, propagating error here (matching former
+ *    `internal/start/start.go:274-277`, deleted as unreachable in CLI-1966 and last present at
+ *    commit a253ccba2, which returned the error outright); `serve.ts` instead swallows the failure and continues with
  *    zero remote keys, a `functions serve`-only leniency with no equivalent in `ResolveJWKS`.
  *  - this never injects `serve.ts`'s `defaultSigningKey` EC key — that key exists only for
  *    `functions serve`'s own local-dev defaults and has no equivalent in `ResolveJWKS`.
@@ -3135,7 +3145,8 @@ export async function legacyResolveLocalJwks(
   // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
   // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
   // c.Auth.Enabled` block (`config.go:1087-1153`) — but `ResolveJWKS`/`IssuerURL()` (this whole
-  // function) is called UNCONDITIONALLY (`internal/start/start.go:274`), regardless of
+  // function) is called UNCONDITIONALLY (formerly `internal/start/start.go:274`, deleted as
+  // unreachable in CLI-1966; last present at commit a253ccba2), regardless of
   // `auth.enabled`. When auth is enabled, `legacyResolveLocalConfigValues`'s own gated
   // `validateAuthThirdPartyProviders`-equivalent check already ran first, so the validating
   // resolver here is safe/redundant-but-harmless. When auth is disabled, that earlier validation

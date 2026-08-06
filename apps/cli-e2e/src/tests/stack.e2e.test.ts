@@ -142,7 +142,13 @@ describe("start", () => {
   test.todo("start → status → stop lifecycle");
   test.todo("starts with --exclude studio and stops cleanly");
 
-  test.todo("parity: start");
+  // Unlike `status`/`stop` above, there is no `testParityStack(["start"])` here,
+  // and there never will be: Go's `internal/start` was deleted outright as
+  // unreachable (CLI-1966), so `supabase-go start` is now a permanent stub that
+  // always fails with a fixed error -- there is no real Go implementation left to
+  // diff TS's behavior against. Go-parity coverage for `start` instead lives in
+  // `apps/cli/src/legacy/commands/start/start.live.test.ts` and its siblings,
+  // asserted against the pre-deletion Go behavior documented in `SIDE_EFFECTS.md`.
 });
 
 // ---------------------------------------------------------------------------

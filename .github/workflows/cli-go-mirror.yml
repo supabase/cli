@@ -10,8 +10,9 @@ on:
   # This workflow is the manual/bulk entry point for re-mirroring everything.
   # Template image bumps are mirrored automatically by mirror-template-images.yml
   # on push to develop, which backfills any unmirrored tag when the templates
-  # Dockerfile changes — so develop and PRs rebased on it stop inheriting the
-  # `manifest unknown` failure in the ghcr.io-pinned `Start` check.
+  # Dockerfile changes — so anyone pinning SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+  # doesn't inherit a `manifest unknown` failure. (No CI job pins that registry
+  # anymore -- see mirror-template-images.yml's own comment for why, CLI-1966.)
   workflow_dispatch:
 permissions:
   contents: read

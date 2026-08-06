@@ -2,6 +2,10 @@
  * Port of Go's `NewContainerConfig`/`NewHostConfig`
  * (`apps/cli-go/internal/db/start/start.go:63-131`): builds the
  * {@link LegacyStartContainerSpec} for `supabase start`'s Postgres container.
+ * Below, a bare `start.go:NNN` means `internal/db/start/start.go` (still
+ * live) unless prefixed `internal/start/`, which is the deleted, unreachable
+ * `internal/start/start.go` (CLI-1966; last present at commit
+ * a253ccba25c21356ccd33044c4474aecb77d1ae4) -- see `../SIDE_EFFECTS.md`.
  *
  * Deliberately out of scope, per the approved start-port plan:
  *  - `StartDatabase`'s `fromBackup` restore branch (`start.go:143-164`,

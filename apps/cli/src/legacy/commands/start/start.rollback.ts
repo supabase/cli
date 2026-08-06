@@ -8,6 +8,11 @@ import { LegacyHealthCheckTimeoutError } from "./lib/health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
+// Below, a bare `start.go:NNN` means the deleted, unreachable
+// `internal/start/start.go` (CLI-1966; last present at commit
+// a253ccba25c21356ccd33044c4474aecb77d1ae4) unless prefixed `internal/db/start/`,
+// which is still live -- see `SIDE_EFFECTS.md`.
+
 /**
  * Port of Go's `start.IsUnhealthyError` (`apps/cli-go/internal/db/start/
  * start.go:227-231`): Go tests whether the failure unwraps as a joined

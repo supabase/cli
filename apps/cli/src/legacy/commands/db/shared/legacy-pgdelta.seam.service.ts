@@ -86,11 +86,12 @@ interface LegacyDeclarativeSeamShape {
   /**
    * Go's `ensureLocalDatabaseStarted` for the `--local` declarative paths
    * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`): inspects the local
-   * Postgres container and, when it is not running, starts it via the bundled
-   * Go binary's own DB-only `db start` (`internal/db/start.Run`, the same path
-   * `supabase db start` uses — not the full `supabase start` stack, so this
-   * avoids failing on unavailable auth/storage/etc. ports or images). TS's own
-   * native `db start` (`legacy/commands/db/start/`) exists but is not yet
+   * Postgres container and, when it is not running, starts ONLY the database via
+   * the bundled Go binary's own DB-only `db start` (`internal/db/start.Run`, the
+   * same hidden path `supabase db start` uses) -- not the full `supabase start`
+   * stack, which was deleted outright as unreachable (CLI-1966); this also avoids
+   * failing on unavailable auth/storage/etc. ports or images. TS's own native
+   * `db start` (`legacy/commands/db/start/`) exists but is not yet
    * in-process-callable either, so this seam shells out to the Go binary
    * directly rather than to the TS handler. A no-op when the container is
    * already running, so `db schema declarative generate --local` bootstraps a
