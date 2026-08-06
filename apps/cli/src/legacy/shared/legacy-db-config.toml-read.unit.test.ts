@@ -612,6 +612,49 @@ describe("legacyReadDbToml", () => {
   );
 
   it.effect(
+    "aggregates unconvertible-entry issues from BOTH db.seed.sql_paths and db.migrations.schema_paths in one error (Go UnmarshalExact single-pass parity, review CLI-1958)",
+    () => {
+      // Go's `UnmarshalExact` decodes the WHOLE config in a SINGLE mapstructure pass:
+      // `decodeStructFromMap`'s per-field loop never stops at the first field's error
+      // — it visits every field, collects every error, then joins them all together
+      // at the end. So a config invalid in BOTH `Glob` fields reports BOTH, not just
+      // whichever field is checked first. Verified empirically against `apps/cli-go`
+      // (`config.Load` with `sql_paths = [[]]` + `schema_paths = [[]]`): the single
+      // returned error contains both lines, `db.migrations.schema_paths[0]` BEFORE
+      // `db.seed.sql_paths[0]` — Go's `db` struct declares `Migrations` before `Seed`
+      // (`pkg/config/db.go:90-91`), so mapstructure visits (and therefore reports)
+      // `schema_paths` first regardless of which field this reader happens to resolve
+      // first internally.
+      const dir = withConfig(
+        ["[db.seed]", "sql_paths = [[]]", "", "[db.migrations]", "schema_paths = [[]]", ""].join(
+          "\n",
+        ),
+      );
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const message = JSON.stringify(exit.cause);
+              const schemaIssue =
+                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+              const seedIssue =
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+              expect(message).toContain(schemaIssue);
+              expect(message).toContain(seedIssue);
+              // Both issues in ONE combined error, schema_paths first (Go's struct
+              // field declaration order), not two separate failures.
+              expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
     () => {
       // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv

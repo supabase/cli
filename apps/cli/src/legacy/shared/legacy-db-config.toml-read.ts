@@ -1959,22 +1959,45 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       : typeof value === "object" && value !== null
         ? "map[string]interface {}"
         : undefined;
-  const legacyFailOnUnconvertibleGlobEntries = (
+  // Pure — returns the mapstructure-style issue strings for a real `Glob` array's
+  // unconvertible elements WITHOUT failing. Go's `UnmarshalExact` decodes the WHOLE
+  // config in a SINGLE mapstructure pass: `decodeStructFromMap`'s per-field loop
+  // (`mapstructure.go:1657-1724`) appends each field's decode error to a shared `errs`
+  // slice and keeps going — it never stops at the first field's error — then
+  // `errors.Join(errs...)`-s everything together at the very end
+  // (`mapstructure.go:1777`). So an invalid `db.migrations.schema_paths` does NOT
+  // prevent `db.seed.sql_paths` from ALSO being decoded (and erroring) in the same
+  // pass; both surface together in ONE combined error. Verified empirically against
+  // `apps/cli-go` (`config.Load` with both fields containing an unconvertible entry,
+  // e.g. `sql_paths = [[]]` + `schema_paths = [[]]`): the single returned error
+  // contains BOTH lines, `db.migrations.schema_paths[0]` BEFORE `db.seed.sql_paths[0]`
+  // — Go's `db` struct declares `Migrations` before `Seed` (`pkg/config/db.go:90-91`),
+  // and mapstructure iterates struct fields in declaration order, not alphabetically,
+  // so callers below must combine in that same order before failing once (see
+  // `legacyFailOnGlobIssues`).
+  const legacyGlobArrayIssues = (
     keyPath: string,
     values: ReadonlyArray<unknown>,
-  ): Effect.Effect<void, LegacyDbConfigLoadError> => {
-    const issues = values.flatMap((value, index) => {
+  ): ReadonlyArray<string> =>
+    values.flatMap((value, index) => {
       const goType = legacyGoUnconvertibleType(value);
       return goType === undefined
         ? []
         : [`'${keyPath}[${index}]' expected type 'string', got unconvertible type '${goType}'`];
     });
-    return issues.length === 0
+  // Fails ONCE with every issue collected across BOTH `Glob` fields (see
+  // `legacyGlobArrayIssues`'s doc comment) — never called per-field, so a config
+  // invalid in both `db.seed.sql_paths` and `db.migrations.schema_paths` reports both,
+  // matching Go's single combined `UnmarshalExact` error instead of only the first
+  // field checked.
+  const legacyFailOnGlobIssues = (
+    issues: ReadonlyArray<string>,
+  ): Effect.Effect<void, LegacyDbConfigLoadError> =>
+    issues.length === 0
       ? Effect.void
       : fail(
           `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`,
         );
-  };
   // A TOP-LEVEL raw value that is neither an array nor a string (e.g.
   // `schema_paths = 42`/`true`, or a stray inline table) still reaches
   // mapstructure's `decodeSlice`, which is weakly typed the same way an array
@@ -1991,46 +2014,78 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // 'string', got unconvertible type 'map[string]interface {}'`. Never
   // called with `undefined` — an absent key has its own Go-matching default
   // per caller below, so callers guard that case before reaching here.
+  // Pure — the TOP-LEVEL scalar fallback (see doc comment above), returning either the
+  // one resolved pattern or the one issue it would raise, WITHOUT failing (same reason
+  // as `legacyGlobArrayIssues`: the caller combines issues across both `Glob` fields
+  // before deciding whether to fail).
   const legacyResolveScalarGlobFallback = (
     keyPath: string,
     value: unknown,
-  ): Effect.Effect<ReadonlyArray<string>, LegacyDbConfigLoadError> =>
-    Effect.gen(function* () {
-      if (typeof value === "object" && value !== null && Object.keys(value).length === 0) {
-        return [];
-      }
-      const coerced = legacyWeakCoerceGlobEntry(value);
-      if (coerced !== undefined) {
-        return [coerced];
-      }
-      yield* legacyFailOnUnconvertibleGlobEntries(keyPath, [value]);
-      return [];
-    });
+  ): { readonly resolved: ReadonlyArray<string>; readonly issues: ReadonlyArray<string> } => {
+    if (typeof value === "object" && value !== null && Object.keys(value).length === 0) {
+      return { resolved: [], issues: [] };
+    }
+    const coerced = legacyWeakCoerceGlobEntry(value);
+    if (coerced !== undefined) {
+      return { resolved: [coerced], issues: [] };
+    }
+    return { resolved: [], issues: legacyGlobArrayIssues(keyPath, [value]) };
+  };
+  /**
+   * Resolves ONE `Glob`-typed field (`[db.seed].sql_paths` / `[db.migrations].
+   * schema_paths`) into its pre-supabase-join patterns, covering every decode branch
+   * in one place: override env var, real array, bare string, absent key (caller's own
+   * Go-matching default), or the top-level scalar fallback. Returns any issues
+   * alongside the best-effort patterns rather than failing here — see
+   * `legacyFailOnGlobIssues`'s doc comment for why the two `Glob` fields must combine
+   * their issues into ONE error before failing, matching Go's single `UnmarshalExact`
+   * pass, instead of each field failing independently on its own first bad entry.
+   */
+  const legacyResolveGlobField = (
+    keyPath: string,
+    raw: unknown,
+    override: string | undefined,
+    absentDefault: ReadonlyArray<string>,
+  ): { readonly patterns: ReadonlyArray<string>; readonly issues: ReadonlyArray<string> } => {
+    if (override !== undefined) {
+      return { patterns: splitGoSeedPaths(override), issues: [] };
+    }
+    if (Array.isArray(raw)) {
+      return {
+        patterns: raw
+          .map((pattern) => legacyWeakCoerceGlobEntry(pattern))
+          .filter((pattern): pattern is string => pattern !== undefined)
+          .map((pattern) => legacyExpandEnv(pattern, lookup)),
+        issues: legacyGlobArrayIssues(keyPath, raw),
+      };
+    }
+    if (typeof raw === "string") {
+      return { patterns: splitGoSeedPaths(raw), issues: [] };
+    }
+    if (raw === undefined) {
+      return { patterns: absentDefault, issues: [] };
+    }
+    const fallback = legacyResolveScalarGlobFallback(keyPath, raw);
+    return {
+      patterns: fallback.resolved.map((pattern) => legacyExpandEnv(pattern, lookup)),
+      issues: fallback.issues,
+    };
+  };
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathsOverride = remoteOverrideKeys.has("db.seed.sql_paths")
     ? undefined
     : envOverride("SUPABASE_DB_SEED_SQL_PATHS");
-  if (sqlPathsOverride === undefined && Array.isArray(rawSqlPaths)) {
-    yield* legacyFailOnUnconvertibleGlobEntries("db.seed.sql_paths", rawSqlPaths);
-  }
-  const sqlPathPatterns =
-    sqlPathsOverride !== undefined
-      ? splitGoSeedPaths(sqlPathsOverride)
-      : Array.isArray(rawSqlPaths)
-        ? rawSqlPaths
-            .map((pattern) => legacyWeakCoerceGlobEntry(pattern))
-            .filter((pattern): pattern is string => pattern !== undefined)
-            .map((pattern) => legacyExpandEnv(pattern, lookup))
-        : typeof rawSqlPaths === "string"
-          ? splitGoSeedPaths(rawSqlPaths)
-          : rawSqlPaths === undefined
-            ? ["seed.sql"]
-            : (yield* legacyResolveScalarGlobFallback("db.seed.sql_paths", rawSqlPaths)).map(
-                (pattern) => legacyExpandEnv(pattern, lookup),
-              );
+  const sqlPathsResolved = legacyResolveGlobField(
+    "db.seed.sql_paths",
+    rawSqlPaths,
+    sqlPathsOverride,
+    ["seed.sql"],
+  );
   // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split);
   // resolve each to Go's config-load form (absolute verbatim, relative supabase-joined).
-  const seedSqlPaths = sqlPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
+  const seedSqlPaths = sqlPathsResolved.patterns.map((pattern) =>
+    legacyResolveSeedSqlPath(path, pattern),
+  );
 
   // `[db.migrations] schema_paths` — Go default `[]` (`pkg/config/templates/config.toml:64`),
   // resolved through the exact same decode + env-expand + supabase-join pipeline as
@@ -2041,26 +2096,23 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const schemaPathsOverride = remoteOverrideKeys.has("db.migrations.schema_paths")
     ? undefined
     : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS");
-  if (schemaPathsOverride === undefined && Array.isArray(rawSchemaPaths)) {
-    yield* legacyFailOnUnconvertibleGlobEntries("db.migrations.schema_paths", rawSchemaPaths);
-  }
-  const schemaPathPatterns =
-    schemaPathsOverride !== undefined
-      ? splitGoSeedPaths(schemaPathsOverride)
-      : Array.isArray(rawSchemaPaths)
-        ? rawSchemaPaths
-            .map((pattern) => legacyWeakCoerceGlobEntry(pattern))
-            .filter((pattern): pattern is string => pattern !== undefined)
-            .map((pattern) => legacyExpandEnv(pattern, lookup))
-        : typeof rawSchemaPaths === "string"
-          ? splitGoSeedPaths(rawSchemaPaths)
-          : rawSchemaPaths === undefined
-            ? []
-            : (yield* legacyResolveScalarGlobFallback(
-                "db.migrations.schema_paths",
-                rawSchemaPaths,
-              )).map((pattern) => legacyExpandEnv(pattern, lookup));
-  const schemaPaths = schemaPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
+  const schemaPathsResolved = legacyResolveGlobField(
+    "db.migrations.schema_paths",
+    rawSchemaPaths,
+    schemaPathsOverride,
+    [],
+  );
+
+  // Go's `UnmarshalExact` decodes the whole config in ONE mapstructure pass (see
+  // `legacyGlobArrayIssues`'s doc comment) — combine BOTH `Glob` fields' issues, in
+  // Go's struct-declaration order (`Migrations` before `Seed`), before failing once,
+  // so a config invalid in both surfaces both, matching Go's single combined error
+  // instead of only the first field checked.
+  yield* legacyFailOnGlobIssues([...schemaPathsResolved.issues, ...sqlPathsResolved.issues]);
+
+  const schemaPaths = schemaPathsResolved.patterns.map((pattern) =>
+    legacyResolveSeedSqlPath(path, pattern),
+  );
 
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
   // ciphertext. `resolved` mirrors Go's `len(SHA256) > 0` gate (Go sets SHA256 only
