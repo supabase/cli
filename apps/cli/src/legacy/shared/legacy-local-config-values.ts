@@ -1694,12 +1694,19 @@ export function legacyResolveAuthHooks(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
-   * parameter — each `auth.hook.<type>.enabled` is in `LEGACY_ENV_OVERRIDABLE_KEYS`
-   * (`legacy-db-config.toml-read.ts`) because the ungated `legacyEnvOverrideBool` call below
-   * THROWS on a malformed override even when a matched remote block already set it, which would
-   * abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on an env
-   * value Go silently ignores. Defaults to empty for `start.handler.ts`'s callers, which never
-   * resolve a `[remotes.<ref>]` block for this config read.
+   * parameter — every `auth.hook.<type>.{enabled,uri,secrets}` leaf is in
+   * `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`) because Go's
+   * `mergeRemoteConfig` flattens the WHOLE matched block via `u.AllKeys()` and applies every
+   * leaf — not just `enabled` — with `v.Set` (override tier, above `AutomaticEnv`,
+   * `apps/cli-go/pkg/config/config.go:718-724`). `enabled`'s ungated `legacyEnvOverrideBool`
+   * call additionally THROWS on a malformed override even when a matched remote block already
+   * set it, which would abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow
+   * it feeds) on an env value Go silently ignores. `uri`/`secrets` can't throw the same way
+   * (plain `legacyEnvOverride`), but leaving them ungated is still a precedence bug: a remote's
+   * valid `uri` must beat a stale/malformed `SUPABASE_AUTH_HOOK_<TYPE>_URI`, otherwise
+   * `legacyValidateResolvedConfig`'s scheme check can reject a linked diff/pull that Go would
+   * accept (review: PRRT_kwDOErm0O86XGTq5). Defaults to empty for `start.handler.ts`'s callers,
+   * which never resolve a `[remotes.<ref>]` block for this config read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyResolvedAuthHooks {
@@ -1720,13 +1727,17 @@ export function legacyResolveAuthHooks(
           )
         : h.enabled;
     const uri =
-      (hookSectionPresent
-        ? legacyEnvOverride(`${envPrefix}_URI`, h.uri, projectEnvValues)
-        : h.uri) ?? "";
+      (remoteOverrideKeys.has(`auth.hook.${hookType}.uri`)
+        ? h.uri
+        : hookSectionPresent
+          ? legacyEnvOverride(`${envPrefix}_URI`, h.uri, projectEnvValues)
+          : h.uri) ?? "";
     const secrets =
-      (hookSectionPresent
-        ? legacyEnvOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
-        : h.secrets) ?? "";
+      (remoteOverrideKeys.has(`auth.hook.${hookType}.secrets`)
+        ? h.secrets
+        : hookSectionPresent
+          ? legacyEnvOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
+          : h.secrets) ?? "";
     result[LEGACY_HOOK_TYPE_TO_CAMEL[hookType]] = { enabled, uri, secrets };
   }
   return result as LegacyResolvedAuthHooks;

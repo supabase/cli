@@ -1370,6 +1370,7 @@ describe("legacyResolveLocalConfigValues", () => {
     afterEach(() => {
       delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"];
       delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
+      delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS"];
     });
 
     it("leaves every hook disabled when nothing is configured or overridden", () => {
@@ -1415,6 +1416,53 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(() => legacyResolveAuthHooks(authDocument, allHooks, undefined)).toThrow(
         'cannot parse "not-a-bool" as a bool',
       );
+    });
+
+    it("prefers a remote-set auth.hook.custom_access_token.uri over a conflicting SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI", () => {
+      // Regression (review: PRRT_kwDOErm0O86XGTq5) — Go's `mergeRemoteConfig` flattens the whole
+      // matched block via `u.AllKeys()` and applies EVERY leaf with `v.Set`
+      // (`apps/cli-go/pkg/config/config.go:718-724`), not just `enabled`. Leaving `uri` ungated
+      // let a stale/malformed env var beat a remote's already-merged, valid `uri`.
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = "ftp://example.com";
+      const hooksWithRemoteUri = {
+        ...allHooks,
+        custom_access_token: { enabled: true, uri: "https://example.com/hook", secrets: "" },
+      };
+      const authDocument = { hook: { custom_access_token: { enabled: true } } };
+      const resolved = legacyResolveAuthHooks(
+        authDocument,
+        hooksWithRemoteUri,
+        undefined,
+        new Set(["auth.hook.custom_access_token.uri"]),
+      );
+      expect(resolved.customAccessToken.uri).toBe("https://example.com/hook");
+    });
+
+    it("prefers a remote-set auth.hook.custom_access_token.secrets over a conflicting SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS", () => {
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS"] = "env-secret";
+      const hooksWithRemoteSecrets = {
+        ...allHooks,
+        custom_access_token: { enabled: true, uri: "", secrets: "remote-secret" },
+      };
+      const authDocument = { hook: { custom_access_token: { enabled: true } } };
+      const resolved = legacyResolveAuthHooks(
+        authDocument,
+        hooksWithRemoteSecrets,
+        undefined,
+        new Set(["auth.hook.custom_access_token.secrets"]),
+      );
+      expect(resolved.customAccessToken.secrets).toBe("remote-secret");
+    });
+
+    it("still applies the env override for uri when no remote block matched that leaf", () => {
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = "https://env.example.com/hook";
+      const hooksWithLocalUri = {
+        ...allHooks,
+        custom_access_token: { enabled: true, uri: "https://local.example.com/hook", secrets: "" },
+      };
+      const authDocument = { hook: { custom_access_token: { enabled: true } } };
+      const resolved = legacyResolveAuthHooks(authDocument, hooksWithLocalUri, undefined);
+      expect(resolved.customAccessToken.uri).toBe("https://env.example.com/hook");
     });
   });
 
@@ -2937,6 +2985,7 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
       "SUPABASE_AUTH_PASSKEY_ENABLED",
       "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
+      "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI",
     ]) {
       delete process.env[name];
     }
@@ -3473,6 +3522,53 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
         new Set(["experimental.webhooks.enabled"]),
       ),
     ).not.toThrow();
+  });
+
+  it("suppresses a scheme-invalid SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI when a remote block already set that hook's uri", () => {
+    // Regression (review: PRRT_kwDOErm0O86XGTq5): the remote can supply a valid `uri` while a
+    // stale/malformed `SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI` sits in the ambient
+    // environment. Go's `mergeRemoteConfig` (`config.go:718-724`) sets EVERY matched-block leaf
+    // above `AutomaticEnv`, so the remote's valid uri must win and validation must pass — before
+    // this fix, the ungated env read won instead and `legacyValidateResolvedConfig`'s scheme
+    // check rejected a linked diff/pull that Go would have accepted.
+    process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = "ftp://example.com";
+    const config = baseConfig({
+      auth: {
+        hook: {
+          custom_access_token: {
+            enabled: true,
+            uri: "https://example.com/hook",
+            secrets: `v1,whsec_${"A".repeat(32)}`,
+          },
+        },
+      },
+    });
+    const document = { auth: { hook: { custom_access_token: { enabled: true } } } };
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        document,
+        new Set(["auth.hook.custom_access_token.uri"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a scheme-invalid SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI when no remote block matched that leaf", () => {
+    process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = "ftp://example.com";
+    const config = baseConfig({
+      auth: {
+        hook: {
+          custom_access_token: { enabled: true, uri: "https://example.com/hook", secrets: "" },
+        },
+      },
+    });
+    const document = { auth: { hook: { custom_access_token: { enabled: true } } } };
+    expect(() =>
+      legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+    ).toThrow("auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI");
   });
 });
 
