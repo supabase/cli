@@ -743,6 +743,60 @@ describe("legacySqlFilesGlob", () => {
     },
   );
 
+  it.effect.skipIf(isRoot)(
+    "picks the lexically-first failing subdirectory as the fatal error, matching Go's fs.WalkDir sorted-visit order (review CLI-1958)",
+    () => {
+      // Go's `fs.WalkDir` visits directory entries in lexical byte order — its
+      // `ReadDir` (`os.ReadDir`/`afero.OsFs`) contract guarantees results "sorted by
+      // filename" before `walkDir` ever iterates them, so when a matched directory
+      // has MULTIPLE unreadable subdirectories, Go deterministically fails on the
+      // FIRST one lexically ("aaa" before "bbb") and never even attempts the second.
+      // This module's own `readDirectory` makes no such ordering promise, so this
+      // test provides a fake `FileSystem` whose `readDirectory` deliberately returns
+      // "schemas"'s children in REVERSE order ("bbb" before "aaa") — the opposite of
+      // Go's guaranteed order — to prove the walk sorts them back (`utf8Compare`)
+      // before iterating, rather than trusting raw (here: adversarial) enumeration
+      // order.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-order-"));
+      const schemasDir = join(dir, "schemas");
+      const aaaDir = join(schemasDir, "aaa");
+      const bbbDir = join(schemasDir, "bbb");
+      mkdirSync(aaaDir, { recursive: true });
+      mkdirSync(bbbDir, { recursive: true });
+      chmodSync(aaaDir, 0o000);
+      chmodSync(bbbDir, 0o000);
+      return Effect.gen(function* () {
+        const realFs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const reorderedFs: FileSystem.FileSystem = {
+          ...realFs,
+          readDirectory: (p, opts) =>
+            realFs
+              .readDirectory(p, opts)
+              .pipe(
+                Effect.map((names) => (p === schemasDir ? [...names].sort().reverse() : names)),
+              ),
+        };
+        const result = yield* legacySqlFilesGlob(reorderedFs, path, ["schemas"], dir);
+        expect(result.files).toEqual([]);
+        expect(result.warnings).toHaveLength(1);
+        // Go descends into "aaa" first (lexical order), fails reading it, and stops —
+        // "bbb" is never even attempted.
+        expect(result.warnings[0]).toContain("schemas/aaa");
+        expect(result.warnings[0]).not.toContain("schemas/bbb");
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            chmodSync(aaaDir, 0o755);
+            chmodSync(bbbDir, 0o755);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect(
     "sorts direct wildcard matches by UTF-8 byte order, not UTF-16 code units (Go sort.Strings parity)",
     () => {

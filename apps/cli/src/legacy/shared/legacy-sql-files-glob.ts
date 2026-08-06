@@ -243,7 +243,18 @@ const legacyWalkSqlFiles = (
                 `failed to walk matched directory: ${legacyRelativizeErrorMessage(legacyErrorMessage(error), absDir, rel)}`,
             ),
           );
-        for (const name of names) {
+        // Go's `fs.WalkDir` visits directory entries in lexical byte order — its own
+        // `ReadDir` (`os.ReadDir`/`afero.OsFs`) contract guarantees results "sorted by
+        // filename" before `walkDir` ever iterates them. This FileSystem service's
+        // `readDirectory` makes no such promise (raw OS enumeration order), so when a
+        // directory contains MULTIPLE problematic children (e.g. two unreadable
+        // subdirectories), which one's failure short-circuits this loop — and therefore
+        // which single error message this walk fails with, or which `WARN:`/fatal text a
+        // caller (the experimental schema branch, or seed-path globbing) surfaces —
+        // would otherwise depend on filesystem enumeration order instead of matching
+        // Go's deterministic choice (review CLI-1958). Sort with the same UTF-8
+        // byte-order comparator `globOne`/the top-level match list already use above.
+        for (const name of [...names].sort(utf8Compare)) {
           const childRel = joinRelChild(path, rel, name);
           const childAbs = path.isAbsolute(childRel) ? childRel : path.join(workdir, childRel);
           // Go's `fs.WalkDir` types each child from the parent's `ReadDir` entry
