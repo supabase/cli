@@ -378,6 +378,43 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
 
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimeInfo = yield* RuntimeInfo;
+    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    // Built BEFORE `resolver.resolve()` below, not just before the "Creating shadow
+    // database..." banner: this call performs a SECOND config load
+    // (`legacyLoadLocalProjectContext`'s `@supabase/config` read, distinct from `cfg`
+    // above) and its own validation (e.g. enabled API TLS's cert/key files, read here —
+    // `cfg` above only tracks their dotted keys for remote-override gating, it never reads
+    // the files), which can print a warning (e.g. deprecated `[inbucket]`) or fail
+    // outright. Go's `flags.LoadConfig` does ALL config loading (including any warnings)
+    // once, in the root `PersistentPreRunE`, strictly before `NewDbConfigWithPassword` —
+    // `resolver.resolve()`'s own parity target, see that call's doc comment above — or
+    // `DiffDatabase` ever prints "Creating shadow database..." (`internal/db/diff/
+    // diff.go:212`) run. Previously this validation ran AFTER `resolver.resolve()` (a
+    // linked target's temp-role mint over the Management API), so a config broken only in
+    // a field this build reads surfaced after that network side effect instead of before
+    // it, unlike Go (review: PRRT_kwDOErm0O86XIUK1, pull.handler.ts's identical fix). Only
+    // the actual Docker-image resolution below (`resolvePostgresImage`, lazy until this
+    // point) is the provisioning work the banner itself announces.
+    const localInputs = yield* legacyBuildLocalDbContainerInputs(
+      spawner,
+      cliConfig.workdir,
+      networkIdFlag,
+      runtimeInfo.platform,
+      debug,
+      // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
+      // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
+      // as `cfg` above (`legacyReadDbToml(..., linkedRef)`) — Go remote-merges the WHOLE
+      // config uniformly on the linked path (`LoadConfig` seeds `flags.ProjectRef` before
+      // every field read).
+      connType === "linked" ? linkedRef : undefined,
+      // `cfg`'s OWN remote-override-key tracking (same matched block) — so a remote-set
+      // bootstrap field (e.g. `db.major_version`) isn't re-overridden by a conflicting
+      // `SUPABASE_*` env var when deriving the shadow's container spec.
+      cfg.remoteOverrideKeys,
+    );
+
     const resolved = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType,
@@ -428,34 +465,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       pgDeltaDefault,
     });
 
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeInfo = yield* RuntimeInfo;
-    const networkIdFlag = yield* LegacyNetworkIdFlag;
-    // Built BEFORE the "Creating shadow database..." banner, not after: this call performs a
-    // SECOND config load (`legacyLoadLocalProjectContext`'s `@supabase/config` read, distinct
-    // from `cfg` above) and its own validation, which can print a warning (e.g. deprecated
-    // `[inbucket]`) or fail outright — Go's `flags.LoadConfig` does ALL config loading
-    // (including any warnings) once, in the command's PreRun, strictly before `DiffDatabase`
-    // ever prints this banner (`internal/db/diff/diff.go:212`). Only the actual Docker-image
-    // resolution below (`resolvePostgresImage`, lazy until this point) is the provisioning work
-    // the banner itself announces (review: PRRT_kwDOErm0O86XHGDM).
-    const localInputs = yield* legacyBuildLocalDbContainerInputs(
-      spawner,
-      cliConfig.workdir,
-      networkIdFlag,
-      runtimeInfo.platform,
-      debug,
-      // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
-      // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
-      // as `cfg` above (`legacyReadDbToml(..., linkedRef)`) — Go remote-merges the WHOLE
-      // config uniformly on the linked path (`LoadConfig` seeds `flags.ProjectRef` before
-      // every field read).
-      connType === "linked" ? linkedRef : undefined,
-      // `cfg`'s OWN remote-override-key tracking (same matched block) — so a remote-set
-      // bootstrap field (e.g. `db.major_version`) isn't re-overridden by a conflicting
-      // `SUPABASE_*` env var when deriving the shadow's container spec.
-      cfg.remoteOverrideKeys,
-    );
     yield* output.raw("Creating shadow database...\n", "stderr");
     const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
     // `Effect.acquireUseRelease`, NOT a separate `yield* legacyPrepareShadowSource(...)`

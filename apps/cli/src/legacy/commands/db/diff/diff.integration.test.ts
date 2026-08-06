@@ -604,6 +604,40 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "validates the shadow's own local config (api.tls cert file) BEFORE resolving the connection",
+    () => {
+      // `db.major_version` above is caught by `cfg` (`legacyReadDbToml`'s "D" pipeline),
+      // which already runs ahead of `resolver.resolve()`. `api.tls` is "L only" — `cfg`
+      // only tracks its dotted keys for remote-override gating, it never reads the cert/key
+      // files (see `legacyBuildLocalDbContainerInputs`'s doc comment) — so this is the ONE
+      // config error only `legacyBuildLocalDbContainerInputs`'s own validation catches. Go
+      // validates it as part of `LoadConfig`, in the root `PersistentPreRunE`, strictly
+      // before `NewDbConfigWithPassword` (`resolver.resolve()`'s parity target) ever runs
+      // (review: PRRT_kwDOErm0O86XIUK1) — so `resolverCalls` must stay empty here, proving
+      // the shadow's config validation ran first, not just that the command failed.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[api]",
+          "enabled = true",
+          "[api.tls]",
+          "enabled = true",
+          'cert_path = "missing-cert.pem"',
+          'key_path = "missing-key.pem"',
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { diffSql: "create table x ();\n" });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbDiff(flags()).pipe(Effect.flip);
+        expect(error.message).toContain("failed to read TLS cert");
+        expect(s.resolverCalls).toHaveLength(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("re-quotes a comma-containing schema when delegating the diff", () => {
     // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
     // would let the Go child's pflag StringSlice CSV-split it into two schemas, so

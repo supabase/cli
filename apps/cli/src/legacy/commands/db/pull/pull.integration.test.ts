@@ -223,9 +223,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const poolerFallbackCalls: unknown[] = [];
+  const resolveCalls: unknown[] = [];
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: ({ connType }) =>
-      Effect.succeed({
+    resolve: (resolveFlags) => {
+      resolveCalls.push(resolveFlags);
+      const { connType } = resolveFlags;
+      return Effect.succeed({
         conn: {
           // A direct `db.<ref>.<projectHost>` host so the pooler-fallback gate
           // (Go's ProjectRefFromDirectDbHost) matches on the linked path.
@@ -237,7 +240,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         },
         isLocal: connType === "local",
         ref: opts.resolvedRef !== undefined ? Option.some(opts.resolvedRef) : Option.none(),
-      }),
+      });
+    },
     resolvePoolerFallback: (resolveFlags) => {
       poolerFallbackCalls.push(resolveFlags);
       return Effect.succeed(
@@ -334,6 +338,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     execLog,
     connectedDatabases,
     poolerFallbackCalls,
+    resolveCalls,
     dumpCalls,
     shadowSpawned: shadowSpawner.spawned,
     get edgeRunCount() {
@@ -561,6 +566,40 @@ describe("legacy db pull", () => {
       expect(err).not.toContain(tmp.current);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "validates the shadow's own local config (api.tls cert file) BEFORE resolving the connection",
+    () => {
+      // `toml` (`legacyReadDbToml`'s "D" pipeline) only tracks `api.tls`'s dotted keys for
+      // remote-override gating, it never reads the cert/key files — that read lives in
+      // `legacyBuildLocalDbContainerInputs`'s own "L" pipeline (see that call's doc comment,
+      // and `diff.handler.ts`'s identical fix). Go validates it as part of `LoadConfig`, in
+      // the root `PersistentPreRunE`, strictly before `NewDbConfigWithPassword`
+      // (`resolver.resolve()`'s parity target) or `pull.Run`'s `ConnectByConfig` ever run
+      // (review: PRRT_kwDOErm0O86XIUK1) — so `resolveCalls` must stay empty here, proving the
+      // shadow's config validation ran first, not just that the command failed.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[api]",
+          "enabled = true",
+          "[api.tls]",
+          "enabled = true",
+          'cert_path = "missing-cert.pem"',
+          'key_path = "missing-key.pem"',
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { remoteVersions: [], edgeStdout: "" });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        expect(error.message).toContain("failed to read TLS cert");
+        expect(s.resolveCalls).toHaveLength(0);
+        expect(s.connectedDatabases).toHaveLength(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("pull --declarative exports declarative files (no migration)", () => {
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });

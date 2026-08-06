@@ -36,7 +36,10 @@ import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts
 import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
-import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
+import {
+  legacyBuildLocalDbContainerInputs,
+  type LegacyLocalDbContainerInputs,
+} from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import {
   legacyPrepareRawShadow,
   legacyRemoveShadowDatabase,
@@ -247,6 +250,61 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
 
+    // viper resolves `EXPERIMENTAL` from *either* the global `--experimental` pflag or
+    // `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,327,334`), so honor both forms; the
+    // legacy root only forwards `--experimental` to Go proxy argv, never into env. Resolved
+    // here, before `resolver.resolve()` below (not just before connecting), so the shadow
+    // container-input build right after it also knows whether this run delegates to the Go
+    // child. Declarative mode never delegates (Go checks `usePgDelta` before `EXPERIMENTAL`,
+    // `pull.go:47-50`).
+    const delegatesExperimentalPull =
+      !useDeclarative &&
+      (experimental || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL")));
+
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimeInfo = yield* RuntimeInfo;
+    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    // Build (and validate) the shadow's own local container inputs BEFORE `resolver.resolve()`
+    // below, not after: `legacyBuildLocalDbContainerInputs` -> `legacyResolveLocalConfigValues`/
+    // `legacyResolveDbBootstrapConfig` read/validate fields (e.g. enabled API TLS's cert/key
+    // files) that `toml` above never touches (`legacy-db-config.toml-read.ts` only tracks their
+    // dotted keys for remote-override gating, it doesn't read the files). Go performs this exact
+    // validation as part of `LoadConfig`, in the root `PersistentPreRunE`, strictly before
+    // `NewDbConfigWithPassword` — `resolver.resolve()`'s own parity target, see that call's doc
+    // comment below — or `pull.Run`'s `ConnectByConfig` ever run (`internal/utils/flags/
+    // db_url.go:87-93` -> `config_path.go:11-12`). Previously this validation ran inside the
+    // declarative/migration-file branches further down, AFTER both `resolver.resolve()` (a
+    // linked target's temp-role mint over the Management API) and `connection.connect()` — so a
+    // config broken only in a field this build reads (e.g. a missing `api.tls.cert_path` file)
+    // surfaced after those network side effects instead of before them, unlike Go (review:
+    // PRRT_kwDOErm0O86XIUK1). Skipped for the delegated `--experimental` path: that spawns the
+    // real Go binary, which performs this exact validation itself in its OWN `PersistentPreRunE`
+    // — building it here too would run (and, for any WARN branch, print) it twice for the same
+    // invocation. Kept as an `Option`, not built directly into a bare value, so the two
+    // non-delegate branches below (declarative and migration-file — the exact set
+    // `delegatesExperimentalPull` excludes) can unwrap it without an `undefined` check; both
+    // `Option.getOrThrow` call sites document why that unwrap is always `Some` there. Cheap
+    // either way: image resolution stays lazy (`resolvePostgresImage`), so this doesn't pull the
+    // shadow's Docker image yet.
+    const localInputs: Option.Option<LegacyLocalDbContainerInputs> = delegatesExperimentalPull
+      ? Option.none()
+      : Option.some(
+          yield* legacyBuildLocalDbContainerInputs(
+            spawner,
+            cliConfig.workdir,
+            networkIdFlag,
+            runtimeInfo.platform,
+            debug,
+            // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
+            // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
+            connType === "linked" ? linkedRef : undefined,
+            // `toml`'s OWN remote-override-key tracking (same matched block) — so a
+            // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
+            // env var when deriving the shadow's container spec.
+            toml.remoteOverrideKeys,
+          ),
+        );
+
     const resolved = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType,
@@ -369,17 +427,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         yield* proxy.exec(rebuildDelegateArgs(flags), { env });
       });
 
-    // viper resolves `EXPERIMENTAL` from *either* the global `--experimental`
-    // pflag or `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,327,334`), so honor
-    // both forms; the legacy root only forwards `--experimental` to Go proxy
-    // argv, never into env. Resolved before connecting so the Connecting line
-    // below knows whether this run delegates to the Go child. Declarative mode
-    // never delegates (Go checks `usePgDelta` before `EXPERIMENTAL`,
-    // `pull.go:47-50`).
-    const delegatesExperimentalPull =
-      !useDeclarative &&
-      (experimental || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL")));
-
     // Connectivity check (Go's `ConnectByConfig` at the top of `pull.Run`).
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -407,23 +454,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
-          const declSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const declRuntimeInfo = yield* RuntimeInfo;
-          const declNetworkIdFlag = yield* LegacyNetworkIdFlag;
-          const declLocalInputs = yield* legacyBuildLocalDbContainerInputs(
-            declSpawner,
-            cliConfig.workdir,
-            declNetworkIdFlag,
-            declRuntimeInfo.platform,
-            debug,
-            // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
-            // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
-            connType === "linked" ? linkedRef : undefined,
-            // `toml`'s OWN remote-override-key tracking (same matched block) — so a
-            // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
-            // env var when deriving the shadow's container spec.
-            toml.remoteOverrideKeys,
-          );
+          // Built above, before `resolver.resolve()` — see that build's doc comment.
+          // `Option.getOrThrow` is safe here: `useDeclarative` is true in this branch, and
+          // `delegatesExperimentalPull` is defined as `!useDeclarative && (...)`, so
+          // `localInputs` was always built (never the `Option.none()` delegate case) by the
+          // time this branch runs.
+          const declLocalInputs = Option.getOrThrow(localInputs);
           const resolvedDeclShadowImage = yield* declLocalInputs.resolvePostgresImage;
           // `legacyPrepareRawShadow` needs none of the `setup`/declarative-branch fields the
           // adapter also returns (a bare shadow never runs `MigrateShadowDatabase`) — its own
@@ -441,7 +477,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // DockerRemove` immediately after successful preparation (review: PRRT_kwDOErm0O86XEuqJ).
           const exported = yield* Effect.acquireUseRelease(
             legacyPrepareRawShadow(
-              declSpawner,
+              spawner,
               legacyShadowRunInputFromLocalContainerInputs(
                 declLocalInputs,
                 resolvedDeclShadowImage,
@@ -460,7 +496,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 }),
               ),
             (shadow) =>
-              legacyRemoveShadowDatabase(declSpawner, {
+              legacyRemoveShadowDatabase(spawner, {
                 containerId: shadow.container,
                 secretDirId: shadow.secretDirId,
                 workdir: cliConfig.workdir,
@@ -558,36 +594,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // is "in sync", a non-empty dump is a valid initial migration on its own.
         let seedWroteBytes = false;
 
-        // Build (and validate) the shadow's own container inputs BEFORE the initial-dump
-        // write below, not after: `legacyBuildLocalDbContainerInputs` → `legacyResolveLocalConfigValues`/
-        // `legacyResolveDbBootstrapConfig` read/validate fields (e.g. enabled API TLS's
-        // cert/key files) that `toml` above never touches (`legacy-db-config.toml-read.ts`
-        // only tracks their dotted keys for remote-override gating, it doesn't read the
-        // files). Go performs this exact validation as part of `LoadConfig`, in the root
-        // `PersistentPreRunE`, before `pull.Run` — and hence before `dumpRemoteSchema` — ever
-        // executes (`internal/utils/flags/db_url.go:87-93` → `config_path.go:11-12`). Building
-        // this here, before `seededFromDump`'s dump write, matches that: a bad config throws
-        // before any migration file exists, instead of leaving a dumped-but-uncommitted
-        // migration behind that then reads as a local/remote history conflict on the next
-        // pull (review: PRRT_kwDOErm0O86XHvYo). Cheap to build early: image resolution stays
-        // lazy (`resolvePostgresImage`), so this doesn't pull the shadow's Docker image yet.
-        const pullSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const pullRuntimeInfo = yield* RuntimeInfo;
-        const pullNetworkIdFlag = yield* LegacyNetworkIdFlag;
-        const pullLocalInputs = yield* legacyBuildLocalDbContainerInputs(
-          pullSpawner,
-          cliConfig.workdir,
-          pullNetworkIdFlag,
-          pullRuntimeInfo.platform,
-          debug,
-          // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
-          // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
-          connType === "linked" ? linkedRef : undefined,
-          // `toml`'s OWN remote-override-key tracking (same matched block) — so a
-          // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
-          // env var when deriving the shadow's container spec.
-          toml.remoteOverrideKeys,
-        );
+        // Built above, before `resolver.resolve()` (see that build's doc comment — it's what
+        // used to run here, right before the initial-dump write below, but even that was still
+        // after `resolver.resolve()`/`connection.connect()`). `Option.getOrThrow` is safe here:
+        // this point is only reached after the `if (delegatesExperimentalPull) { …; return; }`
+        // check above already returned, so `localInputs` was always built.
+        const pullLocalInputs = Option.getOrThrow(localInputs);
 
         if (seededFromDump) {
           yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
@@ -731,7 +743,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // uninterruptible continuation the acquire resolves into, matching Go's `defer
             // DockerRemove` immediately after successful preparation (review: PRRT_kwDOErm0O86XDr4Y).
             return yield* Effect.acquireUseRelease(
-              legacyPrepareShadowSource(pullSpawner, {
+              legacyPrepareShadowSource(spawner, {
                 ...legacyShadowRunInputFromLocalContainerInputs(
                   pullLocalInputs,
                   resolvedPullShadowImage,
@@ -804,7 +816,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   return { sql, files: undefined, capture: undefined };
                 }),
               (shadow) =>
-                legacyRemoveShadowDatabase(pullSpawner, {
+                legacyRemoveShadowDatabase(spawner, {
                   containerId: shadow.container,
                   secretDirId: shadow.secretDirId,
                   workdir: cliConfig.workdir,
