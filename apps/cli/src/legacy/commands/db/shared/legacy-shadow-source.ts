@@ -425,23 +425,25 @@ function legacyGlobDeclaredSchemaPaths(
       // `legacyGlobPattern` (which only recognize `/` as a segment separator) ever see it.
       // Mirrors `legacy-seed-ops.ts`'s identical `toSlash` step for `[db.seed] sql_paths`.
       //
-      // NOT gated on `platform === "win32"` the way `legacyCleanSchemaPath` below gates its
-      // OWN `\`->`/` conversion: verified empirically against the real
-      // `config.Glob.SQLFiles` (`apps/cli-go/pkg/config/config.go:119-192`) on darwin, fed a
-      // pattern containing a literal `\` (`supabase/foo\bar/x.sql`) — Go's `path.Match`
-      // (which `fs.Glob` compiles down to) treats `\` as an ESCAPE metacharacter on every
-      // platform, not a literal filename byte, so it matched `supabase/foobar/x.sql` (the
-      // backslash consumed, "b" required literally), never a real directory named `foo\bar`.
-      // A POSIX build of Go can therefore NEVER glob-match a literal backslash in a
-      // `schema_paths` entry either way — "preserving" it here wouldn't reproduce that
-      // escape semantics (this port's own `legacyPathMatch`/`legacyGlobPattern` don't
-      // segment-join an unslashed `\` the same way Go's chunked matcher does), it would just
-      // swap one non-parity POSIX result for a different, no-more-correct one. Left
-      // unconditional pending a real fix to `legacyPathMatch`/`legacyGlobPattern`'s own
-      // cross-segment escape handling, which is a pre-existing gap in that shared module
-      // (also used by `[db.seed] sql_paths`), not something specific to this PR's shadow
-      // provisioning.
-      const pattern = legacyResolveSeedSqlPath(path, rawPattern).replaceAll("\\", "/");
+      // Gated on `path.sep !== "/"`, mirroring BOTH `legacyCleanSchemaPath` below AND
+      // `legacyGlobPattern`'s own internal `path.sep === "/" ? pattern : ...` normalization
+      // (`legacy-glob.ts:68`) — `filepath.ToSlash` is a byte-for-byte no-op on POSIX (only
+      // Windows's `filepath.Separator` is `\`), so converting unconditionally here previously
+      // fed `legacyGlobPattern` an already-slashed pattern on POSIX too, silently discarding
+      // any `\` a caller wrote as a `path.Match` escape. Verified empirically with a scratch
+      // `path.Match` probe on darwin: `path.Match("foo\\*.sql", "foo*.sql")` (Go's real,
+      // unconverted-on-POSIX behavior) is `true` — a literal `\*` escapes the metacharacter,
+      // matching a file literally named `foo*.sql` — while this file's OLD unconditional
+      // `.replaceAll("\\", "/")` turned the same pattern into `foo/*.sql`, which instead
+      // searches a `foo/` subdirectory and never matches the literal `foo*.sql` file Go finds.
+      // The same probe also caught a second-order bug: unconditionally rewriting `\[` (a valid
+      // escaped literal `[`) into `/[` turns it into an unterminated character class, so a
+      // pattern that is well-formed for Go's `path.Match` was spuriously rejected as malformed
+      // here. Leaving `\` untouched on POSIX lets `legacyPathMatch`'s own escape handling (used
+      // by both this and `legacyGlobPattern`) reproduce Go's semantics directly — no gap in
+      // that shared module needs fixing first.
+      const rawResolved = legacyResolveSeedSqlPath(path, rawPattern);
+      const pattern = path.sep === "/" ? rawResolved : rawResolved.replaceAll("\\", "/");
       if (legacyPathMatch(pattern, "").badPattern) {
         problems.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
         continue;

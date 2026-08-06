@@ -304,25 +304,20 @@ describe("legacyLoadDeclaredSchemas", () => {
   });
 
   it.effect(
-    "normalizes a backslash-separated schema_paths entry before globbing (Go's filepath.ToSlash)",
+    "on POSIX, a backslash in a schema_paths entry is a path.Match escape, not a separator (review: PRRT_kwDOErm0O86W7n90)",
     () => {
-      // Go calls `fs.Glob(fsys, filepath.ToSlash(pattern))` immediately before globbing
-      // (`pkg/config/config.go:145`) — a pattern containing `\` (as every absolute Windows
-      // `schema_paths` entry does) must be forward-slashed first, or `legacyPathMatch`/
-      // `legacyGlobPattern` (which only recognize `/` as a segment separator, and treat `\`
-      // as a glob escape) mis-parse it entirely.
-      //
-      // NOT gated on platform, unlike `legacyCleanSchemaPath`'s own win32-only conversion:
-      // verified empirically against the real `config.Glob.SQLFiles`
-      // (`apps/cli-go/pkg/config/config.go:119-192`) on darwin that Go's own `path.Match`
-      // treats `\` as an escape metacharacter on every platform, not a literal filename byte —
-      // a `foo\bar/x.sql` pattern matched `foobar/x.sql`, never a directory actually named
-      // `foo\bar`. A POSIX Go build can therefore never glob-match a literal backslash in a
-      // `schema_paths` entry either way, so "preserving" it here wouldn't reproduce Go's real
-      // behavior; it would just swap one non-parity result for a different one.
+      // Go's `filepath.ToSlash` (`fs.Glob(fsys, filepath.ToSlash(pattern))`,
+      // `pkg/config/config.go:145`) is a byte-for-byte no-op on POSIX — only Windows's
+      // `filepath.Separator` is `\`. `path.Match` (what `fs.Glob` compiles down to) then
+      // treats an un-converted `\` as an escape metacharacter: `custom\x.sql` escapes the
+      // literal `x`, matching a FILE literally named `customx.sql` directly under
+      // `supabase/`, never the path-separated `supabase/custom/x.sql`. Verified empirically:
+      // `path.Match("custom\\x.sql", "customx.sql")` is `true` on darwin, while
+      // `path.Match("custom\\x.sql", "custom/x.sql")` never even reaches that filename (the
+      // pattern has no `/`, so it only lists `supabase/`, never descends into `custom/`).
       const workdir = makeWorkdir();
-      mkdirSync(join(workdir, "supabase", "custom"), { recursive: true });
-      writeFileSync(join(workdir, "supabase", "custom", "x.sql"), "select 1;\n");
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "customx.sql"), "select 1;\n");
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -333,7 +328,35 @@ describe("legacyLoadDeclaredSchemas", () => {
           ["custom\\x.sql"],
           pgDelta(),
         );
-        expect(result).toEqual(["supabase/custom/x.sql"]);
+        expect(result).toEqual(["supabase/customx.sql"]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
+    "on POSIX, a backslash-escaped glob metacharacter in schema_paths matches the literal filename (review: PRRT_kwDOErm0O86W7n90)",
+    () => {
+      // The specific case the review thread flagged: `path.Match("foo\\*.sql", "foo*.sql")`
+      // is `true` on darwin — the escaped `*` is a literal asterisk, matching a file named
+      // `foo*.sql`, not a glob that searches a `foo/` subdirectory. Before this fix,
+      // `legacyGlobDeclaredSchemaPaths` unconditionally rewrote the pattern to `foo/*.sql`
+      // ahead of globbing, which searches `foo/` instead and would report "no files matched"
+      // for this exact, valid Go config.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "foo*.sql"), "select 1;\n");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          ["foo\\*.sql"],
+          pgDelta(),
+        );
+        expect(result).toEqual(["supabase/foo*.sql"]);
         rmSync(workdir, { recursive: true, force: true });
       }).pipe(Effect.provide(BunServices.layer));
     },
