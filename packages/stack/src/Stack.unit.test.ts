@@ -175,7 +175,7 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves the current functions bundle across repeated runtime reloads", () => {
+  it.live("preserves current Functions and Edge Runtime settings across partial reloads", () => {
     const runtimeRoot = mkdtempSync(join(tmpdir(), "supabase-functions-reload-"));
     const initialBundle = functionsBundle(runtimeRoot, "initial-secret");
     const replacementBundle = functionsBundle(runtimeRoot, "replacement-secret");
@@ -194,12 +194,16 @@ describe("Stack", () => {
         },
       ]),
     );
+    const builtConfigs: ResolvedStackConfig[] = [];
     const builderLayer = Layer.succeed(StackBuilder, {
-      build: () =>
-        Effect.succeed({
-          graph,
-          cleanupTargets: { dockerContainerNames: [] },
-          serviceProjection: new Map([["edge-runtime", { visibility: "public" as const }]]),
+      build: (candidate) =>
+        Effect.sync(() => {
+          builtConfigs.push(candidate);
+          return {
+            graph,
+            cleanupTargets: { dockerContainerNames: [] },
+            serviceProjection: new Map([["edge-runtime", { visibility: "public" as const }]]),
+          };
         }),
     });
     const resolver = mockBinaryResolver();
@@ -225,6 +229,12 @@ describe("Stack", () => {
 
       yield* stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } });
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
+      yield* stack.reloadEdgeRuntime({ edgeRuntime: { env: { NEXT: "next-value" } } });
+      expect(builtConfigs.at(-1)?.edgeRuntime).toMatchObject({
+        policy: "oneshot",
+        env: { NEXT: "next-value" },
+      });
 
       yield* stack.reloadFunctions();
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
