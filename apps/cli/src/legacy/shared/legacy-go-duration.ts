@@ -8,7 +8,9 @@
  * (nanoseconds as `int64`). Go itself re-serializes the PARSED value with
  * `fmt.Sprintf("%v", duration)` when building a container's env (e.g.
  * `GOTRUE_SESSIONS_TIMEBOX`, `GOTRUE_SMS_MAX_FREQUENCY` in
- * `apps/cli-go/internal/start/start.go`'s `buildGotrueEnv`), which normalizes
+ * `apps/cli-go/internal/start/start.go`'s `buildGotrueEnv`, deleted along with
+ * the rest of `internal/start` as unreachable, CLI-1966; last present at
+ * commit a253ccba2), which normalizes
  * the string to Go's canonical form — `"1h"` becomes `"1h0m0s"`,
  * `"90s"` becomes `"1m30s"` — so callers needing byte-exact parity must
  * round-trip through both functions below, not just pass the configured
@@ -208,4 +210,26 @@ export function legacyFormatGoDuration(nanoseconds: number): string {
 /** Formats `totalNs / unitNs` with trailing zeros (and a trailing `.`) trimmed, matching Go's `fmtFrac`. */
 function formatFraction(totalNs: number, unitNs: number): string {
   return (totalNs / unitNs).toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+/**
+ * Go's `Db.HealthTimeout` (`apps/cli-go/internal/db/start/start.go:180`) — a duration STRING
+ * (`"2m"` default, `packages/config/src/db.ts`) decoded via `mapstructure.
+ * StringToTimeDurationHookFunc()` inside the same `v.UnmarshalExact` call every `SUPABASE_*`
+ * override goes through (`pkg/config/config.go:749-756,775-784`) — a malformed value hard-fails
+ * `Config.Load` (`"failed to parse config: %w"`) before either `start`/`db start` ever runs; it is
+ * never silently replaced with a default. A valid-but-degenerate value (e.g. `"0s"`) isn't
+ * special-cased either: Go's backoff policy computes `uint64(timeout.Seconds())` as the retry
+ * count (`internal/db/start/start.go:192-198`), and the backoff library returns `Stop` immediately
+ * when that count is `0` — i.e. exactly one immediate health probe with no wait, not a 30s
+ * fallback. Throws on a malformed value, matching `legacyParseGoDuration`; the caller wraps that
+ * into its own typed config-load-failure error so rollback/cleanup still fires (a plain throw here
+ * would surface as an Effect defect instead of a typed failure).
+ *
+ * Hoisted here (was private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts`'s own native container bootstrap became a second caller —
+ * see `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ */
+export function legacyResolveHealthTimeoutSeconds(healthTimeout: string): number {
+  return Math.trunc(legacyParseGoDuration(healthTimeout) / 1_000_000_000);
 }

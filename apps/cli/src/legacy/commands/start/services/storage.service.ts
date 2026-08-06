@@ -44,12 +44,12 @@ import type { ProjectConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import {
   legacyStartInternalDbUrl,
   legacyStartInternalDbPassword,
-} from "../lib/internal-db-connection.ts";
+} from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 /** Go's `dockerStoragePath` local (`start.go:996`) — both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
 const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
@@ -57,7 +57,7 @@ const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
 export interface LegacyStorageVectorEnvInput {
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `legacyStartInternalDbPassword` (`../lib/internal-db-connection.ts`). */
+  /** See `legacyStartInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
   readonly dbPassword: string;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
@@ -116,7 +116,7 @@ export interface LegacyStorageEnvInput {
   readonly jwks: string;
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `legacyStartInternalDbPassword` (`../lib/internal-db-connection.ts`). */
+  /** See `legacyStartInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
   readonly dbPassword: string;
   /** `config.storage.file_size_limit`, e.g. `"50MiB"` — converted to a byte count via `ramInBytes`. */
   readonly fileSizeLimit: ProjectConfig["storage"]["file_size_limit"];

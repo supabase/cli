@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -271,24 +270,29 @@ var (
 		},
 	}
 
-	bootstrapMode       string
-	bootstrapSqlPaths   []string
-	bootstrapFromBackup string
-	bootstrapVersion    string
-	bootstrapNoSeed     bool
+	bootstrapMode     string
+	bootstrapSqlPaths []string
+	bootstrapVersion  string
+	bootstrapNoSeed   bool
 
-	// dbBootstrapCmd is a hidden seam used by the native-TypeScript `db start` and
-	// `db reset --local` commands to drive the container-bootstrap primitives that
-	// are not yet ported to TypeScript: creating/recreating the local Postgres
-	// container, applying the initial schema, and the storage health gate. The TS
-	// caller orchestrates everything else (the "already running?" check and its
-	// message, version/last resolution, bucket seeding, the git-branch "Finished…"
-	// line, telemetry, and --output-format shaping); the seam stays in Go only for
-	// the Docker lifecycle. It mirrors the existing db __shadow seam: it carries no
+	// dbBootstrapCmd is a hidden seam used by the native-TypeScript `db reset --local`
+	// command to drive the container-bootstrap primitives that are not yet ported to
+	// TypeScript: recreating the local Postgres container, applying the initial
+	// schema, and the storage health gate. The TS caller orchestrates everything else
+	// (version/last resolution, bucket seeding, the git-branch "Finished…" line,
+	// telemetry, and --output-format shaping); the seam stays in Go only for the
+	// Docker lifecycle. It mirrors the existing db __shadow seam: it carries no
 	// db-url/local/linked target flags, so it loads supabase/config.toml explicitly
 	// (the root PersistentPreRunE only loads it when a target flag is set). Progress
 	// goes to stderr; the only stdout output is a single machine-parseable marker
-	// for --mode await-storage ("ready" or "absent").
+	// for --mode await-storage ("ready" or "absent"). `db start`'s own container
+	// bootstrap (--mode start) was removed from this seam by CLI-1954 — it is now a
+	// fully native TypeScript implementation
+	// (apps/cli/src/legacy/commands/db/start/start.handler.ts), reusing
+	// legacy/shared/db-bootstrap/'s already-ported container-bootstrap primitives
+	// instead of shelling out to this binary. `start.StartDatabase` itself (called
+	// below by the real, customer-facing `db start` Go command) is untouched — it
+	// remains the parity oracle this TS port was checked against.
 	dbBootstrapCmd = &cobra.Command{
 		Use:    "__db-bootstrap",
 		Hidden: true,
@@ -299,16 +303,6 @@ var (
 				return err
 			}
 			switch bootstrapMode {
-			case "start":
-				// Mirror start.Run minus the "already running?" check, which the TS
-				// caller performs (and prints "Postgres database is already running.").
-				if err := start.StartDatabase(cmd.Context(), bootstrapFromBackup, fsys, os.Stderr); err != nil {
-					if rmErr := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); rmErr != nil {
-						fmt.Fprintln(os.Stderr, rmErr)
-					}
-					return err
-				}
-				return nil
 			case "recreate":
 				// The PG14/PG15 container-recreate half of local db reset. The TS
 				// caller has already printed "Resetting local database…" and validated
@@ -688,8 +682,7 @@ func init() {
 	dbCmd.AddCommand(dbShadowCmd)
 	// Build hidden container-bootstrap seam command (native db start / db reset)
 	bootstrapFlags := dbBootstrapCmd.Flags()
-	bootstrapFlags.StringVar(&bootstrapMode, "mode", "start", "Bootstrap mode: start, recreate, or await-storage.")
-	bootstrapFlags.StringVar(&bootstrapFromBackup, "from-backup", "", "Path to a logical backup file (start mode).")
+	bootstrapFlags.StringVar(&bootstrapMode, "mode", "recreate", "Bootstrap mode: recreate or await-storage.")
 	bootstrapFlags.StringVar(&bootstrapVersion, "version", "", "Reset up to the specified version (recreate mode).")
 	bootstrapFlags.BoolVar(&bootstrapNoSeed, "no-seed", false, "Skip the seed script after recreate (recreate mode).")
 	bootstrapFlags.StringArrayVar(&bootstrapSqlPaths, "sql-paths", nil, "Override [db.seed].sql_paths for the recreate (recreate mode).")

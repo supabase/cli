@@ -16,7 +16,7 @@
  * {@link legacyBuildPgMetaContainerSpec} is the only exported entry point.
  */
 
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
 /** Go's hardcoded pg-meta listen port (`start.go:1117`, `PG_META_PORT=8080`) — never configurable. */
 const PG_META_PORT = 8080;
