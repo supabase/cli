@@ -641,6 +641,48 @@ describe("legacyLoadDeclaredSchemas", () => {
   );
 
   it.effect.skipIf(isRoot)(
+    "visits sibling directories in UTF-8 byte order, not JS's default UTF-16 order, so the reported failure matches Go's (review: PRRT_kwDOErm0O86XAlIo)",
+    () => {
+      // `["dir\u{1F600}", "dir\u{E000}"].sort()` (JS default, UTF-16 code-unit order) puts the
+      // supplementary-plane name FIRST — its lead surrogate (0xD83D) is less than the
+      // private-use code unit (0xE000). Byte order (Go's `sort.Strings`/`bytealg.CompareString`,
+      // what `legacyCompareUtf8Bytes` reproduces) disagrees: U+1F600 encodes to a LARGER first
+      // UTF-8 byte (0xF0) than U+E000 (0xEE), so the private-use name sorts first instead.
+      // Both subdirectories are unreadable, so whichever the walk visits FIRST is the one whose
+      // `EACCES` failure aborts the whole walk (Effect.gen never reaches the second entry) —
+      // its path, not the other one's, must appear in the resulting error.
+      const workdir = makeWorkdir();
+      const matched = join(workdir, "supabase", "custom");
+      const utf16First = join(matched, "dir\u{1F600}");
+      const byteOrderFirst = join(matched, "dir\u{E000}");
+      mkdirSync(utf16First, { recursive: true });
+      mkdirSync(byteOrderFirst, { recursive: true });
+      chmodSync(utf16First, 0o000);
+      chmodSync(byteOrderFirst, 0o000);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          ["custom"],
+          pgDelta(),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain(byteOrderFirst);
+          expect(errorJson).not.toContain(utf16First);
+        }
+        chmodSync(utf16First, 0o755);
+        chmodSync(byteOrderFirst, 0o755);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect.skipIf(isRoot)(
     "reports the pg-delta declarative dir walk failure as 'failed to walk declarative dir', not the generic 'failed to walk dir'",
     () => {
       // Go's `loadDeclaredSchemas` (`apps/cli-go/internal/db/diff/diff.go:52-101`) wraps the

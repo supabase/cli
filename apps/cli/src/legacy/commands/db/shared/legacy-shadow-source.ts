@@ -366,7 +366,13 @@ function legacyWalkRegularSqlFilesNoFollow(
 
     const visit = (dirAbs: string, dirRel: string): Effect.Effect<void, PlatformError> =>
       Effect.gen(function* () {
-        const names = [...(yield* fs.readDirectory(dirAbs))].sort();
+        // Go's `os.ReadDir`/`io/fs.ReadDir` (backing both `fs.WalkDir` and `afero.Walk` — see
+        // `afero/path.go`'s `readDirNames`) byte-sort EVERY directory level via
+        // `bytealg.CompareString`/`sort.Strings`, not just a final flattened result — so the
+        // traversal order itself (which determines which entry's read/stat error surfaces
+        // first when a walk aborts early) must use {@link legacyCompareUtf8Bytes} here too, not
+        // JS's default UTF-16-code-unit comparator (review: PRRT_kwDOErm0O86XAlIo).
+        const names = [...(yield* fs.readDirectory(dirAbs))].sort(legacyCompareUtf8Bytes);
         for (const name of names) {
           const entryAbs = path.join(dirAbs, name);
           const entryRel = dirRel === "" ? name : `${dirRel}/${name}`;
