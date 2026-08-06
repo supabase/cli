@@ -1,4 +1,5 @@
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
 
@@ -54,12 +55,35 @@ export interface ResolvedFunctionsBundle extends Schema.Schema.Type<
   typeof ResolvedFunctionsBundleSchema
 > {}
 
-function isWithinProjectDir(projectDir: string, candidate: string): boolean {
-  const relativePath = relative(resolve(projectDir), candidate);
+function isWithinPath(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate);
   return (
     relativePath === "" ||
     (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
   );
+}
+
+function nearestExistingAncestor(candidate: string): string | undefined {
+  let current = resolve(candidate);
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+  return current;
+}
+
+function isWithinProjectDir(projectDir: string, candidate: string): boolean {
+  const resolvedProjectDir = resolve(projectDir);
+  if (!isWithinPath(resolvedProjectDir, candidate)) return false;
+
+  const existingCandidate = nearestExistingAncestor(candidate);
+  if (existingCandidate === undefined) return false;
+  try {
+    return isWithinPath(realpathSync(resolvedProjectDir), realpathSync(existingCandidate));
+  } catch {
+    return false;
+  }
 }
 
 /**
