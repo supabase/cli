@@ -4,11 +4,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { activationTimeoutSecondsForService } from "../src/ServiceActivation.ts";
 import { createStack, type StackHandle } from "../src/node.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 180_000;
 const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS = 90_000;
+const ANALYTICS_COLD_START_TEST_TIMEOUT_MS = activationTimeoutSecondsForService("analytics") * 1000;
 
 function hasDockerDaemon(): boolean {
   try {
@@ -113,22 +115,27 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     },
   );
 
-  test("cold-starts analytics through lazy service activation", { timeout: 180_000 }, async () => {
-    expect(await stack.getServiceStatus("analytics")).toEqual(
-      expect.objectContaining({ status: "Dormant" }),
-    );
+  test(
+    "cold-starts analytics through lazy service activation",
+    { timeout: ANALYTICS_COLD_START_TEST_TIMEOUT_MS },
+    async () => {
+      expect(await stack.getServiceStatus("analytics")).toEqual(
+        expect.objectContaining({ status: "Dormant" }),
+      );
 
-    await stack.startService("analytics");
-    await stack.serviceReady("analytics");
+      await stack.startService("analytics");
 
-    expect(await stack.getServiceStatus("analytics")).toEqual(
-      expect.objectContaining({ name: "analytics", status: "Healthy" }),
-    );
+      const [runningImages, states] = await Promise.all([
+        Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
+        stack.getStatus(),
+      ]);
 
-    const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
-
-    expect(runningImages).toContain("supabase/logflare");
-  });
+      expect(runningImages).toContain("supabase/logflare");
+      expect(states).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "analytics", status: "Healthy" })]),
+      );
+    },
+  );
 
   test(
     "supports the docker auth signup and session golden path",

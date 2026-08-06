@@ -151,7 +151,11 @@ has had time to flush, disposes both managed runtimes, and removes live state/ru
 
 A readiness deadline is terminal for that local runtime: the stack disposes its scoped resources,
 the daemon returns the typed timeout response, and then the daemon shuts down. This prevents later
-requests from relaunching processes after cleanup has already run.
+requests from relaunching processes after cleanup has already run. The boundary is deliberately
+fail-closed across the whole daemon, rather than isolated to the service that timed out: once
+processes and port leases are being released, the management and proxy servers cannot safely keep
+advertising a usable runtime. This terminal path does not drain unrelated in-flight requests to
+otherwise healthy services; callers must reconnect after starting a fresh daemon.
 
 If the daemon has died, CLI stop/status detects a stale PID. Stop can use cleanup targets persisted
 in `stack.json` to force-remove known Docker containers before removing the stale state. This
