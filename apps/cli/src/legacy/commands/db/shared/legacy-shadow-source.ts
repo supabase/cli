@@ -641,6 +641,29 @@ export function legacyLoadDeclaredSchemas(
 }
 
 /**
+ * Windows-only sibling of {@link legacyCleanSchemaPath}'s segment cleaner: the length of the
+ * leading "volume" a Windows path can carry, mirroring Go's `volumeNameLen`
+ * (`internal/filepathlite/path_windows.go`) for the two shapes realistic in a `schema_paths`
+ * config value — a drive letter (`C:...`, length 2) and a UNC share (`//host/share`, length
+ * through the second separator, Go's `uncLen`). Deliberately does NOT port Go's `\\.\`/`\\?\`/
+ * `\??\` device-path branches (`\\.\C:\...`, Root Local Device paths) — not realistic values
+ * for this field, and porting them would add meaningful complexity for no reachable parity
+ * benefit. `path` is already backslash-normalized to `/` by the caller.
+ */
+function legacyWindowsVolumeLen(path: string): number {
+  if (path.length >= 2 && path[1] === ":") return 2;
+  if (path.length < 2 || path[0] !== "/" || path[1] !== "/") return 0;
+  let separators = 0;
+  for (let i = 2; i < path.length; i++) {
+    if (path[i] === "/") {
+      separators++;
+      if (separators === 2) return i;
+    }
+  }
+  return path.length;
+}
+
+/**
  * Go's `cleanSchemaPath` (`apps/cli-go/internal/db/diff/diff.go:117-119`):
  * `filepath.ToSlash(filepath.Clean(path))`. `filepath.Clean`/`ToSlash` only treat `\` as a path
  * separator on the Windows build of the Go CLI (`filepath.Separator == '\\'` there) — on every
@@ -649,15 +672,32 @@ export function legacyLoadDeclaredSchemas(
  * `filepath.ToSlash(filepath.Clean(\`supabase/foo\bar\`))` compiled for `GOOS=darwin` returns
  * `supabase/foo\bar`, not `supabase/foo/bar`. Gate the separator-normalization on the host
  * platform so this matches whichever Go build this TS binary is standing in for.
+ *
+ * On Windows, `filepath.Clean` never cleans INTO a leading volume (`internal/filepathlite/
+ * path_windows.go`'s `volumeNameLen`/`Clean`) — a UNC host+share (or a drive letter) survives
+ * verbatim, including its doubled leading separator for UNC, through `ToSlash`. Split it off
+ * with {@link legacyWindowsVolumeLen} before the segment-cleanup loop below, which would
+ * otherwise treat a UNC path's two leading empty segments the same as any other redundant
+ * separator and collapse `//host/share` down to `/host/share` — verified empirically against
+ * a standalone extraction of Go's own windows `Clean`/`ToSlash` source, run natively (review:
+ * PRRT_kwDOErm0O86W2tRk): `filepath.ToSlash(filepath.Clean(\`\\server\share\schemas\`))`
+ * compiled for `GOOS=windows` returns `//server/share/schemas`, not `/server/share/schemas`.
  */
-function legacyCleanSchemaPath(
+export function legacyCleanSchemaPath(
   rawPath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
   const normalized = platform === "win32" ? rawPath.replaceAll("\\", "/") : rawPath;
-  const isAbsolute = normalized.startsWith("/");
+  const volumeLen = platform === "win32" ? legacyWindowsVolumeLen(normalized) : 0;
+  const volume = normalized.slice(0, volumeLen);
+  const remainder = normalized.slice(volumeLen);
+  // A bare volume with nothing after it (`\\server\share`, or `C:`) — Go's Clean leaves it
+  // untouched rather than falling into the segment-cleanup loop below (which would otherwise
+  // turn "no path left" into a bare "." and lose the volume).
+  if (volumeLen > 0 && remainder === "") return volume;
+  const isAbsolute = remainder.startsWith("/");
   const out: Array<string> = [];
-  for (const segment of normalized.split("/")) {
+  for (const segment of remainder.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment === "..") {
       if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
@@ -667,8 +707,8 @@ function legacyCleanSchemaPath(
     }
   }
   const joined = out.join("/");
-  if (joined.length === 0) return isAbsolute ? "/" : ".";
-  return isAbsolute ? `/${joined}` : joined;
+  if (joined.length === 0) return volume + (isAbsolute ? "/" : ".");
+  return volume + (isAbsolute ? "/" : "") + joined;
 }
 
 /**

@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import {
+  legacyCleanSchemaPath,
   legacyLoadDeclaredSchemas,
   legacyShouldApplyDeclarativeWithPgDelta,
 } from "./legacy-shadow-source.ts";
@@ -110,6 +111,55 @@ describe("legacyShouldApplyDeclarativeWithPgDelta", () => {
       ).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
   );
+});
+
+describe("legacyCleanSchemaPath", () => {
+  // Go's `filepath.Clean` (windows build) never cleans INTO a leading UNC volume — verified
+  // empirically against a standalone extraction of Go's own windows `internal/filepathlite`
+  // Clean/ToSlash/volumeNameLen source, run natively: `filepath.ToSlash(filepath.Clean(
+  // \`\\server\share\schemas\`))` compiled for `GOOS=windows` returns `//server/share/schemas`
+  // (review: PRRT_kwDOErm0O86W2tRk) — the doubled leading separator is part of the UNC host+
+  // share, not a redundant separator to collapse to one.
+  it("preserves a UNC host+share prefix on win32, matching Go's Clean", () => {
+    expect(legacyCleanSchemaPath("\\\\server\\share\\schemas", "win32")).toBe(
+      "//server/share/schemas",
+    );
+  });
+
+  it("cleans `.`/`..` segments AFTER a UNC prefix without touching the prefix itself", () => {
+    expect(legacyCleanSchemaPath("\\\\server\\share\\a\\.\\b\\..\\c", "win32")).toBe(
+      "//server/share/a/c",
+    );
+  });
+
+  it("drops a leading `..` past a UNC share root instead of climbing above it", () => {
+    expect(legacyCleanSchemaPath("\\\\server\\share\\..\\schemas", "win32")).toBe(
+      "//server/share/schemas",
+    );
+  });
+
+  it("leaves a bare UNC share (no subpath) unchanged", () => {
+    expect(legacyCleanSchemaPath("\\\\server\\share", "win32")).toBe("//server/share");
+  });
+
+  it("does not confuse a UNC path with the distinct root-relative path of the same tail", () => {
+    // The bug this guards against: collapsing `//server/share/schemas` down to
+    // `/server/share/schemas` would make a UNC `schema_paths` entry compare equal to an
+    // unrelated root-relative declarative dir.
+    expect(legacyCleanSchemaPath("\\\\server\\share\\schemas", "win32")).not.toBe(
+      legacyCleanSchemaPath("/server/share/schemas", "win32"),
+    );
+  });
+
+  it("still cleans a drive-letter path correctly", () => {
+    expect(legacyCleanSchemaPath("C:\\foo\\..\\bar", "win32")).toBe("C:/bar");
+  });
+
+  it("does not treat a doubled separator as a UNC volume off win32", () => {
+    // POSIX has no UNC concept — Go's non-Windows `filepath.Clean` collapses redundant
+    // separators uniformly, same as this function's pre-existing POSIX behavior.
+    expect(legacyCleanSchemaPath("//server/share/schemas", "darwin")).toBe("/server/share/schemas");
+  });
 });
 
 describe("legacyLoadDeclaredSchemas", () => {
