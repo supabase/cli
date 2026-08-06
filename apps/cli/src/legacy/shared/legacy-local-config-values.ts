@@ -1006,6 +1006,15 @@ export function legacyResolveAuthEmail(
   email: ProjectConfig["auth"]["email"],
   authDocument: Record<string, unknown> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  // `remoteOverrideKeys` (default empty, so `start.handler.ts`/`db/start/start.handler.ts` —
+  // which never resolve a matched `[remotes.*]` block — see identical behavior to before this
+  // parameter existed): a matched remote's override-tier `auth.email.*` leaf must win over a
+  // conflicting `SUPABASE_AUTH_EMAIL_*` env var the same way every other gated field in this
+  // file does, and — same "throws before a value the caller needs is resolved" bug class as
+  // `auth.enabled`/`api.enabled` — an ungated malformed override here aborts the WHOLE
+  // `legacyResolveLocalConfigValues` call for the `db diff --linked`/`db pull` shadow-provisioning
+  // path (CLI-1956), denying the shadow every field, not just this one (review: PRRT_kwDOErm0O86XHvYh).
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyResolvedAuthEmail {
   const emailDoc = asRecord(authDocument?.["email"]);
   const templateDoc = asRecord(emailDoc?.["template"]);
@@ -1057,48 +1066,60 @@ export function legacyResolveAuthEmail(
 
   return {
     ...email,
-    enable_signup: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP",
-      email.enable_signup,
-      "auth.email.enable_signup",
-      projectEnvValues,
-    ),
-    double_confirm_changes: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_EMAIL_DOUBLE_CONFIRM_CHANGES",
-      email.double_confirm_changes,
-      "auth.email.double_confirm_changes",
-      projectEnvValues,
-    ),
-    enable_confirmations: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_EMAIL_ENABLE_CONFIRMATIONS",
-      email.enable_confirmations,
-      "auth.email.enable_confirmations",
-      projectEnvValues,
-    ),
-    secure_password_change: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_EMAIL_SECURE_PASSWORD_CHANGE",
-      email.secure_password_change,
-      "auth.email.secure_password_change",
-      projectEnvValues,
-    ),
+    enable_signup: remoteOverrideKeys.has("auth.email.enable_signup")
+      ? email.enable_signup
+      : legacyEnvOverrideBool(
+          "SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP",
+          email.enable_signup,
+          "auth.email.enable_signup",
+          projectEnvValues,
+        ),
+    double_confirm_changes: remoteOverrideKeys.has("auth.email.double_confirm_changes")
+      ? email.double_confirm_changes
+      : legacyEnvOverrideBool(
+          "SUPABASE_AUTH_EMAIL_DOUBLE_CONFIRM_CHANGES",
+          email.double_confirm_changes,
+          "auth.email.double_confirm_changes",
+          projectEnvValues,
+        ),
+    enable_confirmations: remoteOverrideKeys.has("auth.email.enable_confirmations")
+      ? email.enable_confirmations
+      : legacyEnvOverrideBool(
+          "SUPABASE_AUTH_EMAIL_ENABLE_CONFIRMATIONS",
+          email.enable_confirmations,
+          "auth.email.enable_confirmations",
+          projectEnvValues,
+        ),
+    secure_password_change: remoteOverrideKeys.has("auth.email.secure_password_change")
+      ? email.secure_password_change
+      : legacyEnvOverrideBool(
+          "SUPABASE_AUTH_EMAIL_SECURE_PASSWORD_CHANGE",
+          email.secure_password_change,
+          "auth.email.secure_password_change",
+          projectEnvValues,
+        ),
     max_frequency:
       legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_MAX_FREQUENCY",
         email.max_frequency,
         projectEnvValues,
       ) ?? email.max_frequency,
-    otp_length: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
-      "auth.email.otp_length",
-      email.otp_length,
-      projectEnvValues,
-    ),
-    otp_expiry: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_EMAIL_OTP_EXPIRY",
-      "auth.email.otp_expiry",
-      email.otp_expiry,
-      projectEnvValues,
-    ),
+    otp_length: remoteOverrideKeys.has("auth.email.otp_length")
+      ? email.otp_length
+      : legacyEnvOverrideUint(
+          "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
+          "auth.email.otp_length",
+          email.otp_length,
+          projectEnvValues,
+        ),
+    otp_expiry: remoteOverrideKeys.has("auth.email.otp_expiry")
+      ? email.otp_expiry
+      : legacyEnvOverrideUint(
+          "SUPABASE_AUTH_EMAIL_OTP_EXPIRY",
+          "auth.email.otp_expiry",
+          email.otp_expiry,
+          projectEnvValues,
+        ),
     template,
     notification,
   };
@@ -3266,7 +3287,7 @@ export function legacyResolveLocalConfigValues(
     // `Auth.MFA.validate()`, still inside `if c.Auth.Enabled` (`config.go:1142`) — this I/O read
     // stays at this exact textual position (see this function's `@throws` doc for why).
     readAuthEmailTemplateContent(
-      legacyResolveAuthEmail(config.auth.email, authDocument, projectEnvValues),
+      legacyResolveAuthEmail(config.auth.email, authDocument, projectEnvValues, remoteOverrideKeys),
       workdir,
     );
 

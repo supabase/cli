@@ -480,6 +480,17 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.captcha.enabled",
   "auth.email.smtp.enabled",
   "auth.email.smtp.port",
+  // Not read by THIS reader's own resolved fields — tracked so `legacyResolveAuthEmail`
+  // (`legacy-local-config-values.ts`) also gates its own throw-capable
+  // `legacyEnvOverrideBool`/`legacyEnvOverrideUint` calls for these `auth.email.*` scalars,
+  // same "throws before a value the caller needs is resolved" bug class as
+  // `auth.email.smtp.enabled`/`.port` above (review: PRRT_kwDOErm0O86XHvYh).
+  "auth.email.enable_signup",
+  "auth.email.double_confirm_changes",
+  "auth.email.enable_confirmations",
+  "auth.email.secure_password_change",
+  "auth.email.otp_length",
+  "auth.email.otp_expiry",
   "experimental.webhooks.enabled",
 ];
 
