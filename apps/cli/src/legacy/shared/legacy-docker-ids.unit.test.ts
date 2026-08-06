@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   LEGACY_CLI_PROJECT_LABEL,
   legacyCliProjectFilterValue,
   legacyResolveLocalProjectId,
+  legacyResolveNetworkId,
   legacySanitizeProjectId,
   legacyServiceContainerIds,
   localDbContainerId,
+  localNetworkId,
 } from "./legacy-docker-ids.ts";
 
 describe("legacyResolveLocalProjectId", () => {
@@ -77,6 +79,53 @@ describe("legacyCliProjectFilterValue", () => {
     expect(legacyCliProjectFilterValue(dirty)).toBe(`${LEGACY_CLI_PROJECT_LABEL}=My App!!`);
     expect(legacyCliProjectFilterValue(legacySanitizeProjectId(dirty))).toBe(
       `${LEGACY_CLI_PROJECT_LABEL}=My_App_`,
+    );
+  });
+});
+
+describe("legacyResolveNetworkId", () => {
+  const KEY = "SUPABASE_NETWORK_ID";
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("prefers an explicit --network-id flag over everything else", () => {
+    process.env[KEY] = "env-network";
+    expect(legacyResolveNetworkId("flag-network", "my-app", { [KEY]: "toml-network" })).toBe(
+      "flag-network",
+    );
+  });
+
+  it("falls back to SUPABASE_NETWORK_ID (shell) when the flag is absent", () => {
+    process.env[KEY] = "shell-network";
+    expect(legacyResolveNetworkId(undefined, "my-app", {})).toBe("shell-network");
+  });
+
+  it("falls back to SUPABASE_NETWORK_ID (project .env) when both the flag and shell are absent", () => {
+    delete process.env[KEY];
+    expect(legacyResolveNetworkId(undefined, "my-app", { [KEY]: "project-network" })).toBe(
+      "project-network",
+    );
+  });
+
+  it("prefers the shell value over the project .env value (presence wins, matching godotenv.Load)", () => {
+    process.env[KEY] = "shell-network";
+    expect(legacyResolveNetworkId(undefined, "my-app", { [KEY]: "project-network" })).toBe(
+      "shell-network",
+    );
+  });
+
+  it("falls back to the generated network name when the flag and env are all absent/empty", () => {
+    delete process.env[KEY];
+    expect(legacyResolveNetworkId(undefined, "my-app", {})).toBe(localNetworkId("my-app"));
+    expect(legacyResolveNetworkId("", "my-app", {})).toBe(localNetworkId("my-app"));
+  });
+
+  it("treats an empty shell value as present (blocks the project value) and falls to generated", () => {
+    process.env[KEY] = "";
+    expect(legacyResolveNetworkId(undefined, "my-app", { [KEY]: "project-network" })).toBe(
+      localNetworkId("my-app"),
     );
   });
 });

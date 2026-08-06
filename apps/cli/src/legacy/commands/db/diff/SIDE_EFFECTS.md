@@ -28,8 +28,12 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 
 ## Docker
 
-- Edge-runtime container (pg-delta / migra diff scripts).
-- Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam).
+- Edge-runtime container (pg-delta / migra diff scripts; also runs the pg-delta
+  catalog-export script for explicit `--from/--to migrations` on a cache miss —
+  CLI-1959, native, no longer the hidden Go `__catalog` seam).
+- Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam;
+  explicit `--from/--to migrations` reuses this same seam call — `mode: "diff"` —
+  on a cache miss, rather than a second, `__catalog`-specific shadow).
 - `supabase/migra` container — the migra OOM bash fallback only.
 
 ## API Routes (linked path, via the db-config resolver)
@@ -82,6 +86,12 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   binary (their side effects are Go's); the Go child's telemetry is disabled so the
   single `cli_command_executed` event comes from this TS command.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
+- The explicit `migrations` target resolves natively (CLI-1959): a bare
+  migrations-content hash cache lookup (`<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`,
+  shared with `db push`'s post-apply cache write), and on a miss, the existing
+  `db __shadow --mode diff` seam call (unchanged — still Go, out of scope for
+  CLI-1959) plus a native pg-delta catalog export. No hidden Go
+  `db schema declarative __catalog` subprocess runs for this path any more.
 
 ### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
 

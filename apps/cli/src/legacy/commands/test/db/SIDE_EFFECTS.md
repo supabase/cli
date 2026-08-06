@@ -63,6 +63,20 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 | `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                |
 | `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors |
 
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                                     |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags`, **`command: "test db"`** — not `"db test"` |
+
+`db test` (`../../db/test/`) is a hidden Go-parity alias that reuses this
+command's flag config and handler verbatim, but records `command: "db test"`
+instead — matching Go's `cmd.CommandPath()` (`apps/cli-go/cmd/root_analytics.go:33`),
+which differs between the two `cobra.Command` registrations even though
+`RunE` is the literal same function. Driven by `commandPath` in
+`../../../shared/legacy-test-db.layers.ts`'s `legacyTestDbRuntimeLayer`
+factory — each `.command.ts` passes its own actual invocation path.
+
 ## Output
 
 `pg_prove`'s TAP output streams to **stdout in every output format** (the docker
