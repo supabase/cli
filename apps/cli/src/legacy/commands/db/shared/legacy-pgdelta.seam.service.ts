@@ -2,8 +2,23 @@ import { Context, type Effect } from "effect";
 
 import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 
-/** Which shadow-database catalog the Go seam should produce. */
-export type LegacyCatalogMode = "baseline" | "migrations" | "declarative";
+/**
+ * Which shadow-database catalog the Go seam should produce.
+ *
+ * `"migrations"` was removed from this union under CLI-1959: both call sites
+ * that used it (`db diff`'s explicit `--from/--to migrations`, and
+ * `db schema declarative sync`'s migrations-catalog diff source) now resolve
+ * natively — see `legacy-pgdelta.cache.ts`'s `legacyResolveMigrationsCatalogRef`
+ * and `legacyGetMigrationsCatalogRef` respectively. `"baseline"` and
+ * `"declarative"` remain seam-backed because they need a shadow provisioned with
+ * ONLY the platform baseline (no migrations) or with declarative files applied —
+ * neither has a native TS equivalent yet (`start.SetupDatabase` against an
+ * arbitrary shadow, and `pgdelta.ApplyDeclarative`), and porting either
+ * overlaps with CLI-1956's in-progress native shadow-provisioning work. CLI-1823
+ * (native pg-delta lib) and CLI-1956 are the tracked follow-ups for retiring the
+ * rest of this seam.
+ */
+export type LegacyCatalogMode = "baseline" | "declarative";
 
 /**
  * Which live shadow database the Go seam should provision and leave running:
@@ -30,15 +45,16 @@ export interface LegacyShadowSource {
 
 interface LegacyDeclarativeSeamShape {
   /**
-   * Provisions the shadow-database platform baseline (and, for
-   * `migrations`/`declarative`, applies migrations / declarative files) via the
-   * bundled Go binary's hidden `db schema declarative __catalog` command, and
-   * returns the workdir-relative path of the exported pg-delta catalog (cached
-   * under `supabase/.temp/pgdelta/`). Go's progress is teed to stderr; only the
-   * catalog path is captured from stdout.
+   * Provisions the shadow-database platform baseline (and, for `declarative`,
+   * applies declarative files) via the bundled Go binary's hidden
+   * `db schema declarative __catalog` command, and returns the workdir-relative
+   * path of the exported pg-delta catalog (cached under `supabase/.temp/pgdelta/`).
+   * Go's progress is teed to stderr; only the catalog path is captured from stdout.
    *
    * This is the seam for `start.SetupDatabase` (the auth/storage/realtime service
-   * migrations), which is not yet ported to TypeScript.
+   * migrations) run against an arbitrary shadow, and for `pgdelta.ApplyDeclarative`
+   * (the `declarative` mode), neither of which is yet ported to TypeScript
+   * (CLI-1959/CLI-1956/CLI-1823 — see {@link LegacyCatalogMode}'s doc comment).
    */
   readonly exportCatalog: (opts: {
     readonly mode: LegacyCatalogMode;
