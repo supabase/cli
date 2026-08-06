@@ -129,6 +129,9 @@ export const stackServiceStartupBudgetSeconds = {
 
 const STARTUP_COORDINATION_MARGIN_SECONDS = 5;
 
+/** Maximum coordination allowance for the native one-shot database initialization step. */
+export const POSTGRES_INIT_COMPLETION_BUDGET_SECONDS = 60;
+
 export const dependencyTimeoutSecondsForServices = (services: ReadonlyArray<ServiceName>): number =>
   services.reduce((total, service) => total + stackServiceStartupBudgetSeconds[service], 0) +
   STARTUP_COORDINATION_MARGIN_SECONDS;
