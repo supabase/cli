@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { StackHandle } from "./createStack.ts";
+import { runForegroundOperation, type StackHandle } from "./createStack.ts";
+import { StackReadinessError } from "./errors.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
@@ -65,6 +66,37 @@ function writeStackMetadata(
     ),
   );
 }
+
+describe("foreground operation lifecycle", () => {
+  it("disposes the foreground runtime after a direct readiness timeout", async () => {
+    let disposeCount = 0;
+    const operation = Promise.reject(
+      new StackReadinessError({
+        target: "stack",
+        timeoutMs: 10,
+        detail: "Timed out waiting for stack readiness",
+      }),
+    );
+
+    await expect(
+      runForegroundOperation(operation, async () => {
+        disposeCount += 1;
+      }),
+    ).rejects.toMatchObject({ code: "STACK_READINESS_TIMEOUT" });
+    expect(disposeCount).toBe(1);
+  });
+
+  it("keeps the foreground runtime open after a non-terminal operation failure", async () => {
+    let disposeCount = 0;
+
+    await expect(
+      runForegroundOperation(Promise.reject(new Error("failed")), async () => {
+        disposeCount += 1;
+      }),
+    ).rejects.toMatchObject({ code: "UNKNOWN" });
+    expect(disposeCount).toBe(0);
+  });
+});
 
 describe("createStack types", () => {
   it("StackHandle interface has expected shape", () => {
@@ -261,7 +293,7 @@ describe("resolveConfig startup mode", () => {
 describe("resolveConfig readiness policy", () => {
   it("uses a finite package default", async () => {
     const config = await resolveConfig();
-    expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 120_000 });
+    expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 180_000 });
   });
 
   it("preserves an explicit infinite policy", async () => {

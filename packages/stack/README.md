@@ -198,7 +198,7 @@ service and its projected status.
 ### Readiness
 
 ```typescript
-await stack.ready(); // Inherit the stack's finite two-minute default
+await stack.ready(); // Inherit the stack's finite three-minute default
 await stack.ready({ mode: "finite", timeoutMs: 30_000 });
 await stack.ready({ mode: "infinite" }); // Explicit debugging override
 await stack.serviceReady("postgres");
@@ -209,7 +209,10 @@ In eager mode, `start()` blocks until every enabled service is ready. In lazy mo
 for direct listeners and services activated so far. Unrequested lazy services report `Dormant`.
 Calling `serviceReady()` for a dormant lazy
 service fails immediately; activate it through the proxy or call `startService()` first. Foreground
-and detached stacks use the same readiness rules.
+and detached stacks use the same readiness rules. The configured policy also applies to service
+start, restart, activation, and reload operations; a call-specific option overrides it. A finite
+deadline fails with `STACK_READINESS_TIMEOUT` and disposes the local runtime, so the handle cannot
+be used to relaunch processes afterward.
 
 ### Status
 
@@ -308,15 +311,16 @@ try {
 }
 ```
 
-| Code                | Description                                  |
-| ------------------- | -------------------------------------------- |
-| `SERVICE_NOT_FOUND` | Referenced a service that doesn't exist      |
-| `SERVICE_NOT_READY` | Service failed to become healthy             |
-| `BUILD_ERROR`       | Failed to build the service dependency graph |
-| `BINARY_NOT_FOUND`  | No binary available for the current platform |
-| `DOWNLOAD_ERROR`    | Binary download failed                       |
-| `PORT_CONFLICT`     | Requested port is already in use             |
-| `PORT_ALLOCATION`   | Failed to allocate a free port               |
+| Code                      | Description                                  |
+| ------------------------- | -------------------------------------------- |
+| `SERVICE_NOT_FOUND`       | Referenced a service that doesn't exist      |
+| `SERVICE_NOT_READY`       | Service failed to become healthy             |
+| `STACK_READINESS_TIMEOUT` | Stack readiness exceeded its finite deadline |
+| `BUILD_ERROR`             | Failed to build the service dependency graph |
+| `BINARY_NOT_FOUND`        | No binary available for the current platform |
+| `DOWNLOAD_ERROR`          | Binary download failed                       |
+| `PORT_CONFLICT`           | Requested port is already in use             |
+| `PORT_ALLOCATION`         | Failed to allocate a free port               |
 
 ## Examples
 

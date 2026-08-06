@@ -1,10 +1,11 @@
 import type { LogEntry } from "@supabase/process-compose";
-import { Duration, Effect, type Layer, ManagedRuntime, Stream } from "effect";
+import { Context, Effect, type Layer, ManagedRuntime, Stream } from "effect";
 import { FileSystem, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import type { CleanupTargets } from "./CleanupTargets.ts";
+import { ApiProxy } from "./ApiProxy.ts";
 import { toStackError } from "./errors.ts";
 import type { FunctionsConfig } from "./functions.ts";
 import { daemonLayer, foregroundLayer, type DaemonStartError } from "./layers.ts";
@@ -13,7 +14,6 @@ import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
-import { resolveReadinessPolicy } from "./StackConfig.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
@@ -33,6 +33,22 @@ export interface PlatformFactoryOptions {
 }
 
 export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
+
+/** @internal Converts foreground operation failures and closes the runtime after terminal timeouts. */
+export async function runForegroundOperation<A>(
+  operation: Promise<A>,
+  dispose: () => Promise<void>,
+): Promise<A> {
+  try {
+    return await operation;
+  } catch (error: unknown) {
+    const stackError = toStackError(error);
+    if (stackError.code === "STACK_READINESS_TIMEOUT") {
+      await dispose();
+    }
+    throw stackError;
+  }
+}
 
 export interface StackHandle extends AsyncDisposable {
   readonly url: string;
@@ -139,21 +155,24 @@ export async function createStack(
 
     try {
       const services = await runtime.context();
-      const localStack = await runtime.runPromise(
-        Effect.gen(function* () {
-          return yield* Stack;
-        }),
-      );
+      const localStack = Context.get(services, Stack);
+      const apiProxy = Context.get(services, ApiProxy);
       const info = await runtime.runPromise(localStack.getInfo());
 
-      const run = <A>(effect: Effect.Effect<A, unknown>) =>
-        runtime.runPromise(effect).catch((error: unknown) => {
-          throw toStackError(error);
-        });
-
-      const gracefulDispose = async () => {
-        await runtime.dispose().catch(() => {});
+      let disposal: Promise<void> | undefined;
+      const gracefulDispose = () => {
+        disposal ??= runtime.dispose().catch(() => {});
+        return disposal;
       };
+      const run = <A>(effect: Effect.Effect<A, unknown>) =>
+        runForegroundOperation(runtime.runPromise(effect), gracefulDispose);
+
+      // A terminal lazy-activation timeout disposes LocalStack. Close the
+      // foreground runtime as well so the public API port cannot outlive it.
+      void runtime
+        .runPromise(apiProxy.awaitTerminalFailure)
+        .then(gracefulDispose)
+        .catch(() => {});
 
       const stack: StackHandle = {
         url: info.url,
@@ -168,28 +187,8 @@ export async function createStack(
         restartService: (name) => run(localStack.restartService(name)),
         reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
         reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
-        ready: (opts) => {
-          const policy = resolveReadinessPolicy({
-            readyOptions: opts,
-            stackPolicy: resolved.readiness,
-          });
-          const effect =
-            policy.mode === "finite"
-              ? localStack.waitAllReady().pipe(Effect.timeout(Duration.millis(policy.timeoutMs)))
-              : localStack.waitAllReady();
-          return run(effect);
-        },
-        serviceReady: (name, opts) => {
-          const policy = resolveReadinessPolicy({
-            readyOptions: opts,
-            stackPolicy: resolved.readiness,
-          });
-          const effect =
-            policy.mode === "finite"
-              ? localStack.waitReady(name).pipe(Effect.timeout(Duration.millis(policy.timeoutMs)))
-              : localStack.waitReady(name);
-          return run(effect);
-        },
+        ready: (opts) => run(localStack.waitAllReady(opts)),
+        serviceReady: (name, opts) => run(localStack.waitReady(name, opts)),
         getStatus: () => run(localStack.getAllStates()),
         getServiceStatus: (name) => run(localStack.getState(name)),
         statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),

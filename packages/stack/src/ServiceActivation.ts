@@ -1,7 +1,7 @@
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { ServiceReadyError } from "@supabase/process-compose";
 import { Context, Effect, Layer } from "effect";
-import { StackBuildError, StackNotRunningError } from "./errors.ts";
+import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
 import { stackServiceStartupBudgetSeconds } from "./services/health-budgets.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
@@ -74,7 +74,11 @@ export class StackServiceActivator extends Context.Service<
       service: ServiceName,
     ) => Effect.Effect<
       void,
-      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackNotRunningError
+      | ServiceNotFoundError
+      | ServiceReadyError
+      | StackBuildError
+      | StackNotRunningError
+      | StackReadinessError
     >;
   }
 >()("stack/StackServiceActivator") {

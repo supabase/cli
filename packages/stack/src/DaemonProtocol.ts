@@ -4,6 +4,7 @@ import { StackStateSchema } from "./StateManager.ts";
 const DaemonErrorCodeSchema = Schema.Literals([
   "SERVICE_NOT_FOUND",
   "SERVICE_NOT_READY",
+  "STACK_READINESS_TIMEOUT",
   "STACK_BUILD_ERROR",
 ]);
 
@@ -12,6 +13,7 @@ export const DaemonErrorResponseSchema = Schema.Struct({
   error: Schema.String,
   service: Schema.optionalKey(Schema.String),
   exitCode: Schema.optionalKey(Schema.Number),
+  timeoutMs: Schema.optionalKey(Schema.Number),
 });
 
 export type DaemonErrorResponse = typeof DaemonErrorResponseSchema.Type;

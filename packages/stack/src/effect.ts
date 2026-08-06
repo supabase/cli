@@ -13,6 +13,7 @@ export {
   PortConflictError,
   StackBuildError,
   StackError,
+  StackReadinessError,
   toStackError,
 } from "./errors.ts";
 

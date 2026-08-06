@@ -11,9 +11,8 @@ import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
 import { DaemonMessageSchema } from "./DaemonProtocol.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { RemoteStack } from "./RemoteStack.ts";
-import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
-import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
+import { localStackLayer } from "./LocalStack.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import {
@@ -46,7 +45,7 @@ export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack> => {
+): Layer.Layer<Stack | ApiProxy> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -56,17 +55,10 @@ export const foregroundLayer = (
     Layer.provide(FetchHttpClient.layer),
   );
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(binaryResolverLayer));
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
+  const stackLayer = localStackLayer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
-  );
-  const stackLayer = Stack.layer(config);
-  const serviceActivatorLayer = Layer.effect(
-    StackServiceActivator,
-    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
-      activate: coordinator.activateService,
-    })),
   );
 
   const proxyConfig: ProxyConfig = {
@@ -88,14 +80,10 @@ export const foregroundLayer = (
   };
   const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
     Layer.provide(FetchHttpClient.layer),
-    Layer.provide(serviceActivatorLayer),
+    Layer.provide(stackLayer),
   );
 
-  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(
-    Layer.provide(coordinatorLayer),
-    Layer.provide(platform),
-    Layer.orDie,
-  );
+  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(Layer.provide(platform), Layer.orDie);
 };
 
 // ---------------------------------------------------------------------------
@@ -114,7 +102,7 @@ export const foregroundDaemonLayer = (
   config: ResolvedDaemonConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack | StateManager> => {
+): Layer.Layer<Stack | StateManager | ApiProxy> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -140,16 +128,6 @@ export const foregroundDaemonLayer = (
     anonJwt: config.anonJwt,
     serviceRoleJwt: config.serviceRoleJwt,
   };
-  const serviceActivatorLayer = Layer.effect(
-    StackServiceActivator,
-    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
-      activate: coordinator.activateService,
-    })),
-  );
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(serviceActivatorLayer),
-  );
   const stateManagerLayer = StateManager.make(
     singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
   );
@@ -157,15 +135,17 @@ export const foregroundDaemonLayer = (
   const metadataPersistenceLayer = StackMetadataPersistence.fromStateManager(config.name).pipe(
     Layer.provide(stateManagerLayer),
   );
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
+  const stackLayer = localStackLayer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(metadataPersistenceLayer),
   );
-  const stackLayer = Stack.layer(config);
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(stackLayer),
+  );
 
   return Layer.mergeAll(stackLayer, apiProxyLayer, stateManagerLayer).pipe(
-    Layer.provide(coordinatorLayer),
     Layer.provide(platform),
     Layer.orDie,
   );

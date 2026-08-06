@@ -53,20 +53,18 @@ const dockerOnlyServices = SERVICE_NAMES.filter(
   (service) => serviceMetadata(service).runtimeSupport === "docker-only",
 );
 
+// Serial health-check paths used by dependency waits; keep each path aligned
+// with the corresponding service's transitive dependencies.
+const postgresStartupPath: ReadonlyArray<ServiceName> = ["postgres"];
+const storageStartupPath: ReadonlyArray<ServiceName> = ["postgres", "storage"];
+const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics"];
+
+const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
+
 const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDependency> =>
   hasPostgresInit
     ? [{ service: "postgres-init", condition: "completed" }]
     : [{ service: "postgres", condition: "healthy" }];
-
-const POSTGRES_DEPENDENCY_TIMEOUT_SECONDS = dependencyTimeoutSecondsForServices(["postgres"]);
-const STORAGE_DEPENDENCY_TIMEOUT_SECONDS = dependencyTimeoutSecondsForServices([
-  "postgres",
-  "storage",
-]);
-const ANALYTICS_DEPENDENCY_TIMEOUT_SECONDS = dependencyTimeoutSecondsForServices([
-  "postgres",
-  "analytics",
-]);
 
 const publicServiceProjection = (
   defs: ReadonlyArray<ServiceDef>,
@@ -251,15 +249,17 @@ export class StackBuilder extends Context.Service<
         );
         const hasPostgresInit = postgresResolution.type === "binary";
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
+        const postgresInitCompletionBudgetSeconds = hasPostgresInit
+          ? POSTGRES_INIT_COMPLETION_BUDGET_SECONDS
+          : 0;
         const postgresConsumerDependencyTimeoutSeconds =
-          POSTGRES_DEPENDENCY_TIMEOUT_SECONDS +
-          (hasPostgresInit ? POSTGRES_INIT_COMPLETION_BUDGET_SECONDS : 0);
+          postgresDependencyTimeoutSeconds + postgresInitCompletionBudgetSeconds;
         const storageDependencyTimeoutSeconds =
-          STORAGE_DEPENDENCY_TIMEOUT_SECONDS +
-          (hasPostgresInit ? POSTGRES_INIT_COMPLETION_BUDGET_SECONDS : 0);
+          dependencyTimeoutSecondsForServices(storageStartupPath) +
+          postgresInitCompletionBudgetSeconds;
         const analyticsDependencyTimeoutSeconds =
-          ANALYTICS_DEPENDENCY_TIMEOUT_SECONDS +
-          (hasPostgresInit ? POSTGRES_INIT_COMPLETION_BUDGET_SECONDS : 0);
+          dependencyTimeoutSecondsForServices(analyticsStartupPath) +
+          postgresInitCompletionBudgetSeconds;
         const jwtJwks = generateJwks(config.jwtSecret);
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
@@ -293,7 +293,7 @@ export class StackBuilder extends Context.Service<
               dbPort: config.dbPort,
               autoExposeNewTables: config.postgres.autoExposeNewTables,
             }),
-            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }

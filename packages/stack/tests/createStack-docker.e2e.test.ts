@@ -101,11 +101,8 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     async () => {
       const functionsRes = await fetch(`${stack.url}/functions/v1/test`);
       await stack.serviceReady("edge-runtime");
-
-      const [runningImages, states] = await Promise.all([
-        Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
-        stack.getStatus(),
-      ]);
+      const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
+      const states = await stack.getStatus();
 
       expect(runningImages).toContain("supabase/edge-runtime");
       expect(states).toEqual(

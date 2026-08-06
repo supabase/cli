@@ -1,5 +1,5 @@
 import { defaults, type HealthCheckConfig } from "@supabase/process-compose";
-import type { ServiceName } from "../versions.ts";
+import type { ServiceName } from "../ServiceName.ts";
 
 type HealthBudget = Required<
   Pick<
