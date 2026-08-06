@@ -14,6 +14,7 @@ import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.
 import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
 import {
   LegacyDbSetupError,
+  legacyResolveDbSetupPrelude,
   legacyStartInitCurrentBranch,
   legacyStartSetupLocalDatabase,
   type LegacyStartSetupLocalDatabaseInput,
@@ -245,21 +246,6 @@ describe("legacyStartSetupLocalDatabase", () => {
           expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
           // Default config: realtime, storage, and auth are all enabled.
           expect(docker.runs.length).toBe(3);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
-    });
-
-    it.effect('prints "Initialising schema..." once, for either branch', () => {
-      const workdir = makeWorkdir();
-      const { session } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      return run(baseInput(workdir, session, { majorVersion: 17 }), out, docker).pipe(
-        Effect.map(() => {
-          const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
-          expect(banner.length).toBe(1);
-          expect(banner[0]?.stream).toBe("stderr");
           rmSync(workdir, { recursive: true, force: true });
         }),
       );
@@ -597,6 +583,75 @@ describe("legacyStartSetupLocalDatabase", () => {
       },
     );
   });
+});
+
+describe("legacyResolveDbSetupPrelude", () => {
+  const run = (
+    setup: {
+      readonly majorVersion: number;
+      readonly realtimeEnabledForSetup: boolean;
+      readonly jwks: Effect.Effect<string, Error>;
+    },
+    out: ReturnType<typeof mockOutput>,
+  ) =>
+    legacyResolveDbSetupPrelude({ ...setup, serviceVersionOverrides: {} }).pipe(
+      Effect.provide(out.layer),
+    );
+
+  it.effect('prints "Initialising schema..." to stderr exactly once, for either PG branch', () => {
+    const out = mockOutput();
+    return run(
+      { majorVersion: 17, realtimeEnabledForSetup: false, jwks: Effect.succeed("") },
+      out,
+    ).pipe(
+      Effect.map(() => {
+        const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
+        expect(banner.length).toBe(1);
+        expect(banner[0]?.stream).toBe("stderr");
+      }),
+    );
+  });
+
+  it.effect(
+    'prints the banner BEFORE a JWKS resolution failure — matching Go\'s "initSchema" printing the banner before ever calling "initSchema15" -> "ResolveJWKS" (review: PRRT_kwDOErm0O86W6R-O)',
+    () => {
+      const out = mockOutput();
+      return run(
+        {
+          majorVersion: 15,
+          realtimeEnabledForSetup: true,
+          jwks: Effect.fail(new Error("jwks discovery failed")),
+        },
+        out,
+      ).pipe(
+        Effect.flip,
+        Effect.map((error) => {
+          expect(error.message).toBe("jwks discovery failed");
+          const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
+          expect(banner.length).toBe(1);
+          expect(banner[0]?.stream).toBe("stderr");
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    "does not resolve JWKS on PG <= 14 even with realtime enabled — Go's initSchema never reaches initSchema15 there",
+    () => {
+      const out = mockOutput();
+      let jwksCalled = false;
+      const jwks = Effect.sync(() => {
+        jwksCalled = true;
+        return "unused";
+      });
+      return run({ majorVersion: 14, realtimeEnabledForSetup: true, jwks }, out).pipe(
+        Effect.map((resolved) => {
+          expect(jwksCalled).toBe(false);
+          expect(resolved.jwks).toBe("");
+        }),
+      );
+    },
+  );
 });
 
 describe("legacyStartInitCurrentBranch", () => {

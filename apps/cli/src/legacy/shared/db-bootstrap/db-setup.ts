@@ -205,19 +205,32 @@ function legacyResolveDbSetupImages(
 }
 
 /**
- * Resolves JWKS (lazily, only when `majorVersion >= 15` AND `realtimeEnabledForSetup`) + the
- * PG15+ one-shot job images' PINNED names (via {@link legacyResolveDbSetupImages}) — the
- * exact prelude BOTH {@link legacyRunFreshDbSetup} (the real local `db` container) and
- * `shadow-database.ts`'s `legacySetupShadowDatabase`/`legacyMigrateShadowDatabase` need
- * before calling {@link legacySetupDatabase}. Hoisted here (CLI-1956 review follow-up) so
- * the shadow path shares this exact resolution instead of keeping its own copy, which had
- * silently drifted (a dead, never-forwarded `jwtExpiry` field on the shadow's own setup-input
- * shape). Structurally typed against just the fields this needs (not the full {@link
- * LegacyFreshDbSetupInput}) so both that type and `shadow-database.ts`'s
- * `LegacyShadowDbSetupInput` — which is itself derived from it — satisfy this signature
- * without an explicit cast. Synchronous other than the caller-supplied `jwks` effect: neither
- * step here talks to Docker at all (see {@link legacyResolveDbSetupImages}'s own doc comment
- * for why the images are only PINNED, not registry-resolved, at this stage).
+ * Prints the banner + resolves JWKS (lazily, only when `majorVersion >= 15` AND
+ * `realtimeEnabledForSetup`) + the PG15+ one-shot job images' PINNED names (via
+ * {@link legacyResolveDbSetupImages}) — the exact prelude BOTH {@link legacyRunFreshDbSetup}
+ * (the real local `db` container) and `shadow-database.ts`'s
+ * `legacySetupShadowDatabase`/`legacyMigrateShadowDatabase` need before calling
+ * {@link legacySetupDatabase}. Hoisted here (CLI-1956 review follow-up) so the shadow path
+ * shares this exact resolution instead of keeping its own copy, which had silently drifted (a
+ * dead, never-forwarded `jwtExpiry` field on the shadow's own setup-input shape). Structurally
+ * typed against just the fields this needs (not the full {@link LegacyFreshDbSetupInput}) so
+ * both that type and `shadow-database.ts`'s `LegacyShadowDbSetupInput` — which is itself
+ * derived from it — satisfy this signature without an explicit cast.
+ *
+ * The banner print lives HERE, not in {@link legacySetupDatabase}'s own `initSchema` step,
+ * even though Go's `initSchema` (`start.go:243-254`) prints it immediately before branching on
+ * `MajorVersion` and, for PG15+, calling `initSchema15` -> `Config.Auth.ResolveJWKS`
+ * (`start.go:334-343`) — i.e. in Go, the print and the JWKS fetch are two steps of the SAME
+ * `initSchema` call, print first. This module's `jwks` field is a plain, already-resolved
+ * `string` on {@link LegacySetupDatabaseInput} (not a lazy effect `legacySetupDatabase` itself
+ * runs), so it MUST be resolved by the caller before `legacySetupDatabase` is ever invoked —
+ * printing the banner here, immediately before that resolution, is the only way to reproduce
+ * Go's exact observable order (banner, THEN a possible JWKS failure) without restructuring
+ * `legacySetupDatabase`'s input to carry a lazy JWKS effect instead. Previously the print lived
+ * solely in `legacyStartInitSchema` below, AFTER this whole prelude — so a JWKS discovery
+ * failure (realtime enabled, PG15+, third-party JWKS unreachable) meant `db diff --linked`/
+ * `db pull`'s native shadow-provisioning path failed BEFORE ever printing "Initialising
+ * schema...", where Go always prints it first (review: PRRT_kwDOErm0O86W6R-O).
  *
  * The `majorVersion >= 15` gate matters, not just an optimization: Go's `initSchema`
  * (`apps/cli-go/internal/db/start/start.go:243-253`) returns via `InitSchema14` for
@@ -232,8 +245,14 @@ export const legacyResolveDbSetupPrelude = <E>(setup: {
   readonly realtimeEnabledForSetup: boolean;
   readonly serviceVersionOverrides: LocalServiceVersionOverrides;
   readonly jwks: Effect.Effect<string, E>;
-}): Effect.Effect<{ readonly jwks: string; readonly images: LegacyStartDbSetupImages }, E> =>
+}): Effect.Effect<
+  { readonly jwks: string; readonly images: LegacyStartDbSetupImages },
+  E,
+  Output
+> =>
   Effect.gen(function* () {
+    const output = yield* Output;
+    yield* output.raw("Initialising schema...\n", "stderr");
     const jwks = setup.majorVersion >= 15 && setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
     const images = legacyResolveDbSetupImages(setup.serviceVersionOverrides);
     return { jwks, images };
@@ -747,18 +766,19 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
 });
 
 /**
- * Port of Go's `initSchema` (`start.go:243-254`): prints the banner line once,
- * then branches on PG major version — unconditionally, for BOTH branches, exactly
- * matching Go's `fmt.Fprintln(w, "Initialising schema...")` running before the
- * `if utils.Config.Db.MajorVersion <= 14` check.
+ * Port of Go's `initSchema` (`start.go:243-254`) MINUS the banner print: branches on PG major
+ * version — unconditionally, for both branches. The banner itself
+ * (`fmt.Fprintln(w, "Initialising schema...")`, printed before the `if
+ * utils.Config.Db.MajorVersion <= 14` check) now prints from
+ * {@link legacyResolveDbSetupPrelude}, the caller-side step that runs immediately before this
+ * one — see that function's own doc comment for why the print had to move there instead of
+ * staying here.
  */
 const legacyStartInitSchema = Effect.fnUntraced(function* (
   spawner: Spawner,
   input: LegacySetupDatabaseInput,
   tmpDir: string,
 ) {
-  const output = yield* Output;
-  yield* output.raw("Initialising schema...\n", "stderr");
   if (input.majorVersion <= 14) {
     yield* legacyStartInitSchemaPre15(
       input.session,
