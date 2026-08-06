@@ -26,6 +26,7 @@ import {
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+import { legacyResolveMigrationsCatalogRef } from "../shared/legacy-pgdelta.cache.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
@@ -229,16 +230,29 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               }
               return legacyToPostgresURL(resolved.conn);
             }
-            case "migrations":
-              return yield* seam.exportCatalog({
-                mode: "migrations",
-                noCache: false,
-                // Pass the linked ref only if one resolved earlier in the cascade,
-                // so the `__catalog` child merges the same remote override Go's
-                // in-process migrations catalog sees (`explicit.go:88-126`). Absent
-                // otherwise → base config, matching Go's resolution order.
-                ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
-              });
+            case "migrations": {
+              // Native (CLI-1959): mirrors Go's `resolveMigrationsCatalogRef`
+              // (`explicit.go:88-126`) exactly — see `legacyResolveMigrationsCatalogRef`'s
+              // doc comment. The pg-delta context is built from whatever `cfg` is
+              // current at this point in the cascade (possibly re-merged by an
+              // earlier "linked" ref above), matching Go's stateful pre-run.
+              const migrationsCtx: LegacyPgDeltaContext = {
+                projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+                cwd: cliConfig.workdir,
+                npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
+                denoVersion: cfg.denoVersion,
+              };
+              // Pass the linked ref only if one resolved earlier in the cascade, so
+              // the shadow merges the same remote override Go's in-process
+              // migrations catalog sees (`explicit.go:88-126`). Absent otherwise →
+              // base config, matching Go's resolution order.
+              return yield* legacyResolveMigrationsCatalogRef(
+                fs,
+                path,
+                migrationsCtx,
+                mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {},
+              );
+            }
             case "url":
               return ref;
             default:

@@ -18,8 +18,10 @@ import type { LegacyDbStartFlags } from "./start.command.ts";
  * health + initial schema + `_current_branch`), whose progress is teed to stderr.
  *
  * Parity notes: this is `db start`, NOT the top-level `supabase start`. It does
- * NOT print a status table and does NOT fire `cli_stack_started` — those belong to
- * `internal/start/start.go`. There is no `Finished` line.
+ * NOT print a status table and does NOT fire `cli_stack_started` — those belonged
+ * to `internal/start/start.go`, deleted outright as unreachable (CLI-1966; last
+ * present at commit a253ccba2) and now natively ported in
+ * `legacy/commands/start/`. There is no `Finished` line.
  */
 export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: LegacyDbStartFlags) {
   const output = yield* Output;

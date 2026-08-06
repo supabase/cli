@@ -76,8 +76,10 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     entrypoint: "sh",
     cmd: [
       "-c",
+      // migrate && start: a failed migrate exits the container and the
+      // unless-stopped restart retries until the db is ready (supabase/cli#6088).
       `cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh
-./logflare eval Logflare.Release.migrate
+./logflare eval Logflare.Release.migrate &&
 ./logflare start --sname logflare
 EOF
 `,

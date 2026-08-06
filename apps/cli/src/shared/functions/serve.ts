@@ -1339,8 +1339,13 @@ const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
   // Reload re-renders nginx.conf from Kong's default template, so it needs the
-  // template bring-up wrote (`kong.service.ts`, Go's `start.go:589-592`) handed
-  // back — otherwise it drops that template's `email_templates` server (#6059).
+  // template bring-up wrote (`kong.service.ts`; formerly Go's
+  // `start.go:589-592`, deleted as unreachable in CLI-1966, last present at
+  // commit a253ccba2) handed back — otherwise it drops that template's
+  // `email_templates` server (#6059). Go's own `restartEdgeRuntime`
+  // (`internal/functions/serve/serve.go:129`) passes the same flag for the
+  // same reason — an earlier revision of this file dropped it believing it was
+  // start-only (#5976), which #6065 proved wrong.
   const result = yield* runChildProcess(
     "docker",
     ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
@@ -1413,7 +1418,8 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
  * `serve.PopulatePerFunctionConfigs` (`internal/functions/serve/serve.go:
  * 277-318`), called both from Edge Runtime bring-up below (as part of its
  * own loop) and, standalone, from `start`'s Studio container spec
- * (`internal/start/start.go:1149-1159`), which needs only the bind mounts,
+ * (formerly `internal/start/start.go:1149-1159`, deleted as unreachable in
+ * CLI-1966; last present at commit a253ccba2), which needs only the bind mounts,
  * unconditionally of whether Edge Runtime itself is enabled or excluded.
  * `PopulatePerFunctionConfigs` logs `Skipped serving Function: <slug>`
  * unconditionally for every disabled function, regardless of which of its
@@ -1485,7 +1491,9 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
  * `ServeFunctions` (`internal/functions/serve/serve.go:135-252`), called both
  * by standalone `functions serve` (indirectly, via `startEdgeRuntime` below,
  * mirroring Go's `restartEdgeRuntime` wrapper) and directly by `start`'s own
- * bring-up (`internal/start/start.go:1101-1108`, no wrapper step in between).
+ * bring-up (formerly `internal/start/start.go:1101-1108`, no wrapper step in
+ * between; `internal/start` was deleted as unreachable in CLI-1966, last
+ * present at commit a253ccba2).
  * Deliberately excludes everything `ServeFunctions` itself excludes too: no
  * config-loading (caller resolves {@link StartEdgeRuntimeContainerInput.config}/
  * {@link StartEdgeRuntimeContainerInput.authArtifacts} itself, matching how
