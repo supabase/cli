@@ -246,13 +246,18 @@ export class Orchestrator extends Context.Service<
                     (state) =>
                       state.desired === "running" &&
                       (state.status === "Healthy" ||
-                        (state.status === "Failed" &&
+                        ((state.status === "Failed" || state.status === "Stopped") &&
                           !willRestartAfterExit(dependency.effectiveDef, state))),
                   );
-                  if (ready.status === "Failed") {
+                  if (ready.status !== "Healthy") {
                     yield* sendEvent(def.name, {
                       _tag: "DependencyFailed",
-                      error: `Dependency ${depDef.name} failed: ${ready.error ?? "unknown failure"}`,
+                      error: `Dependency ${depDef.name} failed: ${
+                        ready.error ??
+                        (ready.exitCode === null
+                          ? "stopped before becoming healthy"
+                          : `exited with code ${ready.exitCode} before becoming healthy`)
+                      }`,
                     });
                     return;
                   }
@@ -756,7 +761,8 @@ export class Orchestrator extends Context.Service<
                   d.name !== name &&
                   service !== undefined &&
                   SubscriptionRef.getUnsafe(service.state).desired !== "stopped" &&
-                  restartPolicy === "no"
+                  restartPolicy === "no" &&
+                  d.healthCheck == null
                 ) {
                   continue;
                 }
