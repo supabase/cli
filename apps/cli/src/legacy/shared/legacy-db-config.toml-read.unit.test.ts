@@ -431,6 +431,29 @@ describe("legacyReadDbToml", () => {
   );
 
   it.effect(
+    "formats TOML special-float db.migrations.schema_paths entries like Go's strconv.FormatFloat, not JS's toString (Go parity)",
+    () => {
+      // `strconv.FormatFloat` special-cases the three non-finite values BEFORE the
+      // format verb is even consulted, so `'f'` never applies to them — it renders
+      // `+Inf` / `-Inf` / `NaN` (verified empirically against `apps/cli-go`: a real
+      // `schema_paths = [inf, -inf, nan]` config load resolves to exactly
+      // `supabase/{+Inf,-Inf,NaN}`). JS's own `Number.prototype.toString()` renders
+      // the two infinities as `"Infinity"`/`"-Infinity"` instead — a naive port would
+      // record (and later glob) the wrong path. TOML v1.0's bare `inf`/`-inf`/`nan`
+      // float literals parse to exactly these JS values (smol-toml).
+      const dir = withConfig(["[db.migrations]", "schema_paths = [inf, -inf, nan]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/+Inf", "supabase/-Inf", "supabase/NaN"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "weakly coerces a TOP-LEVEL scalar db.migrations.schema_paths (Go mapstructure weak-decode of a []string field)",
     () => {
       // Go's `decodeSlice` wraps a non-array/non-string value into a synthetic

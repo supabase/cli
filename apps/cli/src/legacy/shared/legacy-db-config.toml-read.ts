@@ -1894,7 +1894,19 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // since `Number.prototype.toString()`/`toExponential()` already computed the same
   // shortest round-tripping digit sequence Go's algorithm would — only the notation
   // differs.
+  //
+  // `strconv.FormatFloat` special-cases the three non-finite values BEFORE it ever
+  // looks at the format verb, so `'f'` never applies to them: verified empirically
+  // (`apps/cli-go` probe against a real `schema_paths = [inf, -inf, nan]` config load) —
+  // `+Inf`/`-Inf`/`NaN` (note the "+Inf" sign Go always prints, and the short "Inf"/"NaN"
+  // spelling) — never JS's own `Infinity`/`-Infinity`/`NaN` (which happens to already
+  // match the "NaN" case, but not the two `Infinity` ones). TOML v1.0's bare `inf`/
+  // `+inf`/`-inf`/`nan` float literals (smol-toml) parse to exactly these JS values, so
+  // a `schema_paths`/`sql_paths` array entry can realistically hit this branch.
   const legacyFormatGoWeakFloat = (value: number): string => {
+    if (Number.isNaN(value)) return "NaN";
+    if (value === Number.POSITIVE_INFINITY) return "+Inf";
+    if (value === Number.NEGATIVE_INFINITY) return "-Inf";
     const str = value.toString();
     const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(str);
     if (match === null) return str;
