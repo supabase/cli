@@ -494,6 +494,93 @@ describe("legacyReadDbToml", () => {
     },
   );
 
+  it.effect.each([
+    { name: "offset date-time", literal: "1979-05-27T07:32:00Z", goType: "time.Time" },
+    { name: "local date-time", literal: "1979-05-27T07:32:00", goType: "toml.LocalDateTime" },
+    { name: "local date", literal: "1979-05-27", goType: "toml.LocalDate" },
+    { name: "local time", literal: "07:32:00", goType: "toml.LocalTime" },
+  ])(
+    "aborts the whole config load on a TOP-LEVEL bare $name db.migrations.schema_paths instead of silently treating it as empty (Go mapstructure UnconvertibleTypeError, review CLI-1958)",
+    ({ literal, goType }) => {
+      // `smol-toml` parses every TOML datetime variant to a `TomlDate` (a `Date`
+      // subclass) that stores its value internally, not as an enumerable own
+      // property — so `Object.keys(tomlDate).length === 0`, same as a genuine empty
+      // inline table (`schema_paths = {}`, tested above). Without excluding `TomlDate`
+      // from that zero-length-map special case, this would silently resolve to `[]`
+      // instead of aborting. Verified empirically against the real `apps/cli-go`
+      // `config.Load`: a bare datetime literal here fails with exactly this message,
+      // never resolving to an empty/partial glob list — one distinct Go type per TOML
+      // datetime variant (`time.Time` for the offset form, `toml.Local*` wrappers for
+      // the 3 zone-less "local" forms).
+      const dir = withConfig(["[db.migrations]", `schema_paths = ${literal}`, ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                `'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '${goType}'`,
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a bare datetime db.migrations.schema_paths ARRAY element (Go mapstructure UnconvertibleTypeError, review CLI-1958)",
+    () => {
+      // Same `TomlDate`-vs-generic-object collision as the top-level scalar case above,
+      // but reached through the real-array branch (`legacyGoUnconvertibleType`) instead
+      // of the scalar fallback. Verified empirically against `apps/cli-go`:
+      // `schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]` fails config load with
+      // exactly this message — the valid glob entry never masks the datetime's failure.
+      const dir = withConfig(
+        ["[db.migrations]", 'schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]', ""].join(
+          "\n",
+        ),
+      );
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'time.Time'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a TOP-LEVEL bare datetime db.seed.sql_paths (same UnmarshalExact call as schema_paths, review CLI-1958)",
+    () => {
+      const dir = withConfig(["[db.seed]", "sql_paths = 1979-05-27T07:32:00Z", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'time.Time'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect(
     "aborts the whole config load on a TOP-LEVEL table db.migrations.schema_paths (Go mapstructure UnconvertibleTypeError, synthetic index 0)",
     () => {

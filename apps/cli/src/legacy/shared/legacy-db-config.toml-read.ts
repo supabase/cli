@@ -1953,12 +1953,33 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // migrations.schema_paths[0]' expected type 'string', got unconvertible type
   // '[]interface {}'` / `'map[string]interface {}'` respectively — never silently
   // dropping the element and continuing with an empty/partial glob list.
+  //
+  // A bare TOML datetime (e.g. `schema_paths = 1979-05-27T07:32:00Z`) hits this same
+  // `UnconvertibleTypeError` path in Go, but as a DIFFERENT Go type per TOML datetime
+  // variant — `BurntSushi/toml` decodes an offset date-time to stdlib `time.Time` and
+  // each of the 3 zone-less "local" variants to its own `toml.Local*` wrapper type.
+  // Verified empirically against the real `apps/cli-go` `config.Load` (review
+  // CLI-1958): `schema_paths = 1979-05-27T07:32:00Z` → `unconvertible type
+  // 'time.Time'`; `= 1979-05-27T07:32:00` (no zone) → `'toml.LocalDateTime'`;
+  // `= 1979-05-27` → `'toml.LocalDate'`; `= 07:32:00` → `'toml.LocalTime'` — same four
+  // messages whether the datetime is this top-level scalar or an array element.
+  // `smol-toml` parses every TOML datetime to a `TomlDate` (a `Date` subclass, so
+  // `typeof`/`Array.isArray` alone can't tell it apart from an inline table) exposing
+  // exactly the `isDate`/`isTime`/`isDateTime`/`isLocal` discriminators needed to
+  // reproduce Go's per-variant type name.
+  const legacyGoTomlDateType = (value: SmolToml.TomlDate): string => {
+    if (value.isDate()) return "toml.LocalDate";
+    if (value.isTime()) return "toml.LocalTime";
+    return value.isLocal() ? "toml.LocalDateTime" : "time.Time";
+  };
   const legacyGoUnconvertibleType = (value: unknown): string | undefined =>
-    Array.isArray(value)
-      ? "[]interface {}"
-      : typeof value === "object" && value !== null
-        ? "map[string]interface {}"
-        : undefined;
+    value instanceof SmolToml.TomlDate
+      ? legacyGoTomlDateType(value)
+      : Array.isArray(value)
+        ? "[]interface {}"
+        : typeof value === "object" && value !== null
+          ? "map[string]interface {}"
+          : undefined;
   // Pure — returns the mapstructure-style issue strings for a real `Glob` array's
   // unconvertible elements WITHOUT failing. Go's `UnmarshalExact` decodes the WHOLE
   // config in a SINGLE mapstructure pass: `decodeStructFromMap`'s per-field loop
@@ -2014,6 +2035,15 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // 'string', got unconvertible type 'map[string]interface {}'`. Never
   // called with `undefined` — an absent key has its own Go-matching default
   // per caller below, so callers guard that case before reaching here.
+  //
+  // The zero-length-map special case must NOT match a `TomlDate` (e.g. `schema_paths =
+  // 1979-05-27T07:32:00Z`): a `TomlDate` stores its value internally, not as an
+  // enumerable own property, so `Object.keys(tomlDate).length === 0` is ALSO true for
+  // it — but Go does not treat a bare datetime as an empty map; mapstructure reports it
+  // unconvertible and aborts the whole load (see `legacyGoUnconvertibleType` above).
+  // Without this exclusion, a `TomlDate` would silently resolve to `[]` here instead of
+  // falling through to the unconvertible-type issue below, turning Go's hard config-load
+  // failure into a silently-empty schema/seed path list (review CLI-1958).
   // Pure — the TOP-LEVEL scalar fallback (see doc comment above), returning either the
   // one resolved pattern or the one issue it would raise, WITHOUT failing (same reason
   // as `legacyGlobArrayIssues`: the caller combines issues across both `Glob` fields
@@ -2022,7 +2052,12 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     keyPath: string,
     value: unknown,
   ): { readonly resolved: ReadonlyArray<string>; readonly issues: ReadonlyArray<string> } => {
-    if (typeof value === "object" && value !== null && Object.keys(value).length === 0) {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !(value instanceof SmolToml.TomlDate) &&
+      Object.keys(value).length === 0
+    ) {
       return { resolved: [], issues: [] };
     }
     const coerced = legacyWeakCoerceGlobEntry(value);
