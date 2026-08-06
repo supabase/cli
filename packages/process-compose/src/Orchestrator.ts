@@ -127,6 +127,7 @@ export class Orchestrator extends Context.Service<
 
         interface ServiceRuntime {
           readonly state: SubscriptionRef.SubscriptionRef<ServiceState>;
+          effectiveDef: ServiceDef;
         }
         const services = new Map<string, ServiceRuntime>();
 
@@ -135,6 +136,7 @@ export class Orchestrator extends Context.Service<
           const stateRef = yield* SubscriptionRef.make(initial(def.name));
           services.set(def.name, {
             state: stateRef,
+            effectiveDef: def,
           });
         }
 
@@ -244,7 +246,8 @@ export class Orchestrator extends Context.Service<
                     (state) =>
                       state.desired === "running" &&
                       (state.status === "Healthy" ||
-                        (state.status === "Failed" && !willRestartAfterExit(depDef, state))),
+                        (state.status === "Failed" &&
+                          !willRestartAfterExit(dependency.effectiveDef, state))),
                   );
                   if (ready.status === "Failed") {
                     yield* sendEvent(def.name, {
@@ -259,7 +262,7 @@ export class Orchestrator extends Context.Service<
                     (state) =>
                       (state.status === "Failed" ||
                         (state.status === "Stopped" && state.exitCode !== null)) &&
-                      !willRestartAfterExit(depDef, state),
+                      !willRestartAfterExit(dependency.effectiveDef, state),
                   );
                   if (completed.status === "Failed") {
                     yield* sendEvent(def.name, {
@@ -590,7 +593,13 @@ export class Orchestrator extends Context.Service<
           });
 
         const runServiceSafe = (def: ServiceDef, options?: ServiceStartOptions) =>
-          runService(def, options).pipe(
+          Effect.sync(() => {
+            const service = services.get(def.name);
+            if (service !== undefined) {
+              service.effectiveDef = def;
+            }
+          }).pipe(
+            Effect.andThen(runService(def, options)),
             Effect.catch((error) =>
               sendEvent(def.name, {
                 _tag: "SpawnFailed",
