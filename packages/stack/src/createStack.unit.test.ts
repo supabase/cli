@@ -345,10 +345,12 @@ describe("resolveConfig readiness policy", () => {
   it("uses a finite package default", async () => {
     const config = await resolveConfig();
     expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 180_000 });
+    expect(config.readinessSource).toBe("default");
   });
 
   it("preserves an explicit infinite policy", async () => {
     const config = await resolveConfig({ readiness: { mode: "infinite" } });
     expect(config.readiness).toEqual({ mode: "infinite" });
+    expect(config.readinessSource).toBe("configured");
   });
 });

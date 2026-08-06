@@ -48,6 +48,7 @@ const defaultConfig: ResolvedStackConfig = {
   mode: "native",
   startupMode: "eager",
   readiness: DEFAULT_STACK_READINESS_POLICY,
+  readinessSource: "default",
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
   apiPort: 54321,
@@ -345,6 +346,7 @@ describe("Stack", () => {
       postgrest: false,
       auth: false,
       readiness: { mode: "finite", timeoutMs: 250 },
+      readinessSource: "configured",
     } satisfies ResolvedStackConfig;
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
     const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
@@ -522,6 +524,7 @@ describe("Stack", () => {
       {
         ...defaultConfig,
         readiness: { mode: "finite", timeoutMs: 1_000 },
+        readinessSource: "configured",
       },
       noopPortLease(defaultConfig.ports),
     ).pipe(
@@ -781,6 +784,7 @@ describe("Stack", () => {
         ...defaultConfig,
         startupMode: "lazy",
         readiness: { mode: "finite", timeoutMs: 500 },
+        readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),
@@ -839,6 +843,7 @@ describe("Stack", () => {
         ...defaultConfig,
         startupMode: "lazy",
         readiness: { mode: "infinite" },
+        readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),

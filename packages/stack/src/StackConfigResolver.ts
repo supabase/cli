@@ -507,6 +507,7 @@ export async function resolveConfig(
     mode: resolvedMode,
     startupMode: config.startupMode ?? "eager",
     readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
+    readinessSource: config.readiness === undefined ? "default" : "configured",
     jwtSecret,
     ports,
     apiPort: ports.apiPort,
