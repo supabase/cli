@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyEvent } from "./ServiceTransition.ts";
-import { ServiceState, initial } from "./ServiceState.ts";
+import { applyEvent, type ServiceEvent } from "./ServiceTransition.ts";
+import { ServiceState, initial, type ServiceStatus } from "./ServiceState.ts";
 
 const make = (
   name: string,
@@ -19,6 +19,73 @@ const make = (
   });
 
 describe("ServiceTransition", () => {
+  it("classifies every event against every service status", () => {
+    const statuses: ReadonlyArray<ServiceStatus> = [
+      "Pending",
+      "Starting",
+      "Running",
+      "Healthy",
+      "Unhealthy",
+      "Stopping",
+      "Stopped",
+      "Failed",
+      "Restarting",
+    ];
+    const events: { readonly [Tag in ServiceEvent["_tag"]]: Extract<ServiceEvent, { _tag: Tag }> } =
+      {
+        DependenciesSatisfied: { _tag: "DependenciesSatisfied" },
+        DependencyFailed: { _tag: "DependencyFailed", error: "dependency failed" },
+        SpawnFailed: { _tag: "SpawnFailed", error: "spawn failed" },
+        ProcessSpawned: { _tag: "ProcessSpawned", pid: 1234, startedAt: 1000 },
+        HealthCheckPassed: { _tag: "HealthCheckPassed" },
+        HealthCheckFailed: { _tag: "HealthCheckFailed" },
+        ProcessTerminated: { _tag: "ProcessTerminated" },
+        UnhealthyRestartExhausted: {
+          _tag: "UnhealthyRestartExhausted",
+          error: "restart exhausted",
+        },
+        ProcessExited: { _tag: "ProcessExited", exitCode: 1 },
+        StopRequested: { _tag: "StopRequested" },
+        RestartTriggered: { _tag: "RestartTriggered", restartCount: 1 },
+        BackoffElapsed: { _tag: "BackoffElapsed" },
+        HookFailed: { _tag: "HookFailed", error: "hook failed" },
+      };
+    const legalStatuses: {
+      readonly [Tag in ServiceEvent["_tag"]]: ReadonlyArray<ServiceStatus>;
+    } = {
+      DependenciesSatisfied: ["Pending"],
+      DependencyFailed: ["Pending"],
+      SpawnFailed: ["Pending", "Starting", "Restarting"],
+      ProcessSpawned: ["Starting"],
+      HealthCheckPassed: ["Running", "Healthy", "Unhealthy"],
+      HealthCheckFailed: ["Running", "Healthy"],
+      ProcessTerminated: ["Unhealthy"],
+      UnhealthyRestartExhausted: ["Unhealthy"],
+      ProcessExited: ["Running", "Healthy", "Unhealthy", "Stopping", "Failed"],
+      StopRequested: [
+        "Pending",
+        "Starting",
+        "Running",
+        "Healthy",
+        "Unhealthy",
+        "Failed",
+        "Restarting",
+      ],
+      RestartTriggered: ["Unhealthy", "Stopped", "Failed"],
+      BackoffElapsed: ["Restarting"],
+      HookFailed: ["Starting", "Running", "Healthy", "Unhealthy"],
+    };
+
+    for (const event of Object.values(events)) {
+      for (const status of statuses) {
+        const state = make("service", { status, pid: 1234 });
+        expect(applyEvent(state, event) !== null, `${status} + ${event._tag}`).toBe(
+          legalStatuses[event._tag].includes(status),
+        );
+      }
+    }
+  });
+
   describe("valid transitions", () => {
     it("Pending + DependenciesSatisfied → Starting", () => {
       const state = make("db");

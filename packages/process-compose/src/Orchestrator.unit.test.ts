@@ -48,7 +48,6 @@ function mockLogBuffer() {
             line: entry.line,
           }));
         }),
-      truncate: () => Effect.void,
     }),
     get entries() {
       return entries;
@@ -455,11 +454,17 @@ describe("Orchestrator", () => {
 
   it.live("supervised services spawn the supervisor runtime", () => {
     const { layer, proc } = setupOrchestrator([
-      svc("postgres", {
-        command: "docker",
-        args: ["run", "--rm", "postgres"],
+      svc("database", {
+        command: "container-runtime",
+        args: ["run", "database"],
         supervision: {
-          orphanCleanup: [{ _tag: "DockerRemove", containerName: "supabase-postgres-test" }],
+          orphanCleanup: [
+            {
+              _tag: "RunCommand",
+              executable: "container-runtime",
+              args: ["remove", "database-test"],
+            },
+          ],
         },
       }),
     ]);
@@ -476,11 +481,17 @@ describe("Orchestrator", () => {
   it.live("stopping a supervisor during its spawn handshake cleans it up", () => {
     const { layer, proc } = setupOrchestrator(
       [
-        svc("postgres", {
-          command: "docker",
-          args: ["run", "--rm", "postgres"],
+        svc("database", {
+          command: "container-runtime",
+          args: ["run", "database"],
           supervision: {
-            orphanCleanup: [{ _tag: "DockerRemove", containerName: "supabase-postgres-test" }],
+            orphanCleanup: [
+              {
+                _tag: "RunCommand",
+                executable: "container-runtime",
+                args: ["remove", "database-test"],
+              },
+            ],
           },
         }),
       ],
@@ -488,10 +499,10 @@ describe("Orchestrator", () => {
     );
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
-      yield* orc.startService("postgres", { beforeSpawn: () => Effect.void });
+      yield* orc.startService("database", { beforeSpawn: () => Effect.void });
       yield* proc.waitForSpawnCount(1);
 
-      yield* orc.stopService("postgres");
+      yield* orc.stopService("database");
       yield* proc.waitForKillCount(1);
 
       expect(proc.killed[0]?.command).toBe(process.execPath);

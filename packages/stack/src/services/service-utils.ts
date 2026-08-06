@@ -1,4 +1,4 @@
-import type { ServiceDef } from "@supabase/process-compose";
+import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compose";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 export interface ServiceDependency {
@@ -20,7 +20,7 @@ interface DockerRunServiceOptions {
   readonly healthCheck?: ServiceDef["healthCheck"];
   readonly restart?: ServiceDef["restart"];
   readonly shutdown?: ServiceDef["shutdown"];
-  readonly orphanCleanup?: ReadonlyArray<any>;
+  readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
 }
 
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
