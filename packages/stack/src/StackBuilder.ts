@@ -325,6 +325,16 @@ const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDepen
     ? [{ service: "postgres-init", condition: "completed" }]
     : [{ service: "postgres", condition: "healthy" }];
 
+const POSTGRES_DEPENDENCY_TIMEOUT_SECONDS = dependencyTimeoutSecondsForServices(["postgres"]);
+const STORAGE_DEPENDENCY_TIMEOUT_SECONDS = dependencyTimeoutSecondsForServices([
+  "postgres",
+  "storage",
+]);
+const ANALYTICS_DEPENDENCY_TIMEOUT_SECONDS = dependencyTimeoutSecondsForServices([
+  "postgres",
+  "analytics",
+]);
+
 const publicServiceProjection = (
   defs: ReadonlyArray<ServiceDef>,
   hasPostgresInit: boolean,
@@ -588,6 +598,7 @@ export class StackBuilder extends Context.Service<
               dbPort: config.dbPort,
               autoExposeNewTables: config.postgres.autoExposeNewTables,
             }),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -625,6 +636,7 @@ export class StackBuilder extends Context.Service<
               : {
                   dependencies: [{ service: "postgres", condition: "healthy" as const }],
                 }),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -663,6 +675,7 @@ export class StackBuilder extends Context.Service<
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -691,6 +704,7 @@ export class StackBuilder extends Context.Service<
                   networkArgs: dockerNetworkArgs(platform.os, [config.edgeRuntime.port]),
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -732,6 +746,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.realtime.port]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -759,6 +774,7 @@ export class StackBuilder extends Context.Service<
               dependencies: postgresDeps,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
             }),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -775,6 +791,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.imgproxy.port]),
               dependencies: [{ service: "storage", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: STORAGE_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -791,6 +808,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.pgmeta.port]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -818,6 +836,7 @@ export class StackBuilder extends Context.Service<
               ]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -835,10 +854,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, []),
               dependencies: [{ service: "analytics", condition: "healthy" }],
             }),
-            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices([
-              "postgres",
-              "analytics",
-            ]),
+            dependencyTimeoutSeconds: ANALYTICS_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -874,6 +890,7 @@ export class StackBuilder extends Context.Service<
               ]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: POSTGRES_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }
@@ -908,10 +925,7 @@ export class StackBuilder extends Context.Service<
                       { service: "analytics", condition: "healthy" },
                     ],
             }),
-            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices([
-              "postgres",
-              "analytics",
-            ]),
+            dependencyTimeoutSeconds: ANALYTICS_DEPENDENCY_TIMEOUT_SECONDS,
             enabled: true,
           });
         }

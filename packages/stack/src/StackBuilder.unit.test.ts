@@ -11,6 +11,7 @@ import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
+import { dependencyTimeoutSecondsForServices } from "./services/health-budgets.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters";
@@ -203,6 +204,13 @@ describe("StackBuilder", () => {
       expect(names.indexOf("postgres")).toBeLessThan(names.indexOf("postgres-init"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("postgrest"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("auth"));
+
+      const postgresDependencyTimeout = dependencyTimeoutSecondsForServices(["postgres"]);
+      for (const name of ["postgres-init", "postgrest", "auth"]) {
+        expect(
+          graph.startOrder.find((service) => service.name === name)?.dependencyTimeoutSeconds,
+        ).toBe(postgresDependencyTimeout);
+      }
 
       expect(serviceProjection.get("postgres")).toEqual({ visibility: "public" });
       expect(serviceProjection.get("postgres-init")).toEqual({
