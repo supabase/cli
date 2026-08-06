@@ -40,6 +40,10 @@ import {
   legacyPrepareRawShadow,
   legacyRemoveShadowDatabase,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
+import {
+  legacyResolveLocalProjectId,
+  legacySanitizeProjectId,
+} from "../../../shared/legacy-docker-ids.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -252,7 +256,23 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
     const ctx: LegacyPgDeltaContext = {
-      projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+      // Go's `UpdateDockerIds` derives `EdgeRuntimeId` from the ALREADY-sanitized
+      // `Config.ProjectId` singleton (`internal/utils/config.go:57-76`, sanitized once by
+      // `Config.Validate` at config-load time) — `SUPABASE_PROJECT_ID` env override wins,
+      // then config.toml's `project_id`, then the workdir basename fallback
+      // (`pkg/config/config.go:563-570`). `cliConfig.projectId` alone is env-only, so a
+      // project that relies on `config.toml`'s `project_id` (or the workdir-basename
+      // default) previously resolved to an empty project id here, mounting the WRONG
+      // `supabase_edge_runtime_` Deno-cache volume — see `legacy-pgdelta.seam.layer.ts`'s
+      // `ensureLocalDatabaseStarted` for the same resolution already established for this
+      // command family (review: PRRT_kwDOErm0O86XAlIw).
+      projectId: legacySanitizeProjectId(
+        legacyResolveLocalProjectId(
+          Option.getOrUndefined(cliConfig.projectId),
+          Option.getOrUndefined(toml.projectId),
+          cliConfig.workdir,
+        ),
+      ),
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
       denoVersion: toml.denoVersion,

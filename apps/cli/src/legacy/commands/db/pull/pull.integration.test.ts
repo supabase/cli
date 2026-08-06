@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
@@ -107,6 +107,10 @@ interface SetupOpts {
   readonly args?: ReadonlyArray<string>;
   // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
   readonly failWriteOnCall?: number;
+  // `LegacyCliConfig.projectId` (Go's `SUPABASE_PROJECT_ID` env-only reader). Defaults to
+  // `Option.some("test")`; pass `Option.none()` to exercise the config.toml/workdir-basename
+  // fallback `legacyResolveLocalProjectId` provides for the pg-delta edge-runtime cache bind.
+  readonly projectId?: Option.Option<string>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -129,9 +133,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const shadowSpawner = mockLegacyShadowContainerCliSpawner();
 
   let edgeRunCount = 0;
+  const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCount += 1;
+      edgeCalls.push(runOpts);
       if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
         return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
       }
@@ -278,7 +284,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     alwaysReadyHttpClientLayer,
     resolver,
     proxy,
-    mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
+    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
       opts.stdinIsTty ?? false,
@@ -316,6 +322,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     get edgeRunCount() {
       return edgeRunCount;
     },
+    edgeCalls,
   };
 }
 
@@ -621,6 +628,28 @@ describe("legacy db pull", () => {
         expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
         expect(streamText(s.out, "stderr")).toContain(
           `Declarative schema written to ${join("supabase", "database")}\n`,
+        );
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "mounts the pg-delta Deno-cache volume by the config/workdir-resolved project id, not just SUPABASE_PROJECT_ID (review: PRRT_kwDOErm0O86XAlIw)",
+    () => {
+      // No `SUPABASE_PROJECT_ID` env and no `supabase/config.toml` `project_id` — Go's
+      // `Config.ProjectId` falls back to the workdir basename (`pkg/config/config.go:563-570`)
+      // and `UpdateDockerIds` names the edge-runtime volume from that already-sanitized value
+      // (`internal/utils/config.go:57-76`). Before the fix, `ctx.projectId` came from
+      // `LegacyCliConfig.projectId` alone (env-only) and resolved to `""`, mounting
+      // `supabase_edge_runtime_:/root/.cache/deno:rw` regardless of the real project — reachable
+      // here via the declarative-export path (`legacyDeclarativeExportPgDelta`), which reads
+      // `ctx.projectId` before any local shadow diff even starts.
+      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON, projectId: Option.none() });
+      const expectedProjectId = basename(tmp.current);
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+        expect(s.edgeCalls[0]?.binds).toContain(
+          `supabase_edge_runtime_${expectedProjectId}:/root/.cache/deno:rw`,
         );
       }).pipe(Effect.provide(s.layer));
     },

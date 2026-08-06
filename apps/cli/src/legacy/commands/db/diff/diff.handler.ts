@@ -22,6 +22,10 @@ import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import { legacyRemoveShadowDatabase } from "../../../shared/db-bootstrap/shadow-database.ts";
+import {
+  legacyResolveLocalProjectId,
+  legacySanitizeProjectId,
+} from "../../../shared/legacy-docker-ids.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -379,7 +383,23 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
     const ctx: LegacyPgDeltaContext = {
-      projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+      // Go's `UpdateDockerIds` derives `EdgeRuntimeId` from the ALREADY-sanitized
+      // `Config.ProjectId` singleton (`internal/utils/config.go:57-76`, sanitized once by
+      // `Config.Validate` at config-load time) — `SUPABASE_PROJECT_ID` env override wins,
+      // then config.toml's `project_id`, then the workdir basename fallback
+      // (`pkg/config/config.go:563-570`). `cliConfig.projectId` alone is env-only, so a
+      // project that relies on `config.toml`'s `project_id` (or the workdir-basename
+      // default) previously resolved to an empty project id here, mounting the WRONG
+      // `supabase_edge_runtime_` Deno-cache volume — see `legacy-pgdelta.seam.layer.ts`'s
+      // `ensureLocalDatabaseStarted` for the same resolution already established for this
+      // command family (review: PRRT_kwDOErm0O86XAlIw).
+      projectId: legacySanitizeProjectId(
+        legacyResolveLocalProjectId(
+          Option.getOrUndefined(cliConfig.projectId),
+          Option.getOrUndefined(cfg.projectId),
+          cliConfig.workdir,
+        ),
+      ),
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
       denoVersion: cfg.denoVersion,
