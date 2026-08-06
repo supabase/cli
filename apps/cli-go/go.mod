@@ -17,12 +17,12 @@ require (
 	github.com/docker/cli v28.5.2+incompatible
 	github.com/docker/compose/v2 v2.40.3
 	github.com/docker/docker v28.5.2+incompatible
-	github.com/docker/go-connections v0.8.0
+	github.com/docker/go-connections v0.8.1
 	github.com/docker/go-units v0.5.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-errors/errors v1.5.1
-	github.com/go-git/go-git/v5 v5.19.1
+	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/go-xmlfmt/xmlfmt v1.1.3
@@ -48,7 +48,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
-	github.com/stripe/pg-schema-diff v1.0.7
+	github.com/stripe/pg-schema-diff v1.0.8
 	github.com/supabase/cli/pkg v1.0.0
 	github.com/tidwall/jsonc v0.3.3
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0

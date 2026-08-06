@@ -549,9 +549,7 @@ describe("init handler", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Command.runWith(initCommand, { version: "0.1.0" })(["init"]).pipe(
-        Effect.provide(layer),
-      );
+      yield* Command.runWith(initCommand, { version: "0.1.0" })([]).pipe(Effect.provide(layer));
 
       expect(analytics.captured).toHaveLength(1);
       expect(analytics.captured[0]).toEqual({
@@ -585,7 +583,6 @@ describe("init handler", () => {
 
     return Effect.gen(function* () {
       yield* Command.runWith(initCommand, { version: "0.1.0" })([
-        "init",
         "--experimental",
         "--use-orioledb",
       ]).pipe(Effect.provide(layer));

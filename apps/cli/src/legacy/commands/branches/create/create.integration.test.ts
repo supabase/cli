@@ -26,7 +26,7 @@ import { legacyBranchesCreate } from "./create.handler.ts";
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
 const CREATED: CreatedBranch = {
-  id: "11111111-2222-3333-4444-555555555555",
+  id: "11111111-2222-4333-8444-555555555555",
   name: "feat-x",
   project_ref: "aaaaaaaaaaaaaaaaaaaa",
   parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",
@@ -442,8 +442,8 @@ describe("legacy branches create integration", () => {
   // succeeding where Go errors.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
-      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
       Command.withSubcommands([legacyBranchesCreateCommand]),
+      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
     );
 
     return Effect.gen(function* () {

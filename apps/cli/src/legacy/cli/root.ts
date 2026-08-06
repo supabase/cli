@@ -60,7 +60,6 @@ import {
 
 export const legacyRoot = Command.make("supabase").pipe(
   Command.withDescription("Supabase CLI (stable channel)."),
-  Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
   Command.withSubcommands([
     legacyBackupsCommand,
     legacyBootstrapCommand,
@@ -161,4 +160,5 @@ export const legacyRoot = Command.make("supabase").pipe(
       }),
     ),
   ),
+  Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
 );

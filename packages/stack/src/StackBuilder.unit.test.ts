@@ -42,6 +42,7 @@ const baseConfig: ResolvedStackConfig = {
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
   mode: "auto",
+  startupMode: "eager",
   jwtSecret: testJwtSecret,
   ports: basePorts,
   apiPort: 3000,

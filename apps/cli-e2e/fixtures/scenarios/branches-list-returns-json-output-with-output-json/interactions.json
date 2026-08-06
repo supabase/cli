@@ -23,7 +23,7 @@
       },
       "body": [
         {
-          "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
           "name": "test-branch",
           "project_ref": "branchrefaaaaaaaaa",
           "parent_project_ref": "__PROJECT_REF__",

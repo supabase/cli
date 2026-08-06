@@ -92,3 +92,39 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   `db __shadow --mode diff` seam call (unchanged — still Go, out of scope for
   CLI-1959) plus a native pg-delta catalog export. No hidden Go
   `db schema declarative __catalog` subprocess runs for this path any more.
+
+### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
+
+`--use-pg-schema` wraps the in-process Go library `stripe/pg-schema-diff`
+(`apps/cli-go/internal/db/diff/pgschema.go`). It is a keep-in-Go exception rather
+than a pending port because:
+
+- it runs **in-process** inside the Go binary, with no container/binary boundary
+  to re-invoke from TS — unlike `--use-pgadmin`, which shells out to a
+  container/binary path that could in principle be called from TS;
+- no TS binding and no WASM build of the library exists, or is reasonably
+  buildable, within the M9 "Final Cleanup — Go Removal" milestone's scope;
+- this specific exception (`db diff --use-pg-schema`) was pre-named when the M9
+  milestone was scoped.
+
+The decision record is Linear issue CLI-1960 and the pull request that introduced
+this deprecation notice; re-open only if a TS/WASM binding for
+`stripe/pg-schema-diff` ships. It will become the CLI's sole remaining Go delegation
+once `--use-pgadmin`'s delegation, the `db __shadow`/`db __db-bootstrap` seams, and
+the rest of the M9 milestone's in-flight issues are done — it is not there yet.
+
+Given that, the flag is now deprecated rather than ported:
+
+- A TS-only stderr deprecation warning is printed immediately before delegating
+  (both text and machine `--output-format` modes — diagnostics stay stderr-only,
+  the CLI-1546 rule): `"--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`
+  The warning text intentionally does not promise a removal timeline.
+- This is **additive** to (printed before) Go's own pre-existing "experimental"
+  warning (`cmd/db.go:121`, unchanged): `--use-pg-schema flag is experimental and may not include all entities, such as views and grants.` The delegated child
+  still prints its own warning; the TS wrapper does not suppress or replace it.
+- `--help` for the flag now also carries a `Deprecated: …` suffix pointing at the
+  same migration path.
+- Actual flag removal and any PostHog usage-telemetry gate for that removal are
+  explicitly out of scope for CLI-1960 — this is a documentation/deprecation-notice
+  change only, tracked as a follow-up decision outside this milestone, with no
+  owning issue yet.
