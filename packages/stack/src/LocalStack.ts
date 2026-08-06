@@ -58,6 +58,15 @@ type LifecyclePhase =
 
 type StackService = typeof Stack.Service;
 
+/** Private signal used by the Promise adapter to close its enclosing managed runtime. */
+export class LocalStackLifecycle extends Context.Service<
+  LocalStackLifecycle,
+  {
+    readonly awaitDisposed: Effect.Effect<void>;
+    readonly isDisposed: Effect.Effect<boolean>;
+  }
+>()("stack/LocalStackLifecycle") {}
+
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
   readonly graph: ResolvedGraph;
@@ -146,7 +155,7 @@ export const localStackLayer = (
   config: ResolvedStackConfig,
   portLease: PortLease,
 ): Layer.Layer<
-  Stack | StackServiceActivator,
+  Stack | StackServiceActivator | LocalStackLifecycle,
   StackBuildError,
   | StackBuilder
   | StackPreparation
@@ -169,6 +178,7 @@ export const localStackLayer = (
       const enabledServices = enabledServicesForConfig(config);
       const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
       const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
+      const disposedSignal = yield* Deferred.make<void>();
       const lifecycleLock = Semaphore.makeUnsafe(1);
       const projectionLock = Semaphore.makeUnsafe(1);
 
@@ -603,7 +613,10 @@ export const localStackLayer = (
               Effect.ensuring(Ref.set(phaseRef, "disposed")),
             );
           }).pipe(withLifecycleLock);
-        }).pipe(Effect.uninterruptible);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(disposedSignal, undefined).pipe(Effect.asVoid)),
+          Effect.uninterruptible,
+        );
 
       const withReadinessPolicy = <A, E, R>(
         effect: Effect.Effect<A, E, R>,
@@ -891,6 +904,10 @@ export const localStackLayer = (
 
       return Context.make(Stack, stack).pipe(
         Context.add(StackServiceActivator, { activate: activateService }),
+        Context.add(LocalStackLifecycle, {
+          awaitDisposed: Deferred.await(disposedSignal),
+          isDisposed: Effect.sync(() => disposed),
+        }),
       );
     }),
   );
