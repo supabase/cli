@@ -275,26 +275,6 @@ describe("ApiProxy", () => {
     }
   });
 
-  test("returns 503 when service activation does not complete before the request deadline", async () => {
-    const activatorLayer = Layer.succeed(StackServiceActivator, {
-      activate: () => Effect.never,
-    });
-    const proxy = await startProxy(
-      { ...configForPort(echoServer.port), activationTimeout: "10 millis" },
-      activatorLayer,
-    );
-    try {
-      const res = await fetch(`${proxy.url}/rest/v1/users`, {
-        signal: AbortSignal.timeout(1_000),
-      });
-      expect(res.status).toBe(503);
-      expect(res.headers.get("retry-after")).toBe("1");
-      await expect(proxy.awaitTerminalFailure()).resolves.toBeUndefined();
-    } finally {
-      await proxy.dispose();
-    }
-  });
-
   // ---------------------------------------------------------------------------
   // Auth transformation — publishableKey → anonJwt
   // ---------------------------------------------------------------------------

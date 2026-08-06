@@ -195,9 +195,10 @@ describe("supervisor-runtime", () => {
     expect(childEnv).toEqual({ KEEP_ME: "value" });
   });
 
-  test("bounds a cleanup command by its timeout and continues remaining cleanup", async () => {
+  test("bounds a cleanup command tree by its timeout and continues remaining cleanup", async () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "process-compose-supervisor-timeout-"));
     const cleanupDir = path.join(tempDir, "cleanup-dir");
+    const cleanupWorkerPidFile = path.join(tempDir, "cleanup-worker.pid");
     const childScriptPath = path.join(tempDir, "child.mjs");
     mkdirSync(cleanupDir);
     writeFileSync(childScriptPath, "process.exit(0);\n");
@@ -209,7 +210,16 @@ describe("supervisor-runtime", () => {
           {
             _tag: "RunCommand",
             executable: process.execPath,
-            args: ["-e", 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'],
+            args: [
+              "-e",
+              [
+                `const { spawn } = require("node:child_process");`,
+                `const { writeFileSync } = require("node:fs");`,
+                `const worker = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+                `writeFileSync(${JSON.stringify(cleanupWorkerPidFile)}, String(worker.pid));`,
+                `setInterval(() => {}, 1000);`,
+              ].join("\n"),
+            ],
             timeoutMs: 100,
           },
           { _tag: "RemovePath", path: cleanupDir, recursive: true },
@@ -222,8 +232,16 @@ describe("supervisor-runtime", () => {
       await waitFor(() => supervisor.exitCode != null);
       expect(supervisor.exitCode).toBe(0);
       expect(existsSync(cleanupDir)).toBe(false);
+      const cleanupWorkerPid = Number.parseInt(readFileSync(cleanupWorkerPidFile, "utf8"), 10);
+      expect(Number.isSafeInteger(cleanupWorkerPid)).toBe(true);
+      await waitFor(() => !isPidAlive(cleanupWorkerPid));
     } finally {
       supervisor.kill("SIGKILL");
+      if (existsSync(cleanupWorkerPidFile)) {
+        try {
+          process.kill(Number.parseInt(readFileSync(cleanupWorkerPidFile, "utf8"), 10), "SIGKILL");
+        } catch {}
+      }
       rmSync(tempDir, { recursive: true, force: true });
     }
   });

@@ -46,11 +46,7 @@ import {
 } from "./StackBuilder.ts";
 import { resolveReadinessPolicy } from "./StackConfig.ts";
 import type { ReadinessPolicy, ReadyOptions, ResolvedStackConfig } from "./StackConfig.ts";
-import {
-  changedProjectedStates,
-  projectStackStates,
-  type StackServiceProjectionCatalog,
-} from "./StackStateProjection.ts";
+import { projectStackStates, type StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
@@ -183,6 +179,7 @@ export const localStackLayer = (
         config.functions === false ? undefined : config.functions,
       );
       const lifecycleLock = Semaphore.makeUnsafe(1);
+      const projectionLock = Semaphore.makeUnsafe(1);
 
       const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
       const logBuffer = Context.get(logBufferServices, LogBuffer);
@@ -197,6 +194,17 @@ export const localStackLayer = (
             ? current.map((entry) => (entry.name === nextState.name ? nextState : entry))
             : [...current, nextState];
         });
+
+      const syncProjectedStates = (
+        orchestrator: Orchestrator["Service"],
+        serviceProjection: StackServiceProjectionCatalog,
+      ) =>
+        Effect.gen(function* () {
+          const rawStates = yield* orchestrator.getAllStates();
+          yield* Effect.forEach(projectStackStates(rawStates, serviceProjection), updateState, {
+            discard: true,
+          });
+        }).pipe(projectionLock.withPermit);
 
       const requireKnownService = (name: string) =>
         Effect.gen(function* () {
@@ -357,40 +365,9 @@ export const localStackLayer = (
           const orchServices = yield* Layer.buildWithScope(orchLayer, scope);
           const orchestrator = Context.get(orchServices, Orchestrator);
 
-          const projectedStates = Stream.unwrap(
-            Effect.gen(function* () {
-              const rawInitialStates = yield* orchestrator.getAllStates();
-              const initialProjected = projectStackStates(rawInitialStates, serviceProjection);
-              let rawStates = new Map(
-                rawInitialStates.map((state) => [state.name, state] as const),
-              );
-              let projectedByName = new Map(
-                initialProjected.map((state) => [state.name, state] as const),
-              );
-
-              return Stream.concat(
-                Stream.fromIterable(initialProjected),
-                orchestrator.allStateChanges().pipe(
-                  Stream.map((rawState) => {
-                    rawStates.set(rawState.name, rawState);
-                    const nextProjected = projectStackStates(
-                      [...rawStates.values()],
-                      serviceProjection,
-                    );
-                    const changed = changedProjectedStates(projectedByName, nextProjected);
-                    projectedByName = new Map(
-                      nextProjected.map((state) => [state.name, state] as const),
-                    );
-                    return changed;
-                  }),
-                  Stream.flatMap((states) => Stream.fromIterable(states)),
-                ),
-              );
-            }),
-          );
-
-          yield* projectedStates.pipe(
-            Stream.runForEach((state) => updateState(state)),
+          yield* syncProjectedStates(orchestrator, serviceProjection);
+          yield* orchestrator.allStateChanges().pipe(
+            Stream.runForEach(() => syncProjectedStates(orchestrator, serviceProjection)),
             Effect.ignore,
             Effect.forkIn(scope),
           );
@@ -495,15 +472,8 @@ export const localStackLayer = (
           ),
         );
       const withLifecycleLock = lifecycleLock.withPermit;
-      const syncProjectedStates = (runtime: RuntimeState) =>
-        Effect.gen(function* () {
-          const rawStates = yield* runtime.orchestrator.getAllStates();
-          yield* Effect.forEach(
-            projectStackStates(rawStates, runtime.serviceProjection),
-            updateState,
-            { discard: true },
-          );
-        });
+      const syncRuntimeProjectedStates = (runtime: RuntimeState) =>
+        syncProjectedStates(runtime.orchestrator, runtime.serviceProjection);
       const serviceStartOptions = {
         beforeStart: (name: string) => portLease.reserve(portFieldsForService(name)),
         beforeSpawn: (name: string) => portLease.release(portFieldsForService(name)),
@@ -579,7 +549,7 @@ export const localStackLayer = (
                 ),
             { concurrency: "unbounded", discard: true },
           );
-          yield* syncProjectedStates(runtime);
+          yield* syncRuntimeProjectedStates(runtime);
         });
       const inspectStartedTargets = (root: ServiceName) =>
         Effect.gen(function* () {
@@ -678,10 +648,6 @@ export const localStackLayer = (
             disposeOnce().pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
-      const cleanupOnStartupFailure = <A, E, R>(
-        effect: Effect.Effect<A, E, R>,
-      ): Effect.Effect<A, E, R> => effect.pipe(Effect.onError(() => disposeOnce()));
-
       yield* Effect.addFinalizer(disposeOnce);
 
       const activateService = (name: ServiceName) =>
@@ -710,12 +676,14 @@ export const localStackLayer = (
 
       const stack = {
         getInfo: () => Effect.succeed(info),
-        start: () =>
-          Effect.gen(function* () {
+        start: () => {
+          let serviceStartupBegan = false;
+          return Effect.gen(function* () {
             yield* requireMutable("start");
             yield* Ref.set(phaseRef, "starting");
             const runtime = yield* ensureRuntime;
             yield* configureFunctions(config, yield* Ref.get(functionsBundleRef));
+            serviceStartupBegan = true;
 
             if (config.startupMode === "lazy") {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
@@ -754,14 +722,15 @@ export const localStackLayer = (
               yield* runtime.orchestrator
                 .waitAllReady()
                 .pipe((effect) => withReadinessPolicy(effect, "stack"));
-              yield* syncProjectedStates(runtime);
+              yield* syncRuntimeProjectedStates(runtime);
             }
             yield* Ref.set(phaseRef, "running");
           }).pipe(
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
             withLifecycleLock,
-            cleanupOnStartupFailure,
-          ),
+            Effect.onError(() => (serviceStartupBegan ? disposeOnce() : Effect.void)),
+          );
+        },
         stop: () =>
           Effect.gen(function* () {
             if (disposed) {
@@ -912,7 +881,7 @@ export const localStackLayer = (
             yield* runtime.orchestrator
               .waitReady(name)
               .pipe((effect) => withReadinessPolicy(effect, name, opts));
-            yield* syncProjectedStates(runtime);
+            yield* syncRuntimeProjectedStates(runtime);
           }).pipe(cleanupOnReadinessFailure),
         waitAllReady: (opts) =>
           Effect.gen(function* () {
@@ -928,7 +897,7 @@ export const localStackLayer = (
             yield* runtime.orchestrator
               .waitAllReady()
               .pipe((effect) => withReadinessPolicy(effect, "stack", opts));
-            yield* syncProjectedStates(runtime);
+            yield* syncRuntimeProjectedStates(runtime);
           }).pipe(cleanupOnReadinessFailure),
         subscribeLogs: (name) => logBuffer.subscribe(name),
         subscribeAllLogs: (services) =>

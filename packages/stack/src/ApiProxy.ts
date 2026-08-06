@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Option, Context, Duration, Schedule, Result } from "effect";
+import { Deferred, Effect, Layer, Option, Context, Schedule, Result } from "effect";
 import {
   Headers,
   HttpBody,
@@ -9,13 +9,11 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import { activationTimeoutSecondsForService, StackServiceActivator } from "./ServiceActivation.ts";
-import { StackReadinessError } from "./errors.ts";
+import { StackServiceActivator } from "./ServiceActivation.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
 export interface ProxyConfig {
   readonly listenPort: number;
-  readonly activationTimeout?: Duration.Input | "infinite";
   readonly gotruePort: number;
   readonly postgrestPort: number;
   readonly postgrestAdminPort: number;
@@ -138,28 +136,7 @@ function makeProxyHandler(
 ) {
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
-      const activationEffect = activator.activate(opts.service);
-      const activation = yield* (() => {
-        if (config.activationTimeout === "infinite") {
-          return activationEffect;
-        }
-        const activationTimeout =
-          config.activationTimeout ??
-          Duration.seconds(activationTimeoutSecondsForService(opts.service));
-        return activationEffect.pipe(
-          Effect.timeoutOrElse({
-            duration: activationTimeout,
-            orElse: () =>
-              Effect.fail(
-                new StackReadinessError({
-                  target: opts.service,
-                  timeoutMs: Duration.toMillis(activationTimeout),
-                  detail: `Timed out waiting for ${opts.service} activation`,
-                }),
-              ),
-          }),
-        );
-      })().pipe(
+      const activation = yield* activator.activate(opts.service).pipe(
         Effect.tapError((error) =>
           error._tag === "StackReadinessError" ? signalTerminalFailure : Effect.void,
         ),
