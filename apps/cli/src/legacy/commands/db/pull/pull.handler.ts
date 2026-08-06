@@ -425,31 +425,42 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // adapter also returns (a bare shadow never runs `MigrateShadowDatabase`) — its own
           // input type (`LegacyShadowConnectionInput`) is structurally narrower, so the extra
           // fields are simply never read.
-          const shadow = yield* legacyPrepareRawShadow(
-            declSpawner,
-            legacyShadowRunInputFromLocalContainerInputs(
-              declLocalInputs,
-              resolvedDeclShadowImage,
-              toml,
-              fs,
-              path,
+          //
+          // `Effect.acquireUseRelease`, NOT a separate `yield* legacyPrepareRawShadow(...)`
+          // followed by a later `.pipe(Effect.ensuring(...))` (see this file's migration-path
+          // call site below, and `diff.handler.ts`'s identical call site, for the full
+          // rationale): the latter shape leaves a gap between the shadow's successful creation
+          // and the `Effect.ensuring` finalizer actually being attached, where a fiber interrupt
+          // would skip `legacyRemoveShadowDatabase` and leak the shadow container + its staged
+          // secret directory. `acquireUseRelease` registers the release finalizer in the same
+          // uninterruptible continuation the acquire resolves into, matching Go's `defer
+          // DockerRemove` immediately after successful preparation (review: PRRT_kwDOErm0O86XEuqJ).
+          const exported = yield* Effect.acquireUseRelease(
+            legacyPrepareRawShadow(
+              declSpawner,
+              legacyShadowRunInputFromLocalContainerInputs(
+                declLocalInputs,
+                resolvedDeclShadowImage,
+                toml,
+                fs,
+                path,
+              ),
             ),
-          );
-          const exported = yield* withPoolerFallback(targetUrl, (targetRef) =>
-            legacyDeclarativeExportPgDelta(ctx, {
-              sourceRef: shadow.sourceUrl,
-              targetRef,
-              schema: flags.schema,
-              formatOptions,
-            }),
-          ).pipe(
-            Effect.ensuring(
+            (shadow) =>
+              withPoolerFallback(targetUrl, (targetRef) =>
+                legacyDeclarativeExportPgDelta(ctx, {
+                  sourceRef: shadow.sourceUrl,
+                  targetRef,
+                  schema: flags.schema,
+                  formatOptions,
+                }),
+              ),
+            (shadow) =>
               legacyRemoveShadowDatabase(declSpawner, {
                 containerId: shadow.container,
                 secretDirId: shadow.secretDirId,
                 workdir: cliConfig.workdir,
               }),
-            ),
           );
           yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
