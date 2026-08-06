@@ -33,6 +33,22 @@ export interface PlatformFactoryOptions {
 
 export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
 
+/** @internal Converts foreground operation failures and closes the runtime after terminal timeouts. */
+export async function runForegroundOperation<A>(
+  operation: Promise<A>,
+  dispose: () => Promise<void>,
+): Promise<A> {
+  try {
+    return await operation;
+  } catch (error: unknown) {
+    const stackError = toStackError(error);
+    if (stackError.code === "STACK_READINESS_TIMEOUT") {
+      await dispose();
+    }
+    throw stackError;
+  }
+}
+
 export interface StackHandle extends AsyncDisposable {
   readonly url: string;
   readonly dbUrl: string;
@@ -124,16 +140,13 @@ export async function createStack(
       const apiProxy = Context.get(services, ApiProxy);
       const info = await runtime.runPromise(localStack.getInfo());
 
-      const run = <A>(effect: Effect.Effect<A, unknown>) =>
-        runtime.runPromise(effect).catch((error: unknown) => {
-          throw toStackError(error);
-        });
-
       let disposal: Promise<void> | undefined;
       const gracefulDispose = () => {
         disposal ??= runtime.dispose().catch(() => {});
         return disposal;
       };
+      const run = <A>(effect: Effect.Effect<A, unknown>) =>
+        runForegroundOperation(runtime.runPromise(effect), gracefulDispose);
 
       // A terminal lazy-activation timeout disposes LocalStack. Close the
       // foreground runtime as well so the public API port cannot outlive it.
