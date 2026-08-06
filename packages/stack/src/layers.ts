@@ -102,7 +102,7 @@ export const foregroundDaemonLayer = (
   config: ResolvedDaemonConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack | StateManager | ApiProxy> => {
+): Layer.Layer<Stack | StateManager | ApiProxy | LocalStackLifecycle> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
