@@ -50,6 +50,9 @@ const dockerOnlyServices = SERVICE_NAMES.filter(
   (service) => serviceMetadata(service).runtimeSupport === "docker-only",
 );
 
+// Longest serial health-check path to analytics; keep aligned with its transitive dependencies.
+const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics"];
+
 const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDependency> =>
   hasPostgresInit
     ? [{ service: "postgres-init", condition: "completed" }]
@@ -518,10 +521,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, []),
               dependencies: [{ service: "analytics", condition: "healthy" }],
             }),
-            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices([
-              "postgres",
-              "analytics",
-            ]),
+            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices(analyticsStartupPath),
             enabled: true,
           });
         }
@@ -591,10 +591,7 @@ export class StackBuilder extends Context.Service<
                       { service: "analytics", condition: "healthy" },
                     ],
             }),
-            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices([
-              "postgres",
-              "analytics",
-            ]),
+            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices(analyticsStartupPath),
             enabled: true,
           });
         }
