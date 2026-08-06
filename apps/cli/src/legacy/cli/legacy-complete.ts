@@ -1094,21 +1094,34 @@ function legacyResolveShortFlagCluster(
  * (b) resolves to a real flag whose value `legacyIsValidFlagValue` rejects,
  * or (c) resolves to a real, non-boolean flag with NO value available at all
  * — no attached suffix and no following token — AND `toComplete` itself is a
- * bare flag-shaped token (starts with `-`, no `=`).
+ * bare flag-shaped token (starts with `-`).
  *
  * That last condition mirrors a real two-part cobra/pflag interaction:
  * cobra's `checkIfFlagCompletion` only rescues a trailing incomplete flag
  * from `ParseFlags()` (treating it as "the flag currently being
  * value-completed" instead of a parse error) when `toComplete` is EMPTY or
- * otherwise not itself flag-shaped (`completions.go:666-687`); when
- * `toComplete` IS flag-shaped with no `=`, that rescue never happens and the
+ * otherwise not itself flag-shaped (`completions.go:666-687`, the `prevArg`
+ * branch, which strips the dangling flag out of `finalArgs` before
+ * `ParseFlags` ever sees it). When `toComplete` IS flag-shaped, that rescue
+ * never happens — `checkIfFlagCompletion` either returns immediately without
+ * touching `finalArgs` (no `=`, `completions.go`'s "Normal flag completion"
+ * early return) or extracts a flag name from `toComplete`'s OWN prefix
+ * before its `=` (`completions.go`'s `flagWithEqual` branch) — neither path
+ * strips a DIFFERENT, already-dangling flag earlier in `finalArgs`, so the
  * real `finalCmd.ParseFlags()` call (`completions.go:373-375`) fails
- * outright on the dangling flag (verified empirically against a real
- * `apps/cli-go` build: `__complete -o --d` returns zero candidates with the
- * Default directive — Go's `ParseFlags` error is "flag needs an argument:
- * 'o' in -o" — while `__complete -o ''` and `__complete -o pre` both instead
- * fall through to flag-VALUE completion for `--output`, per
- * `legacyClassifyCompletion`'s Case 2 — CLI-1965 review finding).
+ * outright on it. Whether `toComplete` itself contains `=` is irrelevant:
+ * that `=` only ever resolves `toComplete`'s own flag name, never rescues an
+ * earlier dangling one (verified empirically against a real `apps/cli-go`
+ * build: `__complete -o --d` returns zero candidates with the Default
+ * directive — Go's `ParseFlags` error is "flag needs an argument: 'o' in
+ * -o" — while `__complete -o ''` and `__complete -o pre` both instead fall
+ * through to flag-VALUE completion for `--output`, per
+ * `legacyClassifyCompletion`'s Case 2; `__complete sso add --type saml
+ * --metadata-file --attribute-mapping-file=` ALSO returns zero candidates
+ * with the Default directive — Go's `ParseFlags` error is "flag needs an
+ * argument: --metadata-file" — even though the current token has an `=` and
+ * identifies a wholly separate flag, not `--metadata-file`'s value —
+ * CLI-1965 review finding).
  *
  * Long flags (`--foo`, `--foo=bar`) resolve via `legacyResolveFlagFromToken`
  * (no first/last-character ambiguity for a `--name` token). Short flags
@@ -1145,11 +1158,14 @@ function legacyFindUnresolvedFlagToken(
   matchedPath: ReadonlyArray<string>,
 ): string | undefined {
   // See this function's doc comment: only a `toComplete` that's itself a
-  // bare flag-shaped token (no `=`) blocks cobra's "rescue" of a trailing,
-  // value-less flag — every other shape of `toComplete` leaves it for
-  // flag-VALUE completion instead, so a missing value at the end of
-  // `trimmedArgs` is not, by itself, unresolved in that case.
-  const trailingMissingValueIsFatal = toComplete.startsWith("-") && !toComplete.includes("=");
+  // bare flag-shaped token blocks cobra's "rescue" of a trailing,
+  // value-less flag — whether that token also contains `=` is irrelevant,
+  // since the `=` only ever resolves `toComplete`'s OWN flag name, never an
+  // earlier, different dangling flag. Every non-flag-shaped `toComplete`
+  // leaves the trailing flag for flag-VALUE completion instead, so a
+  // missing value at the end of `trimmedArgs` is not, by itself, unresolved
+  // in that case.
+  const trailingMissingValueIsFatal = toComplete.startsWith("-");
 
   let index = 0;
   while (index < trimmedArgs.length) {

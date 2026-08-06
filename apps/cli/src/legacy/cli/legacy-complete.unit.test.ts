@@ -519,6 +519,28 @@ describe("legacyRespondToComplete", () => {
         expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
       },
     );
+
+    it("rejects a dangling value-taking flag even when toComplete is a DIFFERENT flag's attached-value token", () => {
+      // A `toComplete` containing `=` still identifies its OWN flag name
+      // (checkIfFlagCompletion's flagWithEqual branch) — that never rescues
+      // an earlier, different dangling flag out of finalArgs, so
+      // ParseFlags() still fails on it (verified empirically against a real
+      // apps/cli-go build: `sso add --type saml --metadata-file
+      // --attribute-mapping-file=` returns zero candidates with the Default
+      // directive — Go's error is "flag needs an argument: --metadata-file"
+      // — even though `--attribute-mapping-file` is itself a real flag with
+      // a registered file-extension completion).
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "sso",
+        "add",
+        "--type",
+        "saml",
+        "--metadata-file",
+        "--attribute-mapping-file=",
+      ]);
+      expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+    });
   });
 
   describe("changed-flag tracking honors a long flag's real value consumption (CLI-1965 review)", () => {
