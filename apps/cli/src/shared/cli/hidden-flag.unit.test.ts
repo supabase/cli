@@ -40,7 +40,6 @@ function mockLegacyGoProxy() {
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([
     legacyStartCommand,
     legacyStopCommand,
@@ -50,6 +49,7 @@ const legacyTestRoot = Command.make("supabase").pipe(
     legacyBranchesCommand,
     legacyDbCommand,
   ]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 const silentCliOutputFormatter: CliOutput.Formatter = {

@@ -2,7 +2,6 @@ import { daemonEntryPoint } from "@supabase/stack";
 import {
   connectLayer,
   daemonLayer,
-  resolveDaemonConfig,
   stackMetadata,
   Stack,
   StateManager,
@@ -69,8 +68,8 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
-  const config = yield* Effect.promise(() =>
-    resolveDaemonConfig({
+  const stackLayer = yield* daemonLayer(
+    {
       cacheRoot: cliConfig.supabaseHome,
       cwd: runtimeInfo.cwd,
       projectDir: projectHome.projectRoot,
@@ -79,19 +78,20 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
       edgeRuntime: opts.edgeRuntime,
       functions: toStackFunctionsConfig(opts),
       ...versionsFromContext(serviceVersionContext),
-    }),
+    },
+    daemonEntryPoint,
   );
+  const state = yield* stateManager.read(opts.stack);
 
   yield* stateManager.writeMetadata(
     opts.stack,
     stackMetadata({
-      ports: config.ports,
+      ports: state.ports,
       services: serviceVersionContext.pinnedBaseline,
       launch: { mode: "auto", excludedServices: [] },
     }),
   );
 
-  const stackLayer = yield* daemonLayer(config, daemonEntryPoint);
   yield* startStackWithProgress().pipe(Effect.provide(stackLayer));
   const stack = yield* Stack.pipe(Effect.provide(stackLayer));
 

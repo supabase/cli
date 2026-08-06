@@ -148,6 +148,37 @@ describe("api schema payload", () => {
     });
   });
 
+  it("uses unknown placeholders for recursive response schemas", () => {
+    const payload = buildPlatformSchemaPayload(
+      findPlatformOperationDescriptor("v1GetHostnameConfig"),
+    );
+
+    expect(payload).toMatchObject({
+      response: {
+        properties: {
+          data: {
+            properties: {
+              errors: {
+                items: {
+                  oneOf: expect.arrayContaining([
+                    {
+                      type: "array",
+                      items: {
+                        type: "unknown",
+                        description: "Any JSON-serializable value",
+                      },
+                    },
+                  ]),
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain('"oneOf":[]');
+  });
+
   it("splits multipart routes into structured and upload channels", () => {
     const payload = buildPlatformSchemaPayload(
       findPlatformOperationDescriptor("v1DeployAFunction"),
@@ -177,7 +208,7 @@ describe("api schema payload", () => {
             },
             upload: {
               flag: "--upload",
-              optional: {
+              required: {
                 file: {
                   type: "array",
                   items: {

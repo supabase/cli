@@ -25,8 +25,8 @@ import { legacySslEnforcementCommand } from "./ssl-enforcement.command.ts";
 const tempRoot = useLegacyTempWorkdir("supabase-ssl-enforcement-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacySslEnforcementCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {

@@ -26,8 +26,8 @@ import { legacyNetworkRestrictionsCommand } from "./network-restrictions.command
 const tempRoot = useLegacyTempWorkdir("supabase-network-restrictions-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyNetworkRestrictionsCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {
