@@ -127,6 +127,29 @@ export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
 export const LEGACY_CLI_WORKDIR_LABEL = "com.supabase.cli.workdir";
 
 /**
+ * TS-port-only Docker label (no Go equivalent, same reasoning as {@link
+ * LEGACY_CLI_WORKDIR_LABEL}) recording the staged-secret directory id for a container
+ * created WITHOUT a name (`container-lifecycle.ts`'s `legacyCreateContainer` fallback path
+ * — today, only the `db diff`/`db pull` shadow database, see
+ * `db-bootstrap/shadow-database.ts`'s `legacyCreateShadowDatabase`). A named container's
+ * secret directory is always `<containerName>` and needs no separate label — Docker hands
+ * that name straight back via `docker ps`. An UNNAMED container's secret directory is a
+ * randomized `shadow-<uuid>` known only to the process that created it (see
+ * `legacyCreateShadowDatabase`'s own doc comment for why it's randomized rather than
+ * fixed); if that process is killed before its own finalizer
+ * (`legacyRemoveShadowDatabase`) runs, the container becomes a labeled orphan that a later
+ * `stop`'s project-label-filtered reaping WILL remove, but with no way to recover the
+ * matching secret-dir id from `container.name` (Docker's own auto-generated name, which
+ * bears no relation to it) — leaving the staged plaintext pgsodium root key on disk
+ * indefinitely. Stamping this label at creation time gives orphan cleanup a way to recover
+ * it anyway: read back by {@link legacyListContainerIdsAndNames}
+ * (`legacy-docker-lifecycle.ts`), consumed by `legacyCleanupStartSecrets`
+ * (`legacy-start-secrets-cleanup.ts`), which prefers this label's value over `container.name`
+ * whenever it's present (review: PRRT_kwDOErm0O86W8ZYt).
+ */
+export const LEGACY_CLI_SECRET_DIR_LABEL = "com.supabase.cli.secret-dir";
+
+/**
  * Go's `utils.GetDockerIds()` (`apps/cli-go/internal/utils/config.go:82-98`) — the
  * 13 service container ids (excludes `db`, `network`, and the `differ` shadow
  * container, which are not part of the "expected running services" set). Order and

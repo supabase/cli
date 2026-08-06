@@ -61,14 +61,15 @@ type RouteResult = {
  * step-array mock `gen types` uses for its single linear pipeline.
  *
  * `stop`'s single `ps` listing uses the combined `--format "{{.ID}}\t{{.Names}}\t{{.Label
- * \"com.supabase.cli.workdir\"}}"` (via `legacyDockerRemoveAll`'s `onContainersRemoved`
- * hook, see that function's doc comment) so `legacyCleanupStartSecrets` gets container
- * names/workdirs from the same request that lists ids to stop, rather than a second,
- * separately-formatted `docker ps` call — which would cost an extra real Docker Engine
- * API request Go never makes. `stdout` for a `ps` route response is one `<id>\t<name>`
- * line per container (no third, workdir column — every test here exercises the
- * `cliConfig.workdir` fallback path); `defaultRoute` below tab-joins each configured id
- * with itself.
+ * \"com.supabase.cli.workdir\"}}\t{{.Label \"com.supabase.cli.secret-dir\"}}"` (via
+ * `legacyDockerRemoveAll`'s `onContainersRemoved` hook, see that function's doc comment)
+ * so `legacyCleanupStartSecrets` gets container names/workdirs/secret-dir ids from the
+ * same request that lists ids to stop, rather than a second, separately-formatted `docker
+ * ps` call — which would cost an extra real Docker Engine API request Go never makes.
+ * `stdout` for a `ps` route response is one `<id>\t<name>` line per container (no third or
+ * fourth, workdir/secret-dir column — every test here exercises the `cliConfig.workdir`
+ * fallback path and no test container is an unnamed shadow database); `defaultRoute` below
+ * tab-joins each configured id with itself.
  */
 function mockRoutedContainerCliSpawner(
   route: (args: ReadonlyArray<string>) => RouteResult,
@@ -234,7 +235,7 @@ describe("legacy stop integration", () => {
           "label=com.supabase.cli.project=demo",
           "--all",
           "--format",
-          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
         ]);
         const stopCalls = child.spawned.filter((s) => s.args[0] === "stop");
         expect(stopCalls.map((s) => s.args)).toEqual([
@@ -350,7 +351,7 @@ describe("legacy stop integration", () => {
           "label=com.supabase.cli.project=My_App_",
           "--all",
           "--format",
-          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
         ]);
       }).pipe(Effect.provide(layer));
     },
@@ -370,7 +371,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=Raw Value!!",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -386,7 +387,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
       const pruneCalls = child.spawned.filter(
         (s) => s.args[0] === "container" && s.args[1] === "prune",
@@ -427,7 +428,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=other-project",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -446,7 +447,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=demo",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -467,7 +468,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=env-file-project",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -485,7 +486,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=ambient-project",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
     }).pipe(
       Effect.provide(layer),
@@ -520,7 +521,7 @@ describe("legacy stop integration", () => {
           `label=com.supabase.cli.project=${projectId}`,
           "--all",
           "--format",
-          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
         ]);
       }).pipe(Effect.provide(layer));
     },
@@ -542,7 +543,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=no-config-project",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -562,7 +563,7 @@ describe("legacy stop integration", () => {
         "label=com.supabase.cli.project=root-env-project",
         "--all",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -841,7 +842,7 @@ additional_redirect_urls = "http://a,http://b"
           "label=com.supabase.cli.project=demo",
           "--all",
           "--format",
-          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
         ]);
       }).pipe(Effect.provide(layer));
     },

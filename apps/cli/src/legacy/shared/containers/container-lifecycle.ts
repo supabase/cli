@@ -28,7 +28,11 @@ import {
   legacyBindMountSpecSource,
   legacyIsBindMountSource,
 } from "../legacy-docker-bind-classify.ts";
-import { LEGACY_CLI_PROJECT_LABEL, LEGACY_CLI_WORKDIR_LABEL } from "../legacy-docker-ids.ts";
+import {
+  LEGACY_CLI_PROJECT_LABEL,
+  LEGACY_CLI_SECRET_DIR_LABEL,
+  LEGACY_CLI_WORKDIR_LABEL,
+} from "../legacy-docker-ids.ts";
 import { isUserDefinedDockerNetwork } from "../../../shared/functions/deploy.ts";
 import {
   legacyBuildStartContainerCreateArgs,
@@ -780,15 +784,26 @@ export function legacyCreateContainer(
         }),
       );
     }
+    // Stamp the fallback secret-dir id as its own label — ONLY on the unnamed-container
+    // path, where it's the sole way orphan cleanup can ever recover this directory later
+    // (see `LEGACY_CLI_SECRET_DIR_LABEL`'s own doc comment). A named container needs no
+    // such label: its secret directory IS its name, which `docker ps` already reports.
+    const specWithSecretDirLabel: LegacyStartContainerSpec =
+      finalSpec.containerName.length === 0
+        ? {
+            ...finalSpec,
+            labels: { ...finalSpec.labels, [LEGACY_CLI_SECRET_DIR_LABEL]: secretDirId },
+          }
+        : finalSpec;
     const { binds: secretBinds, cleanup: cleanupSecretFiles } = yield* legacyStageStartSecretFiles(
-      finalSpec.secretFiles ?? [],
+      specWithSecretDirLabel.secretFiles ?? [],
       secretDirId,
       opts.workdir,
     );
     const specWithSecretBinds: LegacyStartContainerSpec =
       secretBinds.length === 0
-        ? finalSpec
-        : { ...finalSpec, binds: [...finalSpec.binds, ...secretBinds] };
+        ? specWithSecretDirLabel
+        : { ...specWithSecretDirLabel, binds: [...specWithSecretDirLabel.binds, ...secretBinds] };
 
     return yield* Effect.gen(function* () {
       const createArgs = legacyBuildStartContainerCreateArgs(specWithSecretBinds);

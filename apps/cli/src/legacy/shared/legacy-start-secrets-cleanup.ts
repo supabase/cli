@@ -22,7 +22,10 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * `stop` (`stop.handler.ts`) need this same cleanup.
  *
  * Each container's own directory is resolved as `<workdir>/supabase/.temp/
- * start-secrets/<name>`, where `workdir` is that container's own
+ * start-secrets/<dirId>`, where `dirId` is `container.secretDirId` when present
+ * (an unnamed container's own `LEGACY_CLI_SECRET_DIR_LABEL` value — see that
+ * constant's doc comment for why `container.name` can't be used for one of
+ * those) and `container.name` otherwise, and `workdir` is that container's own
  * `LEGACY_CLI_WORKDIR_LABEL` value (see that constant's doc comment) — NOT
  * necessarily `fallbackWorkdir` (the caller's own `LegacyCliConfig.workdir`).
  * A caller tearing down containers by an explicit `--project-id`/`--all`
@@ -47,8 +50,9 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * --project-id`/rollback isn't tearing down.
  *
  * Never fails: a directory that was never staged (every service besides
- * Kong/Postgres/Supavisor) is a harmless no-op, and a real deletion error is
- * not worth failing `stop`/rollback over.
+ * Kong/Postgres/Supavisor, and the shadow database before CLI-1956) is a
+ * harmless no-op, and a real deletion error is not worth failing
+ * `stop`/rollback over.
  */
 export function legacyCleanupStartSecrets(
   containers: ReadonlyArray<LegacyContainerIdName>,
@@ -58,7 +62,8 @@ export function legacyCleanupStartSecrets(
     Promise.all(
       containers.map((container) => {
         const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
-        return rm(join(workdir, "supabase", ".temp", "start-secrets", container.name), {
+        const dirId = container.secretDirId.length > 0 ? container.secretDirId : container.name;
+        return rm(join(workdir, "supabase", ".temp", "start-secrets", dirId), {
           recursive: true,
           force: true,
         });

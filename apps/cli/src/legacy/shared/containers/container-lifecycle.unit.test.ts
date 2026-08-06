@@ -1024,6 +1024,42 @@ describe("legacyCreateContainer with an empty containerName (the shadow database
           expect(
             existsSync(join(workdir, "supabase", ".temp", "start-secrets", "should-be-ignored")),
           ).toBe(false);
+          // A NAMED container never gets `LEGACY_CLI_SECRET_DIR_LABEL` — its secret
+          // directory IS its own name, which `docker ps` already reports back; stamping
+          // this label unconditionally would be redundant and could be mistaken for the
+          // "this container's secretDirId isn't its name" signal that label exists to give
+          // orphan cleanup on the unnamed-container path (review: PRRT_kwDOErm0O86W8ZYt).
+          const create = mock.spawned.find((args) => args[0] === "create");
+          expect(create?.some((arg) => arg.startsWith("com.supabase.cli.secret-dir="))).toBe(false);
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "stamps an unnamed container with a com.supabase.cli.secret-dir label matching opts.secretDirId",
+    () => {
+      // If this process is killed before its own finalizer (`legacyRemoveShadowDatabase`)
+      // reclaims the staged secret directory, the container becomes an orphan a later
+      // `stop`'s project-label-filtered reaping WILL remove — but only this label lets
+      // that reaping recover the matching `<workdir>/supabase/.temp/start-secrets/<id>`
+      // directory too, since Docker's own auto-generated container name bears no relation
+      // to the randomized `secretDirId` that was actually staged (review:
+      // PRRT_kwDOErm0O86W8ZYt, `LEGACY_CLI_SECRET_DIR_LABEL`'s own doc comment).
+      const mock = alwaysSucceed("shadow-container-id\n");
+      const spec: LegacyStartContainerSpec = { ...baseSpec, containerName: "", binds: [] };
+      return legacyCreateContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+        secretDirId: "shadow-11111111-1111-1111-1111-111111111111",
+      }).pipe(
+        Effect.map(() => {
+          const create = mock.spawned.find((args) => args[0] === "create");
+          expect(create).toContain(
+            "com.supabase.cli.secret-dir=shadow-11111111-1111-1111-1111-111111111111",
+          );
         }),
       );
     },

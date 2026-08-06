@@ -226,7 +226,7 @@ export const legacyCreateShadowDatabase = (
 /** Input to {@link legacyRemoveShadowDatabase} — everything needed to tear down both halves of a shadow ({@link legacyCreateShadowDatabase}'s container AND its staged secret directory). */
 export interface LegacyRemoveShadowDatabaseInput {
   readonly containerId: string;
-  /** {@link LegacyShadowDatabaseHandle.secretDirId} — the ONLY reclaim path for the shadow's staged secret directory (see {@link legacyCreateShadowDatabase}'s own doc comment): the shadow container has no name, so neither `legacyCleanupStartSecrets` (keyed off a container's own name/label) nor `legacyStageStartSecretFiles`'s self-healing `rm -rf` (keyed off the SAME directory being reused across calls) can ever find it. */
+  /** {@link LegacyShadowDatabaseHandle.secretDirId} — the NORMAL reclaim path for the shadow's staged secret directory (see {@link legacyCreateShadowDatabase}'s own doc comment): the shadow container has no name, so `legacyStageStartSecretFiles`'s self-healing `rm -rf` (keyed off the SAME directory being reused across calls) can never find it, and `legacyCleanupStartSecrets`'s own name-keyed fallback can't either. If this process is killed before this function ever runs, `legacyCleanupStartSecrets` can still recover the SAME directory later via the container's own `LEGACY_CLI_SECRET_DIR_LABEL` (stamped at creation time, read back off the orphan `stop` finds by project label) — see that label's doc comment (`legacy-docker-ids.ts`) for why that fallback exists (review: PRRT_kwDOErm0O86W8ZYt). */
   readonly secretDirId: string;
   readonly workdir: string;
 }
@@ -278,8 +278,10 @@ const legacyCleanupShadowSecretDir = (
  * Postgres's entrypoint can still read it — that same invariant means it must ALSO outlive a
  * shadow that `docker rm` failed to actually remove: a still-running (or later-restarted)
  * orphan would find its bind source deleted out from under it. `secretDirId` is randomized per
- * shadow, not keyed off the container's name, so this reclaim (once safe) is the only path
- * that can find it.
+ * shadow, not keyed off the container's name, so this reclaim (once safe) is the NORMAL path
+ * that finds it — the only other path is `legacyCleanupStartSecrets`'s
+ * `LEGACY_CLI_SECRET_DIR_LABEL` fallback, for when this whole process (not just `docker rm`)
+ * never got to run at all, e.g. killed mid-flight (review: PRRT_kwDOErm0O86W8ZYt).
  */
 export const legacyRemoveShadowDatabase = (
   spawner: Spawner,
