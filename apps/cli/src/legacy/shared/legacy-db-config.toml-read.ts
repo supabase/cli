@@ -1903,10 +1903,20 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // match the "NaN" case, but not the two `Infinity` ones). TOML v1.0's bare `inf`/
   // `+inf`/`-inf`/`nan` float literals (smol-toml) parse to exactly these JS values, so
   // a `schema_paths`/`sql_paths` array entry can realistically hit this branch.
+  //
+  // `strconv.FormatFloat` also preserves the IEEE754 sign bit on zero: a genuine
+  // negative-zero float64 formats as `"-0"`, never `"0"`. Verified empirically —
+  // `strconv.FormatFloat(math.Copysign(0, -1), 'f', -1, 64)` returns `"-0"` — and
+  // end-to-end through the real decode pipeline this weak-decode mirrors
+  // (`BurntSushi/toml` + `go-viper/mapstructure`'s `WeaklyTypedInput`): a
+  // `schema_paths = [-0.0]` config decodes its glob entry to the literal string
+  // `"-0"`. JS's own `(-0).toString()` is `"0"` (the sign is dropped), by spec —
+  // `Object.is(value, -0)` is JS's only way to detect it, since `-0 === 0`.
   const legacyFormatGoWeakFloat = (value: number): string => {
     if (Number.isNaN(value)) return "NaN";
     if (value === Number.POSITIVE_INFINITY) return "+Inf";
     if (value === Number.NEGATIVE_INFINITY) return "-Inf";
+    if (Object.is(value, -0)) return "-0";
     const str = value.toString();
     const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(str);
     if (match === null) return str;
