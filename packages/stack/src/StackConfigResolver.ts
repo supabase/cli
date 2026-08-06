@@ -567,11 +567,19 @@ export type DaemonConfigInput = Omit<StackConfig, "functions"> & {
   readonly projectStateRoot?: string;
 };
 
+export function sanitizeDaemonConfigInput(
+  input: DaemonConfigInput & { readonly functions?: unknown },
+): DaemonConfigInput {
+  const { functions: _functions, ...config } = input;
+  return config;
+}
+
 export async function resolveDaemonConfig(
   input: DaemonConfigInput,
   opts: Pick<ResolveConfigOptions, "portAllocator"> = {},
 ): Promise<ResolvedDaemonConfig> {
-  const { cwd, name, projectDir, projectStateRoot, ...stackConfig } = input;
+  const { cwd, name, projectDir, projectStateRoot, ...stackConfig } =
+    sanitizeDaemonConfigInput(input);
   if (stackConfig.stackRoot !== undefined || stackConfig.runtimeRoot !== undefined) {
     throw new Error("Managed daemon stacks derive stackRoot and runtimeRoot automatically");
   }
