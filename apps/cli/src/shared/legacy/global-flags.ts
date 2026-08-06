@@ -248,3 +248,35 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
     }
     return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
   });
+
+/**
+ * True when the raw argv contains an explicit `--debug=<false>` (pflag's `ParseBool` false
+ * set). Mirrors {@link legacyYesFlagExplicitlyFalse}/{@link legacyExperimentalFlagExplicitlyFalse}:
+ * `--debug` is bound to viper the same way (`apps/cli-go/cmd/root.go:318-334`).
+ */
+const legacyDebugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
+  args.some(
+    (arg) => arg.startsWith("--debug=") && PFLAG_FALSE_VALUES.has(arg.slice("--debug=".length)),
+  );
+
+/**
+ * `--debug` resolved with Go's viper `AutomaticEnv` fallback: EVERY Go debug read goes
+ * through `viper.GetBool("DEBUG")` — never the bare pflag — across the whole Go CLI
+ * (`apps/cli-go/cmd/root.go:122,289`, `internal/utils/{connect,docker,edgeruntime,logger}.go`,
+ * `internal/pgdelta/apply.go:332,342`, …), so `SUPABASE_DEBUG` enables debug output exactly
+ * like `--debug`. An explicit `--debug` — including `--debug=false` — wins over the env,
+ * matching viper's bound-pflag precedence. Mirrors {@link legacyResolveYes}/
+ * {@link legacyResolveExperimental} above. Prefer this over reading {@link LegacyDebugFlag}
+ * directly for any NEW debug-gated behavior that has a direct, single-call-site Go
+ * counterpart reading `viper.GetBool("DEBUG")` (review: PRRT_kwDOErm0O86XDr4V) — existing
+ * `LegacyDebugFlag` call sites predate this helper and are a separate, broader cross-cutting
+ * cleanup, not folded in here.
+ */
+export const legacyResolveDebug = Effect.gen(function* () {
+  const flag = yield* LegacyDebugFlag;
+  const cliArgs = yield* CliArgs;
+  if (legacyDebugFlagExplicitlyFalse(cliArgs.args)) {
+    return false;
+  }
+  return flag || legacyViperEnvBool("SUPABASE_DEBUG");
+});

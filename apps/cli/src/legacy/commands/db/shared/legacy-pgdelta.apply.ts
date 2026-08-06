@@ -12,7 +12,7 @@
 
 import { Data, Effect, type FileSystem } from "effect";
 
-import { LegacyDebugFlag } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveDebug } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import {
@@ -835,7 +835,11 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
 
   const output = yield* Output;
   const edgeRuntime = yield* LegacyEdgeRuntimeScript;
-  const debug = yield* LegacyDebugFlag;
+  // Go's `pgdelta.ApplyDeclarative` reads `viper.GetBool("DEBUG")` (`apply.go:332,342`), which
+  // falls back to `SUPABASE_DEBUG` via `AutomaticEnv` when `--debug` itself is unset —
+  // `legacyResolveDebug` (not the bare `LegacyDebugFlag`) reproduces that (review:
+  // PRRT_kwDOErm0O86XDr4V).
+  const debug = yield* legacyResolveDebug;
 
   yield* output.raw("Applying declarative schemas via pg-delta...\n", "stderr");
 

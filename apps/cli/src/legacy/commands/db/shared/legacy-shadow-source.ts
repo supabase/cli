@@ -18,6 +18,7 @@ import type { GlobalFlag } from "effect/unstable/cli";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import type { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
@@ -207,6 +208,10 @@ export const legacyPrepareShadowSource = <E>(
   | LegacyDbConnection
   | LegacyEdgeRuntimeScript
   | GlobalFlag.Setting.Identifier<"debug">
+  // `legacyApplyDeclarativePgDelta`'s own `legacyResolveDebug` (viper `AutomaticEnv`
+  // `SUPABASE_DEBUG` fallback, review: PRRT_kwDOErm0O86XDr4V) needs `CliArgs` to detect an
+  // explicit `--debug=false`, same as `legacyResolveYes`/`legacyResolveExperimental`.
+  | CliArgs
 > =>
   Effect.gen(function* () {
     const { containerId, secretDirId } = yield* legacyCreateShadowDatabase(spawner, input);

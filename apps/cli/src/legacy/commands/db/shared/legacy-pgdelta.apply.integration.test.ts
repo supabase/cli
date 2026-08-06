@@ -5,6 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer } from "effect";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDebugFlag } from "../../../../shared/legacy/global-flags.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -74,6 +75,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, false),
+          Layer.succeed(CliArgs, { args: [] }),
         ),
       ),
     );
@@ -102,6 +104,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, false),
+          Layer.succeed(CliArgs, { args: [] }),
         ),
       ),
     );
@@ -131,6 +134,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, false),
+          Layer.succeed(CliArgs, { args: [] }),
         ),
       ),
     );
@@ -159,6 +163,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, true),
+          Layer.succeed(CliArgs, { args: [] }),
         ),
       ),
     );
@@ -200,6 +205,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -236,6 +243,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -266,6 +275,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, false),
+          Layer.succeed(CliArgs, { args: [] }),
         ),
       ),
     );
@@ -303,6 +313,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -342,6 +354,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -379,6 +393,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -416,6 +432,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -456,6 +474,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -501,6 +521,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, true),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -538,6 +560,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -575,6 +599,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -620,6 +646,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -657,6 +685,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -696,6 +726,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -737,6 +769,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -773,6 +807,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, true),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
@@ -819,6 +855,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
       );
