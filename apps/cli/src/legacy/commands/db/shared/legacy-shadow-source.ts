@@ -319,7 +319,12 @@ function legacyHasConfigGlobMeta(pattern: string): boolean {
  * same two strings' UTF-8 bytes. Used for every `sort.Strings` this module ports so a schema
  * directory with such filenames applies in the same order Go would.
  */
-function legacyCompareUtf8Bytes(a: string, b: string): number {
+// Exported (not module-private) so `legacy-pgdelta.cache.ts`'s `legacyListLocalMigrations` — the
+// same command family (`commands/db/shared/`), per `apps/cli/CLAUDE.md`'s "Hoist Before You
+// Duplicate" rule — can reuse it for Go's `fs.ReadDir`-backed `migration.ListLocalMigrations`
+// (`pkg/migration/list.go:34`), which is byte-sorted the exact same way (review:
+// PRRT_kwDOErm0O86W3OyD).
+export function legacyCompareUtf8Bytes(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 }
 

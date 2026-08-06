@@ -215,6 +215,37 @@ describe("legacyListLocalMigrations", () => {
     },
   );
 
+  it.effect(
+    "sorts by UTF-8 byte order, matching Go's fs.ReadDir, not JS's default UTF-16 code-unit order",
+    () => {
+      // Go's `fs.ReadDir` (`pkg/migration/list.go:34`) sorts entries byte-wise over each name's
+      // UTF-8 encoding. A BMP private-use character (U+E000, single UTF-16 code unit `0xE000`)
+      // and a supplementary-plane character (U+1F600, a surrogate pair starting `0xD83D`) reverse
+      // order between the two schemes: JS's default `Array.prototype.sort()` ranks the surrogate
+      // pair first (`0xD83D < 0xE000`), while Go's byte order — which preserves codepoint order —
+      // ranks U+1F600 (`> U+FFFF`) after U+E000. A migrations directory with such filenames must
+      // replay in Go's order, not JS's default, or a dependent migration could apply out of order.
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const privateUseFile = "20240101120000_z\uE000.sql";
+      const supplementaryFile = "20240101120000_z\u{1F600}.sql";
+      writeFileSync(join(migrationsDir, privateUseFile), "create table x();");
+      writeFileSync(join(migrationsDir, supplementaryFile), "create table y();");
+      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
+        Effect.tap((paths) =>
+          Effect.sync(() => {
+            expect(paths.map((p) => p.split("/").pop())).toEqual([
+              privateUseFile,
+              supplementaryFile,
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("returns [] when the migrations dir is absent", () => {
     const dir = withTemp();
     return withServices((fs, path) => legacyListLocalMigrations(fs, path, join(dir, "nope"))).pipe(

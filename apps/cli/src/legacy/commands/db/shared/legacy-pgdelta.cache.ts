@@ -4,6 +4,7 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
 import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "./legacy-pgdelta.ts";
+import { legacyCompareUtf8Bytes } from "./legacy-shadow-source.ts";
 
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported
@@ -129,9 +130,11 @@ export function legacyPgDeltaTempPath(path: Path.Path, workdir: string): string 
 
 /**
  * Lists local migration file paths under `migrationsDir`. Mirrors Go's
- * `migration.ListLocalMigrations` (`pkg/migration/list.go:33`): entries are
- * sorted by name, directories skipped, a deprecated `<14-digit>_init.sql` first
- * migration (pre-2021-12-09) is skipped, and names must match `<digits>_*.sql`.
+ * `migration.ListLocalMigrations` (`pkg/migration/list.go:33`): entries are sorted by name — Go's
+ * `fs.ReadDir` byte-wise UTF-8 order, via {@link legacyCompareUtf8Bytes}, not JS's default
+ * UTF-16-code-unit `Array.prototype.sort()` — directories skipped, a deprecated
+ * `<14-digit>_init.sql` first migration (pre-2021-12-09) is skipped, and names must match
+ * `<digits>_*.sql`.
  *
  * Each skipped file emits a byte-exact stderr warning matching Go's
  * `fmt.Fprintf(os.Stderr, …)` (`list.go:45-53`) — same wording for both the
@@ -162,7 +165,15 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
     ),
   );
   if (names.length === 0) return [] as ReadonlyArray<string>;
-  const sorted = [...names].sort();
+  // Go's `fs.ReadDir` (`pkg/migration/list.go:34`) returns entries sorted byte-wise over each
+  // name's UTF-8 encoding — NOT JS's default `Array.prototype.sort()`, which compares UTF-16 code
+  // units and disagrees with byte/codepoint order for a supplementary-plane filename character
+  // alongside a BMP private-use one (see {@link legacyCompareUtf8Bytes}'s own doc comment,
+  // verified empirically there against both Go's `sort.Strings` and `os.ReadDir`). Left
+  // uncorrected, such a migrations directory would replay in a different order than Go, and a
+  // dependent migration could fail or produce a different shadow schema (review:
+  // PRRT_kwDOErm0O86W3OyD).
+  const sorted = [...names].sort(legacyCompareUtf8Bytes);
   const result: Array<string> = [];
   for (let index = 0; index < sorted.length; index++) {
     const name = sorted[index]!;
