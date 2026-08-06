@@ -5,6 +5,7 @@ packages:
 
 allowBuilds:
   '@parcel/watcher': true
+  '@launchql/protobufjs': true
   "@swc/core": true
   esbuild: true
   msgpackr-extract: true
