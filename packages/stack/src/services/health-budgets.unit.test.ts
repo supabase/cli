@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dependencyTimeoutSecondsForService,
+  dependencyTimeoutSecondsForServices,
   healthStartupBudgetSeconds,
   stackHealthBudgets,
   stackServiceStartupBudgetSeconds,
@@ -27,98 +27,98 @@ describe("stack health budgets", () => {
           "initialDelay": 10,
           "livenessThreshold": 60,
           "period": 1,
-          "startupBudget": 130,
+          "startupBudget": 369,
           "startupThreshold": 120,
         },
         "auth": {
           "initialDelay": 0,
           "livenessThreshold": 20,
           "period": 0.5,
-          "startupBudget": 30,
+          "startupBudget": 149.5,
           "startupThreshold": 60,
         },
         "edgeRuntime": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 31,
+          "startupBudget": 150.5,
           "startupThreshold": 60,
         },
         "imgproxy": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 31,
+          "startupBudget": 150.5,
           "startupThreshold": 60,
         },
         "mailpit": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 31,
+          "startupBudget": 150.5,
           "startupThreshold": 60,
         },
         "pgmeta": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 31,
+          "startupBudget": 150.5,
           "startupThreshold": 60,
         },
         "pooler": {
           "initialDelay": 2,
           "livenessThreshold": 60,
           "period": 1,
-          "startupBudget": 92,
+          "startupBudget": 271,
           "startupThreshold": 90,
         },
         "postgresDocker": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 61,
+          "startupBudget": 300.5,
           "startupThreshold": 120,
         },
         "postgresNative": {
           "initialDelay": 0,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 60,
+          "startupBudget": 299.5,
           "startupThreshold": 120,
         },
         "postgrest": {
           "initialDelay": 0,
           "livenessThreshold": 20,
           "period": 0.5,
-          "startupBudget": 30,
+          "startupBudget": 149.5,
           "startupThreshold": 60,
         },
         "realtime": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 31,
+          "startupBudget": 150.5,
           "startupThreshold": 60,
         },
         "storage": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 0.5,
-          "startupBudget": 31,
+          "startupBudget": 150.5,
           "startupThreshold": 60,
         },
         "studio": {
           "initialDelay": 2,
           "livenessThreshold": 60,
           "period": 1,
-          "startupBudget": 92,
+          "startupBudget": 271,
           "startupThreshold": 90,
         },
         "vector": {
           "initialDelay": 1,
           "livenessThreshold": 30,
           "period": 1,
-          "startupBudget": 61,
+          "startupBudget": 180,
           "startupThreshold": 60,
         },
       }
@@ -126,8 +126,8 @@ describe("stack health budgets", () => {
   });
 
   it("keeps dependency timeouts beyond the dependency startup budget", () => {
-    expect(dependencyTimeoutSecondsForService("analytics")).toBeGreaterThan(
-      stackServiceStartupBudgetSeconds.analytics,
+    expect(dependencyTimeoutSecondsForServices(["postgres", "analytics"])).toBeGreaterThan(
+      stackServiceStartupBudgetSeconds.postgres + stackServiceStartupBudgetSeconds.analytics,
     );
   });
 });

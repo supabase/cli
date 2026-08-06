@@ -43,6 +43,19 @@ import { type ServiceEvent, transition } from "./ServiceTransition.ts";
 
 const DIAGNOSTIC_LOG_LINES = 20;
 
+const willRestartAfterExit = (def: ServiceDef, state: ServiceState): boolean => {
+  if (state.exitCode === null) return false;
+  return (
+    decideRestart({
+      cause: { _tag: "ProcessExit", exitCode: state.exitCode },
+      policy: def.restart ?? defaults.restart,
+      restartCount: state.restartCount,
+      maxRestarts: def.maxRestarts ?? defaults.maxRestarts,
+      desired: state.desired,
+    })._tag === "Restart"
+  );
+};
+
 // Some one-shot adapters report `isRunning: false` before their exit-code Effect is observable.
 // Keep the compensating poll isolated here so the ordinary process-exit path remains event-driven.
 const waitForProcessToStop = (handle: {
@@ -229,24 +242,12 @@ export class Orchestrator extends Context.Service<
                         (state.status === "Stopped" && state.exitCode === 0)),
                   );
                 } else if (condition === "healthy") {
-                  const willRestartAfterExit = (state: ServiceState): boolean => {
-                    if (state.exitCode === null) return false;
-                    return (
-                      decideRestart({
-                        cause: { _tag: "ProcessExit", exitCode: state.exitCode },
-                        policy: depDef.restart ?? defaults.restart,
-                        restartCount: state.restartCount,
-                        maxRestarts: depDef.maxRestarts ?? defaults.maxRestarts,
-                        desired: state.desired,
-                      })._tag === "Restart"
-                    );
-                  };
                   const ready = yield* waitForState(
                     dependency,
                     (state) =>
                       state.desired === "running" &&
                       (state.status === "Healthy" ||
-                        (state.status === "Failed" && !willRestartAfterExit(state))),
+                        (state.status === "Failed" && !willRestartAfterExit(depDef, state))),
                   );
                   if (ready.status === "Failed") {
                     yield* sendEvent(def.name, {
@@ -259,8 +260,9 @@ export class Orchestrator extends Context.Service<
                   const completed = yield* waitForState(
                     dependency,
                     (state) =>
-                      state.status === "Failed" ||
-                      (state.status === "Stopped" && state.exitCode !== null),
+                      (state.status === "Failed" ||
+                        (state.status === "Stopped" && state.exitCode !== null)) &&
+                      !willRestartAfterExit(depDef, state),
                   );
                   if (completed.status === "Failed") {
                     yield* sendEvent(def.name, {
@@ -649,19 +651,6 @@ export class Orchestrator extends Context.Service<
           Effect.suspend(() => {
             const svc = services.get(def.name);
             if (!svc) return Effect.void;
-            const willRestartAfterExit = (state: ServiceState): boolean => {
-              if (state.exitCode === null) return false;
-              return (
-                decideRestart({
-                  cause: { _tag: "ProcessExit", exitCode: state.exitCode },
-                  policy: def.restart ?? defaults.restart,
-                  restartCount: state.restartCount,
-                  maxRestarts: def.maxRestarts ?? defaults.maxRestarts,
-                  desired: state.desired,
-                })._tag === "Restart"
-              );
-            };
-
             const current = SubscriptionRef.getUnsafe(svc.state);
             if (current.desired !== "running") {
               return Effect.fail(
@@ -674,7 +663,7 @@ export class Orchestrator extends Context.Service<
                 }),
               );
             }
-            if (current.status === "Failed" && !willRestartAfterExit(current)) {
+            if (current.status === "Failed" && !willRestartAfterExit(def, current)) {
               return Effect.fail(
                 new ServiceReadyError({
                   name: def.name,
@@ -710,7 +699,7 @@ export class Orchestrator extends Context.Service<
               (state) =>
                 state.status === "Healthy" ||
                 ((state.status === "Failed" || state.status === "Stopped") &&
-                  !willRestartAfterExit(state)),
+                  !willRestartAfterExit(def, state)),
             ).pipe(
               Effect.flatMap((ready) => {
                 if (ready.status === "Healthy") return Effect.void;
