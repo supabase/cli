@@ -2594,20 +2594,23 @@ export function legacyResolveLocalConfigValues(
    * OTHER shadow-bootstrap fields (review: PRRT_kwDOErm0O86W2tRi, following on from
    * PRRT_kwDOErm0O86W2LL4's fix to those two). Defaults to empty: `db start`/`db reset`/
    * `status`/`stop` never resolve a remote block for this config read (they never pass a
-   * `projectRef`), so they are unaffected. `auth.enabled` is ALSO gated below even though its
-   * resolved value itself is never part of the returned `LegacyLocalConfigValues` — an ungated
-   * `legacyEnvOverrideBool` call there would THROW on a malformed `SUPABASE_AUTH_ENABLED` even
-   * when the remote block already set `auth.enabled`, which would abort this entire function
+   * `projectRef`), so they are unaffected. `auth.enabled`/`edge_runtime.deno_version`/
+   * `analytics.enabled`/`analytics.backend`/every `auth.third_party.*.enabled` are ALSO gated
+   * below even though their resolved values are never part of the returned
+   * `LegacyLocalConfigValues` — each one's `legacyEnvOverride*` call THROWS on a malformed
+   * override (`legacyEnvOverrideBool`/`legacyEnvOverrideDenoVersion`/`envOverrideAnalyticsBackend`)
+   * even when the remote block already set that field, which would abort this entire function
    * (and every field it DOES return) on an env value Go silently ignores (review:
-   * PRRT_kwDOErm0O86W30n6) — "not read by the caller" is not the same as "cannot abort the
+   * PRRT_kwDOErm0O86W30n6 for `auth.enabled`/`analytics.*`, PRRT_kwDOErm0O86W4gCk for
+   * `edge_runtime.deno_version`) — "not read by the caller" is not the same as "cannot abort the
    * caller." The dozens of remaining OTHER fields this function resolves (studio/smtp/passkey/
-   * mfa/analytics, the auth `enable_signup`/`enable_anonymous_sign_ins`/refresh-token/
+   * mfa, the auth `enable_signup`/`enable_anonymous_sign_ins`/refresh-token/
    * manual-linking/password-length/-requirements group, plus this function's OWN
-   * validation-only `thirdParty` block feeding `Auth.ThirdParty.validate()`'s "at most one
-   * enabled" check) are never read by that caller AND their own `legacyEnvOverride*` calls
-   * cannot throw before a value the caller needs has already been resolved — grepped confirmed
-   * no other consumer reads `LegacyLocalConfigValues` beyond those — so they are deliberately
-   * NOT gated here; gating them would be inert (no caller ever passes a non-empty
+   * validation-only `thirdParty` block's non-`enabled` leaves feeding `Auth.ThirdParty.validate()`'s
+   * "at most one enabled" check) are never read by that caller AND their own `legacyEnvOverride*`
+   * calls cannot throw before a value the caller needs has already been resolved — grepped
+   * confirmed no other consumer reads `LegacyLocalConfigValues` beyond those — so they are
+   * deliberately NOT gated here; gating them would be inert (no caller ever passes a non-empty
    * `remoteOverrideKeys` that could reach them, and none of them can abort resolution of a field
    * the caller does read) rather than a genuine parity gap. This is NOT the same `third_party` as
    * {@link legacyResolveLocalJwks}'s/
@@ -3257,11 +3260,18 @@ export function legacyResolveLocalConfigValues(
   // Go's `Config.Validate` checks `edge_runtime.deno_version` after the auth
   // block and the functions loop (`pkg/config/config.go:1158-1173`), and —
   // unlike `studio.port`/`local_smtp.port` above — unconditionally, with no
-  // `edge_runtime.enabled` gate.
-  const denoVersion = legacyEnvOverrideDenoVersion(
-    config.edge_runtime.deno_version,
-    projectEnvValues,
-  );
+  // `edge_runtime.enabled` gate. `edge_runtime.deno_version` is in
+  // `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`) and
+  // `legacyEnvOverrideDenoVersion` THROWS on a malformed override — same
+  // `auth.enabled`/`analytics.enabled` bug class (review: PRRT_kwDOErm0O86W30n6,
+  // PRRT_kwDOErm0O86W4gCk): an ungated call here would abort this whole
+  // resolver (and the shadow it feeds) on a malformed `SUPABASE_EDGE_RUNTIME_
+  // DENO_VERSION` even when a matched remote block already set
+  // `edge_runtime.deno_version` at viper's OVERRIDE tier, a value Go's
+  // `Validate` never evaluates the env var for in that case.
+  const denoVersion = remoteWins("edge_runtime.deno_version")
+    ? config.edge_runtime.deno_version
+    : legacyEnvOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
 
   // Go's `Config.Validate` validates `[analytics]` right after
   // `edge_runtime.deno_version` (`pkg/config/config.go:1174-1187`): when

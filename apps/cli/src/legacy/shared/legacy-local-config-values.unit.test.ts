@@ -2817,6 +2817,7 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_AUTH_ENABLED",
       "SUPABASE_ANALYTICS_ENABLED",
       "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+      "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
     ]) {
       delete process.env[name];
     }
@@ -3079,6 +3080,34 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
     });
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
       'Invalid config for auth.third_party.firebase.enabled: cannot parse "not-a-bool" as a bool',
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_EDGE_RUNTIME_DENO_VERSION when a remote block already set edge_runtime.deno_version", () => {
+    // Regression (review: PRRT_kwDOErm0O86W4gCk): same class of gap as `auth.enabled`/
+    // `analytics.enabled` above — `edge_runtime.deno_version` is also in
+    // `LEGACY_ENV_OVERRIDABLE_KEYS` and `denoVersion` is never read by the shadow's own
+    // container inputs, but an ungated `legacyEnvOverrideDenoVersion` call still aborts this
+    // whole function on a malformed override the remote block should have made irrelevant.
+    process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "abc";
+    const config = baseConfig({ edge_runtime: { deno_version: 2 } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["edge_runtime.deno_version"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_EDGE_RUNTIME_DENO_VERSION when no remote block matched", () => {
+    process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "abc";
+    const config = baseConfig({ edge_runtime: { deno_version: 2 } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      "Failed reading config: Invalid edge_runtime.deno_version: abc.",
     );
   });
 });
