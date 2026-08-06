@@ -66,7 +66,13 @@ const probe = Layer.succeed(LegacyPgDeltaSslProbe, {
 });
 
 const ctx = (declarativeDir: string): LegacyDeclarativeRunContext => ({
-  pgDelta: { projectId: "cferry", cwd: "/proj", npmVersion: undefined, denoVersion: 2 },
+  pgDelta: {
+    projectId: "cferry",
+    cwd: "/proj",
+    npmVersion: undefined,
+    denoVersion: 2,
+    projectEnv: {},
+  },
   formatOptions: "",
   declarativeDir,
   schema: [],

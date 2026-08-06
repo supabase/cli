@@ -261,6 +261,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         cwd: cliConfig.workdir,
         npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
         denoVersion: cfg.denoVersion,
+        projectEnv: cfg.projectEnv,
       };
       const result = yield* legacyDiffPgDelta(explicitCtx, {
         sourceRef,
@@ -403,6 +404,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
       denoVersion: cfg.denoVersion,
+      projectEnv: cfg.projectEnv,
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 

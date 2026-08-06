@@ -306,6 +306,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
               cwd: workdir,
               npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
               denoVersion: toml.denoVersion,
+              projectEnv: toml.projectEnv,
             };
             yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
               enabled: cacheEnabled,

@@ -851,7 +851,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     `${legacyEdgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`,
     `${params.declarativeDirAbs}:${LEGACY_PG_DELTA_APPLY_CONTAINER_SCHEMA_PATH}:ro`,
   ];
-  const npm = legacyPgDeltaNpmRegistryOption();
+  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaDeclarativeApplyScript, ctx.npmVersion),

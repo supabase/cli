@@ -276,6 +276,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
       denoVersion: toml.denoVersion,
+      projectEnv: toml.projectEnv,
     };
     const formatOptions = Option.getOrElse(toml.pgDelta.formatOptions, () => "");
 

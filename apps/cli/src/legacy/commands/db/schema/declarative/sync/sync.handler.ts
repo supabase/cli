@@ -147,6 +147,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
