@@ -255,7 +255,18 @@ const checkScannerBufferSize = <E>(
   let emitted = 0;
   let lastRaw = "";
   for (const token of legacySplitSqlTokens(content)) {
-    if (utf8ByteLength(token.raw) > limit) {
+    // A delimiter-terminated token is found (and emitted) by `parser.Split`'s scan in
+    // the SAME `Scan()` call that fills the buffer to capacity — before Go's too-long
+    // check is ever reached — so a token exactly AT `limit` still succeeds; only
+    // strictly-over fails (`>`). The trailing, unterminated token (only ever the LAST
+    // one `legacySplitSqlTokens` returns, if any — see `LegacySplitSqlToken.terminated`)
+    // has no delimiter to find: once the buffer fills to `limit` bytes without one, the
+    // too-long check fires immediately, without Go ever attempting the extra `Read()`
+    // that would reveal real EOF — so a trailing token AT `limit` already fails (`>=`).
+    const tooLong = token.terminated
+      ? utf8ByteLength(token.raw) > limit
+      : utf8ByteLength(token.raw) >= limit;
+    if (tooLong) {
       const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
       return Effect.fail(
         mapError(

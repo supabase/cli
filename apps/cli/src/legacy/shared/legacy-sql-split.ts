@@ -143,16 +143,29 @@ class AtomicState implements State {
   }
 }
 
+/**
+ * One raw token from {@link splitRaw}. `terminated` is `false` only for a
+ * trailing statement emitted at EOF with no closing delimiter (the
+ * `acc.length > 0` fallback below) — every other token was emitted because the
+ * FSM itself found a boundary (a bare `;` in `ReadyState`, or `AtomicState`
+ * closing). Only ever `false` on the LAST element `splitRaw` returns, since
+ * that fallback fires at most once, after the main loop.
+ */
+interface RawToken {
+  readonly text: string;
+  readonly terminated: boolean;
+}
+
 /** The FSM traversal shared by every `legacySplitSql*` entry point below. */
-function splitRaw(sql: string): string[] {
+function splitRaw(sql: string): RawToken[] {
   let state: State = new ReadyState();
-  const tokens: string[] = [];
+  const tokens: RawToken[] = [];
   let acc = "";
   for (const rune of Array.from(sql)) {
     acc += rune;
     const next = state.next(rune, acc);
     if (next === null) {
-      tokens.push(acc);
+      tokens.push({ text: acc, terminated: true });
       acc = "";
       state = new ReadyState();
     } else {
@@ -160,7 +173,7 @@ function splitRaw(sql: string): string[] {
     }
   }
   // Trailing non-terminated statement at EOF.
-  if (acc.length > 0) tokens.push(acc);
+  if (acc.length > 0) tokens.push({ text: acc, terminated: false });
   return tokens;
 }
 
@@ -173,7 +186,7 @@ export function legacySplitSql(
   ...transform: ReadonlyArray<(s: string) => string>
 ): string[] {
   const statements: string[] = [];
-  for (const raw of splitRaw(sql)) {
+  for (const { text: raw } of splitRaw(sql)) {
     let token = raw;
     for (const apply of transform) token = apply(token);
     if (token.length > 0) statements.push(token);
@@ -195,6 +208,27 @@ export interface LegacySplitSqlToken {
   readonly raw: string;
   /** `legacyTrimStatement(raw)` — what `legacySplitAndTrim` emits, including when empty. */
   readonly trimmed: string;
+  /**
+   * `false` only for a trailing statement with no closing delimiter, emitted at
+   * real EOF (`splitRaw`'s `acc.length > 0` fallback) — see {@link RawToken}.
+   * `checkScannerBufferSize` (`legacy-migration-apply.ts`) needs this to decide
+   * `>` vs `>=` against the effective buffer limit: Go's `bufio.Scanner` can
+   * only apply its too-long check (`len(s.buf) >= s.maxTokenSize`) once it has
+   * given up looking for a delimiter and still needs more data — for a
+   * delimiter-terminated token the delimiter is found (and the token emitted)
+   * in the SAME `Scan()` call that fills the buffer to capacity, before that
+   * check is ever reached, so a token exactly AT the limit still succeeds. An
+   * unterminated trailing token has no delimiter to find: once the buffer
+   * fills to the effective limit without one, the too-long check fires
+   * immediately — Go never gets to attempt the extra `Read()` that would
+   * reveal real EOF and let the split function emit the trailing token
+   * instead. Verified empirically against `apps/cli-go/pkg/parser.Split`: a
+   * single terminated statement of exactly `maxbuf` bytes always succeeds,
+   * while an unterminated one of exactly `maxbuf` bytes always fails with
+   * `bufio.ErrTooLong` (one byte under still succeeds; one byte over always
+   * fails either way).
+   */
+  readonly terminated: boolean;
 }
 
 /**
@@ -213,7 +247,11 @@ export interface LegacySplitSqlToken {
  * token, including the ones `legacySplitAndTrim` itself would filter out.
  */
 export function legacySplitSqlTokens(sql: string): ReadonlyArray<LegacySplitSqlToken> {
-  return splitRaw(sql).map((raw) => ({ raw, trimmed: legacyTrimStatement(raw) }));
+  return splitRaw(sql).map(({ text: raw, terminated }) => ({
+    raw,
+    trimmed: legacyTrimStatement(raw),
+    terminated,
+  }));
 }
 
 // `(?i)drop\s+` — Go's `dropStatementPattern` (`internal/db/diff/diff.go:100`,
