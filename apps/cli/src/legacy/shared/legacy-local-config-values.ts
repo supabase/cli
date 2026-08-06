@@ -2684,14 +2684,20 @@ export function legacyResolveLocalConfigValues(
    * local variables earlier in the function — textual position relative to a caller-needed field
    * is irrelevant. All of those fields are now gated the same way as `api.enabled` above and
    * tracked in `LEGACY_ENV_OVERRIDABLE_KEYS` (review: PRRT_kwDOErm0O86W6R-G). Only the fields
-   * whose own resolution genuinely CANNOT throw stay ungated below: every plain
-   * `legacyEnvOverride` (non-bool/port/uint) string/array read — `studioApiUrl`, `jwtIssuer`,
-   * `additionalRedirectUrls`, the auth hooks' `uri`/`secrets`, the mfa phone factor's
-   * `template`/`max_frequency`, the webauthn `rp_id`/`rp_origins`, the GCP analytics fields, and
-   * this function's OWN validation-only `thirdParty` block's non-`enabled` leaves feeding
-   * `Auth.ThirdParty.validate()`'s "at most one enabled" check — none of `legacyEnvOverride`'s
-   * callers has a Go-observable failure mode, so there is genuinely nothing to abort on. This is
-   * NOT the same `third_party` as {@link legacyResolveLocalJwks}'s/
+   * whose own resolution genuinely CANNOT throw AND whose value has no Go-observable consumer
+   * stay ungated below: `studioApiUrl`, `jwtIssuer`, `additionalRedirectUrls`, the auth hooks'
+   * `uri`/`secrets`, the mfa phone factor's `template`/`max_frequency`, the webauthn `rp_id`/
+   * `rp_origins`, and the GCP analytics fields. This function's OWN validation-only `thirdParty`
+   * block's non-`enabled` leaves (`requiredField`/`cognitoUserPoolRegion`) are gated too, despite
+   * `legacyEnvOverride` itself never throwing: each provider's per-field `validate()`
+   * (`config.go:1560-1629` — domain/tenant/user_pool_id/issuer_url emptiness, plus Clerk's domain
+   * regex) runs inside the single {@link legacyValidateResolvedConfig} call below, so an
+   * ungated read that picks up a stale/differently-invalid env override over a remote's own
+   * valid value can flip that provider's validation verdict — accepting a config Go would
+   * reject, or (as the reported case) rejecting one Go would accept — even though nothing
+   * actually throws during resolution itself (review: PRRT_kwDOErm0O86W93Ex). "Cannot throw" and
+   * "has no Go-observable failure mode" are different properties; this block has the former but
+   * not the latter. This is NOT the same `third_party` as {@link legacyResolveLocalJwks}'s/
    * {@link legacyResolveConfiguredSigningKeys}'s own, SEPARATE third-party/signing-keys
    * resolution, which DOES feed the shadow's JWKS document and IS gated (see those functions'
    * own doc comments).
@@ -3293,11 +3299,13 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "firebase",
         requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-            config.auth.third_party.firebase.project_id,
-            projectEnvValues,
-          ) ?? "",
+          (remoteWins("auth.third_party.firebase.project_id")
+            ? config.auth.third_party.firebase.project_id
+            : legacyEnvOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+                config.auth.third_party.firebase.project_id,
+                projectEnvValues,
+              )) ?? "",
       });
     }
     if (
@@ -3313,11 +3321,13 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "auth0",
         requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-            config.auth.third_party.auth0.tenant,
-            projectEnvValues,
-          ) ?? "",
+          (remoteWins("auth.third_party.auth0.tenant")
+            ? config.auth.third_party.auth0.tenant
+            : legacyEnvOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+                config.auth.third_party.auth0.tenant,
+                projectEnvValues,
+              )) ?? "",
       });
     }
     if (
@@ -3333,16 +3343,20 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "cognito",
         requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-            config.auth.third_party.aws_cognito.user_pool_id,
-            projectEnvValues,
-          ) ?? "",
-        cognitoUserPoolRegion: legacyEnvOverride(
-          "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-          config.auth.third_party.aws_cognito.user_pool_region,
-          projectEnvValues,
-        ),
+          (remoteWins("auth.third_party.aws_cognito.user_pool_id")
+            ? config.auth.third_party.aws_cognito.user_pool_id
+            : legacyEnvOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+                config.auth.third_party.aws_cognito.user_pool_id,
+                projectEnvValues,
+              )) ?? "",
+        cognitoUserPoolRegion: remoteWins("auth.third_party.aws_cognito.user_pool_region")
+          ? config.auth.third_party.aws_cognito.user_pool_region
+          : legacyEnvOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+              config.auth.third_party.aws_cognito.user_pool_region,
+              projectEnvValues,
+            ),
       });
     }
     if (
@@ -3358,11 +3372,13 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "clerk",
         requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-            config.auth.third_party.clerk.domain,
-            projectEnvValues,
-          ) ?? "",
+          (remoteWins("auth.third_party.clerk.domain")
+            ? config.auth.third_party.clerk.domain
+            : legacyEnvOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+                config.auth.third_party.clerk.domain,
+                projectEnvValues,
+              )) ?? "",
       });
     }
     if (
@@ -3378,11 +3394,13 @@ export function legacyResolveLocalConfigValues(
       thirdParty.push({
         provider: "workos",
         requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-            config.auth.third_party.workos.issuer_url,
-            projectEnvValues,
-          ) ?? "",
+          (remoteWins("auth.third_party.workos.issuer_url")
+            ? config.auth.third_party.workos.issuer_url
+            : legacyEnvOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+                config.auth.third_party.workos.issuer_url,
+                projectEnvValues,
+              )) ?? "",
       });
     }
 

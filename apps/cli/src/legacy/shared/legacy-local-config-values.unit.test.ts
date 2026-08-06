@@ -2920,6 +2920,8 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_AUTH_ENABLED",
       "SUPABASE_ANALYTICS_ENABLED",
       "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+      "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+      "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
       "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
       "SUPABASE_API_ENABLED",
       "SUPABASE_STUDIO_ENABLED",
@@ -3028,6 +3030,49 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       new Set(["db.root_key"]),
     );
     expect(values.rootKey).toBe("remote-root-key");
+  });
+
+  it("prefers a remote-set auth.third_party.clerk.domain over a conflicting env override during validation", () => {
+    // Regression (review: PRRT_kwDOErm0O86W93Ex): this function's OWN validation-only
+    // `thirdParty` array used to gate `enabled` on `remoteWins` but leave the sibling
+    // `requiredField` (domain/tenant/user_pool_id/issuer_url) ungated — even though
+    // `auth.third_party.clerk.domain` is already tracked in `LEGACY_ENV_OVERRIDABLE_KEYS`. A
+    // matched remote's valid domain lost to a conflicting, invalid `SUPABASE_AUTH_THIRD_PARTY_
+    // CLERK_DOMAIN`, so `legacyValidateResolvedConfig`'s Clerk domain-regex check rejected an
+    // otherwise-valid, remote-backed configuration before the shadow was ever created — Go's
+    // `mergeRemoteConfig` sets the whole matched block at viper's OVERRIDE tier, above
+    // `AutomaticEnv`, so the env var is never even consulted once a remote sets this key.
+    process.env["SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED"] = "false";
+    process.env["SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN"] = "not-a-clerk-domain";
+    const config = baseConfig({
+      auth: {
+        enabled: true,
+        third_party: { clerk: { enabled: true, domain: "clerk.example.com" } },
+      },
+    });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["auth.third_party.clerk.enabled", "auth.third_party.clerk.domain"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a conflicting SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN"] = "not-a-clerk-domain";
+    const config = baseConfig({
+      auth: {
+        enabled: true,
+        third_party: { clerk: { enabled: true, domain: "clerk.example.com" } },
+      },
+    });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      "Invalid config: auth.third_party.clerk has invalid domain",
+    );
   });
 
   describe("api.tls.cert_path/key_path — remoteOverrideKeys (review: PRRT_kwDOErm0O86W8ZYk)", () => {
