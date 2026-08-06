@@ -55,17 +55,27 @@ const globalFlagsWithValues = new Set([
 // Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `legacyStart`
 // installs no signal handling of its own — excluding it left Ctrl-C mid-bring-up as a raw,
 // unhandled OS signal that hard-kills the process, skipping every Effect finalizer
-// including `legacyRollbackStart`. Go's own `start` DOES roll back on SIGINT
+// including `legacyRollbackStart`. Go's own `start` DID roll back on SIGINT
 // (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
-// `internal/start/start.go:73-82` rolls back on any non-nil `run()` error, including the
-// `context.Canceled` a SIGINT produces), so native `start` must participate in the global
+// formerly `internal/start/start.go:73-82`, which rolled back on any non-nil `run()`
+// error, including the `context.Canceled` a SIGINT produces — internal/start was
+// deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
+// `start` must participate in the global
 // wrapper to match. This list is matched purely against argv command-path segments — it has
 // no notion of which shell (legacy vs next) registered the matching command, so `next start`
 // (a completely different command tree that happens to share the literal path `["start"]`)
 // needs its OWN exemption, passed via `RunCliOptions.additionalSelfManagedSignalCommands` from
 // `next/cli/main.ts` — see that call site's comment for why.
+//
+// `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
+// same reason as `start` above: it used to proxy container bootstrap to the hidden Go
+// `db __db-bootstrap --mode start` seam, which held SIGINT/SIGTERM itself, but CLI-1954's
+// native port (`legacy/commands/db/start/start.handler.ts` -> `legacyStartDatabase`) installs
+// no signal handling of its own — it relies on the SAME `Effect.onError(() =>
+// legacyRollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
+// process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
+// failure) — a raw, unhandled OS signal skips it entirely, exactly like the `start` case above.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
-  ["db", "start"],
   // `db reset` (local path) drives the bootstrap seam, which holds SIGINT/SIGTERM/SIGHUP with
   // no-op listeners while the Go child recreates the container; the global handler would
   // otherwise race that and cut off the child's Docker cleanup / status propagation.

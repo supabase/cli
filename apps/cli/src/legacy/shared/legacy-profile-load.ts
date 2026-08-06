@@ -1,29 +1,34 @@
 import { Data, Effect, FileSystem } from "effect";
 import { parse as parseYaml } from "yaml";
 
-import { legacyApiUrl, legacyIsBuiltinProfileName } from "./legacy-profile.ts";
+import {
+  legacyApiUrl,
+  legacyDashboardUrl,
+  legacyIsBuiltinProfileName,
+  legacyPoolerHost,
+  legacyProjectHost,
+} from "./legacy-profile.ts";
 
 // Go's `LoadProfile` (`internal/utils/profile.go:94-118`), run from the root
 // `PersistentPreRunE` (`cmd/root.go:98-102`) immediately BEFORE
 // `ChangeWorkDir` — so a profile Go cannot load aborts before the workdir
 // check, `ValidateRequiredFlags`, `ValidateFlagGroups`, and `RunE`, with no
-// API call ever made. Emulated for the pflag/viper-effective `--profile`/
-// `SUPABASE_PROFILE` whenever it differs from the token the Effect config
-// layer resolved (PR #5974 review round 7). Shared across add + update;
-// message byte-matches Go for the deterministic failure classes (see
-// `legacy-profile-load.ts`).
+// API call ever made. Raised by `legacyCliConfigLayer` on every command's
+// profile resolution (supabase/cli#6091) and by the sso pflag reconciliation
+// (PR #5974 round 7). Message byte-matches Go for the deterministic failure
+// classes.
 export class LegacyProfileLoadError extends Data.TaggedError("LegacyProfileLoadError")<{
   readonly message: string;
 }> {}
 
 /**
  * Emulates Go's `LoadProfile` (`apps/cli-go/internal/utils/profile.go:94-118`)
- * for a viper-effective profile token, returning the profile's API URL or
- * failing exactly where — and, for the deterministic classes, byte-for-byte
- * how — the Go binary fails. Go runs this from the root `PersistentPreRunE`
- * (`cmd/root.go:98-102`) BEFORE `ChangeWorkDir`, so a load failure aborts the
- * command before the workdir check, the required-flag check, the mutex check,
- * and any API request.
+ * for a resolved profile token, returning the profile's endpoint set
+ * (`LegacyLoadedProfile`) or failing exactly where — and, for the
+ * deterministic classes, byte-for-byte how — the Go binary fails. Go runs
+ * this from the root `PersistentPreRunE` (`cmd/root.go:98-102`) BEFORE
+ * `ChangeWorkDir`, so a load failure aborts the command before the workdir
+ * check, the required-flag check, the mutex check, and any API request.
  *
  * Resolution, mirroring Go (binary-verified, PR #5974 review round 7):
  *
@@ -82,6 +87,15 @@ export interface LegacyLoadedProfile {
    * config layer's (review r3684153345).
    */
   readonly name: string;
+  /** Go's `Profile.ProjectHost` (`required`). */
+  readonly projectHost: string;
+  /**
+   * Go's `Profile.PoolerHost` (`omitempty`): "" when absent, disabling the
+   * linked pooler MITM domain assertion — never falls back to `supabase.com`.
+   */
+  readonly poolerHost: string;
+  /** Go's `Profile.DashboardURL` (`required`). */
+  readonly dashboardUrl: string;
 }
 
 export function legacyLoadProfile(
@@ -93,7 +107,13 @@ export function legacyLoadProfile(
     // ASCII lower-case, so folding is plain lower-casing here.
     const folded = token.toLowerCase();
     if (legacyIsBuiltinProfileName(folded)) {
-      return { apiUrl: legacyApiUrl(folded), name: folded };
+      return {
+        apiUrl: legacyApiUrl(folded),
+        name: folded,
+        projectHost: legacyProjectHost(folded),
+        poolerHost: legacyPoolerHost(folded),
+        dashboardUrl: legacyDashboardUrl(folded),
+      };
     }
 
     // viper `SetConfigFile("")` is a no-op, so `ReadInConfig` falls back to
@@ -190,9 +210,15 @@ export function legacyLoadProfile(
       return yield* fail(legacyPadGoErrorBlock(`invalid profile: ${validationErrors.join("\n")}`));
     }
 
-    // `api_url` and `name` both passed the `required` tag above, so they are
-    // present and non-empty.
-    return { apiUrl: values.get("api_url") ?? "", name: values.get("name") ?? "" };
+    // All `required` fields passed validation above; `pooler_host` stays ""
+    // when absent (omitempty).
+    return {
+      apiUrl: values.get("api_url") ?? "",
+      name: values.get("name") ?? "",
+      projectHost: values.get("project_host") ?? "",
+      poolerHost: values.get("pooler_host") ?? "",
+      dashboardUrl: values.get("dashboard_url") ?? "",
+    };
   });
 }
 

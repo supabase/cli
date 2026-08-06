@@ -917,8 +917,9 @@ export type LegacyResolvedAuthEmail = Omit<
 /**
  * Go's `Auth.Email` is a value-typed (non-pointer) struct (`pkg/config/auth.go:174,242-253`),
  * always Viper/`AutomaticEnv`-bound regardless of `[auth.email]` presence in config.toml
- * (`config.go:580-586`) — same reasoning as {@link resolveGotrueRateLimit}/`resolveGotrueSessions`
- * in `start.handler.ts`, just hoisted here since `readAuthEmailTemplateContent`'s validation-only
+ * (`config.go:580-586`) — same reasoning as {@link legacyResolveGotrueRateLimit}/
+ * {@link legacyResolveGotrueSessions} elsewhere in this module, just hoisted here since
+ * `readAuthEmailTemplateContent`'s validation-only
  * file-read ALSO needs the override-aware `template`/`notification` maps, not just
  * `start.handler.ts`'s GoTrue env builder — same single-source/two-consumer shape as
  * {@link legacyResolveAuthExternalProviders}.
@@ -936,8 +937,10 @@ export type LegacyResolvedAuthEmail = Omit<
  * file. An env override always wins outright when set (Go's Viper `AutomaticEnv` precedence over
  * config.toml), regardless of the raw document.
  *
- * `start.go:544-558` (Kong `mountEmailTemplates`) and `start.go:668-694,1376-1406` (GoTrue's
- * mailer/OTP/signup env) both read `utils.Config.Auth.Email.*` post-override — this resolves the
+ * Former `internal/start/start.go:544-558` (Kong `mountEmailTemplates`) and
+ * `start.go:668-694,1376-1406` (GoTrue's mailer/OTP/signup env) — deleted as
+ * unreachable in CLI-1966, last present at commit a253ccba2 — both read
+ * `utils.Config.Auth.Email.*` post-override — this resolves the
  * SAME effective value for both `buildKongEmailTemplateMounts` and `resolveGotrueEnvInput` in
  * `start.handler.ts`.
  */
@@ -1218,7 +1221,10 @@ export function legacyEnvOverrideDenoVersion(
  * `edge_runtime.deno_version`, which always have a real default. `configured`
  * (and the return value) stay `number | undefined` to preserve that
  * "not configured" state through an override miss, matching Go's nil pointer
- * staying nil when no `SUPABASE_DB_SETTINGS_*` override is set either.
+ * staying nil when no `SUPABASE_DB_SETTINGS_*` override is set either. Parses
+ * with {@link parseGoBaseZeroUint}/{@link LEGACY_UINT_MAX}, same as
+ * {@link legacyEnvOverrideUint}, since these fields decode through the same
+ * `strconv.ParseUint(str, 0, 64)` call on the Go side.
  */
 function envOverrideOptionalUint(
   name: string,
@@ -1228,10 +1234,11 @@ function envOverrideOptionalUint(
 ): number | undefined {
   const value = legacyEnvOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  if (!/^\d+$/.test(value)) {
+  const parsed = parseGoBaseZeroUint(value);
+  if (parsed === undefined || parsed > LEGACY_UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
-  return Number(value);
+  return Number(parsed);
 }
 
 /**
@@ -1451,11 +1458,60 @@ const LEGACY_PASSWORD_REQUIREMENTS_VALUES = new Set([
   "lower_upper_letters_digits_symbols",
 ]);
 
+/**
+ * `auth.password_requirements`-flavored sibling of {@link legacyEnvOverrideEdgeRuntimePolicy} —
+ * Go's `PasswordRequirements.UnmarshalText` (`pkg/config/auth.go:26-31`) hard-fails config loading
+ * on a value outside this fixed set, same decode-time-failure semantics as the other `UnmarshalText`
+ * enums above. Extracted to its own exported function (rather than left inline in
+ * {@link legacyResolveLocalConfigValues}) so `db start`'s own eager-validation battery
+ * (`commands/db/start/start.handler.ts`) can call it directly instead of duplicating the check —
+ * mirroring how that battery already calls `legacyEnvOverrideBool`/`legacyEnvOverrideUint` directly
+ * for `auth.enable_signup`/`auth.refresh_token_reuse_interval` rather than going through the full
+ * resolver (review: PRRT_kwDOErm0O86VnEV6).
+ */
+export function legacyEnvOverrideAuthPasswordRequirements(
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string {
+  const override = legacyEnvOverride(
+    "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
+    undefined,
+    projectEnvValues,
+  );
+  if (override !== undefined && !LEGACY_PASSWORD_REQUIREMENTS_VALUES.has(override)) {
+    throw new Error(`Failed reading config: Invalid auth.password_requirements: ${override}.`);
+  }
+  return override ?? configured;
+}
+
 /** Narrows an unknown value to a plain object, mirroring `legacy-db-config.toml-read.ts`'s `asRecord`. */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/**
+ * `auth.external_url` isn't modeled in `@supabase/config`'s schema, so it's read off the raw
+ * document — same presence-based pattern as passkey/webauthn/external. Go's `auth.GetExternalURL`
+ * (`pkg/config/auth.go:401-405`) prefers this explicit value over deriving from `apiUrl`, and feeds
+ * it into `API_EXTERNAL_URL`, the mailer verify URL, the default JWT issuer, and OAuth redirect-URI
+ * fallbacks for `supabase start`'s long-running GoTrue container AND `db start`'s/`supabase
+ * start`'s fresh-DB one-shot auth migration job — every caller must resolve the SAME value, hence
+ * this single standalone helper instead of independent per-caller derivations. Hoisted here (was
+ * private to `start/start.handler.ts`) once `db/start/start.handler.ts`'s own native container
+ * bootstrap became a third caller — see `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ */
+export function legacyResolveAuthExternalUrl(
+  document: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
+  return legacyEnvOverride(
+    "SUPABASE_AUTH_EXTERNAL_URL",
+    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
+    projectEnvValues,
+  );
 }
 
 /** Go's `hook.validate()` hook-type iteration order (`pkg/config/config.go:1453-1485`), used
@@ -1495,7 +1551,8 @@ export type LegacyResolvedAuthHooks = {
  * `auth.hook.<type>.*` is Viper-bound like every other nested field
  * (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
  * `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS` overrides apply before
- * Go builds `GOTRUE_HOOK_*` (`internal/start/start.go:746-792`) — Go has no
+ * Go builds `GOTRUE_HOOK_*` (formerly `internal/start/start.go:746-792`, deleted
+ * as unreachable in CLI-1966; last present at commit a253ccba2) — Go has no
  * separate "raw" vs. "effective" hook value, so a hook enabled/retargeted
  * purely through env vars must reach GoTrue too, not just validation.
  * `@supabase/config`'s hook schema always decodes a `{ enabled: false }`
@@ -1633,6 +1690,387 @@ export function legacyResolveAuthMfa(
   };
 }
 
+/**
+ * Go's `Auth.RateLimit` (`pkg/config/auth.go:200-208`) is a value-typed struct of plain `uint`s,
+ * always Viper-bound regardless of `[auth.rate_limit]` presence, so every
+ * `SUPABASE_AUTH_RATE_LIMIT_*` override applies before `start.go` builds `GOTRUE_RATE_LIMIT_*` —
+ * no raw-document presence gate needed, matching the existing `db.pooler`/SMS numeric-field
+ * precedent. Unlike `auth.sms`/`auth.mfa`, `rateLimit` has no `Enabled`-gated Go `validate()`
+ * method at all (`config.go:1087-1153` never mentions `RateLimit`) — its only Go-side check is
+ * the unconditional `uint` type-decode inside `Config.Load`'s single `UnmarshalExact` pass, so
+ * callers resolve it eagerly and unconditionally, with no `authEnabled` gate.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the same eager,
+ * unconditional `auth.rate_limit.*` resolution to reproduce Go's `Config.Load` decode, per
+ * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
+ */
+export function legacyResolveGotrueRateLimit(
+  rateLimit: ProjectConfig["auth"]["rate_limit"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["rate_limit"] {
+  return {
+    anonymous_users: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
+      "auth.rate_limit.anonymous_users",
+      rateLimit.anonymous_users,
+      projectEnvValues,
+    ),
+    token_refresh: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
+      "auth.rate_limit.token_refresh",
+      rateLimit.token_refresh,
+      projectEnvValues,
+    ),
+    sign_in_sign_ups: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
+      "auth.rate_limit.sign_in_sign_ups",
+      rateLimit.sign_in_sign_ups,
+      projectEnvValues,
+    ),
+    token_verifications: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
+      "auth.rate_limit.token_verifications",
+      rateLimit.token_verifications,
+      projectEnvValues,
+    ),
+    email_sent: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
+      "auth.rate_limit.email_sent",
+      rateLimit.email_sent,
+      projectEnvValues,
+    ),
+    sms_sent: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
+      "auth.rate_limit.sms_sent",
+      rateLimit.sms_sent,
+      projectEnvValues,
+    ),
+    web3: legacyEnvOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_WEB3",
+      "auth.rate_limit.web3",
+      rateLimit.web3,
+      projectEnvValues,
+    ),
+  };
+}
+
+/**
+ * Go's `Auth.Sessions` (`pkg/config/auth.go:330-333`) is a value-typed struct,
+ * always merged with a Viper default (empty durations) regardless of
+ * `[auth.sessions]` presence in config.toml — so
+ * `SUPABASE_AUTH_SESSIONS_{TIMEBOX,INACTIVITY_TIMEOUT}` overrides always apply
+ * before `start.go` builds `GOTRUE_SESSIONS_*`, no raw-document presence gate
+ * needed (same reasoning as {@link legacyResolveAuthMfa} above).
+ * `@supabase/config`'s `sessions` schema is `Schema.optionalKey` at the
+ * `auth` level though (`config.auth.sessions` can be `undefined`), unlike
+ * Go's always-present struct — an env override must still be able to
+ * introduce a value even when the section was never in config.toml at all,
+ * matching Go's real behavior.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.sessions.{timebox,inactivity_timeout}` resolution to
+ * reproduce Go's unconditional `Config.Load` duration decode, per
+ * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
+ */
+export function legacyResolveGotrueSessions(
+  sessions: ProjectConfig["auth"]["sessions"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["sessions"] {
+  const timebox = legacyEnvOverride(
+    "SUPABASE_AUTH_SESSIONS_TIMEBOX",
+    sessions?.timebox,
+    projectEnvValues,
+  );
+  const inactivityTimeout = legacyEnvOverride(
+    "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
+    sessions?.inactivity_timeout,
+    projectEnvValues,
+  );
+  if (timebox === undefined && inactivityTimeout === undefined) return sessions;
+  return { timebox, inactivity_timeout: inactivityTimeout };
+}
+
+/**
+ * Go's `appendGotruePasskeyEnv`/`Auth.Passkey`/`Auth.Webauthn` presence gate
+ * (`start.go:1427-1440`, `pkg/config/config.go:1117-1134`): `@supabase/config`
+ * has no `auth.passkey`/`auth.webauthn` schema fields at all, so presence and
+ * every field must come from the raw, pre-schema TOML document instead — same
+ * document-based approach this file's own `Config.Validate`-parity resolution
+ * (inside {@link legacyResolveLocalConfigValues}) already uses for these two
+ * sections.
+ */
+/**
+ * `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other
+ * nested field once `[auth.passkey]`/`[auth.webauthn]` are present in
+ * config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
+ * so `SUPABASE_AUTH_PASSKEY_ENABLED`/`SUPABASE_AUTH_WEBAUTHN_{RP_ID,
+ * RP_DISPLAY_NAME,RP_ORIGINS}` overrides apply before `appendGotruePasskeyEnv`
+ * (`start.go:1427-1436`) builds GoTrue's env — same reasoning, and same
+ * presence-gating (an absent section is never synthesized from an env
+ * override alone), as this file's identical `Config.Validate`-parity
+ * resolution for this raw-document pair. `rp_display_name` has no
+ * validation-path precedent (Go's `Config.Validate` never checks it), but
+ * GoTrue's env does consume it, so it gets the same treatment here.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.passkey`/`auth.webauthn` resolution to reproduce Go's
+ * unconditional `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before
+ * You Duplicate".
+ */
+export function legacyResolveGotruePasskeyWebauthn(
+  document: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): {
+  readonly passkeyEnabled: boolean | undefined;
+  readonly webauthn:
+    | {
+        readonly rpId: string;
+        readonly rpDisplayName: string;
+        readonly rpOrigins: ReadonlyArray<string>;
+      }
+    | undefined;
+} {
+  const authDoc = asRecord(document?.["auth"]);
+  const passkeyDoc = asRecord(authDoc?.["passkey"]);
+  const webauthnDoc = asRecord(authDoc?.["webauthn"]);
+  const passkeyEnabled =
+    passkeyDoc !== undefined
+      ? legacyEnvOverrideBool(
+          "SUPABASE_AUTH_PASSKEY_ENABLED",
+          legacyRawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
+          "auth.passkey.enabled",
+          projectEnvValues,
+        )
+      : undefined;
+  const rpOriginsOverride =
+    webauthnDoc !== undefined
+      ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+      : undefined;
+  const webauthn =
+    webauthnDoc !== undefined
+      ? {
+          rpId:
+            legacyEnvOverride(
+              "SUPABASE_AUTH_WEBAUTHN_RP_ID",
+              typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
+              projectEnvValues,
+            ) ?? "",
+          rpDisplayName:
+            legacyEnvOverride(
+              "SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME",
+              typeof webauthnDoc["rp_display_name"] === "string"
+                ? webauthnDoc["rp_display_name"]
+                : "",
+              projectEnvValues,
+            ) ?? "",
+          // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")`
+          // unconditionally to every `[]string`-typed field (`config.go:775-784`) — a raw or
+          // `env(...)`-resolved `rp_origins` string (this section has no `@supabase/config`
+          // schema at all) is comma-split, not silently dropped to `[]`.
+          rpOrigins: (() => {
+            if (rpOriginsOverride !== undefined) return legacyStrToArr(rpOriginsOverride);
+            const raw = webauthnDoc["rp_origins"];
+            if (Array.isArray(raw)) {
+              return raw.filter((item): item is string => typeof item === "string");
+            }
+            return typeof raw === "string" ? legacyStrToArr(raw) : [];
+          })(),
+        }
+      : undefined;
+  return { passkeyEnabled, webauthn };
+}
+
+/**
+ * Go's `Auth.Web3` (`pkg/config/auth.go:379-382`) is a value-typed struct —
+ * same no-presence-gate reasoning as {@link legacyResolveGotrueRateLimit}.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.web3.*.enabled` resolution to reproduce Go's unconditional
+ * `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before You
+ * Duplicate".
+ */
+export function legacyResolveGotrueWeb3(
+  web3: ProjectConfig["auth"]["web3"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["web3"] {
+  return {
+    solana: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
+        web3.solana.enabled,
+        "auth.web3.solana.enabled",
+        projectEnvValues,
+      ),
+    },
+    ethereum: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_WEB3_ETHEREUM_ENABLED",
+        web3.ethereum.enabled,
+        "auth.web3.ethereum.enabled",
+        projectEnvValues,
+      ),
+    },
+  };
+}
+
+/**
+ * Go's `Auth.OAuthServer` (`pkg/config/auth.go:394-398`) is a value-typed
+ * struct — same no-presence-gate reasoning as {@link legacyResolveGotrueRateLimit}.
+ *
+ * Hoisted here (originally private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts` became a second caller — both need the
+ * same eager `auth.oauth_server.*` resolution to reproduce Go's unconditional
+ * `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before You
+ * Duplicate".
+ */
+export function legacyResolveGotrueOAuthServer(
+  oauthServer: ProjectConfig["auth"]["oauth_server"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["oauth_server"] {
+  return {
+    enabled: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
+      oauthServer.enabled,
+      "auth.oauth_server.enabled",
+      projectEnvValues,
+    ),
+    authorization_url_path:
+      legacyEnvOverride(
+        "SUPABASE_AUTH_OAUTH_SERVER_AUTHORIZATION_URL_PATH",
+        oauthServer.authorization_url_path,
+        projectEnvValues,
+      ) ?? oauthServer.authorization_url_path,
+    allow_dynamic_registration: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION",
+      oauthServer.allow_dynamic_registration,
+      "auth.oauth_server.allow_dynamic_registration",
+      projectEnvValues,
+    ),
+  };
+}
+
+/**
+ * Go's `(tpa *thirdParty) validate()` fixed provider order (`pkg/config/config.go:1635-1683`) —
+ * only enabled providers are forwarded, in that order. Each provider struct
+ * (`tpaFirebase`/`tpaAuth0`/`tpaCognito`/`tpaClerk`/`tpaWorkOs`, `auth.go:191-198`) is
+ * value-typed, same no-presence-gate reasoning as {@link legacyResolveGotrueWeb3} — so
+ * `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides always apply, including `workos`, whose
+ * default template omits `[auth.third_party.workos]` entirely, before `Auth.ThirdParty.
+ * validate()` runs.
+ *
+ * Hoisted here (originally private to {@link legacyResolveLocalConfigValues}) once
+ * `commands/db/start/start.handler.ts`'s eager pre-probe battery became a second caller — both
+ * need the same eager `auth.third_party.*` resolution to reproduce Go's unconditional
+ * `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" (review:
+ * PRRT_kwDOErm0O86WXFqj).
+ */
+export function legacyResolveThirdPartyProviders(
+  thirdParty: ProjectConfig["auth"]["third_party"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ReadonlyArray<LegacyThirdPartyInput> {
+  const resolved: Array<LegacyThirdPartyInput> = [];
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+      thirdParty.firebase.enabled,
+      "auth.third_party.firebase.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "firebase",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+          thirdParty.firebase.project_id,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+      thirdParty.auth0.enabled,
+      "auth.third_party.auth0.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "auth0",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+          thirdParty.auth0.tenant,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+      thirdParty.aws_cognito.enabled,
+      "auth.third_party.aws_cognito.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "cognito",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+          thirdParty.aws_cognito.user_pool_id,
+          projectEnvValues,
+        ) ?? "",
+      cognitoUserPoolRegion: legacyEnvOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+        thirdParty.aws_cognito.user_pool_region,
+        projectEnvValues,
+      ),
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+      thirdParty.clerk.enabled,
+      "auth.third_party.clerk.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "clerk",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+          thirdParty.clerk.domain,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  if (
+    legacyEnvOverrideBool(
+      "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+      thirdParty.workos.enabled,
+      "auth.third_party.workos.enabled",
+      projectEnvValues,
+    )
+  ) {
+    resolved.push({
+      provider: "workos",
+      requiredField:
+        legacyEnvOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+          thirdParty.workos.issuer_url,
+          projectEnvValues,
+        ) ?? "",
+    });
+  }
+  return resolved;
+}
+
 /** Go's `(s *sms) validate()` fixed provider priority (`pkg/config/config.go:1348-1410`) — a
  * `switch` that validates ONLY the first enabled provider in this order. */
 const LEGACY_SMS_PROVIDER_ORDER = [
@@ -1647,7 +2085,9 @@ const LEGACY_SMS_PROVIDER_ORDER = [
  * Go's `Auth.Sms.<provider>.*` is Viper-bound like every other nested field once
  * `[auth.sms.<provider>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
  * `config.go:581-586`), so `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED`/`_<FIELD>` overrides must reach
- * GoTrue's actual container env (`start.go:696-733`), not just `Config.Validate` — same
+ * GoTrue's actual container env (formerly `internal/start/start.go:696-733`,
+ * deleted as unreachable in CLI-1966; last present at commit a253ccba2), not
+ * just `Config.Validate` — same
  * "validates but doesn't use" gap already fixed for `auth.hook`/`auth.captcha`/`auth.external`/
  * `auth.mfa`. Hoisted so both {@link validateAuthSmsProviders} and `start.handler.ts`'s
  * `resolveGotrueEnvInput` resolve the SAME effective per-provider values — same precedent as
@@ -1875,8 +2315,9 @@ export interface LegacyResolvedAuthExternalProvider {
 }
 
 /**
- * Go's `appendGotrueExternalProviderEnv` presence-filtering (`start.go:1442-
- * 1462`): Go's `Auth.External` is a genuine `map[string]provider{}` containing
+ * Go's `appendGotrueExternalProviderEnv` presence-filtering (formerly
+ * `internal/start/start.go:1442-1462`, deleted as unreachable in CLI-1966;
+ * last present at commit a253ccba2): Go's `Auth.External` is a genuine `map[string]provider{}` containing
  * only the providers a user's `config.toml` actually mentions, but
  * `@supabase/config`'s schema always decodes a fixed set of ~19 known
  * providers, each defaulting `enabled: false` regardless of TOML presence — so
@@ -1912,9 +2353,9 @@ export interface LegacyResolvedAuthExternalProvider {
  * as the literal string `"true"`/`"false"` instead of a real boolean. A native TOML `true`/`false`
  * literal still decodes to an actual `boolean` even for an unmodeled key (only `env(...)`
  * substitution is schema-blind), so this must accept both. Used by
- * {@link legacyResolveAuthExternalProviders} below AND by `start.handler.ts`'s
- * `resolveGotruePasskeyWebauthn`/this file's own passkey-validation read, since both are
- * unmodeled-document reads of the identical shape.
+ * {@link legacyResolveAuthExternalProviders} below AND by
+ * {@link legacyResolveGotruePasskeyWebauthn}/this file's own passkey-validation read, since both
+ * are unmodeled-document reads of the identical shape.
  *
  * An unparsable STRING (e.g. a typo, or a still-literal `"env(VAR)"` when the referenced var was
  * never set) is a hard `Config.Load` failure in Go, not a silent `false` — `v.UnmarshalExact`'s
@@ -2263,7 +2704,8 @@ export function legacyResolveLocalConfigValues(
   const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
   // Go's `flags.LoadConfig` applies every `SUPABASE_DB_SETTINGS_*` override unconditionally
   // during `Config.Load` (`config.go:576-586`), BEFORE `start`/`status`/`stop` do anything else
-  // (`internal/start/start.go:51` runs before `AssertSupabaseDbIsRunning` at line 54; `status.
+  // (formerly `internal/start/start.go:51`, ran before `AssertSupabaseDbIsRunning` at line 54;
+  // deleted as unreachable in CLI-1966, last present at commit a253ccba2; `status.
   // Run`/`stop.Run` load config first too) — so a malformed override must fail here, the same
   // point `majorVersion`/`denoVersion`/`orioledbVersion` are already validated, not deep inside
   // `start.handler.ts`'s `bringUp` after Postgres may already be created. Validate-only: the
@@ -2389,8 +2831,9 @@ export function legacyResolveLocalConfigValues(
   const siteUrl =
     legacyEnvOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
     config.auth.site_url;
-  // Go's `start.go` builds GoTrue's env straight off `utils.Config.Auth.*`
-  // with no local override logic of its own (`start.go:1365-1405`) — the
+  // Go's `start.go` built GoTrue's env straight off `utils.Config.Auth.*`
+  // with no local override logic of its own (formerly `internal/start/start.go:1365-1405`,
+  // deleted as unreachable in CLI-1966; last present at commit a253ccba2) — the
   // override happens earlier, generically, via Viper's `AutomaticEnv`
   // (`config.go:585-586`), so every flat `auth.*` scalar Go feeds into
   // GoTrue's env must go through the same override resolution `siteUrl`
@@ -2455,24 +2898,10 @@ export function legacyResolveLocalConfigValues(
     config.auth.minimum_password_length,
     projectEnvValues,
   );
-  // Go's `PasswordRequirements.UnmarshalText` (`pkg/config/auth.go:26-31`)
-  // hard-fails config loading on a value outside this fixed set — same
-  // decode-time-failure semantics as the numeric overrides above, just
-  // string-typed.
-  const passwordRequirementsOverride = legacyEnvOverride(
-    "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
-    undefined,
+  const passwordRequirements = legacyEnvOverrideAuthPasswordRequirements(
+    config.auth.password_requirements,
     projectEnvValues,
   );
-  if (
-    passwordRequirementsOverride !== undefined &&
-    !LEGACY_PASSWORD_REQUIREMENTS_VALUES.has(passwordRequirementsOverride)
-  ) {
-    throw new Error(
-      `Failed reading config: Invalid auth.password_requirements: ${passwordRequirementsOverride}.`,
-    );
-  }
-  const passwordRequirements = passwordRequirementsOverride ?? config.auth.password_requirements;
   // `LoadedProjectConfig.document` (the raw, pre-schema-default TOML `config` was decoded from) —
   // hoisted here (rather than inside the `authEnabled` block below, where it used to live) because
   // the captcha presence check right below needs it too. `undefined` for callers that haven't
@@ -2633,107 +3062,10 @@ export function legacyResolveLocalConfigValues(
           };
 
     // Go's `(tpa *thirdParty) validate()` fixed provider order (`pkg/config/config.go:1635-1683`)
-    // — only enabled providers are forwarded, in that order. Like `Auth.MFA` above, each provider
-    // struct (`tpaFirebase`/`tpaAuth0`/`tpaCognito`/`tpaClerk`/`tpaWorkOs`, `auth.go:191-198`) is
-    // value-typed, so `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides always apply — including
-    // `workos`, whose default template omits `[auth.third_party.workos]` entirely — before
-    // `Auth.ThirdParty.validate()` runs; no raw-document presence gate needed.
-    const thirdParty: Array<LegacyThirdPartyInput> = [];
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        config.auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "firebase",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-            config.auth.third_party.firebase.project_id,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        config.auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "auth0",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-            config.auth.third_party.auth0.tenant,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        config.auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "cognito",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-            config.auth.third_party.aws_cognito.user_pool_id,
-            projectEnvValues,
-          ) ?? "",
-        cognitoUserPoolRegion: legacyEnvOverride(
-          "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-          config.auth.third_party.aws_cognito.user_pool_region,
-          projectEnvValues,
-        ),
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        config.auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "clerk",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-            config.auth.third_party.clerk.domain,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
-    if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        config.auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        projectEnvValues,
-      )
-    ) {
-      thirdParty.push({
-        provider: "workos",
-        requiredField:
-          legacyEnvOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-            config.auth.third_party.workos.issuer_url,
-            projectEnvValues,
-          ) ?? "",
-      });
-    }
+    // — only enabled providers are forwarded, in that order. {@link legacyResolveThirdPartyProviders}
+    // is the SAME hoisted resolver `commands/db/start/start.handler.ts`'s eager pre-probe battery
+    // calls, so both callers apply identical `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides.
+    const thirdParty = legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues);
 
     authInput = {
       siteUrl: siteUrl ?? "",
@@ -2976,7 +3308,8 @@ export function legacyResolveLocalConfigValues(
 
 /**
  * Go's `(a *auth) ResolveJWKS(ctx)` (`apps/cli-go/pkg/config/config.go:1727-1806`) — reached only
- * from the future native `start` port (`internal/start/start.go:274-277`: a fetch failure there
+ * from the future native `start` port (formerly `internal/start/start.go:274-277`, deleted as
+ * unreachable in CLI-1966, last present at commit a253ccba2: a fetch failure there
  * fails the whole `start` command outright). Deliberately NOT folded into
  * {@link LegacyLocalConfigValues}/{@link legacyResolveLocalConfigValues}: that resolver is
  * synchronous and runs on every `stop`/`status` invocation (see `legacy-status-values.ts`/
@@ -2988,8 +3321,9 @@ export function legacyResolveLocalConfigValues(
  * `resolveLocalAuthArtifacts`/`finalizeAuthArtifacts` pair in
  * `shared/functions/serve.ts` (Go's equivalent call site for THAT pair is
  * `internal/functions/serve/`, out of scope for this port) — deliberately NOT copied here:
- *  - a remote-JWKS fetch failure is a hard, propagating error here (matching `start.go:274-277`
- *    returning the error outright); `serve.ts` instead swallows the failure and continues with
+ *  - a remote-JWKS fetch failure is a hard, propagating error here (matching former
+ *    `internal/start/start.go:274-277`, deleted as unreachable in CLI-1966 and last present at
+ *    commit a253ccba2, which returned the error outright); `serve.ts` instead swallows the failure and continues with
  *    zero remote keys, a `functions serve`-only leniency with no equivalent in `ResolveJWKS`.
  *  - this never injects `serve.ts`'s `defaultSigningKey` EC key — that key exists only for
  *    `functions serve`'s own local-dev defaults and has no equivalent in `ResolveJWKS`.
@@ -3135,7 +3469,8 @@ export async function legacyResolveLocalJwks(
   // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
   // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
   // c.Auth.Enabled` block (`config.go:1087-1153`) — but `ResolveJWKS`/`IssuerURL()` (this whole
-  // function) is called UNCONDITIONALLY (`internal/start/start.go:274`), regardless of
+  // function) is called UNCONDITIONALLY (formerly `internal/start/start.go:274`, deleted as
+  // unreachable in CLI-1966; last present at commit a253ccba2), regardless of
   // `auth.enabled`. When auth is enabled, `legacyResolveLocalConfigValues`'s own gated
   // `validateAuthThirdPartyProviders`-equivalent check already ran first, so the validating
   // resolver here is safe/redundant-but-harmless. When auth is disabled, that earlier validation
