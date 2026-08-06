@@ -163,11 +163,73 @@ const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
  * exactly that one exception. All of the above verified empirically against
  * `apps/cli-go/pkg/parser` + vendored `viper@v1.21.0`
  * (`"5"→5, "5B"→0, "50B"→50, "5KB"→5120, "5M"→0, "0"→0, "5.5"→5, "5.5MB"→5242880`).
- * Known residual delta: Go's `strconv.ParseInt(s, 0, 0)` uses base `0`, so it also
- * accepts a `0x`/`0o`/`0b`-prefixed literal (`"0x5"` → `5`) — not reproduced here as a
- * realistic byte-size override would never use one; flagging so a future parity sweep
- * doesn't rediscover it.
+ *
+ * `cast.ToInt`'s underlying `strconv.ParseInt(s, 0, 0)` (review CLI-1958) uses base
+ * `0`, so the remaining (post multiplier-strip) string is ALSO accepted as a
+ * `0x`/`0X`-prefixed hex literal, an `0o`/`0O`-prefixed OR bare-leading-zero octal
+ * literal, or a `0b`/`0B`-prefixed binary literal — handled below by
+ * {@link parseGoBaseZeroInt}. Verified empirically against vendored `viper@v1.21.0`
+ * (via `viper.GetSizeInBytes`, since `cast.ToInt` is itself unexported call
+ * plumbing): `"0x100000"→1048576`, `"0o40000"→16384`,
+ * `"0b100000000000000000000"→2097152`, `"0755"` (legacy octal, no `"o"`)`→493`,
+ * `"0x"/"garbage"/"0x1g"→unparseable (0)`. A hex/octal/binary value ending in a
+ * literal `b`/`B` digit (e.g. `"0x1B"`) still hits the multiplier-strip switch
+ * ABOVE first, same as any other value — that consumes the trailing `B` before
+ * base-0 parsing ever sees it (`"0x1B"→1`, not `27`), which is a genuine Go quirk
+ * this port reproduces automatically by keeping the same two-step order, not a bug.
+ * Known residual delta: Go's base-0 grammar also permits `_` digit separators
+ * (e.g. `"1_048_576"`, verified empirically to equal `1048576`) — not reproduced
+ * here as a realistic byte-size override would never use one; flagging so a future
+ * parity sweep doesn't rediscover it.
  */
+const parseGoBaseZeroInt = (value: string): number | undefined => {
+  const negative = value.startsWith("-");
+  const unsigned = negative || value.startsWith("+") ? value.slice(1) : value;
+  if (unsigned.length === 0) return undefined;
+
+  let base = 10;
+  let digits = unsigned;
+  const prefix = unsigned.slice(0, 2).toLowerCase();
+  if (prefix === "0x") {
+    base = 16;
+    digits = unsigned.slice(2);
+  } else if (prefix === "0o") {
+    base = 8;
+    digits = unsigned.slice(2);
+  } else if (prefix === "0b") {
+    base = 2;
+    digits = unsigned.slice(2);
+  } else if (unsigned.length > 1 && unsigned[0] === "0") {
+    // Legacy (no "o") leading-zero octal, e.g. "0755".
+    base = 8;
+    digits = unsigned.slice(1);
+  }
+  if (digits.length === 0) return undefined;
+
+  const validDigits =
+    base === 16 ? /^[0-9a-fA-F]+$/ : base === 8 ? /^[0-7]+$/ : base === 2 ? /^[01]+$/ : /^[0-9]+$/;
+  if (!validDigits.test(digits)) return undefined;
+
+  const n = Number.parseInt(digits, base);
+  return negative ? -n : n;
+};
+
+// `cast.ToInt`'s `trimDecimal` (`spf13/cast@v1.10.0/number.go:507-525`) runs BEFORE
+// `strconv.ParseInt`: when the whole string is a sign + plain decimal digits + an
+// optional ".digits" tail (`stringNumberRe`, `^([-+]?\d*)(\.\d*)?$` — never matches
+// a `0x`/`0o`/`0b` literal, which contains letters), it drops the fractional part
+// outright rather than rounding (`"5.5"` → `"5"`). Anything else (including a
+// non-decimal-looking string that merely contains a ".") passes through unchanged
+// and is left for {@link parseGoBaseZeroInt} to accept or reject.
+const trimGoDecimal = (value: string): string => {
+  if (!value.includes(".")) return value;
+  const match = /^([+-]?\d*)(?:\.\d*)?$/.exec(value);
+  if (!match) return value;
+  const intPart = match[1] ?? "";
+  if (intPart === "+" || intPart === "-") return `${intPart}0`;
+  return intPart === "" ? "0" : intPart;
+};
+
 const legacyParseScannerBufferSize = (raw: string): number => {
   let value = raw.trim();
   let multiplier = 1;
@@ -191,9 +253,8 @@ const legacyParseScannerBufferSize = (raw: string): number => {
         break;
     }
   }
-  if (!/^[+-]?\d+(?:\.\d*)?$/.test(value)) return 0;
-  const size = Number.parseInt(value, 10);
-  return Number.isFinite(size) && size > 0 ? size * multiplier : 0;
+  const size = parseGoBaseZeroInt(trimGoDecimal(value));
+  return size !== undefined && Number.isFinite(size) && size > 0 ? size * multiplier : 0;
 };
 
 /**

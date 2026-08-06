@@ -651,6 +651,59 @@ describe("legacyApplySchemaFiles", () => {
   );
 
   it.effect(
+    "accepts a hex-literal SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt base-0 parity, review CLI-1958)",
+    () => {
+      // `viper.GetSizeInBytes` → `cast.ToInt` → `strconv.ParseInt(s, 0, 0)` parses
+      // with base 0, so a `0x`-prefixed literal is a valid byte count in real Go:
+      // "0x1400" is 5120 (5KiB) — verified empirically against vendored
+      // `viper@v1.21.0` (`viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")` with the env
+      // var set to "0x1400" returns 5120). A decimal-only parser would reject this
+      // string outright and silently fall back to the 256KiB default instead, so a
+      // statement between 5120 and 262144 bytes would apply in TS but Go would
+      // already have failed with "bufio.Scanner: token too long" at 5121 bytes.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-hex-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "0x1400";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("bufio.Scanner: token too long");
+          // 5KiB (0x1400 bytes), not the 256KiB hardcoded fallback a decimal-only
+          // parser would have silently used instead.
+          expect(msg).toContain(
+            "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
+          );
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
     "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is set only in the project env (Go loadNestedEnv parity)",
     () => {
       // Go's `loadNestedEnv` (`pkg/config/config.go:1220`) `os.Setenv`s every
