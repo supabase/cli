@@ -4,7 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import { LegacyHealthCheckTimeoutError } from "../../../shared/db-bootstrap/health-check.ts";
+import { LegacyHealthCheckTimeoutError } from "./health-check.ts";
 import { legacyAwaitStorageReady } from "./await-storage-ready.ts";
 
 const unusedHttpClientLayer = Layer.succeed(

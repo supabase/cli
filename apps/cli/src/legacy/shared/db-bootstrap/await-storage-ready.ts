@@ -15,21 +15,24 @@
  *    WHOLE RESET (not just "skip buckets") — dumping the storage container's logs to
  *    stderr on the way out, via `legacyWaitForHealthyServices`'s own existing behavior.
  *
- * Lives here (not `legacy/shared/db-bootstrap/`) since `db reset`'s own handler is its
- * only caller — the bucket-seeding health gate has no equivalent in `db start`/`supabase
- * start` at all (CLI-1955 review follow-up).
+ * Hoisted to `legacy/shared/db-bootstrap/` (CLI-2062): originally lived in
+ * `commands/db/reset/` since `db reset`'s own handler was its only caller — the
+ * bucket-seeding health gate has no equivalent in `db start`/`supabase start` at
+ * all (CLI-1955 review follow-up). `legacyResetLocalDatabase`
+ * (`reset-local-database.ts`) is now a second caller (`db schema declarative`'s
+ * smart-target/sync recovery reset), so this moved alongside it.
  */
 
 import { Effect, Result } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { legacyInspectContainerState } from "../../../shared/legacy-docker-lifecycle.ts";
-import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
+import { legacyInspectContainerState } from "../legacy-docker-lifecycle.ts";
+import { legacyServiceContainerName } from "../legacy-docker-ids.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
-} from "../../../shared/db-bootstrap/health-check.ts";
+} from "./health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 

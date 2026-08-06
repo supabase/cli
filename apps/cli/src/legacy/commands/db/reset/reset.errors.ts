@@ -57,16 +57,6 @@ export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetAppl
 }> {}
 
 /**
- * The local database container is not running. Byte-matches Go's
- * `utils.ErrNotRunning` (`internal/utils/misc.go:116`), `"<aqua>supabase start</aqua>
- * is not running."`, returned by `AssertSupabaseDbIsRunning` before the local
- * reset (`internal/db/reset/reset.go:57`).
- */
-export class LegacyDbResetNotRunningError extends Data.TaggedError("LegacyDbResetNotRunningError")<{
-  readonly message: string;
-}> {}
-
-/**
  * `--last` was given a negative value. Go declares `--last` as an unsigned flag
  * (`UintVar`, `cmd/db.go`), so cobra rejects a negative at parse time. Byte-matches
  * cobra's parse error for `strconv.ParseUint`.

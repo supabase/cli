@@ -541,7 +541,7 @@ describe("legacy db reset", () => {
 
   describe("local reset — PG15+", () => {
     it.live("recreates the container, waits healthy, and runs the setup pipeline", () => {
-      const { layer, out, child } = setup(tmp.current, {
+      const { layer, out, child, telemetry } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
@@ -568,6 +568,10 @@ describe("legacy db reset", () => {
         expect(kongReloadCalls(child.spawned)).toHaveLength(1);
         expect(out.stderrText).toContain("Finished ");
         expect(out.stderrText).toContain("on branch ");
+        // The local-reset composition now lives in the shared
+        // `legacyResetLocalDatabase` (CLI-2062) — confirm this handler's own
+        // single `Effect.ensuring` finalizer still fires exactly once through it.
+        expect(telemetry.flushCount).toBe(1);
       });
     });
 

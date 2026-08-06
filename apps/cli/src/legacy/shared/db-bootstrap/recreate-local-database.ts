@@ -215,7 +215,7 @@ const PG_INVALID_CATALOG_NAME = "3D000";
  * Exported ONLY so `recreate-local-database.unit.test.ts` can pin the retry
  * schedule's exact 10-retry boundary against a plain mocked {@link
  * LegacyDbSession} (no real filesystem/Docker I/O), using the same `TestClock`
- * + `Effect.forkChild` pattern as `commands/db/reset/await-storage-ready.unit.test.ts` —
+ * + `Effect.forkChild` pattern as `db-bootstrap/await-storage-ready.unit.test.ts` —
  * driving the full `legacyDbReset` composite effect through a fake clock isn't
  * reliable (its many REAL filesystem awaits race unpredictably against a
  * virtual-time nudge issued from the outside), so this narrower, no-real-I/O
