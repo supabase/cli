@@ -13,6 +13,9 @@ import { legacyLinkedDbResolverRuntimeLayer } from "../../../../../shared/legacy
 import { legacyPgDeltaSslProbeLayer } from "../../../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyDeclarativeSeamLayer } from "../../../shared/legacy-pgdelta.seam.layer.ts";
+import { legacyPgDeltaEngineLayer } from "../../../shared/legacy-pgdelta-engine.layer.ts";
+import { legacyPgDeltaNextAdapterLayer } from "../../../shared/legacy-pgdelta-next-adapter.layer.ts";
+import { legacyPgDeltaNextShadowLayer } from "../../../shared/legacy-pgdelta-next-shadow.layer.ts";
 
 /**
  * Runtime layer for `supabase db schema declarative sync`. Sync diffs against the
@@ -40,12 +43,22 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
 );
 
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
+const nextShadow = legacyPgDeltaNextShadowLayer.pipe(Layer.provide(seam));
+const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
+  Layer.provide(legacyPgDeltaNextAdapterLayer),
+  Layer.provide(nextShadow),
+  Layer.provide(edgeRuntime),
+  Layer.provide(legacyPgDeltaSslProbeLayer),
+  Layer.provide(seam),
+  Layer.provide(legacyDebugLoggerLayer),
+);
 
 export const legacyDbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
   dbConfig,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,
+  pgDeltaEngine,
   legacyDbConnectionLayer,
   cliConfig,
   legacyIdentityStitchLayer,

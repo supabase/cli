@@ -69,7 +69,7 @@ interface LegacyPgDeltaDiffResult {
 }
 
 /**
- * Ambient inputs shared by every pg-delta invocation: the project id (for the
+ * Ambient inputs retained for the legacy pg-delta adapter: the project id (for the
  * `supabase_edge_runtime_<id>` Deno-cache volume), the working directory (mounted
  * at `/workspace`), and the resolved pg-delta npm version (template interpolation).
  */

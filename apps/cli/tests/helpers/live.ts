@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { describe } from "vitest";
 
 import { runSupabase } from "./cli.ts";
@@ -38,6 +39,23 @@ export {
  * cli-e2e-ci runner.
  */
 export const describeLive = describe.skipIf(!isLiveConfigured());
+
+function hasDockerDaemon(): boolean {
+  try {
+    execSync("docker info", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `describe` for local-stack live tests that only require a real Docker daemon.
+ * Unlike `describeLive`, this gate does not require platform credentials or a
+ * Management API. The synchronous `docker info` probe is read-only and runs once
+ * when this helper module is collected.
+ */
+export const describeDockerLive = describe.skipIf(!hasDockerDaemon());
 
 /**
  * `describe` for project-scoped live suites: runs only when the live env is

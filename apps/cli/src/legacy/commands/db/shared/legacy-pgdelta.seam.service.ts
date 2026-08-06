@@ -11,8 +11,12 @@ export type LegacyCatalogMode = "baseline" | "migrations" | "declarative";
  *    `db pull` diff source), plus the local-target declarative branch.
  *  - `declarative`: a bare shadow with no baseline/migrations (the `db pull
  *    --declarative` empty export source).
+ *  - `pgdelta-next`: platform baseline + local migrations in `postgres`, plus
+ *    an empty same-cluster `pgdelta_declarative` scratch database. Declarative
+ *    SQL is deliberately not applied by Go in this mode; the TypeScript next
+ *    engine loads it later through `planSchemaFiles`.
  */
-type LegacyShadowMode = "diff" | "declarative";
+type LegacyShadowMode = "diff" | "declarative" | "pgdelta-next";
 
 /** A live shadow database left running for the caller to diff against and remove. */
 export interface LegacyShadowSource {
@@ -21,9 +25,10 @@ export interface LegacyShadowSource {
   /** The diff source Postgres URL (the provisioned shadow). */
   readonly sourceUrl: string;
   /**
-   * When set, replaces the diff target with a second shadow database
-   * (`contrib_regression` with declarative schemas applied). Mirrors Go's
-   * local-target declarative branch, where the user's local DB is not diffed.
+   * Optional second live database. For legacy diff it replaces the target with
+   * `contrib_regression` after Go applies declarative schemas. For
+   * `pgdelta-next` it is the empty declarative scratch database; TypeScript
+   * loads the declarative files later through `planSchemaFiles`.
    */
   readonly targetUrlOverride: string | undefined;
 }

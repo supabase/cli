@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -10,6 +10,11 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyPgDeltaLegacyEngineLayer } from "../../shared/legacy-pgdelta-engine.legacy.layer.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDeclarativePlanInput,
+} from "../../shared/legacy-pgdelta-engine.service.ts";
 import {
   type LegacyCatalogMode,
   LegacyDeclarativeSeam,
@@ -73,9 +78,67 @@ const ctx = (declarativeDir: string): LegacyDeclarativeRunContext => ({
   declarativeDir,
   schema: [],
   noCache: false,
+  debug: false,
+  dnsResolver: "native",
 });
 
+const engineLayer = (
+  seam: Layer.Layer<LegacyDeclarativeSeam>,
+  edge: Layer.Layer<LegacyEdgeRuntimeScript>,
+) =>
+  legacyPgDeltaLegacyEngineLayer.pipe(
+    Layer.provide(Layer.mergeAll(seam, edge, probe, BunServices.layer)),
+  );
+
 describe("legacyDiffDeclarativeToMigrations", () => {
+  it.effect("loads nested SQL and its manifest in stable order for the engine", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(join(declDir, "nested"), { recursive: true });
+    writeFileSync(join(declDir, "z.sql"), "select 'z';");
+    writeFileSync(join(declDir, "nested", "a.sql"), "select 'a';");
+    writeFileSync(join(declDir, "ignored.txt"), "ignored");
+    writeFileSync(
+      join(declDir, ".pgdelta-export.json"),
+      JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
+    );
+    const calls: LegacyPgDeltaDeclarativePlanInput[] = [];
+    const engine = Layer.succeed(
+      LegacyPgDeltaEngine,
+      LegacyPgDeltaEngine.of({
+        implementation: "next",
+        diffExplicit: () => Effect.die("diffExplicit not used"),
+        diffDatabase: () => Effect.die("diffDatabase not used"),
+        exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema not used"),
+        planDeclarativeSchema: (input) => {
+          calls.push(input);
+          return Effect.succeed({
+            changes: false,
+            sql: "",
+            files: [],
+            sourceRef: "migrations",
+            targetRef: "declarative",
+          });
+        },
+      }),
+    );
+    return legacyDiffDeclarativeToMigrations({ ...ctx(declDir), debug: true, noCache: true }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(calls[0]?.files).toEqual([
+            { name: "nested/a.sql", sql: "select 'a';" },
+            { name: "z.sql", sql: "select 'z';" },
+          ]);
+          expect(calls[0]?.manifest).toEqual({ redactSecrets: true, scope: "database" });
+          expect(calls[0]?.debug).toBe(true);
+          expect(calls[0]?.noCache).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(engine, BunServices.layer)),
+    );
+  });
+
   it.effect("provisions migrations + declarative catalogs via the seam and diffs them", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
     const declDir = join(dir, "supabase", "database");
@@ -100,7 +163,15 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
-      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, BunServices.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          seam.layer,
+          edge.layer,
+          probe,
+          engineLayer(seam.layer, edge.layer),
+          BunServices.layer,
+        ),
+      ),
     );
   });
 
@@ -123,12 +194,48 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
-      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, BunServices.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          seam.layer,
+          edge.layer,
+          probe,
+          engineLayer(seam.layer, edge.layer),
+          BunServices.layer,
+        ),
+      ),
     );
   });
 });
 
 describe("legacyGenerateDeclarativeOutput", () => {
+  it.effect("propagates debug and no-cache to the selected engine", () => {
+    const calls: Array<{ readonly debug: boolean; readonly noCache: boolean }> = [];
+    const engine = Layer.succeed(
+      LegacyPgDeltaEngine,
+      LegacyPgDeltaEngine.of({
+        implementation: "next",
+        diffExplicit: () => Effect.die("diffExplicit not used"),
+        diffDatabase: () => Effect.die("diffDatabase not used"),
+        exportDeclarativeSchema: (input) => {
+          calls.push({ debug: input.debug, noCache: input.noCache });
+          return Effect.succeed({ files: [] });
+        },
+        planDeclarativeSchema: () => Effect.die("planDeclarativeSchema not used"),
+      }),
+    );
+    return legacyGenerateDeclarativeOutput(
+      { ...ctx("/proj/supabase/database"), debug: true, noCache: true },
+      {
+        kind: "database",
+        ref: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+        connectOptions: { isLocal: true, dnsResolver: "native" },
+      },
+    ).pipe(
+      Effect.tap(() => Effect.sync(() => expect(calls).toEqual([{ debug: true, noCache: true }]))),
+      Effect.provide(engine),
+    );
+  });
+
   it.effect("diffs the baseline catalog against the live DB and returns files", () => {
     const seam = mockSeam({
       migrations: "m",
@@ -141,14 +248,15 @@ describe("legacyGenerateDeclarativeOutput", () => {
       files: [{ path: "public.sql", order: 0, statements: 1, sql: "create table a();" }],
     };
     const edge = mockEdge(JSON.stringify(payload));
-    return legacyGenerateDeclarativeOutput(
-      ctx("/proj/supabase/database"),
-      "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10",
-    ).pipe(
+    return legacyGenerateDeclarativeOutput(ctx("/proj/supabase/database"), {
+      kind: "database",
+      ref: "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10",
+      connectOptions: { isLocal: true, dnsResolver: "native" },
+    }).pipe(
       Effect.tap((output) =>
         Effect.sync(() => {
           expect(seam.calls).toEqual([{ mode: "baseline", noCache: false }]);
-          expect(output.files[0]?.path).toBe("public.sql");
+          expect(output.files[0]?.name).toBe("public.sql");
           // SOURCE = baseline catalog (mapped to /workspace); TARGET = live URL (passthrough).
           expect(edge.calls[0]!.env["SOURCE"]).toBe("/workspace/supabase/.temp/pgdelta/base.json");
           expect(edge.calls[0]!.env["TARGET"]).toBe(
@@ -156,7 +264,15 @@ describe("legacyGenerateDeclarativeOutput", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, BunServices.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          seam.layer,
+          edge.layer,
+          probe,
+          engineLayer(seam.layer, edge.layer),
+          BunServices.layer,
+        ),
+      ),
     );
   });
 });

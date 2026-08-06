@@ -4,26 +4,33 @@ Native TypeScript port of `apps/cli-go/internal/db/push/push.go`. Applies pendin
 local migrations (and optionally seed data and custom roles) to the local or
 linked/remote Postgres database.
 
+Pg-delta's default bundled engine has no reusable migrations-catalog consumer,
+so a normal push does not warm a pg-delta cache or start edge-runtime. Setting
+`SUPABASE_USE_PG_DELTA_NEXT=false` preserves Go's legacy best-effort catalog
+warmup. Legacy catalogs remain directly under `supabase/.temp/pgdelta/` and are
+never read by the default engine.
+
 ## Files Read
 
-| Path                                  | Format     | When                                                                    |
-| ------------------------------------- | ---------- | ----------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`      | TOML       | always (embedded defaults used when absent)                             |
-| `~/.supabase/<hash>/project-ref`      | plain text | on the `--linked` path (and the default target), to resolve the ref     |
-| `~/.supabase/access-token`            | plain text | when `SUPABASE_ACCESS_TOKEN` unset and a linked temp-role is minted     |
-| `<workdir>/supabase/migrations/`      | directory  | when `[db.migrations].enabled` (default true), to list local files      |
-| `<workdir>/supabase/migrations/*.sql` | SQL        | for each pending migration, when applied (and not `--dry-run`)          |
-| seed files from `[db.seed].sql_paths` | SQL        | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`) |
-| `<workdir>/supabase/roles.sql`        | SQL        | when `--include-roles` (existence check + apply)                        |
+| Path                                       | Format     | When                                                                    |
+| ------------------------------------------ | ---------- | ----------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`           | TOML       | always (embedded defaults used when absent)                             |
+| `~/.supabase/<hash>/project-ref`           | plain text | on the `--linked` path (and the default target), to resolve the ref     |
+| `~/.supabase/access-token`                 | plain text | when `SUPABASE_ACCESS_TOKEN` unset and a linked temp-role is minted     |
+| `<workdir>/supabase/migrations/`           | directory  | when `[db.migrations].enabled` (default true), to list local files      |
+| `<workdir>/supabase/migrations/*.sql`      | SQL        | for each pending migration, when applied (and not `--dry-run`)          |
+| seed files from `[db.seed].sql_paths`      | SQL        | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`) |
+| `<workdir>/supabase/roles.sql`             | SQL        | when `--include-roles` (existence check + apply)                        |
+| `<workdir>/supabase/.temp/pgdelta-version` | plain text | always read for compatibility; affects legacy opt-out only              |
 
 ## Files Written
 
-| Path                                                                            | Format | When                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | on the `--linked` path (post-run cache, Go's `ensureProjectGroupsCached`)                                                                                                                                                                            |
-| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                    |
-| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after a successful migration apply, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the push (Go's `pgcache.TryCacheMigrationsCatalog`) |
-| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                        | PEM    | same gate as above, when the target requires SSL (`legacyPreparePgDeltaRef`)                                                                                                                                                                         |
+| Path                                                                            | Format | When                                                                                                                                                        |
+| ------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | on the `--linked` path (post-run cache, Go's `ensureProjectGroupsCached`)                                                                                   |
+| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                           |
+| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | legacy opt-out only, best-effort after a successful migration apply when pg-delta is enabled; failure only warns (Go's `pgcache.TryCacheMigrationsCatalog`) |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                        | PEM    | legacy opt-out cache export when the target requires SSL                                                                                                    |
 
 ## Database Mutations
 
@@ -43,14 +50,15 @@ linked/remote Postgres database.
 
 ## Environment Variables
 
-| Variable                           | Purpose                                                                                                          | Required?                                               |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                                                        | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`                     | auto-confirm prompts (Go's `viper YES`)                                                                          | no (also `--yes`)                                       |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset                              | no (project `.env` or shell)                            |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export                                          | no (project `.env` or shell)                            |
-| `PGDELTA_NPM_REGISTRY`             | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the cache export | no (project `.env` or shell)                            |
+| Variable                           | Purpose                                                                             | Required?                                               |
+| ---------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                         | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                           | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_YES`                     | auto-confirm prompts (Go's `viper YES`)                                             | no (also `--yes`)                                       |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the legacy opt-out cache when `[experimental.pgdelta].enabled` is unset     | no (project `.env` or shell)                            |
+| `SUPABASE_USE_PG_DELTA_NEXT`       | set to `false` to retain the legacy migrations-catalog warmup                       | no (project `.env` or shell)                            |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | legacy opt-out only: overrides the edge-runtime image registry for the cache export | no (project `.env` or shell)                            |
+| `PGDELTA_NPM_REGISTRY`             | legacy opt-out only: overrides the edge-runtime npm registry for the cache export   | no (project `.env` or shell)                            |
 
 ## Exit Codes
 
@@ -117,12 +125,15 @@ stdout is payload-only. A single `result` object is emitted:
   directly into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`) and
   back-ported to the pinned `apps/cli-go` oracle under the CLI-1989 parity ruling
   (2026-07-30).
-- **Migrations catalog cache**: ported (Go's best-effort `pgcache.TryCacheMigrationsCatalog`).
-  After a successful migration apply, when pg-delta is enabled, exports the target's
-  pg-delta catalog via the edge-runtime stack and writes it under
+- **Migrations catalog cache**: retained only for
+  `SUPABASE_USE_PG_DELTA_NEXT=false` (Go's best-effort
+  `pgcache.TryCacheMigrationsCatalog`). After a successful migration apply, when
+  pg-delta is enabled, the legacy implementation exports the target's catalog via
+  the edge-runtime stack and writes it under
   `supabase/.temp/pgdelta/`, pruning older snapshots for the same prefix (retains 2).
   A failure only warns on stderr (`Warning: failed to cache migrations catalog: …`)
   and never fails the push, matching Go exactly. Reuses `legacyExportCatalogPgDelta`
   (the same pg-delta export path `db pull`/`db diff` use, which always mounts the
   project root at `/workspace`) rather than a second copy, so the ENOENT bug fixed in
-  Go's `pgcache/cache.go` (supabase/cli#5921) has no TS equivalent.
+  Go's `pgcache/cache.go` (supabase/cli#5921) has no TS equivalent. The bundled
+  default engine extracts live state for commands that need it and never reads this cache.

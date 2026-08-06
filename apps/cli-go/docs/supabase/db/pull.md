@@ -12,6 +12,8 @@ If no entries exist in the migration history table, the default diff engine uses
 
 Pass `--diff-engine pg-delta` to keep the migration-file `db pull` workflow while using pg-delta for the shadow diff step. On initial pull, pg-delta replaces `pg_dump` and produces the full migration from the shadow diff alone. Pass `--declarative` to switch to the declarative pg-delta export workflow instead.
 
+Pg-delta runs in-process by default and is bundled with pg-topo at CLI build time. Set `SUPABASE_USE_PG_DELTA_NEXT=false` to temporarily use the legacy edge-runtime implementation. `PGDELTA_NPM_REGISTRY`, `supabase/.temp/pgdelta-version`, and legacy catalogs directly under `supabase/.temp/pgdelta/` affect only that opt-out; the CLI never falls back automatically.
+
 pg-delta plans are execution-aware: when a plan crosses a transaction boundary — for example `ALTER TYPE ... ADD VALUE` followed by a statement that uses the new enum value, which cannot run in the same transaction — `db pull` writes one ordered migration file per plan unit instead of a single file (for example `<ts>_remote_schema_schema_changes.sql` and `<ts+1s>_remote_schema_after_enum_values.sql`), each recorded in the migration history. The common case (a single unit) still produces exactly one `<ts>_remote_schema.sql` file.
 
 By default the emitted SQL is formatted with the same settings the declarative export uses (uppercase keywords, wrapped at a max width of 180, indented and column-aligned). Configure overrides with `[experimental.pgdelta] format_options` in `config.toml`, or set `format_options = "null"` to opt out and emit raw, unformatted statements.
@@ -28,7 +30,16 @@ If `db pull --diff-engine pg-delta` reports `No schema changes found` but you ex
 PGDELTA_DEBUG=1 supabase db pull --db-url "$DATABASE_URL" --diff-engine pg-delta
 ```
 
-When pg-delta returns zero statements, the CLI writes a debug bundle under `supabase/.temp/pgdelta/debug/<timestamp>/`:
+The bundled engine writes a debug bundle under `supabase/.temp/pgdelta/v2/debug/<id>/` and includes its path in the empty-pull error. It contains `metadata.json` and, when available:
+
+- `source-snapshot.json` — serialized shadow database state
+- `desired-snapshot.json` — serialized remote database state
+- `plan.json` — serialized pg-delta plan
+- `diagnostics.json` — extraction/planning diagnostics
+
+These files are diagnostic artifacts and are never reused as catalogs. New-engine SQL bytes and transaction-split filenames may differ from the legacy renderer; successful execution and an empty subsequent pull/diff are the contract.
+
+Under `SUPABASE_USE_PG_DELTA_NEXT=false`, the CLI instead writes the legacy debug bundle under `supabase/.temp/pgdelta/debug/<timestamp>/`:
 
 - `source-catalog.json` — shadow database baseline pg-delta extracted
 - `target-catalog.json` — remote database pg-delta extracted
@@ -36,6 +47,6 @@ When pg-delta returns zero statements, the CLI writes a debug bundle under `supa
 - `connection.txt` — redacted connection metadata
 - `error.txt` — error summary
 
-Catalog files are not written during normal `db pull` runs. The `.temp/pgdelta` directory is also used by migration catalog caching (`db push`, local `db start`) when `[experimental.pgdelta] enabled = true`.
+Legacy catalog files are not written during normal default-engine `db pull` runs. The `.temp/pgdelta` root is used only by legacy compatibility paths; default-engine artifacts are generation-separated under `.temp/pgdelta/v2/`.
 
 For TLS tracing without disabling SSL, use `SUPABASE_SSL_DEBUG=true` alongside `PGDELTA_DEBUG=1`.

@@ -16,6 +16,7 @@ import {
 } from "../../../../shared/legacy-db-config.parse.ts";
 import { legacyGetHostname } from "../../../../shared/legacy-hostname.ts";
 import { legacyToPostgresURL } from "../../../../shared/legacy-postgres-url.ts";
+import type { LegacyPgDeltaDatabaseEndpoint } from "../../shared/legacy-pgdelta-engine.service.ts";
 import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeInvalidDbUrlError,
@@ -46,30 +47,48 @@ export interface LegacySmartTargetFlags {
   readonly reset: boolean;
 }
 
-export const legacyLocalUrl = (local: LegacyLocalConn): string =>
-  legacyToPostgresURL({
-    // Go derives the local host from `utils.Config.Hostname` (`GetHostname()`:
-    // SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1), not a hardcoded
-    // loopback (`apps/cli-go/internal/utils/misc.go:298-312`).
-    host: legacyGetHostname(),
-    port: local.port,
-    user: "postgres",
-    password: local.password,
-    database: "postgres",
-  });
+const legacyLocalConnection = (local: LegacyLocalConn) => ({
+  // Go derives the local host from `utils.Config.Hostname` (`GetHostname()`:
+  // SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1), not a hardcoded
+  // loopback (`apps/cli-go/internal/utils/misc.go:298-312`).
+  host: legacyGetHostname(),
+  port: local.port,
+  user: "postgres",
+  password: local.password,
+  database: "postgres",
+});
 
-/** Resolves `--linked` / `--db-url` to a Postgres URL via the shared resolver. */
-export const legacyResolveRemoteUrl = Effect.fnUntraced(function* (flags: LegacySmartTargetFlags) {
+export const legacyLocalEndpoint = (
+  local: LegacyLocalConn,
+  dnsResolver: "native" | "https",
+): LegacyPgDeltaDatabaseEndpoint => {
+  const connection = legacyLocalConnection(local);
+  return {
+    kind: "database",
+    ref: legacyToPostgresURL(connection),
+    connection,
+    connectOptions: { isLocal: true, dnsResolver },
+  };
+};
+
+/** Resolves a remote target without discarding TLS and connection options. */
+export const legacyResolveRemoteEndpoint = Effect.fnUntraced(function* (
+  flags: LegacySmartTargetFlags,
+) {
   const resolver = yield* LegacyDbConfigResolver;
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const resolved = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
-    // Remote-only resolution: `--db-url` wins, otherwise the linked project.
     connType: Option.isSome(flags.dbUrl) ? "db-url" : "linked",
     dnsResolver,
     password: flags.password,
   });
-  return legacyToPostgresURL(resolved.conn);
+  return {
+    kind: "database",
+    ref: legacyToPostgresURL(resolved.conn),
+    connection: resolved.conn,
+    connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+  } satisfies LegacyPgDeltaDatabaseEndpoint;
 });
 
 /**
@@ -78,7 +97,7 @@ export const legacyResolveRemoteUrl = Effect.fnUntraced(function* (flags: Legacy
  * Shared by `generate` (smart mode) and `sync` (no-declarative-files bootstrap) so
  * both offer the same local / linked / custom choice and local-reset prompt.
  */
-export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
+export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
   flags: LegacySmartTargetFlags,
   local: LegacyLocalConn,
   hasMigrations: boolean,
@@ -93,7 +112,7 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
     // (db_schema_declarative.go:291), starting a stopped stack.
     yield* beforeLocalTarget;
     yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
-    return legacyLocalUrl(local);
+    return legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
   }
 
   const output = yield* Output;
@@ -125,7 +144,7 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   if (choice === "linked") {
     // Same path as an explicit `--linked` (Go calls `NewDbConfigWithPassword`):
     // login-role mint + pooler fallback, then `ToPostgresURL`.
-    return yield* legacyResolveRemoteUrl({ ...flags, linked: Option.some(true) });
+    return yield* legacyResolveRemoteEndpoint({ ...flags, linked: Option.some(true) });
   }
 
   if (choice === "custom") {
@@ -151,7 +170,12 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
         }),
       );
     }
-    return legacyToPostgresURL(conn);
+    return {
+      kind: "database",
+      ref: legacyToPostgresURL(conn),
+      connection: conn,
+      connectOptions: { isLocal: false, dnsResolver: yield* LegacyDnsResolverFlag },
+    } satisfies LegacyPgDeltaDatabaseEndpoint;
   }
 
   // "Local database" choice: Go runs ensureLocalDatabaseStarted before the reset
@@ -194,5 +218,5 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
       );
     }
   }
-  return legacyLocalUrl(local);
+  return legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
 });

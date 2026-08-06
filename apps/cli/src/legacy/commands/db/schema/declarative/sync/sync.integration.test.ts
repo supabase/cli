@@ -26,6 +26,11 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyPgDeltaLegacyEngineLayer } from "../../../shared/legacy-pgdelta-engine.legacy.layer.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaRenderedFile,
+} from "../../../shared/legacy-pgdelta-engine.service.ts";
 import { LegacyDeclarativeShadowDbError } from "../../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
@@ -59,6 +64,8 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
   staleLocalImage?: boolean;
   exportJson?: string;
+  engineImplementation?: "legacy" | "next";
+  renderedFiles?: ReadonlyArray<LegacyPgDeltaRenderedFile>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -169,12 +176,46 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
+  const nextFiles = opts.renderedFiles ?? [];
+  const engine =
+    opts.engineImplementation === "next"
+      ? Layer.succeed(
+          LegacyPgDeltaEngine,
+          LegacyPgDeltaEngine.of({
+            implementation: "next",
+            diffExplicit: () => Effect.die("diffExplicit not used in sync tests"),
+            diffDatabase: () => Effect.die("diffDatabase not used in sync tests"),
+            exportDeclarativeSchema: () =>
+              Effect.succeed({
+                files: [
+                  { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
+                ],
+                manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+              }),
+            planDeclarativeSchema: () =>
+              Effect.succeed({
+                changes: nextFiles.length > 0,
+                sql: opts.diffSql ?? nextFiles.map((file) => file.sql).join("\n"),
+                files: nextFiles,
+                sourceRef: "migrations",
+                targetRef: "declarative",
+              }),
+          }),
+        )
+      : legacyPgDeltaLegacyEngineLayer.pipe(
+          Layer.provide(Layer.mergeAll(seam, edge, sslProbe, BunServices.layer)),
+        );
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     cache.layer,
     seam,
     edge,
+    engine,
     dbConn,
     resolver,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
@@ -189,10 +230,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     // Sync diffs against the local DB, which refuses TLS → no SSL env injected.
-    Layer.succeed(LegacyPgDeltaSslProbe, {
-      requireSsl: () => Effect.succeed(false),
-      requireSslForHost: () => Effect.succeed(false),
-    }),
+    sslProbe,
     BunServices.layer,
   );
   return {
@@ -894,6 +932,38 @@ describe("legacy db schema declarative sync integration", () => {
         "--network-id",
         "my_net",
       ]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next engine preserves ordered migration segments as separate files", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      engineImplementation: "next",
+      renderedFiles: [
+        {
+          sequence: 1,
+          name: "transactional",
+          suffix: "_1",
+          sql: "ALTER TABLE a ADD COLUMN b int;",
+          transactional: true,
+        },
+        {
+          sequence: 2,
+          name: "non_transactional",
+          suffix: "_2",
+          sql: "ALTER TYPE mood ADD VALUE 'fine';",
+          transactional: false,
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const migrations = readdirSync(join(tmp.current, "supabase", "migrations")).sort();
+      expect(migrations).toHaveLength(2);
+      expect(migrations[0]).toMatch(/^\d{14}_declarative_sync_1\.sql$/);
+      expect(migrations[1]).toMatch(/^\d{14}_declarative_sync_2\.sql$/);
+      expect(s.exportCatalogCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 });

@@ -13,7 +13,10 @@ import { Effect } from "effect";
 import { LEGACY_SUGGEST_ENV_VAR, LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import { type LegacyPgConnInput, LegacyDbConnection } from "./legacy-db-connection.service.ts";
-import { legacyDbConnectionSqlPgLayer } from "./legacy-db-connection.sql-pg.layer.ts";
+import {
+  legacyAcquirePgPool,
+  legacyDbConnectionSqlPgLayer,
+} from "./legacy-db-connection.sql-pg.layer.ts";
 
 const SUGGESTION_CONTEXT = {
   dashboardUrl: "https://supabase.com/dashboard",
@@ -333,5 +336,39 @@ describe("legacyDbConnectionSqlPgLayer exec failures", () => {
           expect(error.position).toBe(25);
         }
       }),
+  );
+});
+
+describe("legacyAcquirePgPool", () => {
+  it.live("returns the winning raw pool and ends it when the caller scope closes", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() =>
+        fakeQueryServer(() => Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY])),
+      );
+      yield* Effect.gen(function* () {
+        let acquired: import("pg").Pool | undefined;
+
+        yield* Effect.gen(function* () {
+          const pool = yield* legacyAcquirePgPool(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              user: "postgres",
+              password: SENTINEL_PASSWORD,
+              database: "postgres",
+              sslmode: "disable",
+            },
+            { isLocal: true, dnsResolver: "native" },
+          );
+          acquired = pool;
+          expect(pool.ending).toBe(false);
+          expect(pool.ended).toBe(false);
+          yield* Effect.tryPromise(() => pool.query("select 1"));
+        }).pipe(Effect.scoped);
+
+        expect(acquired?.ending).toBe(true);
+        expect(acquired?.ended).toBe(true);
+      }).pipe(Effect.ensuring(Effect.sync(server.close)));
+    }),
   );
 });

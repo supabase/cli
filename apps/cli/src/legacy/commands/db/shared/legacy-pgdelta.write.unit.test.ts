@@ -8,13 +8,17 @@ import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
+import type { LegacyPgDeltaDeclarativeExportResult } from "./legacy-pgdelta-engine.service.ts";
 import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
 import {
   legacyDeclarativeSchemaWrittenLine,
   legacyWriteDeclarativeSchemas,
 } from "./legacy-pgdelta.write.ts";
 
-const write = (declarativeDir: string, output: LegacyDeclarativeOutput) =>
+const write = (
+  declarativeDir: string,
+  output: LegacyDeclarativeOutput | LegacyPgDeltaDeclarativeExportResult,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -41,6 +45,32 @@ describe("legacyWriteDeclarativeSchemas", () => {
           expect(existsSync(join(declDir, "stale.sql"))).toBe(false);
           expect(readFileSync(join(declDir, "public.sql"), "utf8")).toBe("create table a();");
           expect(readFileSync(join(declDir, "auth", "roles.sql"), "utf8")).toBe("create role app;");
+          expect(existsSync(join(declDir, ".pgdelta-export.json"))).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("writes the next export manifest with the generated file list", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-write-"));
+    const declDir = join(dir, "supabase", "database");
+    return write(declDir, {
+      files: [
+        { name: "schemas/z.sql", sql: "select 'z';" },
+        { name: "schemas/a.sql", sql: "select 'a';" },
+      ],
+      manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+    }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(JSON.parse(readFileSync(join(declDir, ".pgdelta-export.json"), "utf8"))).toEqual({
+            formatVersion: 1,
+            redactSecrets: true,
+            scope: "database",
+            profile: "supabase",
+            files: ["schemas/a.sql", "schemas/z.sql"],
+          });
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

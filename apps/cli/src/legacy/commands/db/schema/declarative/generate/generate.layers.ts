@@ -13,15 +13,19 @@ import { legacyLinkedDbResolverRuntimeLayer } from "../../../../../shared/legacy
 import { legacyPgDeltaSslProbeLayer } from "../../../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyDeclarativeSeamLayer } from "../../../shared/legacy-pgdelta.seam.layer.ts";
+import { legacyPgDeltaEngineLayer } from "../../../shared/legacy-pgdelta-engine.layer.ts";
+import { legacyPgDeltaNextAdapterLayer } from "../../../shared/legacy-pgdelta-next-adapter.layer.ts";
+import { legacyPgDeltaNextShadowLayer } from "../../../shared/legacy-pgdelta-next-shadow.layer.ts";
 
 /**
  * Runtime layer for `supabase db schema declarative generate`.
  *
  * `Output` / `LegacyGoProxy` / global flags come from the legacy root; the Bun
  * platform (FileSystem / Path / ChildProcessSpawner / ProcessControl / Tty) from
- * `runCli`. This layer adds the declarative-specific services: the edge-runtime
- * pg-delta runner and the Go shadow-database seam, plus the db-config resolver
- * for `--linked` / `--db-url`. Per the "provide doesn't share to siblings" rule,
+ * `runCli`. This layer adds both pg-delta implementations and the Go
+ * shadow-database seam, plus the db-config resolver for `--linked` / `--db-url`.
+ * The bundled implementation runs in-process by default; edge-runtime is retained
+ * only for the explicit legacy opt-out. Per the "provide doesn't share to siblings" rule,
  * `LegacyCliConfig` is provided to every layer that needs it.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -42,6 +46,15 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
 );
 
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
+const nextShadow = legacyPgDeltaNextShadowLayer.pipe(Layer.provide(seam));
+const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
+  Layer.provide(legacyPgDeltaNextAdapterLayer),
+  Layer.provide(nextShadow),
+  Layer.provide(edgeRuntime),
+  Layer.provide(legacyPgDeltaSslProbeLayer),
+  Layer.provide(seam),
+  Layer.provide(legacyDebugLoggerLayer),
+);
 
 export const legacyDbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
   dbConfig,
@@ -49,6 +62,7 @@ export const legacyDbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,
+  pgDeltaEngine,
   cliConfig,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,

@@ -2,7 +2,15 @@ import { Effect, type FileSystem, type Path } from "effect";
 
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
+import type {
+  LegacyPgDeltaDeclarativeExportResult,
+  LegacyPgDeltaExportManifest,
+} from "./legacy-pgdelta-engine.service.ts";
 import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
+
+const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
+
+type LegacyDeclarativeWriteOutput = LegacyDeclarativeOutput | LegacyPgDeltaDeclarativeExportResult;
 
 /**
  * Go's `declarative.Generate` / `pull.go`'s written-to line, printed by all three
@@ -32,7 +40,7 @@ export const legacyWriteDeclarativeSchemas = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   declarativeDir: string,
-  output: LegacyDeclarativeOutput,
+  output: LegacyDeclarativeWriteOutput,
 ) {
   yield* fs.remove(declarativeDir, { recursive: true }).pipe(
     Effect.catchTag("PlatformError", (error) =>
@@ -48,18 +56,37 @@ export const legacyWriteDeclarativeSchemas = Effect.fnUntraced(function* (
   );
   yield* fs.makeDirectory(declarativeDir, { recursive: true });
 
+  const writtenFiles: Array<string> = [];
   for (const file of output.files) {
-    const rel = path.normalize(file.path);
+    const name = "name" in file ? file.name : file.path;
+    const rel = path.normalize(name);
     if (rel.startsWith("..") || path.isAbsolute(rel)) {
       return yield* Effect.fail(
         new LegacyDeclarativeWriteError({
-          message: `unsafe declarative export path: ${file.path}`,
+          message: `unsafe declarative export path: ${name}`,
         }),
       );
     }
     const targetPath = path.join(declarativeDir, rel);
     yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
     yield* fs.writeFileString(targetPath, file.sql);
+    writtenFiles.push(name.split("\\").join("/"));
+  }
+
+  const manifest = "manifest" in output ? output.manifest : undefined;
+  if (manifest !== undefined) {
+    const serialized: LegacyPgDeltaExportManifest & {
+      readonly formatVersion: 1;
+      readonly files: ReadonlyArray<string>;
+    } = {
+      formatVersion: 1,
+      ...manifest,
+      files: [...writtenFiles].sort(),
+    };
+    yield* fs.writeFileString(
+      path.join(declarativeDir, EXPORT_MANIFEST_FILE),
+      `${JSON.stringify(serialized, null, 2)}\n`,
+    );
   }
 });
 

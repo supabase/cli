@@ -3,39 +3,61 @@
 Diffs local migrations state against declarative schema files and writes the delta
 as a new timestamped migration.
 
+## Pg-delta implementation and compatibility
+
+- The default pg-delta and bundled pg-topo run in-process at the versions fixed
+  when the CLI is built. There is no runtime download or automatic fallback.
+- `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy catalog/edge-runtime
+  implementation. `supabase/.temp/pgdelta-version`, `PGDELTA_NPM_REGISTRY`, and
+  catalogs directly below `supabase/.temp/pgdelta/` are legacy-only.
+- `--no-cache` bypasses legacy catalog reuse/warming. The default engine always
+  extracts current state and maintains no reusable catalog cache.
+- With `PGDELTA_DEBUG`, default-engine snapshots, plan, and diagnostics are
+  written below `supabase/.temp/pgdelta/v2/debug/<id>/` and are not reusable.
+- The default engine refuses to emit a migration when extraction or declarative
+  loading reports an error or a strict coverage gap (`unmodeled_kind` or
+  `unresolved_security_label`). The refusal names the diagnostic, and debug
+  artifacts are saved first when capture is enabled.
+- Default-engine migrations may differ byte-for-byte and may be split into
+  ordered files to preserve transaction boundaries. Successful execution and an
+  empty subsequent sync are the compatibility contract.
+
 ## Files Read
 
-| Path                                                     | Format     | When                                               |
-| -------------------------------------------------------- | ---------- | -------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                         | TOML       | always — pg-delta gate, format options             |
-| `<workdir>/supabase/.temp/pgdelta-version`               | plain text | always — pins the `@supabase/pg-delta` npm version |
-| `<workdir>/supabase/.temp/edge-runtime-version`          | plain text | always — pins the edge-runtime image tag           |
-| `<workdir>/supabase/database/**/*.sql` (declarative dir) | SQL        | always — must exist (else error)                   |
-| `<workdir>/supabase/migrations/*.sql`                    | SQL        | shadow-DB migrations catalog (Go seam)             |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                | JSON       | catalog cache (read/written by the Go seam)        |
+| Path                                                     | Format     | When                                                    |
+| -------------------------------------------------------- | ---------- | ------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                         | TOML       | always — pg-delta gate, format options                  |
+| `<workdir>/supabase/.temp/pgdelta-version`               | plain text | always read for compatibility; affects legacy only      |
+| `<workdir>/supabase/.temp/edge-runtime-version`          | plain text | legacy opt-out only — edge-runtime image tag            |
+| `<workdir>/supabase/database/**/*.sql` (declarative dir) | SQL        | always — must exist (else error)                        |
+| `<workdir>/supabase/migrations/*.sql`                    | SQL        | default: applied to live shadow; legacy: catalog source |
+| `<workdir>/supabase/database/.pgdelta-export.json`       | JSON       | default-engine export policy, when present              |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                | JSON       | legacy opt-out only: catalog cache                      |
 
 ## Files Written
 
-| Path                                                   | Format | When                          |
-| ------------------------------------------------------ | ------ | ----------------------------- |
-| `<workdir>/supabase/migrations/<timestamp>_<name>.sql` | SQL    | when schema changes are found |
-| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`      | JSON   | catalog cache (Go seam)       |
+| Path                                                               | Format | When                                              |
+| ------------------------------------------------------------------ | ------ | ------------------------------------------------- |
+| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql` | SQL    | changes; default engine may emit ordered segments |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out only: catalog cache                |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | default engine with `PGDELTA_DEBUG`               |
 
 ## Subprocesses / Containers
 
 | What                                                                                                                                                                                                 | When                                                              |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `supabase-go db schema declarative __catalog --mode migrations --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply migrations → catalog                                               | always                                                            |
-| `supabase-go db schema declarative __catalog --mode declarative --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply declarative → catalog                                             | always                                                            |
-| Edge-runtime container running the pg-delta diff Deno script                                                                                                                                         | always                                                            |
+| `supabase-go db __shadow` / declarative shadow seam — platform baseline plus migrations and clean declarative target                                                                                 | default engine                                                    |
+| `supabase-go db schema declarative __catalog` migrations/declarative catalog seams                                                                                                                   | legacy opt-out only                                               |
+| Edge-runtime container running the pg-delta diff Deno script                                                                                                                                         | legacy opt-out only                                               |
 | `supabase-go db reset --local [--network-id <id>]` (seam) — only on the failed-apply recovery path; `db reset` is still Go-proxied (`wrapped`), so the reset itself shells out to the bundled binary | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 
 | Variable                     | Purpose                                                     | Required? |
 | ---------------------------- | ----------------------------------------------------------- | --------- |
-| `PGDELTA_NPM_REGISTRY`       | private `@supabase` npm registry for pg-delta               | no        |
-| `PGDELTA_DEBUG`              | verbose pg-delta diagnostics                                | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for the legacy edge-runtime engine           | no        |
+| `PGDELTA_NPM_REGISTRY`       | legacy opt-out only: private npm registry                   | no        |
+| `PGDELTA_DEBUG`              | structured default-engine debug artifacts                   | no        |
 | `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary                      | no        |
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate (Go `GetHostname`) | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback          | no        |
@@ -48,7 +70,7 @@ as a new timestamped migration.
 | `1`  | pg-delta not enabled                                                                                |
 | `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
 | `1`  | no declarative schema files found                                                                   |
-| `1`  | shadow-database / edge-runtime / diff failure                                                       |
+| `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
 | `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
@@ -62,8 +84,8 @@ surfaces before an `--apply`/`--no-apply` conflict is ever checked.
 Text mode only. The generated SQL, the created-migration path, drop-statement
 warnings, and apply status are written to stderr. The no-files bootstrap also
 prints `Declarative schema written to <dir>` (the relative declarative dir, Go's
-`GetDeclarativeDir()`) to stderr after generating, writing, and warming the
-catalog cache — on both the interactive-accept and `--yes` paths.
+`GetDeclarativeDir()`) to stderr after generation and writing. Under the legacy
+opt-out it prints after catalog warming — on both interactive and `--yes` paths.
 `--no-apply` writes the migration only (never prompts/applies); `--apply` applies
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
@@ -79,6 +101,6 @@ are mutually exclusive.
   `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered
   (the reset itself runs the bundled `supabase-go db reset --local`, since
   `db reset` is still `wrapped`).
-- **Architecture:** the shadow-database platform baseline (migrations / declarative
-  catalogs) is provisioned by the bundled `supabase-go` via the hidden
-  `db schema declarative __catalog` seam; the diff is native pg-delta.
+- **Architecture:** the bundled `supabase-go` provisions the two shadow databases;
+  the default engine applies declarative SQL and plans/renders the migration
+  in-process. The opt-out preserves the hidden legacy catalog seams and Deno script.

@@ -1,101 +1,91 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
-import {
-  type LegacyPgDeltaContext,
-  legacyDeclarativeExportPgDelta,
-  legacyDiffPgDelta,
-} from "../../shared/legacy-pgdelta.ts";
-import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
-import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
 import { legacyFindDropStatements } from "../../../../shared/legacy-sql-split.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDatabaseEndpoint,
+  type LegacyPgDeltaRenderedFile,
+} from "../../shared/legacy-pgdelta-engine.service.ts";
+import {
+  LegacyLoadPgDeltaSqlFiles,
+  LegacyReadPgDeltaExportManifest,
+} from "../../shared/legacy-pgdelta-files.ts";
+import type { LegacyPgDeltaContext } from "../../shared/legacy-pgdelta.ts";
+import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
 export interface LegacyDeclarativeRunContext {
   readonly pgDelta: LegacyPgDeltaContext;
-  /** `experimental.pgdelta.format_options` (trimmed; "" when unset). */
   readonly formatOptions: string;
-  /** Resolved declarative schema dir (workdir-relative, e.g. `supabase/database`). */
   readonly declarativeDir: string;
   readonly schema: ReadonlyArray<string>;
   readonly noCache: boolean;
-  /**
-   * Resolved linked project ref for an explicit `generate --linked`. Threaded into
-   * the baseline `__catalog` export so the Go config load merges the matching
-   * `[remotes.<ref>]` override into the platform baseline (auth/storage/realtime/api/
-   * vault settings), matching Go's `Generate`, which builds the baseline from the
-   * remote-merged config. `undefined` for local/db-url/smart targets.
-   */
+  readonly debug: boolean;
+  readonly dnsResolver: "native" | "https";
   readonly linkedProjectRef?: string;
 }
 
 /** The output of a declarative-to-migrations diff. Mirrors Go's `SyncResult`. */
 export interface LegacyDeclarativeSyncResult {
   readonly diffSQL: string;
+  readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile>;
   readonly sourceRef: string;
   readonly targetRef: string;
   readonly dropWarnings: ReadonlyArray<string>;
 }
 
-/**
- * Computes the diff between local migrations state and the declarative schema.
- * Mirrors Go's `DiffDeclarativeToMigrations` (`declarative.go:170`): the
- * migrations catalog (source) and declarative catalog (target) are provisioned
- * via the Go seam (shadow DB + `SetupDatabase` + migrate / apply), then diffed
- * natively with pg-delta.
- */
+const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ message });
+
 export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
   run: LegacyDeclarativeRunContext,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const seam = yield* LegacyDeclarativeSeam;
-
+  const path = yield* Path.Path;
+  const engine = yield* LegacyPgDeltaEngine;
   const exists = yield* fs.exists(run.declarativeDir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
     return yield* Effect.fail(
-      new LegacyDeclarativeDiffError({
-        message:
-          "No declarative schema directory found. Run supabase db schema declarative generate first.",
-      }),
+      declarativeError(
+        "No declarative schema directory found. Run supabase db schema declarative generate first.",
+      ),
     );
   }
-
-  const sourceRef = yield* seam.exportCatalog({ mode: "migrations", noCache: run.noCache });
-  const targetRef = yield* seam.exportCatalog({ mode: "declarative", noCache: run.noCache });
-  const diff = yield* legacyDiffPgDelta(run.pgDelta, {
-    sourceRef,
-    targetRef,
+  const files = yield* LegacyLoadPgDeltaSqlFiles(fs, path, run.declarativeDir).pipe(
+    Effect.mapError((error) => declarativeError(error.message)),
+  );
+  const manifest = yield* LegacyReadPgDeltaExportManifest(fs, path, run.declarativeDir).pipe(
+    Effect.mapError((error) => declarativeError(error.message)),
+  );
+  const result = yield* engine.planDeclarativeSchema({
+    context: run.pgDelta,
     schema: run.schema,
     formatOptions: run.formatOptions,
+    debug: run.debug,
+    files,
+    noCache: run.noCache,
+    ...(manifest !== undefined ? { manifest } : {}),
   });
   return {
-    diffSQL: diff.sql,
-    sourceRef,
-    targetRef,
-    dropWarnings: legacyFindDropStatements(diff.sql),
+    diffSQL: result.sql,
+    files: result.files,
+    sourceRef: result.sourceRef,
+    targetRef: result.targetRef,
+    dropWarnings: legacyFindDropStatements(result.sql),
   } satisfies LegacyDeclarativeSyncResult;
 });
 
-/**
- * Exports a live database's schema as declarative file payloads, diffing it
- * against the platform-baseline catalog (provisioned via the Go seam). Mirrors
- * the catalog half of Go's `Generate` (`declarative.go:110`): the live database
- * URL is the target, the baseline is the source. The handler writes the
- * returned files after the overwrite prompt.
- */
 export const legacyGenerateDeclarativeOutput = Effect.fnUntraced(function* (
   run: LegacyDeclarativeRunContext,
-  targetDbUrl: string,
+  target: LegacyPgDeltaDatabaseEndpoint,
 ) {
-  const seam = yield* LegacyDeclarativeSeam;
-  const baselineRef = yield* seam.exportCatalog({
-    mode: "baseline",
-    noCache: run.noCache,
-    ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
-  });
-  return yield* legacyDeclarativeExportPgDelta(run.pgDelta, {
-    sourceRef: baselineRef,
-    targetRef: targetDbUrl,
+  const engine = yield* LegacyPgDeltaEngine;
+  return yield* engine.exportDeclarativeSchema({
+    context: run.pgDelta,
     schema: run.schema,
     formatOptions: run.formatOptions,
+    debug: run.debug,
+    noCache: run.noCache,
+    ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
+    target,
   });
 });

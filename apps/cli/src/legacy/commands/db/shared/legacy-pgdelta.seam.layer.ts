@@ -447,8 +447,10 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               offset += chunk.length;
             }
             // stdout is three newline-separated lines: container id, source URL,
-            // and an optional target-override URL (empty unless the local-target
-            // declarative branch redirected the target to a second shadow db).
+            // and an optional second-database URL. Legacy diff uses the third URL
+            // only when its local-target declarative branch redirects the target;
+            // `pgdelta-next` always returns its empty same-cluster declarative
+            // scratch database there. That next mode never asks Go to apply SQL.
             // The URLs arrive WITHOUT a password — the Go seam prints them via
             // ToPostgresURLWithoutPassword so it never logs a credential to stdout
             // (CWE-312). The shadow uses the local Postgres password, so we re-inject

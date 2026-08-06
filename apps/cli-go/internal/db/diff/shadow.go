@@ -2,9 +2,11 @@ package diff
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/pgdelta"
@@ -26,6 +28,89 @@ type ShadowSource struct {
 	// DiffDatabase's local-target declarative branch, where the user's local
 	// database is not diffed at all.
 	TargetOverride *pgconn.Config
+}
+
+// PgDeltaNextShadow is a provisioned shadow container exposing both database
+// states needed by the native pg-delta engine. Migrated contains the platform
+// baseline plus local migrations. Scratch is an empty sibling database owned
+// by pg-delta's declarative planner while it loads the desired schema files.
+type PgDeltaNextShadow struct {
+	// Container is left running for the caller, which MUST remove it after use.
+	Container string
+	Migrated  pgconn.Config
+	Scratch   pgconn.Config
+}
+
+type pgDeltaNextShadowDependencies struct {
+	create        func(context.Context, uint16) (string, error)
+	wait          func(context.Context, time.Duration, ...string) error
+	migrate       func(context.Context, string, afero.Fs, ...func(*pgx.ConnConfig)) error
+	createScratch func(context.Context, ...func(*pgx.ConnConfig)) error
+	remove        func(string)
+}
+
+const createPgDeltaNextScratch = "CREATE DATABASE pgdelta_declarative TEMPLATE template0"
+
+// createPgDeltaNextScratchDatabase creates the empty same-cluster database that
+// planSchemaFiles owns. Using template0 guarantees it does not inherit the
+// platform baseline or local migrations from postgres.
+func createPgDeltaNextScratchDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
+	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if _, err := conn.Exec(ctx, createPgDeltaNextScratch); err != nil {
+		return errors.Wrap(err, "failed to create pg-delta declarative scratch database")
+	}
+	return nil
+}
+
+// PreparePgDeltaNextShadow provisions the migrated target and an empty live
+// sibling database used by the native pg-delta declarative planner. It never
+// loads or applies the legacy declarative schemas. On failure, the container is
+// removed best-effort without replacing the provisioning error.
+func PreparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadow, error) {
+	return preparePgDeltaNextShadow(ctx, fsys, pgDeltaNextShadowDependencies{
+		create:        CreateShadowDatabase,
+		wait:          start.WaitForHealthyService,
+		migrate:       MigrateShadowDatabase,
+		createScratch: createPgDeltaNextScratchDatabase,
+		remove:        utils.DockerRemove,
+	}, options...)
+}
+
+func preparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, dependencies pgDeltaNextShadowDependencies, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadow, error) {
+	shadow, err := dependencies.create(ctx, utils.Config.Db.ShadowPort)
+	if err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			dependencies.remove(shadow)
+		}
+	}()
+	if err := dependencies.wait(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+	if err := dependencies.migrate(ctx, shadow, fsys, options...); err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+	if err := dependencies.createScratch(ctx, options...); err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+	migrated := pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     utils.Config.Db.ShadowPort,
+		User:     "postgres",
+		Password: utils.Config.Db.Password,
+		Database: "postgres",
+	}
+	scratch := migrated
+	scratch.Database = "pgdelta_declarative"
+	ok = true
+	return PgDeltaNextShadow{Container: shadow, Migrated: migrated, Scratch: scratch}, nil
 }
 
 // PrepareShadowSource provisions the shadow database that DiffDatabase diffs

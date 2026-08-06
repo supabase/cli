@@ -37,6 +37,10 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import {
+  LegacyPgDeltaEngine,
+  LegacyPgDeltaEngineError,
+} from "../shared/legacy-pgdelta-engine.service.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import { legacyDbPull } from "./pull.handler.ts";
@@ -63,6 +67,8 @@ const pgDeltaDiffEnvelope = (
   });
 
 interface SetupOpts {
+  readonly engineImplementation?: "next" | "legacy";
+  readonly nextDebugDirectory?: string;
   readonly format?: OutputFormat;
   readonly remoteVersions?: ReadonlyArray<string>;
   readonly edgeStdout?: string; // diff SQL or declarative export JSON
@@ -133,6 +139,116 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         removedContainers.push(container);
       }),
   });
+
+  const engineCalls: Array<{
+    operation: "diff" | "export";
+    targetRef: string;
+    projectRef?: string;
+    targetLocal?: boolean;
+  }> = [];
+  let engineDiffCount = 0;
+  const pgDeltaEngine = Layer.succeed(
+    LegacyPgDeltaEngine,
+    LegacyPgDeltaEngine.of({
+      implementation: opts.engineImplementation ?? "legacy",
+      diffExplicit: () => Effect.die("diffExplicit unused"),
+      diffDatabase: (input) => {
+        engineCalls.push({
+          operation: "diff",
+          targetRef: input.target.ref,
+          projectRef: input.projectRef,
+          targetLocal: input.targetLocal,
+        });
+        engineDiffCount += 1;
+        if (opts.edgeFailFirstWith !== undefined && engineDiffCount === 1) {
+          return Effect.fail(
+            new LegacyPgDeltaEngineError({
+              message: opts.edgeFailFirstWith,
+              cause: opts.edgeFailFirstWith,
+            }),
+          );
+        }
+        const stdout = opts.edgeStdout ?? "";
+        if (stdout.trim().length === 0) {
+          return Effect.succeed({
+            changes: false,
+            sql: "",
+            files: [],
+            ...(process.env["PGDELTA_DEBUG"] !== undefined
+              ? {
+                  debug:
+                    opts.engineImplementation === "next"
+                      ? {
+                          sourceSnapshot: opts.catalogStdout ?? "",
+                          ...(opts.nextDebugDirectory !== undefined
+                            ? { directory: opts.nextDebugDirectory }
+                            : {}),
+                        }
+                      : { sourceSnapshot: opts.catalogStdout ?? "", stderr: "" },
+                }
+              : {}),
+          });
+        }
+        try {
+          const parsed: unknown = JSON.parse(stdout);
+          if (typeof parsed !== "object" || parsed === null) throw new Error("invalid envelope");
+          const rawFiles = Reflect.get(parsed, "files");
+          if (!Array.isArray(rawFiles)) throw new Error("invalid envelope");
+          const files = rawFiles.map((raw, index) => {
+            if (typeof raw !== "object" || raw === null) throw new Error("invalid file");
+            const sql = Reflect.get(raw, "sql");
+            const name = Reflect.get(raw, "name");
+            const transactionMode = Reflect.get(raw, "transactionMode");
+            if (typeof sql !== "string" || typeof name !== "string") {
+              throw new Error("invalid file");
+            }
+            return {
+              sequence: index + 1,
+              name,
+              sql,
+              transactional: transactionMode !== "none",
+            };
+          });
+          return Effect.succeed({
+            changes: files.length > 0,
+            sql: files.map((file) => file.sql).join("\n"),
+            files,
+          });
+        } catch (cause) {
+          return Effect.fail(
+            new LegacyPgDeltaEngineError({
+              message: "failed to parse pg-delta diff output",
+              cause,
+            }),
+          );
+        }
+      },
+      exportDeclarativeSchema: (input) => {
+        engineCalls.push({
+          operation: "export",
+          targetRef: input.target.ref,
+          projectRef: input.projectRef,
+        });
+        if (opts.edgeFailFirstWith !== undefined && engineCalls.length === 1) {
+          return Effect.fail(
+            new LegacyPgDeltaEngineError({
+              message: opts.edgeFailFirstWith,
+              cause: opts.edgeFailFirstWith,
+            }),
+          );
+        }
+        return Effect.succeed({
+          files: [{ name: "schemas/public/t.sql", sql: "create table t ();" }],
+          manifest: {
+            redactSecrets: true,
+            scope: "database",
+            profile: "supabase",
+          },
+        });
+      },
+      planDeclarativeSchema: () => Effect.die("planDeclarativeSchema unused"),
+    }),
+  );
 
   let edgeRunCount = 0;
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
@@ -260,6 +376,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry.layer,
     cache.layer,
     seam,
+    pgDeltaEngine,
     edge,
     docker,
     dbConnection,
@@ -303,6 +420,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     execLog,
     poolerFallbackCalls,
     dumpCalls,
+    engineCalls,
     get edgeRunCount() {
       return edgeRunCount;
     },
@@ -366,6 +484,9 @@ describe("legacy db pull", () => {
       );
       expect(streamText(s.out, "stderr")).not.toContain(tmp.current);
       expect(s.historyUpserts.length).toBe(1);
+      expect(s.engineCalls).toHaveLength(1);
+      expect(s.engineCalls[0]?.operation).toBe("diff");
+      expect(s.edgeRunCount).toBe(0);
       expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
       // The linked ref is pre-loaded (cheap, local-only) before `resolve()` runs, so
       // the post-run linked-project cache still gets the ref Go would cache via
@@ -536,6 +657,8 @@ describe("legacy db pull", () => {
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+      expect(s.engineCalls[0]?.operation).toBe("export");
+      expect(s.edgeRunCount).toBe(0);
       const err = streamText(s.out, "stderr");
       // Go's order: `ConnectByConfig` prints Connecting (`pull.go:40`), then
       // `pullDeclarativePgDelta` prints Preparing (`pull.go:93`).
@@ -550,7 +673,17 @@ describe("legacy db pull", () => {
       expect(
         existsSync(join(tmp.current, "supabase", "database", "schemas", "public", "t.sql")),
       ).toBe(true);
-      expect(s.provisionCalls[0]?.mode).toBe("declarative");
+      expect(
+        JSON.parse(
+          readFileSync(join(tmp.current, "supabase", "database", ".pgdelta-export.json"), "utf8"),
+        ),
+      ).toMatchObject({
+        formatVersion: 1,
+        redactSecrets: true,
+        scope: "database",
+        files: ["schemas/public/t.sql"],
+      });
+      expect(s.provisionCalls).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -667,7 +800,8 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(true) }));
-      expect(s.provisionCalls[0]?.mode).toBe("declarative");
+      expect(s.provisionCalls).toHaveLength(0);
+      expect(s.engineCalls[0]?.operation).toBe("export");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -931,6 +1065,40 @@ describe("legacy db pull", () => {
       expect(error.message).toBe("No schema changes found");
       const debugRoot = join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
       expect(existsSync(debugRoot) ? readdirSync(debugRoot) : []).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("reports the next-generation debug directory for an empty pg-delta diff", () => {
+    seedMigration(tmp.current, "20240101000000");
+    const debugDir = join(
+      tmp.current,
+      "supabase",
+      ".temp",
+      "pgdelta",
+      "v2",
+      "debug",
+      "20240102-030405-678-diff",
+    );
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "",
+      engineImplementation: "next",
+      nextDebugDirectory: debugDir,
+    });
+    return Effect.gen(function* () {
+      const previous = process.env["PGDELTA_DEBUG"];
+      process.env["PGDELTA_DEBUG"] = "1";
+      try {
+        const error = yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
+          Effect.flip,
+        );
+        expect(error.message).toBe(`No schema changes found (debug bundle: ${debugDir})`);
+        expect(streamText(s.out, "stderr")).toContain(`Debug information saved to`);
+        expect(streamText(s.out, "stderr")).toContain(debugDir);
+      } finally {
+        if (previous === undefined) delete process.env["PGDELTA_DEBUG"];
+        else process.env["PGDELTA_DEBUG"] = previous;
+      }
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1471,7 +1639,7 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
-      expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
+      expect(s.engineCalls[0]?.operation).toBe("diff");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1598,10 +1766,10 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ linked: Option.some(true) }));
-      expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
-      // The resolved ref is forwarded to the shadow so the `db __shadow` child
-      // merges the same `[remotes.<ref>]` override into the shadow baseline.
-      expect(s.provisionCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
+      expect(s.engineCalls[0]?.operation).toBe("diff");
+      // The resolved ref is forwarded through the strategy so the selected
+      // implementation can build the remote-merged shadow baseline.
+      expect(s.engineCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1624,7 +1792,7 @@ describe("legacy db pull", () => {
       );
       expect(streamText(s.out, "stderr")).toContain("does not support IPv6");
       expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
-      expect(s.edgeRunCount).toBe(2);
+      expect(s.engineCalls.filter((call) => call.operation === "diff")).toHaveLength(2);
       expect(streamText(s.out, "stderr")).toMatch(
         /Schema written to supabase[/\\]migrations[/\\]\d{14}_remote_schema\.sql\n/u,
       );
@@ -1642,7 +1810,7 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ linked: Option.some(true), declarative: Option.some(true) }));
       expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
-      expect(s.edgeRunCount).toBe(2);
+      expect(s.engineCalls.filter((call) => call.operation === "export")).toHaveLength(2);
       expect(streamText(s.out, "stderr")).toContain(
         `Declarative schema written to ${join("supabase", "database")}\n`,
       );
@@ -1665,7 +1833,7 @@ describe("legacy db pull", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(streamText(s.out, "stderr")).not.toContain("Retrying via the IPv4 connection pooler");
-      expect(s.edgeRunCount).toBe(1);
+      expect(s.engineCalls.filter((call) => call.operation === "diff")).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1685,7 +1853,7 @@ describe("legacy db pull", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(s.poolerFallbackCalls).toHaveLength(0);
-      expect(s.edgeRunCount).toBe(1);
+      expect(s.engineCalls.filter((call) => call.operation === "diff")).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 

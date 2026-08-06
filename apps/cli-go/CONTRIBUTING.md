@@ -44,9 +44,48 @@ The Supabase API client is generated from OpenAPI spec. See [our guide](api/READ
 
 ## Testing local pg-delta builds
 
-To exercise unpublished `@supabase/pg-delta` changes inside CLI edge-runtime scripts (`db pull`, `db diff`, `db push`, etc.), publish a local build via Verdaccio in [pg-toolbelt](https://github.com/supabase/pg-toolbelt) and point the CLI at that registry.
+Pg-delta and pg-topo run in-process by default and are bundled into the CLI binary.
+Their versions are fixed by `apps/cli/package.json` and the lockfile at CLI build
+time. `PGDELTA_NPM_REGISTRY` and a test project's
+`supabase/.temp/pgdelta-version` do not affect this implementation.
 
-### 1. Start Verdaccio (pg-toolbelt)
+### Default bundled implementation
+
+To exercise unpublished [pg-toolbelt](https://github.com/supabase/pg-toolbelt)
+changes locally:
+
+1. Build the `@supabase/pg-delta` and `@supabase/pg-topo` packages in pg-toolbelt.
+2. Temporarily point both dependencies in `apps/cli/package.json` at those local
+   package directories (for a sibling checkout, use
+   `file:../../../pg-toolbelt/packages/pg-delta` and
+   `file:../../../pg-toolbelt/packages/pg-topo`).
+3. Run `pnpm install` from the CLI repository root, then run the CLI from source
+   with `pnpm --dir apps/cli dev:legacy -- db diff ...`, or rebuild the legacy
+   binary before testing it.
+
+Both packages must be updated together so local source runs and built binaries
+use the same planner/reorder implementation. Restore the package references and
+lockfile after local testing. New-engine SQL need not byte-match the legacy
+renderer; verify that the SQL executes and a subsequent operation converges to
+an empty diff.
+
+When `PGDELTA_DEBUG` is enabled, the bundled engine writes non-reusable debug
+artifacts under `supabase/.temp/pgdelta/v2/debug/<id>/`: `metadata.json` plus
+`source-snapshot.json`, `desired-snapshot.json`, `plan.json`, and
+`diagnostics.json` when those values are available. Legacy catalogs remain at
+the `supabase/.temp/pgdelta/` root and are never consumed by the bundled engine.
+For declarative `generate` and `sync`, `--no-cache` bypasses legacy catalog
+reuse/warming; the bundled engine already extracts live state and has no
+reusable catalog cache.
+
+### Legacy edge-runtime implementation
+
+To exercise unpublished legacy `@supabase/pg-delta` changes inside edge-runtime
+scripts, select `SUPABASE_USE_PG_DELTA_NEXT=false`, publish a local build via
+Verdaccio, and point the CLI at that registry. These instructions describe the
+temporary compatibility implementation only.
+
+#### 1. Start Verdaccio (pg-toolbelt)
 
 ```sh
 cd pg-toolbelt
@@ -55,7 +94,7 @@ bun run verdaccio:start
 
 Verdaccio listens on `http://localhost:4873`. `@supabase/*` packages you publish locally are served from local storage; other `@supabase/*` dependencies (for example `@supabase/pg-topo`) are proxied to npmjs.
 
-### 2. Publish a local pg-delta build
+#### 2. Publish a local pg-delta build
 
 After changing `packages/pg-delta`:
 
@@ -68,7 +107,7 @@ This publishes a fresh `0.0.0-local.<timestamp>` version and restores `package.j
 
 Re-run whenever you change pg-delta source.
 
-### 3. Run the CLI against the local registry
+#### 3. Run the CLI against the local registry
 
 Set `PGDELTA_NPM_REGISTRY` to a URL reachable **from inside the edge-runtime Docker container**:
 
@@ -79,6 +118,8 @@ export PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
 # Linux (Docker 20.10+)
 export PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
 # or: export PGDELTA_NPM_REGISTRY=http://172.17.0.1:4873
+
+export SUPABASE_USE_PG_DELTA_NEXT=false
 ```
 
 Then run any pg-delta-backed command, for example:
@@ -89,4 +130,7 @@ supabase db pull --db-url "$DATABASE_URL" --diff-engine pg-delta
 
 When set, the CLI injects a scoped `.npmrc` and forwards `NPM_CONFIG_REGISTRY` into the edge-runtime container (`PgDeltaNpmRegistryOption` in `internal/utils/pgdelta_local.go`).
 
-Unset `PGDELTA_NPM_REGISTRY` to return to the npmjs version pinned in config / `supabase/.temp/pgdelta-version`.
+Unset `PGDELTA_NPM_REGISTRY` to return to the legacy npmjs version pinned in
+config / `supabase/.temp/pgdelta-version`. Unset
+`SUPABASE_USE_PG_DELTA_NEXT` (or set it to `true`) to return to the bundled
+default implementation.

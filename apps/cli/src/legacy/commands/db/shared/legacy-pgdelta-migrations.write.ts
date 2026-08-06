@@ -58,7 +58,11 @@ export const legacyWritePgDeltaMigrations = (
     readonly workdir: string;
     readonly baseMillis: number;
     readonly name: string;
-    readonly files: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
+    readonly files: ReadonlyArray<{
+      readonly name: string;
+      readonly suffix?: string | null;
+      readonly sql: string;
+    }>;
   },
 ): Effect.Effect<Array<LegacyWrittenMigration>, LegacyPgDeltaMigrationWriteError> =>
   Effect.gen(function* () {
@@ -67,7 +71,11 @@ export const legacyWritePgDeltaMigrations = (
     const buildSet = (baseMillis: number): Array<LegacyWrittenMigration> =>
       files.map((file, i) => {
         const version = legacyFormatMigrationTimestamp(baseMillis + i * 1000);
-        const unitName = single ? name : `${name}_${file.name}`;
+        const unitName = single
+          ? name
+          : file.suffix !== undefined && file.suffix !== null
+            ? `${name}${file.suffix}`
+            : `${name}_${file.name}`;
         return { path: legacyGetMigrationPath(pathSvc, workdir, version, unitName), version };
       });
 

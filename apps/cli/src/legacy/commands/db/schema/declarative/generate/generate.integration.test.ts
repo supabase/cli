@@ -26,6 +26,8 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyPgDeltaLegacyEngineLayer } from "../../../shared/legacy-pgdelta-engine.legacy.layer.ts";
+import { LegacyPgDeltaEngine } from "../../../shared/legacy-pgdelta-engine.service.ts";
 import { LegacyDeclarativeShadowDbError } from "../../../shared/legacy-pgdelta.errors.ts";
 import {
   type LegacyCatalogMode,
@@ -61,6 +63,7 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
   exportFailsForMode?: LegacyCatalogMode;
   staleLocalImage?: boolean;
+  engineImplementation?: "legacy" | "next";
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -138,12 +141,39 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     exec: (args) => Effect.sync(() => void proxyCalls.push(args)),
     execCapture: () => Effect.succeed(""),
   });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
+  const engine =
+    opts.engineImplementation === "next"
+      ? Layer.succeed(
+          LegacyPgDeltaEngine,
+          LegacyPgDeltaEngine.of({
+            implementation: "next",
+            diffExplicit: () => Effect.die("diffExplicit not used in generate tests"),
+            diffDatabase: () => Effect.die("diffDatabase not used in generate tests"),
+            planDeclarativeSchema: () =>
+              Effect.die("planDeclarativeSchema not used in generate tests"),
+            exportDeclarativeSchema: () =>
+              Effect.succeed({
+                files: [
+                  { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
+                ],
+                manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+              }),
+          }),
+        )
+      : legacyPgDeltaLegacyEngineLayer.pipe(
+          Layer.provide(Layer.mergeAll(seam, edge, sslProbe, BunServices.layer)),
+        );
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     cache.layer,
     seam,
     edge,
+    engine,
     resolver,
     proxy,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
@@ -155,10 +185,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     // The remote ref is a non-Supabase host that refuses TLS → no SSL env.
-    Layer.succeed(LegacyPgDeltaSslProbe, {
-      requireSsl: () => Effect.succeed(false),
-      requireSslForHost: () => Effect.succeed(false),
-    }),
+    sslProbe,
     BunServices.layer,
   );
   return {
@@ -938,6 +965,23 @@ describe("legacy db schema declarative generate integration", () => {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
       // Normalized via ToPostgresURL → connect_timeout appended, like Go.
       expect(s.edgeCalls[0]!.env["TARGET"]).toContain("@db.example.com:5432/app?connect_timeout=");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next engine writes its manifest and skips legacy catalog warming", () => {
+    const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      const manifest = JSON.parse(
+        readFileSync(join(tmp.current, "supabase", "database", ".pgdelta-export.json"), "utf8"),
+      );
+      expect(manifest).toMatchObject({
+        formatVersion: 1,
+        redactSecrets: true,
+        scope: "database",
+        files: ["schemas/public/tables/players.sql"],
+      });
+      expect(s.seamCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 });

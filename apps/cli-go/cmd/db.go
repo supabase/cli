@@ -247,6 +247,16 @@ var (
 			if err := flags.LoadConfig(fsys); err != nil {
 				return err
 			}
+			if shadowMode == "pgdelta-next" {
+				nextShadow, err := diff.PreparePgDeltaNextShadow(cmd.Context(), fsys)
+				if err != nil {
+					return err
+				}
+				fmt.Println(nextShadow.Container)
+				fmt.Println(utils.ToPostgresURLWithoutPassword(nextShadow.Migrated))
+				fmt.Println(utils.ToPostgresURLWithoutPassword(nextShadow.Scratch))
+				return nil
+			}
 			var src diff.ShadowSource
 			var err error
 			switch shadowMode {
@@ -680,7 +690,7 @@ func init() {
 	dbCmd.AddCommand(dbPullCmd)
 	// Build hidden shadow-provisioning seam command
 	shadowFlags := dbShadowCmd.Flags()
-	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations) or declarative (bare shadow).")
+	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations), declarative (bare shadow), or pgdelta-next (migrated + empty scratch).")
 	shadowFlags.BoolVar(&shadowTargetLocal, "target-local", false, "Whether the diff target is the local database (enables the declarative-schema branch).")
 	shadowFlags.BoolVar(&shadowUsePgDelta, "use-pg-delta", false, "Whether pg-delta is the active diff engine (selects the declarative-apply path).")
 	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")

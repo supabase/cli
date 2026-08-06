@@ -27,7 +27,10 @@ import {
   legacyListLocalMigrations,
   legacyPgDeltaTempPath,
 } from "../../../shared/legacy-pgdelta.cache.ts";
-import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
+import { LegacyPgDeltaEngine } from "../../../shared/legacy-pgdelta-engine.service.ts";
+import { legacyIsPgDeltaDebugEnabled } from "../../../shared/legacy-pgdelta.ts";
+import { legacyWritePgDeltaMigrations } from "../../../shared/legacy-pgdelta-migrations.write.ts";
+import { legacyResolveSmartTargetEndpoint } from "../declarative.smart-target.ts";
 import {
   type LegacyDebugBundle,
   legacyCollectMigrationsList,
@@ -92,6 +95,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const seam = yield* LegacyDeclarativeSeam;
+    const engine = yield* LegacyPgDeltaEngine;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
     // Go's sync bootstrap delegates to `runDeclarativeGenerate`, whose
@@ -152,6 +156,8 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         declarativeDir,
         schema: flags.schema,
         noCache: flags.noCache,
+        debug: legacyIsPgDeltaDebugEnabled(),
+        dnsResolver,
       };
       const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
@@ -225,7 +231,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         }
         // sync has no target flags (Go passes its target-less `cmd` into generate),
         // so reset stays interactive (the prompt fires under the local choice).
-        const targetUrl = yield* legacyResolveSmartTargetUrl(
+        const target = yield* legacyResolveSmartTargetEndpoint(
           { dbUrl: Option.none(), linked: Option.none(), password: Option.none(), reset: false },
           { port: toml.port, password: toml.password },
           hasMigrations,
@@ -235,7 +241,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           linkedRef,
           ensureLocalPostgresImageCurrent,
         );
-        const generated = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
+        const generated = yield* legacyGenerateDeclarativeOutput(run, target);
         yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
         if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
           return yield* Effect.fail(
@@ -251,7 +257,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // catalog / emitting a diff debug bundle, and warming the catalog the following
         // diff reuses. (sync is target-less and writes to the single toml-resolved dir,
         // so the generate handler's remote-override dir guard isn't needed here.)
-        if (!run.noCache) {
+        if (!run.noCache && engine.implementation === "legacy") {
           yield* seam.exportCatalog({ mode: "declarative", noCache: run.noCache });
         }
         // Go's delegated `declarative.Generate` prints the written-to line to stderr
@@ -308,11 +314,28 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       }
 
       // Step 5: write the timestamped migration file.
-      const timestamp = formatTimestamp(yield* Clock.currentTimeMillis);
-      const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
-      yield* legacyMakeDir(fs, migrationsDir);
-      yield* fs.writeFileString(migrationPath, result.diffSQL);
-      yield* output.raw(`Created new migration at ${legacyBold(migrationPath)}\n`, "stderr");
+      const nowMillis = yield* Clock.currentTimeMillis;
+      let migrationPaths: ReadonlyArray<string>;
+      if (engine.implementation === "next" && result.files.length > 1) {
+        const written = yield* legacyWritePgDeltaMigrations(fs, path, {
+          workdir: cliConfig.workdir,
+          baseMillis: nowMillis,
+          name: migrationName,
+          files: result.files,
+        }).pipe(
+          Effect.mapError((error) => new LegacyDeclarativeApplyError({ message: error.message })),
+        );
+        migrationPaths = written.map((migration) => migration.path);
+      } else {
+        const timestamp = formatTimestamp(nowMillis);
+        const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
+        yield* legacyMakeDir(fs, migrationsDir);
+        yield* fs.writeFileString(migrationPath, result.diffSQL);
+        migrationPaths = [migrationPath];
+      }
+      for (const migrationPath of migrationPaths) {
+        yield* output.raw(`Created new migration at ${legacyBold(migrationPath)}\n`, "stderr");
+      }
 
       // Step 6: drop warnings.
       if (result.dropWarnings.length > 0) {
@@ -346,7 +369,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       yield* ensureLocalPostgresImageCurrent;
       const applyExit = yield* applyMigrationToLocal(
         { port: toml.port, password: toml.password, dnsResolver },
-        migrationPath,
+        migrationPaths,
       ).pipe(Effect.exit);
 
       if (Exit.isSuccess(applyExit)) {
@@ -460,10 +483,10 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
   return entries.length > 0;
 });
 
-/** Connects to the local database and applies the single migration file (Go's `applyMigrationToLocal`). */
+/** Connects once and applies the ordered migration files (Go's `applyMigrationToLocal`). */
 const applyMigrationToLocal = (
   local: { port: number; password: string; dnsResolver: "native" | "https" },
-  migrationPath: string,
+  migrationPaths: ReadonlyArray<string>,
 ) =>
   Effect.gen(function* () {
     const dbConnection = yield* LegacyDbConnection;
@@ -486,11 +509,13 @@ const applyMigrationToLocal = (
       .pipe(
         Effect.mapError((error) => new LegacyDeclarativeApplyError({ message: error.message })),
       );
-    yield* legacyApplyMigrationFile(
-      session,
-      fs,
-      path,
-      migrationPath,
-      (message) => new LegacyDeclarativeApplyError({ message }),
-    );
+    for (const migrationPath of migrationPaths) {
+      yield* legacyApplyMigrationFile(
+        session,
+        fs,
+        path,
+        migrationPath,
+        (message) => new LegacyDeclarativeApplyError({ message }),
+      );
+    }
   }).pipe(Effect.scoped);

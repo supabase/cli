@@ -12,13 +12,18 @@ import { legacyLinkedDbResolverRuntimeLayer } from "../../../shared/legacy-manag
 import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyDeclarativeSeamLayer } from "../shared/legacy-pgdelta.seam.layer.ts";
+import { legacyPgDeltaEngineLayer } from "../shared/legacy-pgdelta-engine.layer.ts";
+import { legacyPgDeltaNextAdapterLayer } from "../shared/legacy-pgdelta-next-adapter.layer.ts";
+import { legacyPgDeltaNextShadowLayer } from "../shared/legacy-pgdelta-next-shadow.layer.ts";
 
 /**
  * Runtime layer for `supabase db diff`.
  *
  * Mirrors `db schema declarative generate` (`generate.layers.ts`): the db-config
- * resolver plus the native pg-delta / migra stack — the edge-runtime runner, the
- * SSL probe, and the Go shadow-database seam (`provisionShadow`). `LegacyDockerRun`
+ * resolver plus both pg-delta implementations, migra, the SSL probe, and the Go
+ * shadow-database seam (`provisionShadow`). The default pg-delta runs in-process;
+ * the edge-runtime runner is retained only for migra and the explicit legacy opt-out.
+ * `LegacyDockerRun`
  * is exposed in the merge (not just provided to the edge-runtime layer) because the
  * migra OOM bash fallback runs the `supabase/migra` container directly.
  * Per the "provide doesn't share to siblings" rule, `LegacyCliConfig` is provided
@@ -42,6 +47,15 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
 );
 
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
+const nextShadow = legacyPgDeltaNextShadowLayer.pipe(Layer.provide(seam));
+const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
+  Layer.provide(legacyPgDeltaNextAdapterLayer),
+  Layer.provide(nextShadow),
+  Layer.provide(edgeRuntime),
+  Layer.provide(legacyPgDeltaSslProbeLayer),
+  Layer.provide(seam),
+  Layer.provide(legacyDebugLoggerLayer),
+);
 
 export const legacyDbDiffRuntimeLayer = Layer.mergeAll(
   dbConfig,
@@ -50,6 +64,7 @@ export const legacyDbDiffRuntimeLayer = Layer.mergeAll(
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,
+  pgDeltaEngine,
   cliConfig,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,

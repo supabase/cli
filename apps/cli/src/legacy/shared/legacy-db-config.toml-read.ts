@@ -98,6 +98,8 @@ export interface LegacyDbTomlValues {
   readonly baseline: LegacyBaselineTomlConfig;
   /** `[db.migrations] enabled` (default true) — gates `up`/`down` migration apply. */
   readonly migrationsEnabled: boolean;
+  /** `[db.migrations] schema_paths`, resolved relative to `supabase/`. */
+  readonly migrationSchemaPaths?: ReadonlyArray<string>;
   /** `[db.seed]` enabled + supabase-prefixed `sql_paths` globs — used by `down`. */
   readonly seed: LegacyDbSeedTomlConfig;
   /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
@@ -283,6 +285,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.shadow_port",
   "db.major_version",
   "db.migrations.enabled",
+  "db.migrations.schema_paths",
   "db.seed.enabled",
   "db.seed.sql_paths",
   "auth.enabled",
@@ -536,8 +539,8 @@ const DEFAULT_SUPABASE_ENV = "development";
  * `process.env` (no project-env map path) and must reflect `supabase/.env`:
  * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`) and
  * `PGDELTA_NPM_REGISTRY` (`legacyPgDeltaNpmRegistryOption`, read straight from
- * `process.env` for every pg-delta edge-runtime invocation — diff, declarative
- * export/sync, and the push/pull/dump migrations-catalog cache). Go's
+ * `process.env` for legacy-opt-out pg-delta edge-runtime invocations). The bundled
+ * next implementation never consults it. Go's
  * `godotenv.Load` (`loadNestedEnv`) `os.Setenv`s every key from the project
  * `.env`, so both readers see a `.env`-only value there; omitting either here
  * would leave that one process.env-only reader blind to a project-`.env`-scoped
@@ -1059,10 +1062,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
-  // Go: `config.go:700-709` — the pg-delta npm version is read from
+  // Go: `config.go:700-709` — the legacy pg-delta npm version is read from
   // `.temp/pgdelta-version` (trimmed, non-empty) during Load, never from the
   // TOML. An absent/empty file leaves it `None` (callers fall back to the
-  // default via `legacyEffectivePgDeltaNpmVersion`).
+  // default via `legacyEffectivePgDeltaNpmVersion`). The bundled next engine is
+  // fixed at CLI build time and ignores this compatibility setting.
   const pgDeltaVersionPath = path.join(supabaseDir, ".temp", "pgdelta-version");
   const pgDeltaNpmVersion = yield* fs.readFileString(pgDeltaVersionPath).pipe(
     Effect.map((content) => nonEmptyString(content.trim())),
@@ -1815,6 +1819,27 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       ? undefined
       : envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
   );
+  const rawMigrationSchemaPaths = migrationsRaw?.["schema_paths"];
+  const migrationSchemaPathsOverride = remoteOverrideKeys.has("db.migrations.schema_paths")
+    ? undefined
+    : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS");
+  const splitMigrationSchemaPaths = (value: string): ReadonlyArray<string> => {
+    const expanded = legacyExpandEnv(value, lookup);
+    return expanded.length === 0 ? [] : expanded.split(",");
+  };
+  const migrationSchemaPathPatterns =
+    migrationSchemaPathsOverride !== undefined
+      ? splitMigrationSchemaPaths(migrationSchemaPathsOverride)
+      : Array.isArray(rawMigrationSchemaPaths)
+        ? rawMigrationSchemaPaths
+            .filter((pattern): pattern is string => typeof pattern === "string")
+            .map((pattern) => legacyExpandEnv(pattern, lookup))
+        : typeof rawMigrationSchemaPaths === "string"
+          ? splitMigrationSchemaPaths(rawMigrationSchemaPaths)
+          : [];
+  const migrationSchemaPaths = migrationSchemaPathPatterns.map((pattern) =>
+    path.isAbsolute(pattern) || pattern.length === 0 ? pattern : path.join("supabase", pattern),
+  );
 
   // `[db.seed]` — Go defaults enabled true, sql_paths ["seed.sql"]; relative
   // patterns are supabase-prefixed (`config.go:801-806`). `db.seed.enabled` is
@@ -1953,6 +1978,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       vaultNames,
     },
     migrationsEnabled,
+    migrationSchemaPaths,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote,

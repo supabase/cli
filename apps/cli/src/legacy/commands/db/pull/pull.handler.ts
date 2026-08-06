@@ -58,14 +58,20 @@ import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
-import { legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
+import { legacyDebugBundleMessage, legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
+import type { LegacyPgDeltaContext } from "../shared/legacy-pgdelta.ts";
 import {
-  type LegacyPgDeltaContext,
-  legacyDeclarativeExportPgDelta,
-  legacyDiffPgDelta,
-  legacyExportCatalogPgDelta,
-  legacyIsPgDeltaDebugEnabled,
-} from "../shared/legacy-pgdelta.ts";
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDatabaseEndpoint,
+  type LegacyPgDeltaExportManifest,
+  type LegacyPgDeltaSqlFile,
+} from "../shared/legacy-pgdelta-engine.service.ts";
+import {
+  LegacyLoadPgDeltaSqlFiles,
+  LegacyLoadPgDeltaSqlPaths,
+  LegacyReadPgDeltaExportManifest,
+} from "../shared/legacy-pgdelta-files.ts";
+import { legacyIsPgDeltaDebugEnabled } from "../shared/legacy-pgdelta.ts";
 import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
@@ -160,6 +166,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
   const seam = yield* LegacyDeclarativeSeam;
+  const pgDeltaEngine = yield* LegacyPgDeltaEngine;
   const proxy = yield* LegacyGoProxy;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
@@ -304,9 +311,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // `db.<ref>.<host>` connection (Go's `PoolerFallbackEligible` +
     // `ProjectRefFromDirectDbHost`). The error message embeds the container stderr
     // (edge-runtime/migra errors wrap it), which is what Go classifies.
+    const targetEndpoint: LegacyPgDeltaDatabaseEndpoint = {
+      kind: "database",
+      ref: targetUrl,
+      connection: resolved.conn,
+      connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+    };
     const withPoolerFallback = <A, E extends { readonly message: string }, R>(
-      directTarget: string,
-      attempt: (targetRef: string) => Effect.Effect<A, E, R>,
+      directTarget: LegacyPgDeltaDatabaseEndpoint,
+      attempt: (target: LegacyPgDeltaDatabaseEndpoint) => Effect.Effect<A, E, R>,
     ) =>
       attempt(directTarget).pipe(
         Effect.catch((error) =>
@@ -333,7 +346,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
                 yield* legacyEmitPoolerFallbackWarning(resolved.conn.host);
-                return yield* attempt(legacyToPostgresURL(pooler.value));
+                return yield* attempt({
+                  kind: "database",
+                  ref: legacyToPostgresURL(pooler.value),
+                  connection: pooler.value,
+                  connectOptions: { isLocal: false, dnsResolver },
+                });
               }
             }
             return yield* Effect.fail(error);
@@ -407,23 +425,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
-          const shadow = yield* seam.provisionShadow({
-            mode: "declarative",
-            targetLocal: false,
-            usePgDelta: true,
-            schema: flags.schema,
-            // Linked path only: merge the same `[remotes.<ref>]` override into the
-            // shadow baseline (Go builds the shadow from the remote-merged config).
-            projectRef: connType === "linked" ? linkedRef : undefined,
-          });
-          const exported = yield* withPoolerFallback(targetUrl, (targetRef) =>
-            legacyDeclarativeExportPgDelta(ctx, {
-              sourceRef: shadow.sourceUrl,
-              targetRef,
+          const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
+            pgDeltaEngine.exportDeclarativeSchema({
+              context: ctx,
+              target,
               schema: flags.schema,
               formatOptions,
+              projectRef: connType === "linked" ? linkedRef : undefined,
+              debug: legacyIsPgDeltaDebugEnabled(),
+              noCache: false,
             }),
-          ).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+          );
           yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
@@ -472,7 +484,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // dumped statement with a PostgreSQL DDL AST parser (`multigres`, ~50 node
         // types) to route objects into structured files. No Postgres DDL parser
         // exists in TS yet, and `--declarative` already covers the same per-object
-        // outcome via pg-delta catalog introspection, so this path is deprecated
+        // outcome via pg-delta managed-state extraction, so this path is deprecated
         // rather than ported (CLI-1957) — see the deprecation line printed above.
         if (delegatesExperimentalPull) {
           // Go's structured-dump path returns before writing a migration or
@@ -621,76 +633,87 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // (`internal/db/diff/diff.go:189,234-237`); the shadow seam doesn't, so the
         // pull handler emits them itself to match the migration-style `db pull` output.
         yield* output.raw("Creating shadow database...\n", "stderr");
-        const shadow = yield* seam.provisionShadow({
-          mode: "diff",
-          // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
-          // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:190`):
-          // a local target with declarative schema files gets a second
-          // `contrib_regression` shadow returned as the target override.
-          targetLocal: resolved.isLocal,
-          usePgDelta: usePgDeltaDiff,
-          schema: diffSchema,
-          // Linked path only: merge the same `[remotes.<ref>]` override into the
-          // shadow baseline (Go builds the shadow from the remote-merged config).
-          projectRef: connType === "linked" ? linkedRef : undefined,
-        });
-        const diffOutcome = yield* Effect.gen(function* () {
-          // Use the declarative target override when present (Go substitutes it
-          // for the diff target, `diff.go:196-197`); for remote pulls it's
-          // undefined, so this is the direct target URL as before.
-          const target = shadow.targetUrlOverride ?? targetUrl;
-          yield* output.raw(
-            diffSchema.length > 0
-              ? `Diffing schemas: ${diffSchema.join(",")}\n`
-              : "Diffing schemas...\n",
-            "stderr",
-          );
-          return yield* withPoolerFallback(target, (targetRef) =>
-            // Wrap the engine choice in a gen so both branches' error/requirement
-            // channels unify into one `Effect` the helper can retry generically.
-            Effect.gen(function* () {
-              if (usePgDeltaDiff) {
-                // With PGDELTA_DEBUG set, capture the shadow baseline catalog so an
-                // empty diff can be inspected later (Go's DiffDatabase,
-                // `internal/db/diff/diff.go:205-214`); a failed export only warns.
-                const debug = legacyIsPgDeltaDebugEnabled();
-                const sourceCatalog = debug
-                  ? yield* legacyExportCatalogPgDelta(ctx, {
-                      targetRef: shadow.sourceUrl,
-                      role: "postgres",
-                    }).pipe(
-                      Effect.catch((error) =>
-                        output
-                          .raw(
-                            `Warning: failed to export shadow pg-delta catalog: ${error.message}\n`,
-                            "stderr",
-                          )
-                          .pipe(Effect.as(undefined)),
-                      ),
-                    )
-                  : undefined;
-                const result = yield* legacyDiffPgDelta(ctx, {
-                  sourceRef: shadow.sourceUrl,
-                  targetRef,
-                  schema: diffSchema,
-                  formatOptions,
-                });
-                return {
-                  sql: result.sql,
-                  files: result.files,
-                  capture: debug ? { sourceCatalog, stderr: result.stderr } : undefined,
-                };
+        yield* output.raw(
+          diffSchema.length > 0
+            ? `Diffing schemas: ${diffSchema.join(",")}\n`
+            : "Diffing schemas...\n",
+          "stderr",
+        );
+        let declarativeFiles: ReadonlyArray<LegacyPgDeltaSqlFile> | undefined;
+        let declarativeManifest: LegacyPgDeltaExportManifest | undefined;
+        if (usePgDeltaDiff && pgDeltaEngine.implementation === "next" && resolved.isLocal) {
+          if (toml.migrationSchemaPaths !== undefined && toml.migrationSchemaPaths.length > 0) {
+            declarativeFiles = yield* LegacyLoadPgDeltaSqlPaths(
+              fs,
+              path,
+              cliConfig.workdir,
+              toml.migrationSchemaPaths,
+            );
+          } else {
+            const declarativeDirSetting = legacyResolveDeclarativeDir(path, toml.pgDelta);
+            const declarativeDir = path.isAbsolute(declarativeDirSetting)
+              ? declarativeDirSetting
+              : path.join(cliConfig.workdir, declarativeDirSetting);
+            const hasDeclarativeDir = toml.pgDelta.enabled
+              ? yield* fs.exists(declarativeDir).pipe(Effect.orElseSucceed(() => false))
+              : false;
+            if (hasDeclarativeDir) {
+              const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDir);
+              if (loaded.length > 0) {
+                declarativeFiles = loaded;
+                declarativeManifest = yield* LegacyReadPgDeltaExportManifest(
+                  fs,
+                  path,
+                  declarativeDir,
+                );
               }
-              const sql = yield* legacyDiffMigra(ctx, {
+            } else {
+              const schemasDir = path.join(cliConfig.workdir, "supabase", "schemas");
+              if (yield* fs.exists(schemasDir).pipe(Effect.orElseSucceed(() => false))) {
+                const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, schemasDir);
+                if (loaded.length > 0) declarativeFiles = loaded;
+              }
+            }
+          }
+        }
+
+        const diffOutcome = usePgDeltaDiff
+          ? yield* withPoolerFallback(targetEndpoint, (target) =>
+              pgDeltaEngine.diffDatabase({
+                context: ctx,
+                target,
+                targetLocal: resolved.isLocal,
+                schema: diffSchema,
+                formatOptions,
+                projectRef: connType === "linked" ? linkedRef : undefined,
+                debug: legacyIsPgDeltaDebugEnabled(),
+                ...(declarativeFiles !== undefined ? { declarativeFiles } : {}),
+                ...(declarativeManifest !== undefined ? { declarativeManifest } : {}),
+              }),
+            )
+          : yield* Effect.gen(function* () {
+              const shadow = yield* seam.provisionShadow({
+                mode: "diff",
+                targetLocal: resolved.isLocal,
+                usePgDelta: false,
+                schema: diffSchema,
+                projectRef: connType === "linked" ? linkedRef : undefined,
+              });
+              return yield* legacyDiffMigra(ctx, {
                 source: shadow.sourceUrl,
-                target: targetRef,
+                target: shadow.targetUrlOverride ?? targetUrl,
                 schema: diffSchema,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              });
-              return { sql, files: undefined, capture: undefined };
-            }),
-          );
-        }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+              }).pipe(
+                Effect.map((sql) => ({
+                  changes: sql.trim().length > 0,
+                  sql,
+                  files: [],
+                  debug: undefined,
+                })),
+                Effect.ensuring(seam.removeShadowContainer(shadow.container)),
+              );
+            });
 
         const out = diffOutcome.sql;
         const diffEmpty = out.trim().length === 0;
@@ -702,13 +725,13 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // Go saves a pg-delta debug bundle and embeds its path in the in-sync
           // error when PGDELTA_DEBUG is set (`internal/db/pull/pull.go:176-185`); a
           // bundle-save failure falls through to the plain in-sync error.
-          if (diffOutcome.capture !== undefined) {
+          if (pgDeltaEngine.implementation === "legacy" && diffOutcome.debug !== undefined) {
             const debugDir = yield* legacySaveEmptyPgDeltaPullDebug({
               ctx,
               conn: resolved.conn,
               targetUrl,
-              sourceCatalog: diffOutcome.capture.sourceCatalog,
-              pgDeltaStderr: diffOutcome.capture.stderr,
+              sourceCatalog: diffOutcome.debug.sourceSnapshot,
+              pgDeltaStderr: diffOutcome.debug.stderr,
               id: legacyFormatDebugId(yield* Clock.currentTimeMillis),
               fs,
               path,
@@ -730,6 +753,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 }),
               );
             }
+          }
+          if (
+            pgDeltaEngine.implementation === "next" &&
+            diffOutcome.debug?.directory !== undefined
+          ) {
+            yield* output.raw(legacyDebugBundleMessage(diffOutcome.debug.directory), "stderr");
+            return yield* Effect.fail(
+              new LegacyDbPullInSyncError({
+                message: `No schema changes found (debug bundle: ${diffOutcome.debug.directory})`,
+              }),
+            );
           }
           return yield* Effect.fail(
             new LegacyDbPullInSyncError({ message: "No schema changes found" }),
@@ -756,7 +790,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             workdir: cliConfig.workdir,
             baseMillis: nowMillis,
             name,
-            files: planFiles.map((file) => ({ name: file.name, sql: file.sql })),
+            files: planFiles.map((file) => ({
+              name: file.name,
+              suffix: file.suffix,
+              sql: file.sql,
+            })),
           }).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );

@@ -55,6 +55,8 @@
     "@parcel/watcher": "^2.6.0",
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
+    "@supabase/pg-delta": "https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@951daa9d9b333f5c69c38eb664d8a17847c635eb",
+    "@supabase/pg-topo": "https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@951daa9d9b333f5c69c38eb664d8a17847c635eb",
     "@supabase/process-compose": "workspace:*",
     "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",

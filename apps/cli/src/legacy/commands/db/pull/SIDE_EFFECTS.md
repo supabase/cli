@@ -10,7 +10,7 @@ structured-dump sub-branch (Go's `format.WriteStructuredSchemas`) stays
 delegated to the bundled Go binary rather than retired or ported (CLI-1957): it
 needs a TS PostgreSQL DDL AST parser with no equivalent in this repo.
 `--declarative` covers the same per-object-files outcome for schema objects via
-pg-delta catalog introspection, though its output tree and cluster-object
+pg-delta managed-state extraction, though its output tree and cluster-object
 coverage differ (see Files Written below), so this mode is on a deprecation
 path — the same DECISION CLI-1960 makes for `db diff --use-pg-schema` (keep
 delegating, flag for removal), not the same output: Go's own `--use-pg-schema`
@@ -24,14 +24,36 @@ Go checks `usePgDelta` before `EXPERIMENTAL`, so that combination never
 delegates and just runs the declarative export normally (see the
 Notes/Delegation section below).
 
+## Pg-delta implementation and compatibility
+
+- Pg-delta diff and declarative export use the in-process engine bundled into the
+  CLI binary by default. Pg-topo is bundled with it and the version is fixed at
+  CLI build time; the command never downloads it or falls back automatically.
+- `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy edge-runtime path.
+  `PGDELTA_NPM_REGISTRY`, `supabase/.temp/pgdelta-version`, and legacy catalogs
+  directly below `supabase/.temp/pgdelta/` apply only to that opt-out.
+- With `PGDELTA_DEBUG`, default-engine diagnostic data is stored under
+  `supabase/.temp/pgdelta/v2/debug/<id>/` as `metadata.json` plus available
+  snapshot, plan, and diagnostics JSON files. These artifacts are never catalog
+  cache inputs.
+- The default engine refuses migration or declarative output when extraction
+  reports an error or a strict coverage gap (`unmodeled_kind` or
+  `unresolved_security_label`). The refusal names the diagnostic, and debug
+  artifacts are saved first when capture is enabled.
+- New-engine SQL bytes and transaction-split filenames may differ. Successful
+  execution and convergence on a subsequent pull/diff are the contract.
+
 ## Files Read
 
-| Path                                   | Format     | When                                                |
-| -------------------------------------- | ---------- | --------------------------------------------------- |
-| `<workdir>/supabase/config.toml`       | TOML       | always (db port/password, `[experimental.pgdelta]`) |
-| `<workdir>/supabase/migrations/*.sql`  | SQL        | history reconciliation + shadow provisioning        |
-| `~/.supabase/access-token`             | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`       |
-| `<workdir>/supabase/.temp/project-ref` | plain text | linked ref resolution                               |
+| Path                                            | Format     | When                                                |
+| ----------------------------------------------- | ---------- | --------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                | TOML       | always (db port/password, `[experimental.pgdelta]`) |
+| `<workdir>/supabase/migrations/*.sql`           | SQL        | history reconciliation + shadow provisioning        |
+| `~/.supabase/access-token`                      | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`       |
+| `<workdir>/supabase/.temp/project-ref`          | plain text | linked ref resolution                               |
+| `<workdir>/supabase/.temp/pgdelta-version`      | plain text | always read for compatibility; affects legacy only  |
+| `<workdir>/supabase/.temp/edge-runtime-version` | plain text | legacy opt-out only: edge-runtime image tag         |
+| `<workdir>/supabase/.temp/pgdelta/*.json`       | JSON       | legacy opt-out only: migrations/baseline catalogs   |
 
 ## Files Written
 
@@ -39,13 +61,17 @@ Notes/Delegation section below).
 | ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`      | SQL    | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed)                                                                             |
 | `<workdir>/supabase/database/**`                                 | SQL    | `--declarative`                                                                                                                                        |
+| `<workdir>/supabase/database/.pgdelta-export.json`               | JSON   | default-engine `--declarative` export metadata                                                                                                         |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                | JSON   | legacy opt-out only: catalog snapshots                                                                                                                 |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`         | PEM    | legacy opt-out only: Supabase TLS target                                                                                                               |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`          | JSON   | default pg-delta engine with `PGDELTA_DEBUG`                                                                                                           |
 | `<workdir>/supabase/schemas/**`, `<workdir>/supabase/cluster/**` | SQL    | `--experimental` structured dump (delegated to Go; both dirs are `RemoveAll`'d then rewritten by `format.WriteStructuredSchemas`, not just written to) |
 | `~/.supabase/<workdir-hash>/linked-project.json`                 | JSON   | linked (post-run cache)                                                                                                                                |
 | `~/.supabase/telemetry.json`                                     | JSON   | every invocation (post-run)                                                                                                                            |
 
 ## Docker
 
-- Edge-runtime container (pg-delta export / pg-delta or migra diff).
+- Edge-runtime container (migra, or pg-delta only under the legacy opt-out).
 - Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam).
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
@@ -69,7 +95,8 @@ Notes/Delegation section below).
 | `SUPABASE_DB_PASSWORD`           | remote DB password (overridden by `-p`)                                          | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA` | force pg-delta diff engine                                                       | no        |
 | `SUPABASE_EXPERIMENTAL`          | selects the deprecated structured-dump branch (still delegates to Go, see below) | no        |
-| `PGDELTA_NPM_REGISTRY`           | scoped npm registry for edge-runtime                                             | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT`     | set to `false` for the legacy edge-runtime engine                                | no        |
+| `PGDELTA_NPM_REGISTRY`           | legacy opt-out only: scoped npm registry for edge-runtime                        | no        |
 
 ## Exit Codes
 

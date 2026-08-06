@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
+  LegacyDnsResolverFlag,
   legacyResolveExperimentalWithProjectEnv,
   legacyResolveYesWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
@@ -18,6 +19,11 @@ import {
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
+import { legacyIsPgDeltaDebugEnabled } from "../../../shared/legacy-pgdelta.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDatabaseEndpoint,
+} from "../../../shared/legacy-pgdelta-engine.service.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
@@ -32,9 +38,9 @@ import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.wr
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import {
   type LegacyLocalConn,
-  legacyLocalUrl,
-  legacyResolveRemoteUrl,
-  legacyResolveSmartTargetUrl,
+  legacyLocalEndpoint,
+  legacyResolveRemoteEndpoint,
+  legacyResolveSmartTargetEndpoint,
 } from "../declarative.smart-target.ts";
 
 export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.declarative.generate")(
@@ -46,6 +52,8 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
+    const dnsResolver = yield* LegacyDnsResolverFlag;
+    const engine = yield* LegacyPgDeltaEngine;
     // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
     // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
     // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
@@ -138,13 +146,15 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         declarativeDir,
         schema: flags.schema,
         noCache: flags.noCache,
+        debug: legacyIsPgDeltaDebugEnabled(),
+        dnsResolver,
         ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),
       };
 
       const hasExplicitTarget =
         Option.isSome(flags.local) || Option.isSome(flags.linked) || Option.isSome(flags.dbUrl);
 
-      let targetUrl: string;
+      let target: LegacyPgDeltaDatabaseEndpoint;
       let overwrite: boolean;
       if (hasExplicitTarget) {
         const seam = yield* LegacyDeclarativeSeam;
@@ -158,9 +168,9 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           if (Option.getOrElse(flags.local, () => false)) {
             yield* seam.ensureLocalDatabaseStarted();
           }
-          targetUrl = legacyLocalUrl(local);
+          target = legacyLocalEndpoint(local, dnsResolver);
         } else {
-          targetUrl = yield* legacyResolveRemoteUrl(flags);
+          target = yield* legacyResolveRemoteEndpoint(flags);
         }
         overwrite = flags.overwrite;
       } else {
@@ -216,7 +226,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
             linkedProjectRef = linkedRef.value;
           }
         }
-        targetUrl = yield* legacyResolveSmartTargetUrl(
+        target = yield* legacyResolveSmartTargetEndpoint(
           flags,
           local,
           hasMigrations,
@@ -229,7 +239,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         overwrite = true;
       }
 
-      const result = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
+      const result = yield* legacyGenerateDeclarativeOutput(run, target);
 
       if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
         // Go's confirmOverwrite goes through Console.PromptYesNo (`internal/db/
@@ -265,7 +275,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // merged config and targets the same dir the handler wrote to (also computed from
       // the merged `toml`). Go warms against the in-process merged config identically
       // (`declarative.go:138-154`), so this always runs when `!--no-cache`.
-      if (!flags.noCache) {
+      if (!flags.noCache && engine.implementation === "legacy") {
         yield* (yield* LegacyDeclarativeSeam).exportCatalog({
           mode: "declarative",
           noCache: flags.noCache,

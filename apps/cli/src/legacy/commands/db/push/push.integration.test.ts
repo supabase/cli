@@ -357,12 +357,25 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("does not start edge-runtime for the obsolete catalog warmup under default next", () => {
+    const { layer, edgeRunCalls } = setup(tmp.current, {
+      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(edgeRunCalls).toHaveLength(0);
+      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+    });
+  });
+
   it.live("caches the migrations catalog when project .env enables pg-delta", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: {
         ...migrationFile("20240101000000"),
-        "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n",
+        "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\nSUPABASE_USE_PG_DELTA_NEXT=false\n",
       },
       confirm: [true],
       catalogStdout: '{"snapshot":"ok"}',
@@ -382,7 +395,10 @@ describe("legacy db push", () => {
   it.live("caches the migrations catalog after a successful push when pg-delta is enabled", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {
       toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-      files: migrationFile("20240101000000"),
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+      },
       confirm: [true],
       catalogStdout: '{"snapshot":"ok"}',
     });
@@ -404,7 +420,10 @@ describe("legacy db push", () => {
     () => {
       const { layer, out, edgeRunCalls } = setup(tmp.current, {
         toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        files: migrationFile("20240101000000"),
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+        },
         confirm: [true],
         catalogStdout: '{"snapshot":"ok"}',
         noProjectId: true,
@@ -426,7 +445,10 @@ describe("legacy db push", () => {
     () => {
       const { layer, out, edgeRunCalls } = setup(tmp.current, {
         toml: "[experimental.pgdelta]\nenabled = true\n",
-        files: migrationFile("20240101000000"),
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+        },
         confirm: [true],
         catalogStdout: '{"snapshot":"ok"}',
         noProjectId: true,
@@ -457,7 +479,10 @@ describe("legacy db push", () => {
         args: ["db", "push", "--linked"],
         isLocal: false,
         projectRef: LEGACY_VALID_REF,
-        files: migrationFile("20240101000000"),
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+        },
         confirm: [true],
         catalogStdout: '{"snapshot":"ok"}',
         noProjectId: true,
@@ -478,7 +503,10 @@ describe("legacy db push", () => {
   it.live("sanitizes an invalid config.toml project_id before naming the pg-delta volume", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {
       toml: 'project_id = "my app"\n[experimental.pgdelta]\nenabled = true\n',
-      files: migrationFile("20240101000000"),
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+      },
       confirm: [true],
       catalogStdout: '{"snapshot":"ok"}',
       noProjectId: true,
@@ -498,7 +526,10 @@ describe("legacy db push", () => {
   it.live("warns without failing the push when the catalog export fails", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-      files: migrationFile("20240101000000"),
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+      },
       confirm: [true],
       catalogExportFailWith: "edge-runtime script produced no output",
     });
@@ -521,7 +552,8 @@ describe("legacy db push", () => {
         toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
         files: {
           ...migrationFile("20240101000000"),
-          "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+          "supabase/.env":
+            "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\nSUPABASE_USE_PG_DELTA_NEXT=false\n",
         },
         confirm: [true],
         catalogStdout: '{"snapshot":"ok"}',

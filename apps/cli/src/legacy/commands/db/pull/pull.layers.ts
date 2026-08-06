@@ -13,11 +13,15 @@ import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-p
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyDeclarativeSeamLayer } from "../shared/legacy-pgdelta.seam.layer.ts";
+import { legacyPgDeltaEngineLayer } from "../shared/legacy-pgdelta-engine.layer.ts";
+import { legacyPgDeltaNextAdapterLayer } from "../shared/legacy-pgdelta-next-adapter.layer.ts";
+import { legacyPgDeltaNextShadowLayer } from "../shared/legacy-pgdelta-next-shadow.layer.ts";
 
 /**
  * Runtime layer for `supabase db pull`. Same composition as `db diff`: the
- * db-config resolver, the native pg-delta / migra stack (edge-runtime, SSL probe,
- * the Go shadow seam), `LegacyDbConnection` (remote connect + `schema_migrations`
+ * db-config resolver, both pg-delta implementations, migra, the SSL probe, and
+ * the Go shadow seam. The default pg-delta runs in-process; edge-runtime remains
+ * for migra and the explicit legacy opt-out. `LegacyDbConnection` (remote connect + `schema_migrations`
  * reconciliation / history update), and `LegacyDockerRun` for the migra fallback.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -35,6 +39,15 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
 );
 
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
+const nextShadow = legacyPgDeltaNextShadowLayer.pipe(Layer.provide(seam));
+const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
+  Layer.provide(legacyPgDeltaNextAdapterLayer),
+  Layer.provide(nextShadow),
+  Layer.provide(edgeRuntime),
+  Layer.provide(legacyPgDeltaSslProbeLayer),
+  Layer.provide(seam),
+  Layer.provide(legacyDebugLoggerLayer),
+);
 
 export const legacyDbPullRuntimeLayer = Layer.mergeAll(
   dbConfig,
@@ -43,6 +56,7 @@ export const legacyDbPullRuntimeLayer = Layer.mergeAll(
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,
+  pgDeltaEngine,
   cliConfig,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,

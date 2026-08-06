@@ -37,6 +37,8 @@ blockExoticSubdeps: true
 
 overrides:
   "@effect/platform-node-shared": "4.0.0-beta.97"
+  # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
+  "@launchql/protobufjs>@types/node": "24.10.4"
 
 minimumReleaseAge: 10200
 

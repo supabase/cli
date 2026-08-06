@@ -6,7 +6,10 @@ import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyReadDbToml,
+  legacyResolveDeclarativeDir,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
@@ -26,8 +29,23 @@ import {
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDatabaseEndpoint,
+  type LegacyPgDeltaEndpoint,
+  type LegacyPgDeltaExportManifest,
+  type LegacyPgDeltaSqlFile,
+} from "../shared/legacy-pgdelta-engine.service.ts";
+import {
+  LegacyLoadPgDeltaSqlFiles,
+  LegacyLoadPgDeltaSqlPaths,
+  LegacyReadPgDeltaExportManifest,
+} from "../shared/legacy-pgdelta-files.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
-import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../shared/legacy-pgdelta.ts";
+import {
+  legacyIsPgDeltaDebugEnabled,
+  type LegacyPgDeltaContext,
+} from "../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyClassifyExplicitRef, legacyUnknownTargetMessage } from "./diff.explicit.ts";
@@ -85,6 +103,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const seam = yield* LegacyDeclarativeSeam;
+  const pgDelta = yield* LegacyPgDeltaEngine;
   const proxy = yield* LegacyGoProxy;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
@@ -193,17 +212,24 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // runs `LoadConfig(ref)` (`explicit.go:78-86`), re-merging the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string) =>
+      const resolveRef = (ref: string): Effect.Effect<LegacyPgDeltaEndpoint, unknown> =>
         Effect.gen(function* () {
           switch (legacyClassifyExplicitRef(ref)) {
-            case "local":
-              return legacyToPostgresURL({
+            case "local": {
+              const connection = {
                 host: legacyGetHostname(),
                 port: cfg.port,
                 user: "postgres",
                 password: cfg.password,
                 database: "postgres",
-              });
+              };
+              return {
+                kind: "database",
+                ref: legacyToPostgresURL(connection),
+                connection,
+                connectOptions: { isLocal: true, dnsResolver },
+              } satisfies LegacyPgDeltaDatabaseEndpoint;
+            }
             case "linked": {
               const resolved = yield* resolver.resolve({
                 dbUrl: Option.none(),
@@ -217,39 +243,49 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 mergedLinkedRef = ref2;
                 cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref2);
               }
-              return legacyToPostgresURL(resolved.conn);
+              return {
+                kind: "database",
+                ref: legacyToPostgresURL(resolved.conn),
+                connection: resolved.conn,
+                connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+              } satisfies LegacyPgDeltaDatabaseEndpoint;
             }
             case "migrations":
-              return yield* seam.exportCatalog({
-                mode: "migrations",
-                noCache: false,
-                // Pass the linked ref only if one resolved earlier in the cascade,
-                // so the `__catalog` child merges the same remote override Go's
-                // in-process migrations catalog sees (`explicit.go:88-126`). Absent
-                // otherwise → base config, matching Go's resolution order.
+              return {
+                kind: "migrations",
+                // Preserve resolution order: only refs resolved before this endpoint
+                // influence the migrations shadow/catalog.
                 ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
-              });
+              } satisfies LegacyPgDeltaEndpoint;
             case "url":
-              return ref;
+              return {
+                kind: "database",
+                ref,
+                // The next engine parses arbitrary explicit URLs itself. They are
+                // remote by default, matching Go's TLS-safe connection path.
+                connectOptions: { isLocal: false, dnsResolver },
+              } satisfies LegacyPgDeltaDatabaseEndpoint;
             default:
               return yield* Effect.fail(
                 new LegacyDbDiffUnknownTargetError({ message: legacyUnknownTargetMessage(ref) }),
               );
           }
         });
-      const sourceRef = yield* resolveRef(from);
-      const targetRef = yield* resolveRef(to);
+      const source = yield* resolveRef(from);
+      const desired = yield* resolveRef(to);
       const explicitCtx: LegacyPgDeltaContext = {
         projectId: Option.getOrElse(cliConfig.projectId, () => ""),
         cwd: cliConfig.workdir,
         npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
         denoVersion: cfg.denoVersion,
       };
-      const result = yield* legacyDiffPgDelta(explicitCtx, {
-        sourceRef,
-        targetRef,
+      const result = yield* pgDelta.diffExplicit({
+        context: explicitCtx,
+        source,
+        desired,
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
+        debug: legacyIsPgDeltaDebugEnabled(),
       });
       // Explicit-mode output: `--output` file (Go's `writeOutput`) or stdout
       // (Go's `fmt.Print`, no trailing newline — pg-delta ends each statement `;\n`).
@@ -378,47 +414,93 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     });
 
     yield* output.raw("Creating shadow database...\n", "stderr");
-    const shadow = yield* seam.provisionShadow({
-      mode: "diff",
-      targetLocal: resolved.isLocal,
-      usePgDelta: useDelta,
-      schema: flags.schema,
-      // Linked path only: the shadow merges the same `[remotes.<ref>]` override
-      // the engine/format read above (Go builds the shadow from the remote-merged
-      // config). Default `db diff` is local, which never merges a remote block.
-      projectRef: connType === "linked" ? linkedRef : undefined,
-    });
-
-    const diffResult = yield* Effect.gen(function* () {
-      const target = shadow.targetUrlOverride ?? targetUrl;
-      yield* output.raw(
-        flags.schema.length > 0
-          ? `Diffing schemas: ${flags.schema.join(",")}\n`
-          : "Diffing schemas...\n",
-        "stderr",
-      );
-      if (useDelta) {
-        const result = yield* legacyDiffPgDelta(ctx, {
-          sourceRef: shadow.sourceUrl,
-          targetRef: target,
-          schema: flags.schema,
-          formatOptions,
+    const diffingMessage =
+      flags.schema.length > 0
+        ? `Diffing schemas: ${flags.schema.join(",")}\n`
+        : "Diffing schemas...\n";
+    const diffResult = useDelta
+      ? yield* Effect.gen(function* () {
+          // The selected strategy owns pg-delta shadow/pool lifecycles. This message
+          // precedes the call because the high-level boundary intentionally exposes
+          // no partially-provisioned resource to the handler.
+          yield* output.raw(diffingMessage, "stderr");
+          let declarativeFiles: ReadonlyArray<LegacyPgDeltaSqlFile> | undefined;
+          let declarativeManifest: LegacyPgDeltaExportManifest | undefined;
+          if (pgDelta.implementation === "next" && resolved.isLocal) {
+            if (cfg.migrationSchemaPaths !== undefined && cfg.migrationSchemaPaths.length > 0) {
+              declarativeFiles = yield* LegacyLoadPgDeltaSqlPaths(
+                fs,
+                path,
+                cliConfig.workdir,
+                cfg.migrationSchemaPaths,
+              );
+            } else {
+              const declarativeDirSetting = legacyResolveDeclarativeDir(path, cfg.pgDelta);
+              const declarativeDir = path.isAbsolute(declarativeDirSetting)
+                ? declarativeDirSetting
+                : path.join(cliConfig.workdir, declarativeDirSetting);
+              const hasDeclarativeDir = cfg.pgDelta.enabled
+                ? yield* fs.exists(declarativeDir).pipe(Effect.orElseSucceed(() => false))
+                : false;
+              if (hasDeclarativeDir) {
+                const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDir);
+                if (loaded.length > 0) {
+                  declarativeFiles = loaded;
+                  declarativeManifest = yield* LegacyReadPgDeltaExportManifest(
+                    fs,
+                    path,
+                    declarativeDir,
+                  );
+                }
+              } else {
+                const schemasDir = path.join(cliConfig.workdir, "supabase", "schemas");
+                const hasSchemasDir = yield* fs
+                  .exists(schemasDir)
+                  .pipe(Effect.orElseSucceed(() => false));
+                if (hasSchemasDir) {
+                  const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, schemasDir);
+                  if (loaded.length > 0) declarativeFiles = loaded;
+                }
+              }
+            }
+          }
+          const result = yield* pgDelta.diffDatabase({
+            context: ctx,
+            target: {
+              kind: "database",
+              ref: targetUrl,
+              connection: resolved.conn,
+              connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+            },
+            targetLocal: resolved.isLocal,
+            schema: flags.schema,
+            formatOptions,
+            ...(connType === "linked" && linkedRef !== undefined ? { projectRef: linkedRef } : {}),
+            ...(declarativeFiles !== undefined ? { declarativeFiles } : {}),
+            ...(declarativeManifest !== undefined ? { declarativeManifest } : {}),
+            debug: legacyIsPgDeltaDebugEnabled(),
+          });
+          return { sql: result.sql, files: result.files };
+        })
+      : yield* Effect.gen(function* () {
+          const shadow = yield* seam.provisionShadow({
+            mode: "diff",
+            targetLocal: resolved.isLocal,
+            usePgDelta: false,
+            schema: flags.schema,
+            ...(connType === "linked" && linkedRef !== undefined ? { projectRef: linkedRef } : {}),
+          });
+          return yield* Effect.gen(function* () {
+            yield* output.raw(diffingMessage, "stderr");
+            const sql = yield* legacyDiffMigra(ctx, {
+              source: shadow.sourceUrl,
+              target: shadow.targetUrlOverride ?? targetUrl,
+              schema: flags.schema,
+              connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+            });
+            return { sql, files: undefined };
+          }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
         });
-        // Keep the per-unit plan files so a multi-unit plan can be written as one
-        // migration file each (Go's `DatabaseDiff.Files`); `sql` stays the flattened
-        // join for stdout review + machine payloads.
-        return { sql: result.sql, files: result.files };
-      }
-      const sql = yield* legacyDiffMigra(ctx, {
-        source: shadow.sourceUrl,
-        target,
-        schema: flags.schema,
-        connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-      });
-      // The migra engine has no execution-aware plan units, so it always writes a
-      // single migration file (Go's `SaveDiff` single-file path).
-      return { sql, files: undefined };
-    }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
     const out = diffResult.sql;
 
     // Detect the branch from the resolved workdir, not the caller's CWD: Go
@@ -458,7 +540,13 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           workdir: cliConfig.workdir,
           baseMillis: yield* Clock.currentTimeMillis,
           name: fileName,
-          files: planFiles.map((file) => ({ name: file.name, sql: file.sql })),
+          files: planFiles.map((file) => ({
+            name:
+              file.suffix !== undefined && file.suffix !== null
+                ? file.suffix.replace(/^_/u, "")
+                : file.name,
+            sql: file.sql,
+          })),
         }).pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
         for (const unit of writtenUnits) writtenFiles.push(unit.path);
       } else {

@@ -28,6 +28,11 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDatabaseDiffInput,
+  type LegacyPgDeltaExplicitDiffInput,
+} from "../shared/legacy-pgdelta-engine.service.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyDbDiff } from "./diff.handler.ts";
@@ -37,9 +42,11 @@ interface SetupOpts {
   readonly isLocal?: boolean;
   readonly linkedRef?: string;
   readonly diffSql?: string;
-  // When set, the pg-delta edge mock emits a multi-unit plan envelope (one file
-  // per entry) instead of the single-unit wrap of `diffSql`.
+  // When set, the pg-delta strategy mock returns one rendered file per entry.
   readonly diffFiles?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
+  // Exact suffixes returned by the next renderer, parallel to `diffFiles`.
+  readonly diffSuffixes?: ReadonlyArray<string | null>;
+  readonly pgDeltaImplementation?: "legacy" | "next";
   readonly targetOverride?: string;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
@@ -60,14 +67,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     projectRef?: string;
   }> = [];
   const removedContainers: string[] = [];
-  const exportCalls: string[] = [];
-  const exportCatalogCalls: Array<{ mode: string; projectRef?: string }> = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
-    exportCatalog: ({ mode, projectRef }) => {
-      exportCalls.push(mode);
-      exportCatalogCalls.push({ mode, projectRef });
-      return Effect.succeed("supabase/.temp/pgdelta/migrations.json");
-    },
+    exportCatalog: () => Effect.succeed("supabase/.temp/pgdelta/migrations.json"),
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
@@ -85,6 +86,51 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  const explicitDiffCalls: LegacyPgDeltaExplicitDiffInput[] = [];
+  const databaseDiffCalls: LegacyPgDeltaDatabaseDiffInput[] = [];
+  const pgDeltaResult = () => {
+    const sql = opts.diffSql ?? "";
+    const files =
+      opts.diffFiles !== undefined
+        ? opts.diffFiles.map((file, index) => ({
+            sequence: index + 1,
+            name: file.name,
+            ...(opts.diffSuffixes?.[index] !== undefined
+              ? { suffix: opts.diffSuffixes[index] }
+              : {}),
+            sql: file.sql,
+            transactional: true,
+          }))
+        : sql.length > 0
+          ? [{ sequence: 1, name: "schema_changes", sql, transactional: true }]
+          : [];
+    return {
+      changes: files.length > 0,
+      sql: opts.diffFiles !== undefined ? files.map((file) => file.sql).join("\n\n") : sql,
+      files,
+    };
+  };
+  const pgDeltaEngine = Layer.succeed(
+    LegacyPgDeltaEngine,
+    LegacyPgDeltaEngine.of({
+      // The handler must route through this strategy even when the selected
+      // implementation is legacy; the strategy owns edge runtime and shadows.
+      implementation: opts.pgDeltaImplementation ?? "legacy",
+      diffExplicit: (input) =>
+        Effect.sync(() => {
+          explicitDiffCalls.push(input);
+          return pgDeltaResult();
+        }),
+      diffDatabase: (input) =>
+        Effect.sync(() => {
+          databaseDiffCalls.push(input);
+          return pgDeltaResult();
+        }),
+      exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema unused"),
+      planDeclarativeSchema: () => Effect.die("planDeclarativeSchema unused"),
+    }),
+  );
+
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
@@ -94,28 +140,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           new LegacyEdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
         );
       }
-      const diffSql = opts.diffSql ?? "";
-      // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
-      // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
-      // single-unit envelope so `legacyDiffPgDelta` parses it. The migra script
-      // returns raw SQL unchanged.
-      const isPgDelta = runOpts.script.includes("renderPlanFiles");
-      const planFiles =
-        opts.diffFiles !== undefined
-          ? opts.diffFiles.map((file, i) => ({
-              order: i + 1,
-              name: file.name,
-              transactionMode: "transactional",
-              sql: file.sql,
-            }))
-          : diffSql.length > 0
-            ? [{ order: 1, name: "schema_changes", transactionMode: "transactional", sql: diffSql }]
-            : [];
-      const stdout =
-        isPgDelta && planFiles.length > 0
-          ? JSON.stringify({ version: 1, files: planFiles })
-          : diffSql;
-      return Effect.succeed({ stdout, stderr: "" });
+      return Effect.succeed({ stdout: opts.diffSql ?? "", stderr: "" });
     },
   });
 
@@ -174,6 +199,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry.layer,
     cache.layer,
     seam,
+    pgDeltaEngine,
     edge,
     docker,
     dbConnection,
@@ -206,8 +232,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     provisionCalls,
     removedContainers,
-    exportCalls,
-    exportCatalogCalls,
+    explicitDiffCalls,
+    databaseDiffCalls,
     edgeCalls,
     resolverCalls,
     proxyCalls,
@@ -267,9 +293,104 @@ describe("legacy db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), schema: ["public"] }));
-      expect(s.provisionCalls).toEqual([{ mode: "diff", targetLocal: true, usePgDelta: true }]);
+      expect(s.provisionCalls).toEqual([]);
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(s.databaseDiffCalls[0]).toMatchObject({
+        targetLocal: true,
+        schema: ["public"],
+        target: {
+          kind: "database",
+          connection: {
+            host: "127.0.0.1",
+            port: 54322,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          },
+          connectOptions: { isLocal: true, dnsResolver: "native" },
+        },
+      });
+      // Even the legacy implementation is hidden behind LegacyPgDeltaEngine;
+      // the handler no longer invokes edge runtime itself.
+      expect(s.edgeCalls).toEqual([]);
       expect(stderr(s.out)).toContain("Diffing schemas: public");
       expect(stdout(s.out)).toBe("create table p ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next local diff gives configured schema_paths precedence", () => {
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db.migrations]",
+        'schema_paths = ["configured.sql"]',
+        "",
+        "[experimental.pgdelta]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
+    writeFileSync(
+      join(tmp.current, "supabase", "database", "ignored.sql"),
+      "create table ignored ();\n",
+    );
+    const s = setup(tmp.current, {
+      pgDeltaImplementation: "next",
+      diffSql: "create table result ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      expect(s.databaseDiffCalls[0]?.declarativeFiles).toEqual([
+        { name: "supabase/configured.sql", sql: "create table configured ();\n" },
+      ]);
+      expect(s.databaseDiffCalls[0]?.declarativeManifest).toBeUndefined();
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next local diff loads the enabled declarative directory and manifest", () => {
+    const declarativeDir = join(tmp.current, "supabase", "database");
+    mkdirSync(declarativeDir, { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      ["[experimental.pgdelta]", "enabled = true", ""].join("\n"),
+    );
+    writeFileSync(join(declarativeDir, "public.sql"), "create table public.t ();\n");
+    writeFileSync(
+      join(declarativeDir, ".pgdelta-export.json"),
+      JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
+    );
+    const s = setup(tmp.current, {
+      pgDeltaImplementation: "next",
+      diffSql: "create table result ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      expect(s.databaseDiffCalls[0]?.declarativeFiles).toEqual([
+        { name: "public.sql", sql: "create table public.t ();\n" },
+      ]);
+      expect(s.databaseDiffCalls[0]?.declarativeManifest).toEqual({
+        redactSecrets: true,
+        scope: "database",
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next local diff falls back to supabase/schemas", () => {
+    const schemasDir = join(tmp.current, "supabase", "schemas");
+    mkdirSync(schemasDir, { recursive: true });
+    writeFileSync(join(schemasDir, "fallback.sql"), "create table fallback ();\n");
+    const s = setup(tmp.current, {
+      pgDeltaImplementation: "next",
+      diffSql: "create table result ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      expect(s.databaseDiffCalls[0]?.declarativeFiles).toEqual([
+        { name: "fallback.sql", sql: "create table fallback ();\n" },
+      ]);
+      expect(s.databaseDiffCalls[0]?.declarativeManifest).toBeUndefined();
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -301,10 +422,9 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ linked: Option.some(true) }));
-      expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
-      // The shadow is provisioned with the resolved ref so the `db __shadow` child
-      // merges the same `[remotes.<ref>]` override into the shadow baseline.
-      expect(s.provisionCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
+      expect(s.provisionCalls).toEqual([]);
+      expect(s.databaseDiffCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
+      expect(s.databaseDiffCalls[0]?.target.connectOptions.isLocal).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -498,6 +618,24 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("uses exact next-renderer suffixes for multi-file migration names", () => {
+    const s = setup(tmp.current, {
+      diffFiles: [
+        { name: "ignored_legacy_name", sql: "a" },
+        { name: "ignored_legacy_name", sql: "b" },
+      ],
+      diffSuffixes: ["_1", "_2"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
+      const dir = join(tmp.current, "supabase", "migrations");
+      expect(readdirSync(dir).sort()).toEqual([
+        "19700101000000_my_diff_1.sql",
+        "19700101000001_my_diff_2.sql",
+      ]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("creates nested parent directories for a nested single-unit --file name", () => {
     // `db diff -f snapshots/remote` must create the `<ts>_snapshots/` parent dir
     // before writing, mirroring Go's `utils.WriteFile`.
@@ -590,7 +728,51 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ from: Option.some("local"), to: Option.some("linked") }));
       // Explicit mode is pg-delta and never provisions a shadow.
       expect(s.provisionCalls).toEqual([]);
+      expect(s.explicitDiffCalls[0]).toMatchObject({
+        source: {
+          kind: "database",
+          connection: {
+            host: "127.0.0.1",
+            user: "postgres",
+            database: "postgres",
+          },
+          connectOptions: { isLocal: true, dnsResolver: "native" },
+        },
+        desired: {
+          kind: "database",
+          connection: {
+            host: "127.0.0.1",
+            port: 54322,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          },
+          connectOptions: { isLocal: false, dnsResolver: "native" },
+        },
+      });
       expect(stdout(s.out)).toBe("create table e ();\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explicit URL endpoints retain the raw ref and remote connection options", () => {
+    const s = setup(tmp.current, { diffSql: "create table u ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(
+        flags({
+          from: Option.some("postgresql://source.example/postgres"),
+          to: Option.some("postgresql://desired.example/postgres"),
+        }),
+      );
+      expect(s.explicitDiffCalls[0]?.source).toEqual({
+        kind: "database",
+        ref: "postgresql://source.example/postgres",
+        connectOptions: { isLocal: false, dnsResolver: "native" },
+      });
+      expect(s.explicitDiffCalls[0]?.desired).toEqual({
+        kind: "database",
+        ref: "postgresql://desired.example/postgres",
+        connectOptions: { isLocal: false, dnsResolver: "native" },
+      });
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -652,11 +834,12 @@ describe("legacy db diff", () => {
     },
   );
 
-  it.effect("explicit --from migrations resolves a shadow catalog via the seam", () => {
+  it.effect("explicit --from migrations routes the migrations endpoint to the strategy", () => {
     const s = setup(tmp.current, { diffSql: "create table m ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
-      expect(s.exportCalls).toEqual(["migrations"]);
+      expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
+      expect(s.edgeCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -672,8 +855,10 @@ describe("legacy db diff", () => {
       });
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
-        const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
-        expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
+        expect(s.explicitDiffCalls[0]?.desired).toEqual({
+          kind: "migrations",
+          projectRef: "abcdefghijklmnopqrst",
+        });
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -688,8 +873,7 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
-      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
-      expect(migrations?.projectRef).toBeUndefined();
+      expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -711,8 +895,10 @@ describe("legacy db diff", () => {
           linked: Option.some(true),
         }),
       );
-      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
-      expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
+      expect(s.explicitDiffCalls[0]?.desired).toEqual({
+        kind: "migrations",
+        projectRef: "abcdefghijklmnopqrst",
+      });
     }).pipe(Effect.provide(s.layer));
   });
 
