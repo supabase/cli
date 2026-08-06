@@ -31,7 +31,17 @@ const POSTGRES_STATE = new StackServiceState({
   error: null,
 });
 
-const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE];
+const HEALTH_FAILED_STATE = new StackServiceState({
+  name: "edge-runtime",
+  status: "Failed",
+  pid: null,
+  exitCode: null,
+  restartCount: 2,
+  startedAt: Date.now(),
+  error: "Health check failed and restart budget was exhausted",
+});
+
+const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE, HEALTH_FAILED_STATE];
 
 const MOCK_LOGS: ReadonlyArray<LogEntry> = [
   { timestamp: 1000, service: "postgres", stream: "stdout", line: "starting" },
@@ -190,9 +200,16 @@ describe("DaemonServer", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { info: StackInfo; services: StackServiceState[] };
     expect(body.info).toEqual(MOCK_INFO);
-    expect(body.services).toHaveLength(1);
+    expect(body.services).toHaveLength(2);
     expect(body.services.at(0)?.name).toBe("postgres");
     expect(body.services.at(0)?.status).toBe("Running");
+    expect(body.services.at(1)).toMatchObject({
+      name: "edge-runtime",
+      status: "Failed",
+      pid: null,
+      exitCode: null,
+      error: "Health check failed and restart budget was exhausted",
+    });
   });
 
   // -------------------------------------------------------------------------

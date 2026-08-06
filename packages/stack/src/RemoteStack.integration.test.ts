@@ -44,7 +44,21 @@ const AUTH_STATE = new StackServiceState({
   error: null,
 });
 
-const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE, AUTH_STATE];
+const HEALTH_FAILED_STATE = new StackServiceState({
+  name: "edge-runtime",
+  status: "Failed",
+  pid: null,
+  exitCode: null,
+  restartCount: 2,
+  startedAt: Date.now(),
+  error: "Health check failed and restart budget was exhausted",
+});
+
+const MOCK_STATES: ReadonlyArray<StackServiceState> = [
+  POSTGRES_STATE,
+  AUTH_STATE,
+  HEALTH_FAILED_STATE,
+];
 
 const MOCK_LOGS: ReadonlyArray<LogEntry> = [
   { timestamp: 1000, service: "postgres", stream: "stdout", line: "starting" },
@@ -233,9 +247,16 @@ describe("RemoteStack integration", () => {
     const states = await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) => stack.getAllStates()),
     );
-    expect(states).toHaveLength(2);
+    expect(states).toHaveLength(3);
     expect(states.at(0)?.name).toBe("postgres");
     expect(states.at(1)?.name).toBe("auth");
+    expect(states.at(2)).toMatchObject({
+      name: "edge-runtime",
+      status: "Failed",
+      pid: null,
+      exitCode: null,
+      error: "Health check failed and restart budget was exhausted",
+    });
   });
 
   test("getState returns a single service state", async () => {

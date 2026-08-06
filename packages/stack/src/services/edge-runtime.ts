@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
 import bootstrapSource from "./edge-runtime-main.ts" with { type: "text" };
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface EdgeRuntimeOptions {
   readonly runtimeRoot: string;
@@ -61,9 +62,7 @@ const edgeRuntimeArgs = (
 
 const edgeRuntimeHealthCheck = (port: number): ServiceDef["healthCheck"] =>
   hostHttpHealthCheck(port, "/_internal/health", {
-    initialDelaySeconds: 1,
-    periodSeconds: 0.5,
-    failureThreshold: 30,
+    ...stackHealthBudgets.edgeRuntime,
   });
 
 export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): ServiceDef => {

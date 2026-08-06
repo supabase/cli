@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerAnalyticsOptions {
   readonly image: string;
@@ -34,9 +35,7 @@ const analyticsHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/health",
     scheme: "http",
   },
-  initialDelaySeconds: 10,
-  periodSeconds: 1,
-  failureThreshold: 60,
+  ...stackHealthBudgets.analytics,
 });
 
 export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): ServiceDef => {
