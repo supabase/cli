@@ -2,7 +2,7 @@ import { Effect, type FileSystem, type Path } from "effect";
 
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
-import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
+import type { LegacyDeclarativeOutput } from "../../../shared/legacy-pgdelta.ts";
 
 /**
  * Go's `declarative.Generate` / `pull.go`'s written-to line, printed by all three

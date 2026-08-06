@@ -50,6 +50,26 @@ export function legacyDescribeContainerCliFailure(cause: unknown): string {
   return String(cause);
 }
 
+/**
+ * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect` — Docker's
+ * "No such container"/"No such object" (either casing depending on daemon version/CLI path) or
+ * Podman's own differently worded "no container with name or ID ... found: no such container" —
+ * the subprocess equivalent of Go's `errdefs.IsNotFound` for a CLI-shelled-out (rather than
+ * Engine-API) caller. Case-insensitive and covers all three shapes so a lowercase Podman message
+ * is tolerated exactly like an uppercase Docker one — the same distinction
+ * `legacy-docker-image-resolve.ts`'s `isImageNotFoundMessage` draws for `image inspect`.
+ * Hoisted here (rather than left as separate per-caller copies) so every container-not-found
+ * check across the container-lifecycle/start/health-check domain shares one predicate instead of
+ * re-deriving the same match with different Podman coverage.
+ */
+export function legacyIsContainerNotFoundMessage(message: string): boolean {
+  return (
+    /no such container/iu.test(message) ||
+    /no such object/iu.test(message) ||
+    /no container with name or id/iu.test(message)
+  );
+}
+
 /** Which of the two supported container CLIs actually answered a spawn. */
 export type LegacyContainerRuntime = "docker" | "podman";
 

@@ -15,7 +15,7 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 /**
  * Runtime layer for `supabase db dump`.
  *
- * Mirrors `test db`'s composition (`commands/test/test.layers.ts`): the
+ * Mirrors `test db`'s composition (`legacy/shared/legacy-test-db.layers.ts`): the
  * Management API stack is built lazily inside the resolver's `--linked` branch,
  * so this layer only exposes the always-needed, auth-free services. The dump
  * handler reaches the database through a pg_dump container (`LegacyDockerRun`),

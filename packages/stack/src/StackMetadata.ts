@@ -1,7 +1,8 @@
 import { Schema } from "effect";
 import { CleanupTargetsSchema, type CleanupTargets } from "./CleanupTargets.ts";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { serviceMetadata } from "./ServiceCatalog.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
 import { SERVICE_NAMES, type ServiceName, type VersionManifest } from "./versions.ts";
 
 const VersionManifestSchema = Schema.Struct({
@@ -76,15 +77,10 @@ export const STACK_METADATA_SCHEMA_VERSION = 1;
 export function runningServiceVersionsForConfig(
   config: ResolvedStackConfig,
 ): PartialVersionManifest {
-  const versions: Partial<Record<ServiceName, string>> = {
-    postgres: config.postgres.version,
-  };
+  const versions: Partial<Record<ServiceName, string>> = {};
 
   for (const service of SERVICE_NAMES) {
-    if (service === "postgres") {
-      continue;
-    }
-    const serviceConfig = service === "edge-runtime" ? config.edgeRuntime : config[service];
+    const serviceConfig = config[serviceMetadata(service).configKey];
     if (serviceConfig !== false) {
       versions[service] = serviceConfig.version;
     }

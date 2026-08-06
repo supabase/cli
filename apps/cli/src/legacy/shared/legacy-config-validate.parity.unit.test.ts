@@ -241,6 +241,19 @@ const scenarios: ReadonlyArray<ParityScenario> = [
     overrides: { experimental: { pgdelta: { format_options: "{not json" } } },
     message: "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
   },
+  {
+    name: "experimental.webhooks present without enabled = true",
+    // Both pipelines read webhooks presence from the raw document rather than the always-defaulted
+    // decoded `enabled` (config.go:1846-1848) — L needs the raw `document` (5th param) for this,
+    // matching D's raw smol-toml document. D previously never populated `webhooksPresent`/
+    // `webhooksEnabled` on its `LegacyExperimentalInput` at all, so this branch was D-unreachable
+    // (review: PRRT_kwDOErm0O86WE42i) — now shared like every other scenario in this table.
+    toml: ["[experimental.webhooks]", "enabled = false"],
+    overrides: { experimental: { webhooks: { enabled: false } } },
+    document: { experimental: { webhooks: { enabled: false } } },
+    message:
+      "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
+  },
 ];
 
 // Explicitly SKIPPED (only one caller runs the branch, or the branch isn't exercised the same
@@ -249,11 +262,6 @@ const scenarios: ReadonlyArray<ParityScenario> = [
 // - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
 //   validator (`LegacyConfigValidationInput` has no fields for these at all).
 // - `api.tls`, `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections.
-// - `experimental.webhooks` — L reads webhooks presence from a raw `document` that D's
-//   `legacyReadDbToml` doesn't thread through `legacyValidateResolvedConfig` at all (D has no
-//   `experimental` presence-based input field for this — verified: `legacy-db-config.toml-read.ts`
-//   never sets `experimental.webhooksPresent`/`webhooksEnabled` on its `LegacyExperimentalInput`),
-//   so this branch is D-unreachable and skipped here too.
 describe("legacyValidateResolvedConfig cross-caller parity (D vs L)", () => {
   for (const scenario of scenarios) {
     it.effect(`${scenario.name}: D and L fail with the same message`, () =>

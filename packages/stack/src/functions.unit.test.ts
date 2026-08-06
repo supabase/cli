@@ -5,7 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { resolveConfig } from "./createStack.ts";
+import { resolveConfig } from "./StackConfigResolver.ts";
 import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
 import {
   configureFunctionsRuntime,

@@ -20,7 +20,7 @@ socket HTTP implementations. `createStack.ts` remains platform-agnostic and rece
 
 ```mermaid
 flowchart LR
-    Input["StackConfig"] --> Resolve["resolveConfig"]
+    Input["StackConfig"] --> Resolve["StackConfigResolver"]
     Resolve --> Layer["foregroundLayer"]
     Layer --> Prepare["StackPreparation"]
     Prepare --> Builder["StackBuilder"]
@@ -40,13 +40,21 @@ can use the same lifecycle calls against an in-process stack or a detached daemo
 top-level fields choose runtime mode, startup mode, cache/runtime roots, API keys, JWT secret,
 functions options, and per-service configuration. `false` disables an optional service.
 
-`resolveConfig()`:
+`StackConfigResolver.resolveConfig()`:
 
 1. chooses cache, durable stack, runtime, and project roots;
 2. allocates every required port through one port allocator;
 3. creates development JWTs and opaque publishable/secret keys;
 4. applies per-service defaults and current `DEFAULT_VERSIONS`;
 5. records auto-managed paths for scoped cleanup.
+
+Readiness policy is part of the resolved configuration. The package default is a finite three-minute
+deadline; callers can choose a different finite deadline or explicit infinite waiting. Per-call
+`ReadyOptions` take precedence over the stack policy, while `inherit` delegates to the stack
+policy. The local Implementation applies this resolver to startup, service activation, restart,
+reload, and explicit readiness waits. A finite deadline fails with `StackReadinessError` and runs
+the same scoped cleanup used by disposal. Promise and remote Adapters pass `ReadyOptions` through
+to that Implementation instead of layering a second timeout rule around it.
 
 The current zero-config stack enables PostgreSQL, PostgREST, Auth, and Edge Runtime. Realtime,
 Storage, imgproxy, Mailpit, Postgres Meta, Studio, Analytics, Vector, and Supavisor are enabled only
@@ -65,7 +73,8 @@ disabled by omission because the automatic artifact policy currently classifies 
 
 Preparation is separate from topology construction:
 
-- `ServiceArtifacts.ts` records native release providers and Docker image candidates.
+- `ServiceCatalog.ts` is the exhaustive source for service identity, default version, runtime
+  support, artifact providers, activation policy, and allocated port fields.
 - `BinaryResolver` detects the platform, downloads and verifies archives, restores executable
   permissions, and publishes complete cache entries atomically.
 - `StackPreparation` resolves all enabled public services, emits download/pull progress, and
@@ -76,7 +85,9 @@ Native cache identity includes service, provider, version, and asset name. `.com
 last, so an incomplete download is never treated as reusable. Supabase-owned Docker images are
 tried through ECR, Docker Hub, then GHCR; upstream images use their canonical repository.
 
-`prefetch()` uses the same `StackPreparation` Interface without constructing a lifecycle runtime.
+`ServiceResolution` belongs to this preparation domain. `prefetch()` uses the same
+`StackPreparation` Interface and its binary-to-Docker fallback without constructing a lifecycle
+runtime.
 
 ## Service coverage and topology
 
@@ -110,7 +121,7 @@ Vector without Analytics, and Studio without Postgres Meta.
 
 ## Lifecycle ownership
 
-The current local Implementation is `StackLifecycleCoordinator`. It owns one scoped lifecycle:
+The local Implementation is `LocalStack`. Its scoped layer owns one lifecycle:
 
 - preparation and its single-flight deferred;
 - graph construction and the process-compose runtime;
@@ -120,23 +131,26 @@ The current local Implementation is `StackLifecycleCoordinator`. It owns one sco
 - exact cleanup targets and metadata persistence;
 - disposal of processes, Docker resources, ports, and auto-managed paths.
 
-`Stack.ts` currently provides a thin public Effect Interface over that coordinator. `ApiProxy`
-uses the narrower `StackServiceActivator` Interface so an incoming request can activate a lazy
-backend without gaining unrelated lifecycle operations.
+`Stack.ts` contains only the public Effect Interface and transport schemas. `LocalStack` constructs
+the state once and publishes both `Stack` and the narrower `StackServiceActivator` Interface from
+the same scoped layer. `ApiProxy` therefore activates a lazy backend without gaining unrelated
+lifecycle operations or requiring a second pass-through lifecycle tag.
 
-Before the orchestrator exists, the coordinator publishes synthetic `Pending` and `Downloading`
+Before the orchestrator exists, `LocalStack` publishes synthetic `Pending` and `Downloading`
 states. After construction, it subscribes to raw process-compose state and publishes only public
 projected states. `StackServiceState` adds `Downloading`, `Initializing`, and `Dormant` to the raw
 process statuses.
 
 `start()` prepares artifacts, creates the runtime once, starts the appropriate services, and waits
 for their generic process-compose readiness. `stop()` preserves explicit per-service stop intent;
-`dispose()` additionally closes the scoped runtime and executes cleanup. Current generic readiness
-has no built-in deadline.
+`dispose()` additionally closes the scoped runtime and executes cleanup. Stack readiness policy is
+enforced around generic process-compose waits, which remain intentionally policy-free and
+unbounded. Structural `Equal.equals` comparison suppresses duplicate projected state emissions.
 
 ## Eager and lazy activation
 
-`ServiceActivation.ts` is the declarative startup and companion-ownership policy:
+`ServiceActivation.ts` evaluates the startup and companion-ownership metadata in
+`ServiceCatalog.ts`:
 
 - eager: PostgreSQL, Realtime, Mailpit, Studio, and Pooler;
 - lazy: PostgREST, Auth, Edge Runtime, Storage, imgproxy, Postgres Meta, Analytics, and Vector;
@@ -227,8 +241,9 @@ Detached mode adds:
 - `StateManager`: atomically persists and discovers durable metadata and live state.
 
 The management transport includes health, status, status stream, start/stop, readiness,
-per-service lifecycle, logs/history, and Edge Runtime reload routes. It is local Unix-socket
-transport, not the public Supabase API proxy.
+per-service lifecycle, logs/history, and Edge Runtime reload routes. Readiness waits use validated
+`ReadyOptions` JSON bodies and preserve `StackReadinessError` across the transport. It is local
+Unix-socket transport, not the public Supabase API proxy.
 
 See [detach mode](./detach-mode.md) for paths, process startup, and compiled executable dispatch.
 
@@ -276,5 +291,6 @@ Callers may explicitly supply `projectStateRoot`, in which case durable stacks l
 - Targeted e2e tests own the expensive process/container Seam for full stack startup, parallel
   stacks, daemon lifecycle, and cleanup behavior.
 
-The authoritative current service versions are `DEFAULT_VERSIONS` in `src/versions.ts`; package
+The authoritative current service versions are the `defaultVersion` fields in
+`src/ServiceCatalog.ts`; `DEFAULT_VERSIONS` is derived from that catalog, and package
 documentation should link to that source rather than copy its values.

@@ -18,10 +18,6 @@ export class SpawnError extends Data.TaggedError("SpawnError")<{
   readonly cause: unknown;
 }> {}
 
-export class ShutdownTimeoutError extends Data.TaggedError("ShutdownTimeoutError")<{
-  readonly service: string;
-}> {}
-
 export class ServiceReadyError extends Data.TaggedError("ServiceReadyError")<{
   readonly name: string;
   readonly reason: string;

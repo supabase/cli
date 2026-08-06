@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -171,18 +172,16 @@ function mockConnection(opts: {
 }
 
 /**
- * Stateful mock of the container-bootstrap seam. `running` drives
- * `AssertSupabaseDbIsRunning`; `storageReady` drives the bucket-seed gate. Records
- * the recreate args so tests can assert version / `--no-seed` propagation.
- * `awaitStorageReadyExitCode`, when set, fails `awaitStorageReady` with a
- * `LegacyGoChildExitError` carrying that code — simulating the seam's real
- * `captureStdout` bootstrap-child path exiting non-zero (CLI-1879).
+ * Stateful mock of the container-bootstrap seam. `storageReady` drives the
+ * bucket-seed gate. Records the recreate args so tests can assert version /
+ * `--no-seed` propagation. `awaitStorageReadyExitCode`, when set, fails
+ * `awaitStorageReady` with a `LegacyGoChildExitError` carrying that code —
+ * simulating the seam's real `captureStdout` bootstrap-child path exiting
+ * non-zero (CLI-1879). `AssertSupabaseDbIsRunning` no longer lives on this seam —
+ * see `mockRunningCheckSpawner` below (CLI-1954 hoisted it to
+ * `legacyIsLocalDbRunning`, a native `docker container inspect`).
  */
-function mockBootstrapSeam(opts: {
-  running?: boolean;
-  storageReady?: boolean;
-  awaitStorageReadyExitCode?: number;
-}) {
+function mockBootstrapSeam(opts: { storageReady?: boolean; awaitStorageReadyExitCode?: number }) {
   const recreateCalls: Array<{
     version: string;
     noSeed: boolean;
@@ -190,8 +189,6 @@ function mockBootstrapSeam(opts: {
   }> = [];
   let storageChecked = false;
   const layer = Layer.succeed(LegacyDbBootstrapSeam, {
-    isDbRunning: () => Effect.succeed(opts.running ?? true),
-    startDatabase: () => Effect.void,
     recreateDatabase: (args: {
       version: string;
       noSeed: boolean;
@@ -225,6 +222,51 @@ function mockBootstrapSeam(opts: {
       return storageChecked;
     },
   };
+}
+
+/**
+ * Mock `ChildProcessSpawner` backing `legacyIsLocalDbRunning`'s `docker container
+ * inspect` — the local reset path's only real subprocess call (the recreate /
+ * storage-health primitives stay behind the mocked seam above). `running` (default
+ * `true`, matching the seam-hosted mock's own former default) drives
+ * `AssertSupabaseDbIsRunning`: a healthy inspect when `true`, a "no such container"
+ * failure when `false`.
+ */
+function mockRunningCheckSpawner(opts: { running?: boolean } = {}) {
+  const running = opts.running ?? true;
+  const encoder = new TextEncoder();
+  const layer = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (command._tag !== "StandardCommand") {
+          return yield* Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "spawn failed",
+            }),
+          );
+        }
+        const stderrLines = running ? [] : ["Error: No such container: supabase_db_test"];
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(7000),
+          stdout: Stream.empty,
+          stderr: Stream.fromIterable(stderrLines.map((line) => encoder.encode(`${line}\n`))),
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(running ? 0 : 1)),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    ),
+  );
+  return { layer };
 }
 
 // Dummy HTTP client; the local-reset bucket-seed core only reaches it when storage
@@ -276,10 +318,10 @@ function setup(
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
   const seam = mockBootstrapSeam({
-    running: opts.running,
     storageReady: opts.storageReady,
     awaitStorageReadyExitCode: opts.awaitStorageReadyExitCode,
   });
+  const runningCheck = mockRunningCheckSpawner({ running: opts.running });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
   // The local-reset bucket-seed core statically requires the (lazy) Management-API
@@ -320,6 +362,7 @@ function setup(
     resolver.layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    runningCheck.layer,
     mockRuntimeInfo(),
     // The remote-reset confirmation is answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is

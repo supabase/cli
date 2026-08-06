@@ -9,6 +9,7 @@ const legacyDir = path.join(srcDir, "legacy");
 const sharedDir = path.join(srcDir, "shared");
 const nextCommandsDir = path.join(nextDir, "commands");
 const legacyCommandsDir = path.join(legacyDir, "commands");
+const legacyDbBootstrapDir = path.join(legacyDir, "shared", "db-bootstrap");
 const nextCliDir = path.join(nextDir, "cli");
 const legacyCliDir = path.join(legacyDir, "cli");
 const nextDocsDir = path.join(nextDir, "docs");
@@ -138,6 +139,21 @@ describe("code structure", () => {
         const relativeTarget = path.relative(legacyCommandsDir, resolved);
         const targetCommand = relativeTarget.split(path.sep)[0];
         if (targetCommand !== currentCommand) {
+          violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps legacy/shared/db-bootstrap independent from legacy commands", () => {
+    const violations: Array<string> = [];
+
+    for (const filePath of walk(legacyDbBootstrapDir).filter(isSourceFile)) {
+      for (const specifier of extractRelativeImports(filePath)) {
+        const resolved = resolveImport(filePath, specifier);
+        if (resolved.startsWith(legacyCommandsDir)) {
           violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
         }
       }

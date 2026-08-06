@@ -2,12 +2,19 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ReadyOptions, StackHandle } from "./createStack.ts";
-import { resolveConfig, resolveDaemonConfig } from "./createStack.ts";
+import { runForegroundOperation, type StackHandle } from "./createStack.ts";
+import { StackReadinessError } from "./errors.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
-import type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
+import type {
+  AuthConfig,
+  PostgresConfig,
+  PostgrestConfig,
+  ReadyOptions,
+  StackConfig,
+} from "./StackConfig.ts";
+import { resolveConfig, resolveDaemonConfig } from "./StackConfigResolver.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const DEFAULT_PORTS: AllocatedPorts = {
@@ -59,6 +66,37 @@ function writeStackMetadata(
     ),
   );
 }
+
+describe("foreground operation lifecycle", () => {
+  it("disposes the foreground runtime after a direct readiness timeout", async () => {
+    let disposeCount = 0;
+    const operation = Promise.reject(
+      new StackReadinessError({
+        target: "stack",
+        timeoutMs: 10,
+        detail: "Timed out waiting for stack readiness",
+      }),
+    );
+
+    await expect(
+      runForegroundOperation(operation, async () => {
+        disposeCount += 1;
+      }),
+    ).rejects.toMatchObject({ code: "STACK_READINESS_TIMEOUT" });
+    expect(disposeCount).toBe(1);
+  });
+
+  it("keeps the foreground runtime open after a non-terminal operation failure", async () => {
+    let disposeCount = 0;
+
+    await expect(
+      runForegroundOperation(Promise.reject(new Error("failed")), async () => {
+        disposeCount += 1;
+      }),
+    ).rejects.toMatchObject({ code: "UNKNOWN" });
+    expect(disposeCount).toBe(0);
+  });
+});
 
 describe("createStack types", () => {
   it("StackHandle interface has expected shape", () => {
@@ -249,5 +287,17 @@ describe("resolveConfig startup mode", () => {
   it("preserves an explicit lazy startup mode", async () => {
     const config = await resolveConfig({ startupMode: "lazy" });
     expect(config.startupMode).toBe("lazy");
+  });
+});
+
+describe("resolveConfig readiness policy", () => {
+  it("uses a finite package default", async () => {
+    const config = await resolveConfig();
+    expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 180_000 });
+  });
+
+  it("preserves an explicit infinite policy", async () => {
+    const config = await resolveConfig({ readiness: { mode: "infinite" } });
+    expect(config.readiness).toEqual({ mode: "infinite" });
   });
 });

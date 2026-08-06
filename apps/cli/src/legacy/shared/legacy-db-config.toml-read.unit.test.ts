@@ -879,6 +879,100 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("collapses . and .. in relative db.migrations.schema_paths like Go's path.Join", () => {
+    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`
+    // (`config.go:976-978`), which runs `path.Clean` — same helper `db.seed.sql_paths`
+    // uses above (`legacyResolveSeedSqlPath`), so `./schemas/a.sql` and `schemas/a.sql`
+    // resolve to the identical string instead of aliasing as two different glob patterns.
+    const dir = withConfig(
+      [
+        "[db.migrations]",
+        'schema_paths = ["../schema.sql", "sub/../other.sql", "./schemas/a.sql"]',
+        "",
+      ].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.schemaPaths).toEqual([
+            "schema.sql",
+            "supabase/other.sql",
+            "supabase/schemas/a.sql",
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
+    () => {
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "a.sql, b.sql";
+      const dir = withConfig(["[db.migrations]", 'schema_paths = ["ignored.sql"]', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("defaults db.migrations.schema_paths to [] when absent (Go's Glob zero value)", () => {
+    const dir = withConfig(["[db]", "port = 54322", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.schemaPaths).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+    () => {
+      // Same override-tier precedence as db.migrations.enabled above (config.go:635-637).
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-wins.sql";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.db.migrations]",
+          'schema_paths = ["remote-wins.sql"]',
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/remote-wins.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
     // Go's mergeRemoteConfig applies EVERY matched-block key via v.Set (above AutomaticEnv,
     // config.go:635-637), not just db/seed — so a remote experimental.pgdelta.enabled wins
@@ -988,6 +1082,106 @@ describe("legacyReadDbToml", () => {
       ),
     );
   });
+
+  it.effect(
+    "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
+    () => {
+      // Same v.Set-above-AutomaticEnv precedence as auth.enabled/pgdelta.enabled
+      // (config.go:635-637): a matched remote block's experimental.webhooks.enabled must win
+      // over SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED. Without the fix, the suppressed env value
+      // (false) would win instead, and the merged [experimental.webhooks] section (present via
+      // the remote block) would then fail validation ("Webhooks cannot be deactivated").
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.webhooks]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED still wins when the remote block omits webhooks",
+    () => {
+      // Control: the env override is suppressed only for keys the matched block explicitly
+      // set; a block that omits experimental.webhooks leaves the env override in force — a
+      // base [experimental.webhooks] section (present, default true) flipped off by the env
+      // var still fails Go's "cannot be deactivated" validation.
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[experimental.webhooks]",
+          "enabled = true",
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("Webhooks cannot be deactivated");
+            }
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "ignores a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when [experimental.webhooks] is absent",
+    () => {
+      // Verified empirically against apps/cli-go/pkg/config (config.Load with an in-memory fs,
+      // no [experimental.webhooks] section, env override set to a non-boolean string): Go's
+      // Load() succeeds and Experimental.Webhooks stays nil — the env override is never applied
+      // because the key is only "known" to viper (and thus AutomaticEnv-bindable) when the
+      // section is declared, unlike experimental.pgdelta.enabled (always known via the Eject
+      // template merged into defaults). Before the presence gate, this reader parsed the env
+      // override unconditionally and failed the whole config load on the bogus value.
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "bogus";
+      const dir = withConfig("");
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
@@ -1905,6 +2099,50 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "warnOnUnresolvedEnv: false suppresses the S3 env WARN (review: Codex, PR #6022)",
+    () => {
+      // `start`/`db start`'s fresh-volume bootstrap reads this same config.toml more
+      // than once per invocation (an earlier, authoritative preflight call already
+      // warned) — internal re-reads pass `warnOnUnresolvedEnv: false` so Go's
+      // exactly-once `flags.LoadConfig` WARN isn't printed a second/third time.
+      delete process.env["LEGACY_S3_KEY_QUIET"];
+      const writes: Array<string> = [];
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+        writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      }) as typeof process.stderr.write;
+      const dir = withConfig(
+        [
+          "[db]",
+          "major_version = 15",
+          "[experimental]",
+          'orioledb_version = "15.1.0.55"',
+          's3_access_key = "env(LEGACY_S3_KEY_QUIET)"',
+          "",
+        ].join("\n"),
+      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyReadDbToml(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            // Config load still succeeds and still resolves the value; only the
+            // stderr WARN side effect is suppressed.
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.55");
+            expect(writes.join("")).not.toContain("WARN: environment variable is unset");
+            process.stderr.write = original;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("keeps the literal password when its env var is unset/empty", () => {
     // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
     // preserves the literal string. Password is a plain string field, so an
@@ -2643,8 +2881,8 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
   it.effect("accepts a comma-separated rp_origins string instead of rejecting it as missing", () =>
     // Go decodes `rp_origins` (a `[]string`) through the same `StringToSliceHookFunc(",")`
     // mapstructure hook as every other `[]string` field, so a raw string (not just a literal
-    // TOML array) must split, not read as absent — matches start.handler.ts's own
-    // resolveGotruePasskeyWebauthn/legacyStrToArr handling of this identical field.
+    // TOML array) must split, not read as absent — matches legacy-local-config-values.ts's own
+    // legacyResolveGotruePasskeyWebauthn/legacyStrToArr handling of this identical field.
     succeeds([
       "[auth.passkey]",
       "enabled = true",

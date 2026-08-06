@@ -3,6 +3,7 @@ import { Data, Effect, FileSystem, Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { legacyResolveUnderWorkdir } from "./legacy-glob.ts";
 import {
   legacyCreateSeedTable,
   legacyReadSeedTable,
@@ -32,16 +33,6 @@ interface LegacyPendingSeed {
   readonly hash: string;
   readonly dirty: boolean;
 }
-
-// Go globs/reads seed paths through an OS-root-rooted `afero.NewOsFs`, where the
-// CLI's "workdir" is just `os.Chdir(workdir)` (`internal/utils/misc.go`) — which
-// only affects RELATIVE paths. An absolute `[db.seed].sql_paths` entry, preserved
-// verbatim by the config loader (`pkg/config/config.go`, gated on `!filepath.IsAbs`),
-// therefore resolves at the OS root, never under the workdir. Mirror that: only
-// join under the workdir when the path is relative (`path.join` would otherwise
-// collapse `/repo` + `/tmp/seed.sql` to `/repo/tmp/seed.sql`).
-const resolveUnderWorkdir = (path: Path.Path, workdir: string, p: string): string =>
-  path.isAbsolute(p) ? p : path.join(workdir, p);
 
 /**
  * Resolves `[db.seed].sql_paths` to existing files, porting Go's `config.Glob.SQLFiles`
@@ -94,14 +85,16 @@ export const legacyApplySeedFiles = (
 
     const pending: Array<LegacyPendingSeed> = [];
     for (const relativePath of locals) {
-      const content = yield* fs.readFile(resolveUnderWorkdir(path, workdir, relativePath)).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyMigrationSeedError({
-              message: `failed to open seed file: ${cause.message}`,
-            }),
-        ),
-      );
+      const content = yield* fs
+        .readFile(legacyResolveUnderWorkdir(path, workdir, relativePath))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyMigrationSeedError({
+                message: `failed to open seed file: ${cause.message}`,
+              }),
+          ),
+        );
       const hash = createHash("sha256").update(content).digest("hex");
       const previous = applied.get(relativePath);
       if (previous === hash) continue; // unchanged → skip entirely
@@ -140,7 +133,7 @@ export const legacyApplySeedFiles = (
         ? []
         : legacySplitAndTrim(
             new TextDecoder().decode(
-              yield* fs.readFile(resolveUnderWorkdir(path, workdir, seed.path)).pipe(
+              yield* fs.readFile(legacyResolveUnderWorkdir(path, workdir, seed.path)).pipe(
                 Effect.mapError(
                   (cause) =>
                     new LegacyMigrationSeedError({

@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, hostHttpHealthCheck } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerMailpitOptions {
   readonly image: string;
@@ -12,9 +13,7 @@ interface DockerMailpitOptions {
 
 const mailpitHealthCheck = (port: number): ServiceDef["healthCheck"] =>
   hostHttpHealthCheck(port, "/readyz", {
-    initialDelaySeconds: 1,
-    periodSeconds: 0.5,
-    failureThreshold: 30,
+    ...stackHealthBudgets.mailpit,
   });
 
 export const makeMailpitServiceDocker = (opts: DockerMailpitOptions): ServiceDef =>

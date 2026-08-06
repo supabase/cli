@@ -198,17 +198,21 @@ service and its projected status.
 ### Readiness
 
 ```typescript
-await stack.ready(); // Wait for all services
-await stack.ready({ timeout: 30_000 }); // With timeout (ms)
-await stack.serviceReady("postgres"); // Wait for one service
-await stack.serviceReady("auth", { timeout: 10_000 });
+await stack.ready(); // Inherit the stack's finite three-minute default
+await stack.ready({ mode: "finite", timeoutMs: 30_000 });
+await stack.ready({ mode: "infinite" }); // Explicit debugging override
+await stack.serviceReady("postgres");
+await stack.serviceReady("auth", { mode: "finite", timeoutMs: 10_000 });
 ```
 
 In eager mode, `start()` blocks until every enabled service is ready. In lazy mode it waits only
 for direct listeners and services activated so far. Unrequested lazy services report `Dormant`.
 Calling `serviceReady()` for a dormant lazy
 service fails immediately; activate it through the proxy or call `startService()` first. Foreground
-and detached stacks use the same readiness rules.
+and detached stacks use the same readiness rules. The configured policy also applies to service
+start, restart, activation, and reload operations; a call-specific option overrides it. A finite
+deadline fails with `STACK_READINESS_TIMEOUT` and disposes the local runtime, so the handle cannot
+be used to relaunch processes afterward.
 
 ### Status
 
@@ -276,8 +280,8 @@ await prefetch({ versions: { postgres: "17.4.1.045" } });
 ## Service Versions
 
 Default versions are used when no per-service `version` field is specified. The authoritative,
-exhaustive values are exported as `DEFAULT_VERSIONS` and live in
-[`src/versions.ts`](./src/versions.ts); they are intentionally not copied into this README.
+exhaustive values live in [`src/ServiceCatalog.ts`](./src/ServiceCatalog.ts) and are exported as
+the derived `DEFAULT_VERSIONS` manifest; they are intentionally not copied into this README.
 
 Override versions per service:
 
@@ -307,15 +311,16 @@ try {
 }
 ```
 
-| Code                | Description                                  |
-| ------------------- | -------------------------------------------- |
-| `SERVICE_NOT_FOUND` | Referenced a service that doesn't exist      |
-| `SERVICE_NOT_READY` | Service failed to become healthy             |
-| `BUILD_ERROR`       | Failed to build the service dependency graph |
-| `BINARY_NOT_FOUND`  | No binary available for the current platform |
-| `DOWNLOAD_ERROR`    | Binary download failed                       |
-| `PORT_CONFLICT`     | Requested port is already in use             |
-| `PORT_ALLOCATION`   | Failed to allocate a free port               |
+| Code                      | Description                                  |
+| ------------------------- | -------------------------------------------- |
+| `SERVICE_NOT_FOUND`       | Referenced a service that doesn't exist      |
+| `SERVICE_NOT_READY`       | Service failed to become healthy             |
+| `STACK_READINESS_TIMEOUT` | Stack readiness exceeded its finite deadline |
+| `BUILD_ERROR`             | Failed to build the service dependency graph |
+| `BINARY_NOT_FOUND`        | No binary available for the current platform |
+| `DOWNLOAD_ERROR`          | Binary download failed                       |
+| `PORT_CONFLICT`           | Requested port is already in use             |
+| `PORT_ALLOCATION`         | Failed to allocate a free port               |
 
 ## Examples
 
