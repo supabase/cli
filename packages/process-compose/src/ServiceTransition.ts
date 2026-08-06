@@ -84,6 +84,8 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
       return new ServiceState({
         ...state,
         status: "Failed",
+        pid: null,
+        exitCode: null,
         error: event.error,
       });
 
