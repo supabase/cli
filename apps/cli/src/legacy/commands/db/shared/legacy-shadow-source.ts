@@ -515,7 +515,16 @@ function legacyGlobDeclaredSchemaPaths(
           continue;
         }
         for (const relative of sqlRelativeResult.success) {
-          const relativeToWorkdir = `${match}/${relative}`;
+          // `io/fs.WalkDir`'s own path.Join(dir, entry.Name()) (`io/fs/walk.go`'s `walkDir`)
+          // cleans redundant separators before `walkMatchedDir`'s callback ever records the
+          // child path — so a `match` that retains a trailing separator (e.g. a directory
+          // `schema_paths` entry configured as `"supabase/schemas/"`) never reaches Go's dedup
+          // `set` as a double-slashed key. A raw template join skips that implicit clean and
+          // can let the same file be recorded twice — once here, once via a literal
+          // `schema_paths` entry for the file itself — bypassing `seen` and double-applying the
+          // SQL. `legacyCleanSchemaPath` (below) performs the equivalent slash-segment
+          // collapsing and is reused here rather than duplicated (review: PRRT_kwDOErm0O86XAlIr).
+          const relativeToWorkdir = legacyCleanSchemaPath(`${match}/${relative}`);
           if (!seen.has(relativeToWorkdir)) {
             seen.add(relativeToWorkdir);
             result.push(relativeToWorkdir);

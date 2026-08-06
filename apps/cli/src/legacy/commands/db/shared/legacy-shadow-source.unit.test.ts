@@ -363,6 +363,39 @@ describe("legacyLoadDeclaredSchemas", () => {
   );
 
   it.effect(
+    "dedupes a directory schema_paths entry with a trailing separator against a literal-file entry for the same file (review: PRRT_kwDOErm0O86XAlIr)",
+    () => {
+      // A RELATIVE trailing-slash entry gets `path.Join`-cleaned away by
+      // `legacyResolveSeedSqlPath` before it ever reaches the glob, matching Go's own
+      // `path.Join(builder.SupabaseDirPath, pattern)` resolution — so the bug is only
+      // reachable via an ABSOLUTE entry, which `legacyResolveSeedSqlPath` returns verbatim
+      // (Go's `Glob.files` never resolves an absolute entry either). Without the fix, the
+      // directory branch recorded the walked file as `<abs>/custom//x.sql` (raw template
+      // concatenation), which never matches the literal entry's `<abs>/custom/x.sql` in
+      // `seen`, so both were appended to `result` and the declarative apply would run the
+      // same file's SQL twice.
+      const workdir = makeWorkdir();
+      mkdirSync(join(workdir, "supabase", "custom"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "custom", "x.sql"), "select 1;\n");
+      const absDirWithTrailingSlash = `${join(workdir, "supabase", "custom")}/`;
+      const absFile = join(workdir, "supabase", "custom", "x.sql");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const result = yield* legacyLoadDeclaredSchemas(
+          fs,
+          path,
+          workdir,
+          [absDirWithTrailingSlash, absFile],
+          pgDelta(),
+        );
+        expect(result).toEqual([absFile]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
     "excludes a symlinked .sql file from a recursively-matched schema_paths directory",
     () => {
       // Go's `entry.Type().IsRegular()` (`config.go:127`) is a no-follow check — a symlink
