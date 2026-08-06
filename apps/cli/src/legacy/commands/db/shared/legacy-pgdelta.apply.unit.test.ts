@@ -294,6 +294,25 @@ describe("legacyFormatApplyFailure", () => {
     expect(message).not.toContain("(123");
   });
 
+  test("drops a diagnosis's statementId when sourceOffset is mistyped, even though the location renderer never reads it", () => {
+    // Go's struct-level `json.Unmarshal` into `ApplyStatementLocation` (`apply.go:73-77`)
+    // fails the moment ANY declared field has the wrong type — including `sourceOffset`,
+    // which `legacyFormatStatementLocation`/Go's own `formatStatementLocation` never
+    // display. Verified empirically against Go's real struct:
+    // `json.Unmarshal([]byte(\`{"filePath":"x.sql","sourceOffset":"bad"}\`), &loc)` returns a
+    // non-nil error even though `filePath` itself is well-typed, so the object-shape decode
+    // fails, the bare-string fallback also fails (the value is an object, not a string), and
+    // Go leaves `StatementID` nil — the location must be dropped, not rendered as `(x.sql)`,
+    // which would misattribute the diagnostic to a file Go never resolved.
+    const parsed = JSON.parse(
+      '{"status":"error","totalApplied":0,"totalRounds":1,"totalSkipped":0,"errors":["e"],"diagnostics":[{"message":"d","statementId":{"filePath":"x.sql","sourceOffset":"bad"}}]}',
+    ) as LegacyPgDeltaApplyResult;
+    expect(() => legacyFormatApplyFailure(parsed, true).toString("utf-8")).not.toThrow();
+    const message = legacyFormatApplyFailure(parsed, true).toString("utf-8");
+    expect(message).toContain("- d");
+    expect(message).not.toContain("x.sql");
+  });
+
   test("renders a diagnosis with a null statementId as having no location, without throwing", () => {
     // Reproduces a real pg-delta subprocess emitting
     // `{"diagnostics":[{"message":"failed","statementId":null}]}` — Go's

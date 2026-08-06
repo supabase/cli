@@ -502,6 +502,43 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
+    "accepts an absent or null top-level status and formats it as the empty-string zero value (Go's encoding/json)",
+    () => {
+      // `ApplyResult.Status` has no custom `UnmarshalJSON` of its own, so it's a plain,
+      // non-pointer `string` field decoded via the default `encoding/json` — verified
+      // empirically that `{}` and `{"status":null}` both decode with `err == nil` and
+      // `Status == ""`, reaching the normal failed-apply summary (not a parse failure).
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({ stdout: JSON.stringify({}) });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toBe(
+          "pg-delta declarative apply failed with status: ",
+        );
+        expect(out.stderrText).toContain('pg-delta apply returned status "".');
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "accepts a null errors/stuckStatements/validationErrors/diagnostics array and treats it as empty (Go's encoding/json leaves a nil slice)",
     () => {
       // `ApplyResult`'s array fields have no custom `UnmarshalJSON` of their own, so Go's

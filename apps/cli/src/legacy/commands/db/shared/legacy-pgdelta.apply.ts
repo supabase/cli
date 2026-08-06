@@ -88,14 +88,20 @@ export interface LegacyPgDeltaApplyIssue {
 
 /**
  * Go's `ApplyStatementLocation` (pg-topo's `StatementId` shape). `ApplyStatementLocation`
- * has no custom `UnmarshalJSON` of its own, so `filePath`/`statementIndex` are plain,
- * non-pointer Go types decoded via the default `encoding/json` — same "null means absent"
- * rule as every other scalar in this file (verified empirically, see {@link
- * LegacyPgDeltaApplyIssue.code}'s doc comment), hence `| null` on both.
+ * has no custom `UnmarshalJSON` of its own, so `filePath`/`statementIndex`/`sourceOffset`
+ * are plain, non-pointer Go types decoded via the default `encoding/json` — same "null
+ * means absent" rule as every other scalar in this file (verified empirically, see {@link
+ * LegacyPgDeltaApplyIssue.code}'s doc comment), hence `| null` on all three. `sourceOffset`
+ * is never read by {@link legacyFormatStatementLocation} (Go's own `formatStatementLocation`
+ * doesn't display it either), but it still must be validated in
+ * {@link legacyNormalizeApplyStatementId}: Go's struct-level `json.Unmarshal` fails the
+ * WHOLE object the moment any declared field — including this unused one — has the wrong
+ * type, not just the fields the formatter happens to read.
  */
 export interface LegacyPgDeltaApplyStatementLocation {
   readonly filePath?: string | null;
   readonly statementIndex?: number | null;
+  readonly sourceOffset?: number | null;
 }
 
 /** Go's `ApplyDiagnosis` — a pg-topo static-analysis diagnostic. */
@@ -136,9 +142,16 @@ export interface LegacyPgDeltaApplyDiagnosis {
  * with `r.Errors == nil` (`len(r.Errors) == 0`). `formatApplyFailure`'s `len(result.Errors)
  * > 0` guards treat a nil slice identically to an empty one, so `{"status":"error",
  * "errors":null}` must be accepted here too, not rejected as a parse failure.
+ *
+ * `status?: string | null` (not required non-null `string`): like every other field here,
+ * `Status` has no custom unmarshaler on `ApplyResult` itself, so an absent key or a JSON
+ * `null` decodes with NO error and leaves Go's zero value `""` — verified empirically:
+ * `json.Unmarshal([]byte(\`{}\`), &r)` and the `{"status":null}` variant both return
+ * `err == nil` with `r.Status == ""`. So `{}`/`{"status":null}` must reach the normal
+ * failed-apply summary (status rendered as `""`), not a rejected parse failure.
  */
 export interface LegacyPgDeltaApplyResult {
-  readonly status: string;
+  readonly status?: string | null;
   readonly totalStatements?: number | null;
   readonly totalRounds?: number | null;
   readonly totalApplied?: number | null;
@@ -290,14 +303,18 @@ function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
  * (zero-length) slice — verified empirically, see {@link LegacyPgDeltaApplyResult}'s own
  * doc comment. So `{"status":"error","errors":null}` is a valid, Go-accepted payload, not
  * a rejected one.
+ *
+ * `status` is checked the same "null/absent tolerated" way as every other field, NOT
+ * required to be present and non-null: an absent key or `"status":null` is Go's zero
+ * value `""`, not a parse failure — see {@link LegacyPgDeltaApplyResult}'s own doc comment
+ * for the empirical verification.
  */
 function legacyIsPgDeltaApplyResult(value: unknown): value is LegacyPgDeltaApplyResult {
   if (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
-    !("status" in value) ||
-    typeof value.status !== "string"
+    ("status" in value && value.status !== null && typeof value.status !== "string")
   ) {
     return false;
   }
@@ -385,6 +402,15 @@ function legacyNormalizeApplyIssue(
  * `json.RawMessage` that never fails the outer parse), so this is the only place that can
  * drop a malformed location instead of `legacyFormatStatementLocation`'s `String(...)`
  * coercion rendering a bogus location (e.g. `123#1`) Go would never have shown.
+ *
+ * `sourceOffset` is validated here too, even though {@link legacyFormatStatementLocation}
+ * never reads it: Go's struct-level unmarshal (`apply.go:105`) fails on ANY declared field
+ * with the wrong type, not just the ones a later formatter happens to display. Verified
+ * empirically: `json.Unmarshal([]byte(\`{"filePath":"x.sql","sourceOffset":"bad"}\`), &loc)`
+ * returns a non-nil `UnmarshalTypeError` even though `filePath` itself is well-typed, so
+ * the object-shape decode fails, the string fallback also fails (the value is an object),
+ * and Go leaves `StatementID` nil — dropping the location entirely rather than keeping a
+ * `{filePath:"x.sql"}` that misattributes the diagnostic to the wrong file.
  */
 function legacyNormalizeApplyStatementId(
   raw: LegacyPgDeltaApplyStatementLocation | string | null | undefined,
@@ -398,7 +424,9 @@ function legacyNormalizeApplyStatementId(
     !("statementIndex" in raw) ||
     raw.statementIndex === null ||
     legacyIsGoIntNumber(raw.statementIndex);
-  if (filePathOk && indexOk) return raw;
+  const sourceOffsetOk =
+    !("sourceOffset" in raw) || raw.sourceOffset === null || legacyIsGoIntNumber(raw.sourceOffset);
+  if (filePathOk && indexOk && sourceOffsetOk) return raw;
   return undefined;
 }
 
@@ -698,7 +726,7 @@ export function legacyFormatApplyFailure(
   }
 
   const lines: Array<Buffer> = [
-    Buffer.from(`pg-delta apply returned status "${result.status}".`, "utf-8"),
+    Buffer.from(`pg-delta apply returned status "${result.status ?? ""}".`, "utf-8"),
     Buffer.from(
       `${result.totalApplied ?? 0}/${totalStatements} statements applied in ${
         result.totalRounds ?? 0
@@ -844,7 +872,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     }
     return yield* Effect.fail(
       new LegacyDeclarativeApplyError({
-        message: `pg-delta declarative apply failed with status: ${parsed.status}`,
+        message: `pg-delta declarative apply failed with status: ${parsed.status ?? ""}`,
       }),
     );
   }
