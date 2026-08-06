@@ -5009,6 +5009,76 @@
         "x-oauth-scope": "projects:read"
       }
     },
+    "/v1/projects/{ref}/config": {
+      "get": {
+        "description": "Returns only the Auth and PostgREST fields that differ from their hosted defaults, as JSON shaped by the Supabase config schema. Credential fields are omitted. Defaults to the project itself (production); pass `branch` to target a preview branch instead.",
+        "operationId": "v1-get-project-config",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "branch",
+            "required": false,
+            "in": "query",
+            "description": "Preview branch name. Defaults to the project itself (production) when omitted.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetProjectConfigResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden action"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "description": "Failed to retrieve project's config"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Gets a project's effective configuration",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: auth:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["management-api", "dev-workflows"],
+        "x-fga-permissions": [["auth_config_read", "data_api_config_read"]],
+        "x-oauth-scope": "auth:read"
+      }
+    },
     "/v1/projects/{ref}/config/auth/signing-keys/legacy": {
       "post": {
         "operationId": "v1-create-legacy-signing-key",
@@ -17519,6 +17589,30 @@
         "required": ["query"],
         "example": {
           "query": "select * from pg_stat_activity limit 1;"
+        }
+      },
+      "GetProjectConfigResponse": {
+        "type": "object",
+        "properties": {
+          "auth": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "api": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": ["auth", "api"],
+        "example": {
+          "auth": {
+            "site_url": "https://example.com",
+            "enable_signup": false
+          },
+          "api": {
+            "schemas": ["public", "storage"],
+            "max_rows": 500
+          }
         }
       },
       "GetProjectDbMetadataResponse": {

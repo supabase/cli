@@ -1143,6 +1143,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    getProjectConfig: (
+      input: typeof operationDefinitions.v1GetProjectConfig.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1GetProjectConfig.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1GetProjectConfig">(
+          operationDefinitions.v1GetProjectConfig,
+          input,
+        );
+      }),
     getProjectDiskAutoscaleConfig: (
       input: typeof operationDefinitions.v1GetProjectDiskAutoscaleConfig.inputSchema.Type,
     ): Effect.Effect<
@@ -2683,6 +2697,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1GetProjectClaimToken.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.getProjectClaimToken(decoded)));
+    case "v1GetProjectConfig":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1GetProjectConfig.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.getProjectConfig(decoded)));
     case "v1GetProjectDiskAutoscaleConfig":
       return Schema.decodeUnknownEffect(
         operationDefinitions.v1GetProjectDiskAutoscaleConfig.inputSchema,

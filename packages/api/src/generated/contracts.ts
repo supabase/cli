@@ -5085,6 +5085,22 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
     }),
   ),
 });
+export const V1GetProjectConfigInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  branch: Schema.optionalKey(Schema.String),
+});
+export const V1GetProjectConfigOutput = Schema.Struct({
+  auth: Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
+  api: Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
+});
 export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -10709,6 +10725,7 @@ export const openApiOperationIdMap = {
   "v1-get-project-api-key": "v1GetProjectApiKey",
   "v1-get-project-api-keys": "v1GetProjectApiKeys",
   "v1-get-project-claim-token": "v1GetProjectClaimToken",
+  "v1-get-project-config": "v1GetProjectConfig",
   "v1-get-project-disk-autoscale-config": "v1GetProjectDiskAutoscaleConfig",
   "v1-get-project-function-combined-stats": "v1GetProjectFunctionCombinedStats",
   "v1-get-project-legacy-api-keys": "v1GetProjectLegacyApiKeys",
@@ -11978,6 +11995,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1GetProjectClaimTokenInput,
     outputSchema: V1GetProjectClaimTokenOutput,
+  },
+  v1GetProjectConfig: {
+    id: "v1GetProjectConfig",
+    description:
+      "Returns only the Auth and PostgREST fields that differ from their hosted defaults, as JSON shaped by the Supabase config schema. Credential fields are omitted. Defaults to the project itself (production); pass `branch` to target a preview branch instead.",
+    method: "GET",
+    path: "/v1/projects/{ref}/config",
+    pathParams: ["ref"],
+    queryParams: ["branch"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V1GetProjectConfigInput,
+    outputSchema: V1GetProjectConfigOutput,
   },
   v1GetProjectDiskAutoscaleConfig: {
     id: "v1GetProjectDiskAutoscaleConfig",
