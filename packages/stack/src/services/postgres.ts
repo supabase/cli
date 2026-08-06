@@ -5,6 +5,7 @@ import {
   dockerServiceOrphanCleanup,
   removePathOnOrphanCleanup,
 } from "./docker-cleanup.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface PostgresServiceOptions {
   readonly dataDir: string;
@@ -89,8 +90,7 @@ const postgresHealthCheck = (binPath: string, port: number) => ({
       LD_LIBRARY_PATH: `${binPath}/lib`,
     },
   },
-  periodSeconds: 0.5,
-  failureThreshold: 30,
+  ...stackHealthBudgets.postgresNative,
 });
 
 /**
@@ -107,9 +107,7 @@ const postgresDockerHealthCheck = (containerName: string, port: number) => ({
     command: "docker",
     args: ["exec", containerName, "pg_isready", "-p", String(port), "-U", "postgres"],
   },
-  initialDelaySeconds: 1,
-  periodSeconds: 0.5,
-  failureThreshold: 30,
+  ...stackHealthBudgets.postgresDocker,
 });
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {

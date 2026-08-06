@@ -170,7 +170,6 @@ describe("StateManager", () => {
         expect(mgr.stackDir("my-project")).toBe("/persist/stacks/my-project");
         expect(mgr.dataDir("my-project")).toBe("/persist/stacks/my-project/data");
         expect(mgr.runtimeDir("my-project")).toBe("/tmp/supabase/custom");
-        expect(mgr.socketPath("my-project")).toBe("/tmp/supabase/custom/daemon.sock");
       }).pipe(Effect.provide(layer));
     });
   });

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -11,16 +11,6 @@ import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
-import {
-  legacyResolveLocalProjectId,
-  localDbContainerId,
-} from "../../../shared/legacy-docker-ids.ts";
-import {
-  LEGACY_SUGGEST_DOCKER_INSTALL,
-  legacyIsDockerDaemonUnreachable,
-} from "../../../shared/legacy-docker-suggest.ts";
 import { LegacyDbBootstrapError } from "./legacy-db-bootstrap.errors.ts";
 import { LegacyDbBootstrapSeam } from "./legacy-db-bootstrap.seam.service.ts";
 
@@ -60,8 +50,6 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
     const experimentalArgs = experimental ? ["--experimental"] : [];
     const spawner = yield* ChildProcessSpawner;
     const processControl = yield* ProcessControl;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const resolved = resolveBinary();
 
     /**
@@ -158,80 +146,6 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
       );
 
     return LegacyDbBootstrapSeam.of({
-      isDbRunning: () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            // Resolve `utils.DbId` exactly as Go does (env → config.toml → workdir
-            // basename); the config.toml read is best-effort (`validate: false`) since
-            // the handler has already run Go's `LoadConfig` validation — an invalid
-            // config would have failed there, so here we only want the `projectId` and
-            // tolerate a fallback to the workdir basename rather than re-throwing.
-            const tomlProjectId = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
-              validate: false,
-            }).pipe(
-              Effect.map((toml) => toml.projectId),
-              // The lenient read still surfaces a genuinely unreadable/malformed project
-              // `.env`; fall back to the workdir basename in that case rather than failing
-              // the running-check (the handler has already validated config).
-              Effect.orElseSucceed(() => Option.none<string>()),
-            );
-            const projectId = legacyResolveLocalProjectId(
-              Option.getOrUndefined(cliConfig.projectId),
-              Option.getOrUndefined(tomlProjectId),
-              cliConfig.workdir,
-            );
-            const containerId = localDbContainerId(projectId);
-            // Go's AssertSupabaseDbIsRunning = ContainerInspect → NotFound ⇒ not
-            // running. Discard stdout (the inspect JSON) so the unconsumed pipe can
-            // never deadlock; only the exit code + stderr matter.
-            const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
-              stdin: "ignore",
-              stdout: "ignore",
-              stderr: "pipe",
-              extendEnv: true,
-            }).pipe(Effect.mapError(() => seamFailure("failed to inspect service")));
-            const stderrChunks: Array<Uint8Array> = [];
-            yield* Stream.runForEach(child.stderr, (chunk) =>
-              Effect.sync(() => {
-                stderrChunks.push(chunk);
-              }),
-            ).pipe(Effect.mapError(() => seamFailure("failed to inspect service")));
-            const inspectExit = yield* child.exitCode.pipe(
-              Effect.map(Number),
-              Effect.mapError(() => seamFailure("failed to inspect service")),
-            );
-            if (inspectExit === 0) return true; // container exists ⇒ running
-
-            const stderr = decodeChunks(stderrChunks).trim();
-            // Only a missing container means "not running". Docker reports this as
-            // either "No such container" or "No such object" depending on daemon
-            // version/CLI path (the same pair handled in `shared/functions/serve.ts`).
-            // Any other inspect failure (e.g. the Docker daemon is down) propagates,
-            // matching Go's `AssertSupabaseDbIsRunning`.
-            if (!stderr.includes("No such container") && !stderr.includes("No such object")) {
-              // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
-              // on a daemon-connection failure (`misc.go:148-154`), so a down daemon
-              // still surfaces the actionable Docker Desktop hint, not just raw stderr.
-              return yield* Effect.fail(
-                new LegacyDbBootstrapError({
-                  message:
-                    stderr.length > 0
-                      ? `failed to inspect service: ${stderr}`
-                      : "failed to inspect service",
-                  ...(legacyIsDockerDaemonUnreachable(stderr)
-                    ? { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL }
-                    : {}),
-                }),
-              );
-            }
-            return false;
-          }),
-        ),
-      startDatabase: ({ fromBackup }) =>
-        runBootstrap(
-          ["--mode", "start", ...(fromBackup !== undefined ? ["--from-backup", fromBackup] : [])],
-          false,
-        ).pipe(Effect.asVoid),
       recreateDatabase: ({ version, noSeed, sqlPaths }) =>
         runBootstrap(
           [

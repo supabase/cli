@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_START_STARTING_CONTAINERS_MESSAGE,
-  LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
-  LEGACY_START_STARTING_DATABASE_MESSAGE,
   LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE,
   legacyStartAlreadyRunningMessage,
   legacyStartCompletedMessage,
@@ -28,20 +26,6 @@ describe("LEGACY_START_STARTING_CONTAINERS_MESSAGE", () => {
 describe("LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE", () => {
   it("matches Go's exact stderr line, with a single trailing newline", () => {
     expect(LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE).toBe("Waiting for health checks...\n");
-  });
-});
-
-describe("LEGACY_START_STARTING_DATABASE_MESSAGE", () => {
-  it("matches Go's exact stderr line, with a single trailing newline", () => {
-    expect(LEGACY_START_STARTING_DATABASE_MESSAGE).toBe("Starting database...\n");
-  });
-});
-
-describe("LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE", () => {
-  it("matches Go's exact stderr line, with a single trailing newline", () => {
-    expect(LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE).toBe(
-      "Starting database from backup...\n",
-    );
   });
 });
 

@@ -17,7 +17,7 @@ import {
   legacyMigraDiffShellScript,
 } from "./legacy-migra.deno-templates.ts";
 import { LegacyMigraDiffError, LegacyMigraSchemaLoadError } from "./legacy-migra.errors.ts";
-import { legacyEdgeRuntimeId, type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+import { legacyEdgeRuntimeId, type LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 
 /**
  * The migra Docker image, parsed by Go from its embedded Dockerfile

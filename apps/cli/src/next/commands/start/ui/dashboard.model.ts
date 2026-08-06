@@ -26,6 +26,7 @@ export interface StartDashboardModel {
   readonly errorAtom: Atom.Writable<string | null>;
   readonly displayStatesAtom: Atom.Atom<ReadonlyArray<StackServiceState>>;
   readonly allHealthyAtom: Atom.Atom<boolean>;
+  readonly showConnectionInfoAtom: Atom.Atom<boolean>;
   readonly statusLineAtom: Atom.Atom<string>;
 }
 
@@ -68,6 +69,12 @@ export function createStartDashboardModel(
       get(displayStatesAtom).length > 0 &&
       get(displayStatesAtom).every((s) => s.status === "Healthy"),
   );
+  // Lazy stacks intentionally leave proxy-backed services Pending. A
+  // successful start phase, rather than universal health, makes connection
+  // details safe to display.
+  const showConnectionInfoAtom = Atom.make(
+    (get) => get(phaseAtom) === "running" && get(stackInfoAtom) !== null,
+  );
   const statusLineAtom = Atom.make((get) => {
     const phase = get(phaseAtom);
     const error = get(errorAtom);
@@ -97,6 +104,7 @@ export function createStartDashboardModel(
     errorAtom,
     displayStatesAtom,
     allHealthyAtom,
+    showConnectionInfoAtom,
     statusLineAtom,
   };
 }

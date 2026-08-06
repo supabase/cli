@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface PostgrestServiceOptions {
   readonly dbPort: number;
@@ -43,8 +44,7 @@ const postgrestHealthCheck = (port: number) => ({
     path: "/",
     scheme: "http" as const,
   },
-  periodSeconds: 0.5,
-  failureThreshold: 20,
+  ...stackHealthBudgets.postgrest,
 });
 
 const postgrestDependencies = [{ service: "postgres-init", condition: "completed" as const }];

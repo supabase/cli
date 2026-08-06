@@ -19,7 +19,7 @@ import {
 } from "./prefetch.ts";
 import { defaultCacheRoot } from "./paths.ts";
 import { StackPreparation } from "./StackPreparation.ts";
-import type { StackConfig } from "./StackBuilder.ts";
+import type { StackConfig } from "./StackConfig.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
 const mergeBodyHeaders = (
@@ -118,13 +118,23 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
 // ---------------------------------------------------------------------------
 
 /** Node platform factory for use with foregroundLayer / daemonLayer. */
-export const platformFactory: PlatformFactory = (apiPort) =>
+export const platformFactory: PlatformFactory = ({ apiPort, releaseApiPort }) =>
   Layer.mergeAll(
     NodeServices.layer,
-    NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie),
+    Layer.unwrap(
+      releaseApiPort.pipe(
+        Effect.as(NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie)),
+      ),
+    ),
   );
 
-/** Path to the Node daemon entry point for use with daemonLayer. */
+/**
+ * Path to the Node daemon entry point for use with daemonLayer.
+ *
+ * `daemon-node.ts` is intentionally reached by this file URL instead of a package export. Keep the
+ * matching `knip.entry` in package.json when changing this path; static import analysis cannot see
+ * the child-process entrypoint.
+ */
 export const daemonEntryPoint: string = fileURLToPath(new URL("./daemon-node.ts", import.meta.url));
 
 // ---------------------------------------------------------------------------

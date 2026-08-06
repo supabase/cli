@@ -4,7 +4,7 @@ import { Effect, Layer, Schema, Context, Stream } from "effect";
 import { StackBuildError } from "./errors.ts";
 import type { FunctionsConfig } from "./functions.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
-import type { EdgeRuntimeConfig, ResolvedStackConfig } from "./StackBuilder.ts";
+import type { EdgeRuntimeConfig, ResolvedStackConfig } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 
 export interface StackInfo {
@@ -66,7 +66,7 @@ export class Stack extends Context.Service<
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
     readonly restartService: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly reloadFunctions: (
       opts?: FunctionsConfig,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;

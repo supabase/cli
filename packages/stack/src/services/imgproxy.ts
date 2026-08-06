@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerImgproxyOptions {
   readonly image: string;
@@ -14,9 +15,7 @@ const IMGPROXY_STORAGE_DIR = "/var/lib/storage";
 
 const imgproxyHealthCheck = (port: number): ServiceDef["healthCheck"] =>
   hostHttpHealthCheck(port, "/health", {
-    initialDelaySeconds: 1,
-    periodSeconds: 0.5,
-    failureThreshold: 30,
+    ...stackHealthBudgets.imgproxy,
   });
 
 export const makeImgproxyServiceDocker = (opts: DockerImgproxyOptions): ServiceDef =>

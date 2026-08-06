@@ -1,12 +1,17 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { Data, Effect, Layer, Option } from "effect";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { Data, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { FileSystem, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
+import { DaemonMessageSchema } from "./DaemonProtocol.ts";
+import type { PortLease } from "./PortAllocator.ts";
 import { RemoteStack } from "./RemoteStack.ts";
+import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
@@ -17,11 +22,18 @@ import {
   StackAlreadyRunningError,
   StateManager,
   singleStackStateManagerPaths,
-  type StateManagerService,
 } from "./StateManager.ts";
-import { StackBuilder, type ResolvedStackConfig } from "./StackBuilder.ts";
+import { StackBuilder } from "./StackBuilder.ts";
+import type { ResolvedDaemonConfig, ResolvedStackConfig } from "./StackConfig.ts";
+import type { DaemonConfigInput } from "./StackConfigResolver.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
+import {
+  DEFAULT_MANAGED_STACK_NAME,
+  defaultCacheRoot,
+  defaultManagedRuntimeRoot,
+  defaultManagedStackRoot,
+} from "./paths.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 
 /**
@@ -33,19 +45,29 @@ import { terminateChildProcess } from "./terminateChild.ts";
 export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
+  portLease: PortLease,
 ): Layer.Layer<Stack> => {
-  const platform = platformFactory(config.apiPort);
+  const platform = platformFactory({
+    apiPort: config.apiPort,
+    releaseApiPort: portLease.release(["apiPort"]),
+  });
 
   const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(binaryResolverLayer));
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
   );
-  const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
+  const stackLayer = Stack.layer(config);
+  const serviceActivatorLayer = Layer.effect(
+    StackServiceActivator,
+    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
+      activate: coordinator.activateService,
+    })),
+  );
 
   const proxyConfig: ProxyConfig = {
     listenPort: config.apiPort,
@@ -64,9 +86,16 @@ export const foregroundLayer = (
     anonJwt: config.anonJwt,
     serviceRoleJwt: config.serviceRoleJwt,
   };
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(serviceActivatorLayer),
+  );
 
-  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(Layer.provide(platform), Layer.orDie);
+  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(
+    Layer.provide(coordinatorLayer),
+    Layer.provide(platform),
+    Layer.orDie,
+  );
 };
 
 // ---------------------------------------------------------------------------
@@ -81,16 +110,15 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 // Daemon-backed mode
 // ---------------------------------------------------------------------------
 
-export interface DaemonConfig extends ResolvedStackConfig {
-  readonly name: string;
-  readonly projectDir: string;
-}
-
 export const foregroundDaemonLayer = (
-  config: DaemonConfig,
+  config: ResolvedDaemonConfig,
   platformFactory: PlatformFactory,
+  portLease: PortLease,
 ): Layer.Layer<Stack | StateManager> => {
-  const platform = platformFactory(config.apiPort);
+  const platform = platformFactory({
+    apiPort: config.apiPort,
+    releaseApiPort: portLease.release(["apiPort"]),
+  });
 
   const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
@@ -112,7 +140,16 @@ export const foregroundDaemonLayer = (
     anonJwt: config.anonJwt,
     serviceRoleJwt: config.serviceRoleJwt,
   };
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
+  const serviceActivatorLayer = Layer.effect(
+    StackServiceActivator,
+    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
+      activate: coordinator.activateService,
+    })),
+  );
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(serviceActivatorLayer),
+  );
   const stateManagerLayer = StateManager.make(
     singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
   );
@@ -120,14 +157,15 @@ export const foregroundDaemonLayer = (
   const metadataPersistenceLayer = StackMetadataPersistence.fromStateManager(config.name).pipe(
     Layer.provide(stateManagerLayer),
   );
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(metadataPersistenceLayer),
   );
-  const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
+  const stackLayer = Stack.layer(config);
 
   return Layer.mergeAll(stackLayer, apiProxyLayer, stateManagerLayer).pipe(
+    Layer.provide(coordinatorLayer),
     Layer.provide(platform),
     Layer.orDie,
   );
@@ -143,7 +181,7 @@ export const foregroundDaemonLayer = (
  * 5. Returns RemoteStack.layer(socketPath)
  */
 export const daemonLayer = (
-  config: DaemonConfig,
+  input: DaemonConfigInput,
   daemonEntryPoint: string,
 ): Effect.Effect<
   Layer.Layer<Stack>,
@@ -151,18 +189,33 @@ export const daemonLayer = (
   FileSystem.FileSystem | Path.Path | UnixHttpClient
 > =>
   Effect.gen(function* () {
+    if (input.stackRoot !== undefined || input.runtimeRoot !== undefined) {
+      return yield* new DaemonStartError({
+        message: "Managed daemon stacks derive stackRoot and runtimeRoot automatically",
+      });
+    }
+    const projectDir = input.projectDir ?? input.cwd;
+    const name = input.name ?? DEFAULT_MANAGED_STACK_NAME;
+    const cacheRoot = input.cacheRoot ?? defaultCacheRoot();
+    const stackRoot =
+      input.projectStateRoot !== undefined
+        ? join(input.projectStateRoot, "stacks", name)
+        : defaultManagedStackRoot(cacheRoot, projectDir, name);
+    const runtimeRoot = defaultManagedRuntimeRoot(stackRoot);
+    const config: DaemonConfigInput = {
+      ...input,
+      cacheRoot,
+      projectDir,
+      name,
+    };
     const fs = yield* FileSystem.FileSystem;
     const unixHttpClient = yield* UnixHttpClient;
     const stateManager = yield* StateManager.pipe(
-      Effect.provide(
-        StateManager.make(
-          singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
-        ),
-      ),
+      Effect.provide(StateManager.make(singleStackStateManagerPaths(stackRoot, runtimeRoot, name))),
     );
 
     // Check if a stack with this name is already running
-    const existingState = yield* stateManager.read(config.name).pipe(
+    const existingState = yield* stateManager.read(name).pipe(
       Effect.map(Option.some),
       Effect.catchTag("StateNotFoundError", () => Effect.succeed(Option.none())),
     );
@@ -170,25 +223,28 @@ export const daemonLayer = (
       const alive = yield* stateManager.isAlive(existingState.value);
       if (alive) {
         return yield* new StackAlreadyRunningError({
-          name: config.name,
+          name,
           pid: existingState.value.pid,
           message: `A Supabase stack "${config.name}" is already running (PID ${existingState.value.pid}). Use "supabase stop" first.`,
         });
       }
       // Stale state from a dead daemon — clean up before proceeding
-      yield* stateManager.remove(config.name);
+      yield* stateManager.remove(name);
     }
 
     // Compute socket path via StateManager conventions
-    const dir = stateManager.stackDir(config.name);
+    const dir = stateManager.stackDir(name);
     yield* fs
       .makeDirectory(dir, { recursive: true })
       .pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
-    const runtimeDir = stateManager.runtimeDir(config.name);
+    const runtimeDir = stateManager.runtimeDir(name);
     yield* fs
       .makeDirectory(runtimeDir, { recursive: true })
       .pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
-    const socketPath = stateManager.socketPath(config.name);
+    // A daemon generation owns its socket pathname for its entire lifetime.
+    // Reusing a fixed pathname lets a delayed shutdown unlink a replacement
+    // daemon's socket after the replacement has already bound it.
+    const socketPath = join(runtimeDir, `daemon-${randomUUID().slice(0, 12)}.sock`);
 
     // Clean up stale socket file if present
     yield* fs.remove(socketPath).pipe(Effect.ignore);
@@ -200,13 +256,19 @@ export const daemonLayer = (
       const startMsg: DaemonStartMessage = {
         type: "start",
         config,
-        name: config.name,
-        projectDir: config.projectDir,
         socketPath,
       };
-      child.send(startMsg);
-
-      const response = yield* waitForDaemonResponse(child);
+      const responseFiber = yield* waitForDaemonResponse(child).pipe(
+        Effect.timeout("30 seconds"),
+        Effect.mapError((error) =>
+          error._tag === "DaemonStartError"
+            ? error
+            : new DaemonStartError({ message: "Timed out waiting for daemon startup" }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* sendDaemonStart(child, startMsg);
+      const response = yield* Fiber.join(responseFiber);
 
       if (response.type === "error") {
         return yield* new DaemonStartError({ message: response.message });
@@ -217,15 +279,11 @@ export const daemonLayer = (
       child.unref();
       daemonRegistered = true;
 
-      return RemoteStack.layer(socketPath).pipe(
+      return RemoteStack.layer(response.state.socketPath).pipe(
         Layer.provide(Layer.succeed(UnixHttpClient, unixHttpClient)),
       );
     }).pipe(
-      Effect.onExit(() =>
-        daemonRegistered
-          ? Effect.void
-          : cleanupPendingDaemonStartup(child, stateManager, config.name),
-      ),
+      Effect.onExit(() => (daemonRegistered ? Effect.void : cleanupPendingDaemonStartup(child))),
     );
   });
 
@@ -247,6 +305,35 @@ const forkDaemon = (entryPoint: string): Effect.Effect<ChildProcess, DaemonStart
       }),
   });
 
+const sendDaemonStart = (
+  child: ChildProcess,
+  message: DaemonStartMessage,
+): Effect.Effect<void, DaemonStartError> =>
+  Effect.callback<void, DaemonStartError>((resume) => {
+    try {
+      child.send(message, (error) => {
+        if (error === null) {
+          resume(Effect.void);
+          return;
+        }
+        resume(
+          Effect.fail(
+            new DaemonStartError({ message: `Failed to send daemon config: ${error.message}` }),
+          ),
+        );
+      });
+    } catch (cause) {
+      resume(
+        Effect.fail(
+          new DaemonStartError({
+            message: `Failed to send daemon config: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+        ),
+      );
+    }
+    return Effect.void;
+  });
+
 /** Wait for DaemonStartedMessage or DaemonErrorMessage from the child. */
 const waitForDaemonResponse = (
   child: ChildProcess,
@@ -254,7 +341,12 @@ const waitForDaemonResponse = (
   Effect.callback<DaemonMessage, DaemonStartError>((resume) => {
     const onMessage = (msg: unknown) => {
       cleanup();
-      resume(Effect.succeed(msg as DaemonMessage));
+      const decoded = Schema.decodeUnknownOption(DaemonMessageSchema)(msg);
+      resume(
+        Option.isSome(decoded)
+          ? Effect.succeed(decoded.value)
+          : Effect.fail(new DaemonStartError({ message: "Daemon sent an invalid IPC response" })),
+      );
     };
 
     const onError = (err: Error) => {
@@ -282,15 +374,8 @@ const waitForDaemonResponse = (
     return Effect.sync(cleanup);
   });
 
-const cleanupPendingDaemonStartup = (
-  child: ChildProcess,
-  stateManager: StateManagerService,
-  stackName: string,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    yield* Effect.promise(() => terminateChildProcess(child)).pipe(Effect.catch(() => Effect.void));
-    yield* stateManager.remove(stackName);
-  });
+const cleanupPendingDaemonStartup = (child: ChildProcess): Effect.Effect<void> =>
+  Effect.promise(() => terminateChildProcess(child)).pipe(Effect.catch(() => Effect.void));
 
 // ---------------------------------------------------------------------------
 // Connect mode

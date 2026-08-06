@@ -2,15 +2,14 @@ import { Effect, type FileSystem, type Path } from "effect";
 
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
-import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
+import type { LegacyDeclarativeOutput } from "../../../shared/legacy-pgdelta.ts";
 
 /**
  * Go's `declarative.Generate` / `pull.go`'s written-to line, printed by all three
  * declarative write paths (`generate`, `pull --declarative`, `sync`'s bootstrap).
- * Each caller passes its own dir rendering (`pull` and `sync` already print the
- * relative `GetDeclarativeDir()` value; `generate` still prints the resolved
- * absolute dir — a follow-up candidate for the same treatment) — this only pins
- * the shared message text in one place.
+ * Every caller passes the relative `GetDeclarativeDir()` value, never the resolved
+ * absolute dir (`generate` and `sync` route through this helper; `pull` still
+ * inlines the same template) — this pins the shared message text in one place.
  */
 export const legacyDeclarativeSchemaWrittenLine = (dir: string): string =>
   `Declarative schema written to ${legacyBold(dir)}\n`;

@@ -2,12 +2,18 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ReadyOptions, StackHandle } from "./createStack.ts";
-import { resolveConfig, resolveDaemonConfig } from "./createStack.ts";
+import type { StackHandle } from "./createStack.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
-import type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
+import type {
+  AuthConfig,
+  PostgresConfig,
+  PostgrestConfig,
+  ReadyOptions,
+  StackConfig,
+} from "./StackConfig.ts";
+import { resolveConfig, resolveDaemonConfig } from "./StackConfigResolver.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const DEFAULT_PORTS: AllocatedPorts = {
@@ -83,6 +89,7 @@ describe("createStack types", () => {
   it("StackConfig interface has expected shape", () => {
     const check = (_config: StackConfig) => {
       const _jwtSecret: string | undefined = _config.jwtSecret;
+      const _startupMode: "eager" | "lazy" | undefined = _config.startupMode;
       const _projectDir: string | undefined = _config.projectDir;
       const _functions = _config.functions;
       const _postgres: PostgresConfig | undefined = _config.postgres;
@@ -92,6 +99,7 @@ describe("createStack types", () => {
       const _publishableKey: string | undefined = _config.publishableKey;
       const _secretKey: string | undefined = _config.secretKey;
       void _jwtSecret;
+      void _startupMode;
       void _projectDir;
       void _functions;
       void _postgres;
@@ -235,5 +243,29 @@ describe("resolveConfig edge runtime defaults", () => {
         version: DEFAULT_VERSIONS["edge-runtime"],
       }),
     );
+  });
+});
+
+describe("resolveConfig startup mode", () => {
+  it("keeps eager startup as the package default", async () => {
+    const config = await resolveConfig();
+    expect(config.startupMode).toBe("eager");
+  });
+
+  it("preserves an explicit lazy startup mode", async () => {
+    const config = await resolveConfig({ startupMode: "lazy" });
+    expect(config.startupMode).toBe("lazy");
+  });
+});
+
+describe("resolveConfig readiness policy", () => {
+  it("uses a finite package default", async () => {
+    const config = await resolveConfig();
+    expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 120_000 });
+  });
+
+  it("preserves an explicit infinite policy", async () => {
+    const config = await resolveConfig({ readiness: { mode: "infinite" } });
+    expect(config.readiness).toEqual({ mode: "infinite" });
   });
 });

@@ -31,7 +31,17 @@ const POSTGRES_STATE = new StackServiceState({
   error: null,
 });
 
-const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE];
+const HEALTH_FAILED_STATE = new StackServiceState({
+  name: "edge-runtime",
+  status: "Failed",
+  pid: null,
+  exitCode: null,
+  restartCount: 2,
+  startedAt: Date.now(),
+  error: "Health check failed and restart budget was exhausted",
+});
+
+const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE, HEALTH_FAILED_STATE];
 
 const MOCK_LOGS: ReadonlyArray<LogEntry> = [
   { timestamp: 1000, service: "postgres", stream: "stdout", line: "starting" },
@@ -131,8 +141,9 @@ function mockStack() {
 
 function buildDaemonLayer(
   mock: ReturnType<typeof mockStack>,
+  beforeShutdown: Effect.Effect<void> = Effect.void,
 ): Layer.Layer<DaemonServer, never, never> {
-  return DaemonServer.layer.pipe(
+  return DaemonServer.layerWithShutdown(beforeShutdown).pipe(
     Layer.provide(mock.layer),
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
   ) as Layer.Layer<DaemonServer, never, never>;
@@ -189,9 +200,16 @@ describe("DaemonServer", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { info: StackInfo; services: StackServiceState[] };
     expect(body.info).toEqual(MOCK_INFO);
-    expect(body.services).toHaveLength(1);
+    expect(body.services).toHaveLength(2);
     expect(body.services.at(0)?.name).toBe("postgres");
     expect(body.services.at(0)?.status).toBe("Running");
+    expect(body.services.at(1)).toMatchObject({
+      name: "edge-runtime",
+      status: "Failed",
+      pid: null,
+      exitCode: null,
+      error: "Health check failed and restart budget was exhausted",
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -353,6 +371,28 @@ describe("DaemonServer", () => {
     expect(mock.stopped).toBe(true);
   });
 
+  test("POST /stop unregisters the daemon before responding", async () => {
+    const freshMock = mockStack();
+    let registered = true;
+    const freshRuntime = ManagedRuntime.make(
+      buildDaemonLayer(
+        freshMock,
+        Effect.sync(() => {
+          registered = false;
+        }),
+      ),
+    );
+    try {
+      const daemon = await freshRuntime.runPromise(DaemonServer);
+      const res = await fetch(`${getUrl(daemon.address)}/stop`, { method: "POST" });
+
+      expect(res.status).toBe(200);
+      expect(registered).toBe(false);
+    } finally {
+      await freshRuntime.dispose();
+    }
+  });
+
   test("POST /stop resolves awaitShutdown", async () => {
     // Use a fresh runtime so /stop hasn't been called yet
     const freshMock = mockStack();
@@ -368,6 +408,21 @@ describe("DaemonServer", () => {
       await fetch(`${freshUrl}/stop`, { method: "POST" });
 
       // awaitShutdown should resolve
+      await shutdownPromise;
+    } finally {
+      await freshRuntime.dispose();
+    }
+  });
+
+  test("POST /stop resolves awaitShutdown when cleanup defects", async () => {
+    const freshRuntime = ManagedRuntime.make(
+      buildDaemonLayer(mockStack(), Effect.die("state cleanup failed")),
+    );
+    try {
+      const daemon = await freshRuntime.runPromise(DaemonServer);
+      const shutdownPromise = freshRuntime.runPromise(daemon.awaitShutdown);
+
+      await fetch(`${getUrl(daemon.address)}/stop`, { method: "POST" });
       await shutdownPromise;
     } finally {
       await freshRuntime.dispose();

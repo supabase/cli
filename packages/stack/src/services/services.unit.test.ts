@@ -200,7 +200,14 @@ describe("makePostgresServiceDocker", () => {
     expect(def.dependencies).toBeUndefined();
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-postgres-${API_PORT}` }],
+      orphanCleanup: [
+        {
+          _tag: "RunCommand",
+          executable: "docker",
+          args: ["rm", "-f", `supabase-postgres-${API_PORT}`],
+          timeoutMs: 5_000,
+        },
+      ],
     });
   });
 
@@ -313,7 +320,14 @@ describe("makeAuthServiceDocker", () => {
     expect(def.args).toContain("9999:9999");
     expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
+      orphanCleanup: [
+        {
+          _tag: "RunCommand",
+          executable: "docker",
+          args: ["rm", "-f", `supabase-auth-${API_PORT}`],
+          timeoutMs: 5_000,
+        },
+      ],
     });
   });
 });
@@ -600,6 +614,9 @@ describe("docker-backed auxiliary services", () => {
     expect(args).toContain("PHX_HTTP_PORT=4000");
     expect(args).toContain("54328:4000");
     expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(args.at(-1)).toBe(
+      `cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh\n./logflare eval Logflare.Release.migrate &&\n./logflare start --sname logflare\nEOF\n`,
+    );
   });
 
   it("keeps analytics on its container port when Linux uses bridge networking", () => {
