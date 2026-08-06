@@ -27,26 +27,26 @@ import {
   mockRuntimeInfo,
   mockTelemetryRuntime,
   mockTty,
-} from "../../../../tests/helpers/mocks.ts";
+} from "../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateLayer,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+} from "../../../tests/helpers/legacy-mocks.ts";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyOutputFlag,
   LegacyProfileFlag,
   LegacyWorkdirFlag,
-} from "../../../shared/legacy/global-flags.ts";
+} from "../../shared/legacy/global-flags.ts";
 
-import { LegacyDbConfigResolver } from "../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../shared/legacy-db-connection.service.ts";
-import { LegacyIdentityStitch } from "../../shared/legacy-identity-stitch.ts";
+import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
+import { LegacyDbConnection } from "./legacy-db-connection.service.ts";
+import { LegacyIdentityStitch } from "./legacy-identity-stitch.ts";
 
-import { legacyTestDbRuntimeLayer } from "./test.layers.ts";
+import { legacyTestDbRuntimeLayer } from "./legacy-test-db.layers.ts";
 
 /**
  * Builds a stub ambient layer that satisfies every external service required by
@@ -102,7 +102,10 @@ describe("legacyTestDbRuntimeLayer — LegacyIdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(legacyTestDbRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(
+        Effect.provide(legacyTestDbRuntimeLayer(["test", "db"])),
+        Effect.provide(ambientStubs()),
+      );
     },
   );
 });

@@ -4,35 +4,29 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
-} from "../../../../../tests/helpers/legacy-mocks.ts";
-import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+} from "../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
-} from "../../../../shared/legacy/global-flags.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import {
-  LegacyDbConnectError,
-  LegacyDbExecError,
-} from "../../../shared/legacy-db-connection.errors.ts";
+} from "../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
+import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   LegacyDbConnection,
   type LegacyDbSession,
   type LegacyPgConnInput,
-} from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyDockerRunError } from "../../../shared/legacy-docker-run.errors.ts";
-import {
-  LegacyDockerRun,
-  type LegacyDockerRunOpts,
-} from "../../../shared/legacy-docker-run.service.ts";
-import { legacyTestDb } from "./db.handler.ts";
+} from "./legacy-db-connection.service.ts";
+import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
+import { LegacyDockerRun, type LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
+import { legacyTestDb } from "./legacy-test-db.handler.ts";
 
 const LOCAL_CONN: LegacyPgConnInput = {
   host: "127.0.0.1",
@@ -135,17 +129,19 @@ function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
   };
 }
 
-const runtimeInfoLayer = Layer.succeed(RuntimeInfo, {
-  cwd: "/work/project",
-  platform: "linux",
-  arch: "x64",
-  homeDir: "/home/user",
-  execPath: "/usr/bin/supabase",
-  pid: 1234,
-});
+const runtimeInfoLayer = (platform: NodeJS.Platform) =>
+  Layer.succeed(RuntimeInfo, {
+    cwd: "/work/project",
+    platform,
+    arch: "x64",
+    homeDir: "/home/user",
+    execPath: "/usr/bin/supabase",
+    pid: 1234,
+  });
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
+  platform?: NodeJS.Platform;
   conn?: LegacyPgConnInput;
   isLocal?: boolean;
   existed?: boolean;
@@ -175,7 +171,7 @@ function setup(opts: SetupOpts = {}) {
     docker.layer,
     mockLegacyCliConfig({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
     telemetry.layer,
-    runtimeInfoLayer,
+    runtimeInfoLayer(opts.platform ?? "linux"),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
     Layer.succeed(
       LegacyNetworkIdFlag,
@@ -223,6 +219,17 @@ describe("legacy test db integration", () => {
     return Effect.gen(function* () {
       yield* legacyTestDb(flags());
       expect(docker.lastOpts?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("omits the host-gateway mapping on macOS/Windows", () => {
+    // Docker Desktop provides the host.docker.internal mapping natively there
+    // (docker_darwin.go / docker_windows.go both declare an empty extraHosts);
+    // only Linux needs the explicit ExtraHosts entry.
+    const { layer, docker } = setup({ platform: "darwin" });
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags());
+      expect(docker.lastOpts?.extraHosts).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
