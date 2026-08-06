@@ -856,6 +856,36 @@ describe("legacyRespondToComplete", () => {
       expect(validForValid?.candidates.map((c) => c.name)).toContain("--profile");
     });
 
+    it("rejects a duration one unit past Go's int64 nanosecond range for Go's DurationVar flags", () => {
+      // Go's DurationVar parses via time.ParseDuration, which accumulates
+      // into an int64 nanosecond count — a syntactically well-formed
+      // duration can still overflow that range (verified empirically
+      // against a real apps/cli-go build: `gen types --query-timeout
+      // 2562048h --l` — one hour past the real max — returns zero
+      // candidates with the Default directive, matching `bogus`, while the
+      // exact int64 max, `2562047h47m16.854775807s`, still completes
+      // normally — CLI-1965 review finding).
+      const overflow = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "types",
+        "--query-timeout",
+        "2562048h",
+        "--l",
+      ]);
+      expect(overflow).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+
+      const max = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "types",
+        "--query-timeout",
+        "2562047h47m16.854775807s",
+        "--l",
+      ]);
+      expect(max?.candidates.map((c) => c.name)).toContain("--local");
+    });
+
     it("rejects a malformed value for Go's TimeVar flag (gen bearer-jwt --exp, RFC3339 only)", () => {
       // Declared Flag.string in TS but a TimeVar constrained to time.RFC3339
       // in Go (cmd/gen.go:178) (verified empirically against a real

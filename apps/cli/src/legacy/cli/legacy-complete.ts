@@ -735,30 +735,140 @@ const LEGACY_COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
  */
 const LEGACY_COMPLETION_RFC3339_FLAGS: ReadonlySet<string> = new Set(["gen bearer-jwt:exp"]);
 
-/**
- * Mirrors Go's `time.ParseDuration` grammar (`time/format.go`): an optional
- * sign, then either the literal `0` alone, or one or more
- * `<number><unit>` terms concatenated (`1h30m`, `1.5h`, `.5s`) — every unit
- * pflag's duration parser accepts: `ns`, `us`/`µs`/`μs`, `ms`, `s`, `m`, `h`.
- * A bare number with no unit (`"5"`), a unit with no leading digits (`"h"`),
- * or anything that fails to fully consume (trailing/leading garbage) is
- * rejected, matching Go's "missing unit"/"invalid duration" errors (verified
- * against go1.26 `time.ParseDuration`: `"300ms"`/`"1.5h"`/`"2h45m"`/
- * `"-1.5h"`/`"0"`/`".5s"` → valid; `"bogus"`/`"5"`/`"0.0"`/`"1_0s"` →
- * invalid).
- *
- * Known residual: Go's accumulator additionally overflows (→ "invalid
- * duration") for a magnitude that, once unit-scaled, exceeds `int64`
- * nanoseconds (e.g. a ~20-digit hour count) — this syntax-only check doesn't
- * reproduce that overflow bound, the same class of residual
- * `legacyParseUintBase0`'s own doc comment already accepts for values above
- * 2^53. Unreachable through any realistic completion input.
- */
-const GO_DURATION_PATTERN =
-  /^[+-]?(?:0|(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:ns|us|µs|μs|ms|s|m|h))+)$/;
+/** Nanosecond scale for each unit `time.ParseDuration`'s `unitMap` accepts (`time/format.go`). */
+const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
+  ["ns", 1n],
+  ["us", 1_000n],
+  ["µs", 1_000n], // U+00B5 micro sign
+  ["μs", 1_000n], // U+03BC Greek mu
+  ["ms", 1_000_000n],
+  ["s", 1_000_000_000n],
+  ["m", 60_000_000_000n],
+  ["h", 3_600_000_000_000n],
+]);
 
+// `time.ParseDuration` accumulates into a `uint64` and range-checks against
+// `1<<63` mid-parse, only narrowing to the `int64` max (`1<<63 - 1`) in the
+// final non-negative check — see `legacyIsValidGoDuration` below.
+const GO_DURATION_UINT64_OVERFLOW_BOUND = 1n << 63n;
+const GO_DURATION_MAX_INT64 = (1n << 63n) - 1n;
+
+function legacyIsAsciiDigit(char: string | undefined): boolean {
+  return char !== undefined && char >= "0" && char <= "9";
+}
+
+/**
+ * Faithful port of Go's `time.ParseDuration` (`time/format.go`) — the exact
+ * parser pflag runs for a `DurationVar` flag's `Set` — as a syntax-and-range
+ * VERDICT (completion only needs a boolean, not the parsed `Duration`,
+ * mirroring `legacyIsValidBase0Int64`'s own shape). An optional sign, then
+ * either the literal `0` alone, or one or more `<int>[.<frac>]<unit>` terms
+ * concatenated (`1h30m`, `1.5h`, `.5s`), accumulating nanoseconds as Go does:
+ * `BigInt` for the integer/fraction accumulators (Go's `uint64`, which this
+ * mirrors exactly — no JS `Number` precision loss), and a plain `Number`
+ * multiply-then-`Math.trunc` for the one step Go itself does in `float64`
+ * (`uint64(float64(f) * (float64(unit) / scale))`) — since a JS `number` IS
+ * an IEEE-754 double, `Number(bigIntValue)` round-trips through the exact
+ * same conversion Go's `float64(f)` does, so this step is bit-for-bit
+ * identical to Go's, not merely an approximation of it.
+ *
+ * This replaces an earlier regex-only grammar check whose own doc comment
+ * dismissed the overflow bound as "unreachable through any realistic
+ * completion input" — disputed and disproven on review (CLI-1965): Go's
+ * `int64` nanosecond range caps out at ~292 years, so `--query-timeout
+ * 2562048h` (one hour past the real max, a plausible fat-fingered value, not
+ * a contrived ~20-digit magnitude) is exactly the kind of input real
+ * completion traffic can produce, and the old check silently accepted it.
+ * Verified empirically against a real `apps/cli-go` build (`gen types
+ * --query-timeout 2562048h --l` returns zero candidates with the Default
+ * directive, matching `bogus`) and cross-checked this implementation against
+ * go1.26 `time.ParseDuration` across sign/fraction/multi-term/overflow edge
+ * cases, including the exact `int64` boundary (`2562047h47m16.854775807s` →
+ * valid, one ns more → invalid) and its negative-side asymmetry
+ * (`-2562047h47m16.854775808s`, `int64` min, valid — one ns more still
+ * invalid) — same two's-complement asymmetry `legacyIsValidBase0Int64`
+ * already encodes for `MAX_INT64_NEGATIVE_MAGNITUDE`.
+ */
 function legacyIsValidGoDuration(value: string): boolean {
-  return GO_DURATION_PATTERN.test(value);
+  let rest = value;
+  let negative = false;
+  if (rest.length > 0 && (rest[0] === "-" || rest[0] === "+")) {
+    negative = rest[0] === "-";
+    rest = rest.slice(1);
+  }
+  if (rest === "0") return true;
+  if (rest === "") return false;
+
+  let total = 0n;
+  while (rest.length > 0) {
+    if (!(rest[0] === "." || legacyIsAsciiDigit(rest[0]))) return false;
+
+    // `leadingInt`: digits before the decimal point. Go returns an error
+    // immediately on overflow rather than continuing to consume digits.
+    let i = 0;
+    let intPart = 0n;
+    while (legacyIsAsciiDigit(rest[i])) {
+      if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND / 10n) return false;
+      intPart = intPart * 10n + BigInt(rest[i] as string);
+      if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+      i++;
+    }
+    const hasIntDigits = i > 0;
+    rest = rest.slice(i);
+
+    // `leadingFraction`: digits after `.`. Go does NOT error on overflow
+    // here — it just stops accumulating precision and keeps consuming.
+    let fracPart = 0n;
+    let scale = 1n;
+    let hasFracDigits = false;
+    if (rest.length > 0 && rest[0] === ".") {
+      rest = rest.slice(1);
+      let j = 0;
+      let fracOverflowed = false;
+      while (legacyIsAsciiDigit(rest[j])) {
+        if (!fracOverflowed) {
+          if (fracPart > GO_DURATION_MAX_INT64 / 10n) {
+            fracOverflowed = true;
+          } else {
+            const next = fracPart * 10n + BigInt(rest[j] as string);
+            if (next > GO_DURATION_UINT64_OVERFLOW_BOUND) {
+              fracOverflowed = true;
+            } else {
+              fracPart = next;
+              scale *= 10n;
+            }
+          }
+        }
+        j++;
+      }
+      hasFracDigits = j > 0;
+      rest = rest.slice(j);
+    }
+    if (!hasIntDigits && !hasFracDigits) return false;
+
+    // Consume the unit: every character up to the next digit/`.`.
+    let k = 0;
+    while (k < rest.length && !(rest[k] === "." || legacyIsAsciiDigit(rest[k]))) k++;
+    if (k === 0) return false; // missing unit
+    const unitNanos = GO_DURATION_UNIT_NANOS.get(rest.slice(0, k));
+    rest = rest.slice(k);
+    if (unitNanos === undefined) return false; // unknown unit
+
+    if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND / unitNanos) return false;
+    let termNanos = intPart * unitNanos;
+    if (fracPart > 0n) {
+      const fractional = Number(fracPart) * (Number(unitNanos) / Number(scale));
+      termNanos += BigInt(Math.trunc(fractional));
+      if (termNanos > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+    }
+    total += termNanos;
+    if (total > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+  }
+
+  // Go's final range check only runs for the non-negative case — the
+  // negative side already got the one-larger `1<<63` bound above, matching
+  // `int64`'s two's-complement asymmetry (see the doc comment).
+  return negative || total <= GO_DURATION_MAX_INT64;
 }
 
 /**
