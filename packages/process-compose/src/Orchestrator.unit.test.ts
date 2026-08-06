@@ -2274,6 +2274,26 @@ describe("Orchestrator", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
+    it.live("waitReady uses the running generation restart policy", () => {
+      const { layer, proc } = setupOrchestrator([svc("a", { restart: "no" })], {
+        exitCode: 1,
+        exitDelay: "200 millis",
+      });
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("a");
+
+        // The replacement applies to the next generation; this one still
+        // terminates under restart:no and readiness must fail with it.
+        yield* orc.updateServiceDefinition("a", svc("a", { restart: "always" }));
+
+        const exit = yield* orc.waitReady("a").pipe(Effect.exit, Effect.timeout("1 second"));
+        expect(Exit.isFailure(exit)).toBe(true);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
     it.live("waitReady resolves when one-shot service completes successfully", () => {
       const { layer } = setupOrchestrator([svc("a", { restart: "no" })], {
         exitCode: 0,

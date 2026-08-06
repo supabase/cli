@@ -657,6 +657,7 @@ export class Orchestrator extends Context.Service<
             const svc = services.get(def.name);
             if (!svc) return Effect.void;
             const current = SubscriptionRef.getUnsafe(svc.state);
+            const effectiveDef = svc.effectiveDef;
             if (current.desired !== "running") {
               return Effect.fail(
                 new ServiceReadyError({
@@ -668,7 +669,7 @@ export class Orchestrator extends Context.Service<
                 }),
               );
             }
-            if (current.status === "Failed" && !willRestartAfterExit(def, current)) {
+            if (current.status === "Failed" && !willRestartAfterExit(effectiveDef, current)) {
               return Effect.fail(
                 new ServiceReadyError({
                   name: def.name,
@@ -677,7 +678,10 @@ export class Orchestrator extends Context.Service<
               );
             }
 
-            if ((def.restart ?? defaults.restart) === "no" && def.healthCheck == null) {
+            if (
+              (effectiveDef.restart ?? defaults.restart) === "no" &&
+              effectiveDef.healthCheck == null
+            ) {
               return waitForState(
                 svc,
                 (state) => state.status === "Failed" || state.status === "Stopped",
@@ -704,7 +708,7 @@ export class Orchestrator extends Context.Service<
               (state) =>
                 state.status === "Healthy" ||
                 ((state.status === "Failed" || state.status === "Stopped") &&
-                  !willRestartAfterExit(def, state)),
+                  !willRestartAfterExit(effectiveDef, state)),
             ).pipe(
               Effect.flatMap((ready) => {
                 if (ready.status === "Healthy") return Effect.void;
