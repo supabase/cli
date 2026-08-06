@@ -362,7 +362,19 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         // NOTHING rather than falling back to migrations — CLI-1958).
         const useSchemaFiles = experimental && resolvedVersion === "" && !toml.pgDelta.enabled;
         if (useSchemaFiles) {
-          yield* legacyApplySchemaFiles(session, fs, path, workdir, toml.schemaPaths, applyError);
+          // `projectEnv` (loaded above, before `experimental`/`yes` resolve) is threaded
+          // through so a `SUPABASE_SCANNER_BUFFER_SIZE` set only in `supabase/.env` is
+          // honored here exactly like Go's `loadNestedEnv` (see
+          // `checkScannerBufferSize`'s doc comment, `legacy-migration-apply.ts`).
+          yield* legacyApplySchemaFiles(
+            session,
+            fs,
+            path,
+            workdir,
+            toml.schemaPaths,
+            applyError,
+            projectEnv,
+          );
         } else if (toml.migrationsEnabled) {
           const locals = yield* legacyListLocalMigrations(fs, path, migrationsDir);
           // LoadPartialMigrations filter: version === "" || v <= version.

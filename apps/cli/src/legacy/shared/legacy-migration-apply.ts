@@ -117,6 +117,24 @@ const utf8ByteLength = (value: string): number => new TextEncoder().encode(value
 // pattern repeats at the override's own value (5000 succeeds, 5001 fails).
 const GO_SCANNER_START_BUF_SIZE = 4096;
 
+// Go's `parser.MaxScannerCapacity` (`pkg/parser/token.go:19`) — the hardcoded default
+// `parser.Split` falls back to when `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")`
+// returns `0`. Reached whenever the env var is SET but resolves to a non-positive size
+// — including a value `legacyParseScannerBufferSize` can't parse at all. Verified
+// empirically against `apps/cli-go/pkg/parser` + vendored `viper@v1.21.0`:
+// `SUPABASE_SCANNER_BUFFER_SIZE=5M` (a bare multiplier suffix with NO trailing `b`/`B`)
+// behaves byte-for-byte identically to the var being completely unset from the default
+// cap's own first-failure point on — because `parseSizeInBytes` only ever recognizes a
+// `k`/`m`/`g` multiplier when it immediately precedes a trailing `b`/`B`
+// (`util.go:156-174`); "5M" never strips a suffix, so it falls through to
+// `cast.ToInt("5M")`, which fails whole (not a leading-digits prefix parse — unlike
+// JS's lenient `Number.parseInt`) and returns `0`. This is NOT the same as truly unset,
+// though: `viper.IsSet("SCANNER_BUFFER_SIZE")` is still `true` (the var IS present, just
+// unparseable), so `parseFile`'s file-size auto-growth (see `checkScannerBufferSize`'s
+// doc comment) never runs — the cap stays pinned at this hardcoded default regardless of
+// the real file's size, unlike the genuinely-unset case where it grows to match.
+const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
+
 /**
  * Go's `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")` (env-prefixed
  * `SUPABASE_SCANNER_BUFFER_SIZE`, `pkg/parser/token.go:87`): an integer byte count,
@@ -124,6 +142,31 @@ const GO_SCANNER_START_BUF_SIZE = 4096;
  * `b`/`B` (e.g. `"5MB"`, `"256KB"`, or a bare byte count). Ported 1:1 from viper's
  * own parser (`parseSizeInBytes`, `github.com/spf13/viper@v1.21.0/util.go:151-179`):
  * an unparseable or non-positive result is treated as unset (`0`).
+ *
+ * The multiplier is recognized ONLY when the string's LAST character is literally
+ * `b`/`B` — a bare `"5M"` (no trailing `B`) is NOT 5 MiB in real Go: `sizeStr[lastChar]`
+ * isn't `b`/`B`, so the multiplier branch never runs and the whole (unstripped) string
+ * is handed to `cast.ToInt`, which fails on the trailing letter and yields `0`. Do NOT
+ * special-case a bare `k`/`m`/`g` suffix here; that would make this port accept a value
+ * real Go rejects.
+ *
+ * Go's inner `lastChar > 1` gate (`util.go:158`) means the trailing-`B`-strip ALSO never
+ * runs for a 2-character value like `"5B"`/`"5b"` — only 3+ characters (an actual
+ * multiplier letter, or at least one digit, before the `B`) reach the switch at all — so
+ * `"5B"` is unstripped, `cast.ToInt("5B")` fails, and the whole thing is `0` too, same as
+ * `"5M"`. `cast.ToInt` (`strconv.ParseInt`) also requires the ENTIRE remaining string to
+ * be a clean integer — trailing garbage fails the WHOLE parse, unlike JS's lenient
+ * `Number.parseInt`, which stops at the first non-digit and returns whatever numeric
+ * prefix it found (`Number.parseInt("5M", 10) === 5`, silently discarding the "M", where
+ * Go's parse rejects the string outright). `cast.ToInt` does tolerate one decimal point
+ * via its own `trimDecimal` (keeps only the integer part, e.g. `"5.5"` → `"5"`), so allow
+ * exactly that one exception. All of the above verified empirically against
+ * `apps/cli-go/pkg/parser` + vendored `viper@v1.21.0`
+ * (`"5"→5, "5B"→0, "50B"→50, "5KB"→5120, "5M"→0, "0"→0, "5.5"→5, "5.5MB"→5242880`).
+ * Known residual delta: Go's `strconv.ParseInt(s, 0, 0)` uses base `0`, so it also
+ * accepts a `0x`/`0o`/`0b`-prefixed literal (`"0x5"` → `5`) — not reproduced here as a
+ * realistic byte-size override would never use one; flagging so a future parity sweep
+ * doesn't rediscover it.
  */
 const legacyParseScannerBufferSize = (raw: string): number => {
   let value = raw.trim();
@@ -148,6 +191,7 @@ const legacyParseScannerBufferSize = (raw: string): number => {
         break;
     }
   }
+  if (!/^[+-]?\d+(?:\.\d*)?$/.test(value)) return 0;
   const size = Number.parseInt(value, 10);
   return Number.isFinite(size) && size > 0 ? size * multiplier : 0;
 };
@@ -176,21 +220,43 @@ const legacyParseScannerBufferSize = (raw: string): number => {
  * probe. This is a "read"-phase failure (`NewMigrationFromFile`/`parseFile`
  * returns before `apply.go`'s `CmdSuggestion` is ever set), so it carries no
  * suggestion, same as the file-open failure above.
+ *
+ * `projectEnv`, when given, is the caller's already-loaded `legacyLoadProjectEnv` map:
+ * Go's `loadNestedEnv` (`pkg/config/config.go:1220`) `os.Setenv`s every project-`.env`
+ * key that isn't already in the shell env BEFORE `ParseDatabaseConfig` returns — i.e.
+ * before ANY command body (including this scan) runs — so `viper.AutomaticEnv()` sees a
+ * `supabase/.env`-only `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported
+ * one. Defaults to `{}` for callers that haven't threaded a project-env map through
+ * (shell-only, same as before this parameter existed).
  */
 const checkScannerBufferSize = <E>(
   content: string,
   mapError: (message: string, phase: "read" | "exec") => E,
+  projectEnv: Readonly<Record<string, string>> = {},
 ): Effect.Effect<void, E> => {
-  const raw = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+  const raw =
+    process.env["SUPABASE_SCANNER_BUFFER_SIZE"] ?? projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
   if (raw === undefined) return Effect.void;
   const configuredLimit = legacyParseScannerBufferSize(raw);
-  if (configuredLimit <= 0) return Effect.void;
-  const limit = Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE);
+  // `configuredLimit <= 0` covers both an explicit non-positive size and an unparseable
+  // value (e.g. a bare "5M", see `GO_DEFAULT_MAX_SCANNER_CAPACITY`'s comment) — Go's
+  // `viper.GetSizeInBytes` collapses all of these to `0` too, and `parser.Split` then
+  // falls back to its OWN hardcoded default cap, not to "no limit".
+  const limit =
+    configuredLimit > 0
+      ? Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE)
+      : GO_DEFAULT_MAX_SCANNER_CAPACITY;
+  // Go's suggestion reports `maxbuf>>10` — the EFFECTIVE cap actually passed to
+  // `scanner.Buffer` (`pkg/parser/token.go:110`), which is the raw configured value
+  // (even below the `GO_SCANNER_START_BUF_SIZE` floor — the floor only affects when
+  // `bufio.ErrTooLong` can fire, never the number Go prints) when positive, or the
+  // hardcoded default once Go has fallen back to it.
+  const reportedLimit = configuredLimit > 0 ? configuredLimit : GO_DEFAULT_MAX_SCANNER_CAPACITY;
   let emitted = 0;
   let lastRaw = "";
   for (const token of legacySplitSqlTokens(content)) {
     if (utf8ByteLength(token.raw) > limit) {
-      const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(configuredLimit / 1024)}KB)`;
+      const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
       return Effect.fail(
         mapError(
           `bufio.Scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
@@ -254,6 +320,9 @@ const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
  * apply.go:65-69), so role/globals files (`legacySeedGlobals`) stay reset-free like Go.
  * When `forceNoVersion` is set the history insert is skipped regardless of filename
  * (Go's `SeedGlobals` clears `Version`).
+ *
+ * `projectEnv` is forwarded to {@link checkScannerBufferSize} — see its own doc comment
+ * for why a project-`.env`-only `SUPABASE_SCANNER_BUFFER_SIZE` must be visible here too.
  */
 const execMigrationBatch = <E>(
   session: LegacyDbSession,
@@ -263,6 +332,7 @@ const execMigrationBatch = <E>(
   mapError: (message: string, phase: "read" | "exec") => E,
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
+  projectEnv: Readonly<Record<string, string>> = {},
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
     // Go's `MigrationFile.ExecBatch` receives an already-read/parsed file (the read
@@ -282,6 +352,21 @@ const execMigrationBatch = <E>(
     // absolute too. When it differs from `displayPath` (the caller's Go-equivalent
     // relative path), substitute it in so the wrapped message still reports the
     // relative form Go would, not a leaked local temp/absolute path.
+    //
+    // Known residual delta (CLI-1958 review): `readFileString` decodes via `TextDecoder`
+    // with `fatal: false` (the Effect `FileSystem` default), so an invalid-UTF-8 byte
+    // sequence in the file is lossily replaced with U+FFFD before it ever reaches
+    // `legacySplitAndTrim`/`session.exec`. Go's `parseFile` instead scans the raw byte
+    // stream and preserves those bytes verbatim into the statement strings it sends to
+    // PostgreSQL. Reading raw bytes here (`fs.readFile`) and mapping them 1:1 into a
+    // "binary string" would fix the split/parse stage, but the fix dies at the wire: the
+    // shared `pg`/`pg-protocol` layer this session is built on unconditionally UTF-8-
+    // encodes query text before writing it (`pg-protocol/dist/serializer.js` —
+    // `buff.write(string, offset, 'utf-8')`, no raw-byte send API), so ANY string
+    // representation still gets re-mangled at that boundary, just differently. Faithful
+    // byte parity would require patching that shared wire-serializer — infrastructure
+    // every legacy DB command's `session.exec` funnels through, not something scoped to
+    // this file's read path — so it's flagged here rather than "fixed" underneath it.
     const content = yield* fs.readFileString(migrationPath).pipe(
       Effect.mapError((error) => {
         const message = legacyRelativizeErrorMessage(
@@ -299,7 +384,7 @@ const execMigrationBatch = <E>(
     // failure like the open failure above, not an "exec"-phase one. See
     // `checkScannerBufferSize`'s comment for why this is a no-op unless the env var
     // is explicitly set.
-    yield* checkScannerBufferSize(content, mapError);
+    yield* checkScannerBufferSize(content, mapError, projectEnv);
 
     // Everything below mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
     // which runs against an already-read file — so every failure from here on is an
@@ -496,7 +581,9 @@ export const legacySeedGlobals = <E>(
  * `displayPath`, when given, is the path a read-failure's wrapped message should
  * report instead of `filePath` — see `execMigrationBatch`'s comment on why the two
  * can differ (an absolute path is required for the real read, but Go's equivalent
- * error names the workdir-relative form).
+ * error names the workdir-relative form). `projectEnv`, when given, is forwarded to
+ * {@link checkScannerBufferSize} via `execMigrationBatch` — see that helper's doc
+ * comment.
  */
 export const legacyExecSqlFile = <E>(
   session: LegacyDbSession,
@@ -505,8 +592,9 @@ export const legacyExecSqlFile = <E>(
   filePath: string,
   mapError: (message: string, phase: "read" | "exec") => E,
   displayPath?: string,
+  projectEnv?: Readonly<Record<string, string>>,
 ): Effect.Effect<void, E> =>
-  execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath);
+  execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv);
 
 /**
  * Applies Go's EXPERIMENTAL declarative schema-files branch of `apply.MigrateAndSeed`
@@ -540,6 +628,11 @@ export const legacyExecSqlFile = <E>(
  * failure (Go's `NewMigrationFromFile`, `apply.go:57-59`) returns before `CmdSuggestion` is
  * ever set, so it must NOT carry the suggestion — {@link legacyExecSqlFile}'s `mapError`
  * receives the `"read"`/`"exec"` phase precisely so this call site can tell them apart.
+ *
+ * `projectEnv` is the caller's already-loaded `legacyLoadProjectEnv` map, forwarded to
+ * {@link checkScannerBufferSize} (via `legacyExecSqlFile`/`execMigrationBatch`) so a
+ * `SUPABASE_SCANNER_BUFFER_SIZE` set only in `supabase/.env` is honored here exactly like
+ * a real Go run — see that helper's doc comment.
  */
 export const legacyApplySchemaFiles = <E>(
   session: LegacyDbSession,
@@ -548,6 +641,7 @@ export const legacyApplySchemaFiles = <E>(
   workdir: string,
   schemaPaths: ReadonlyArray<string>,
   mapError: (message: string, suggestion?: string) => E,
+  projectEnv: Readonly<Record<string, string>> = {},
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
     const { files, warnings } = yield* legacySqlFilesGlob(fs, path, schemaPaths, workdir);
@@ -574,6 +668,7 @@ export const legacyApplySchemaFiles = <E>(
             ? mapError(message, `See schema file: ${legacyBold(file)}`)
             : mapError(message),
         file,
+        projectEnv,
       );
     }
   });

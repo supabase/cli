@@ -596,4 +596,145 @@ describe("legacyApplySchemaFiles", () => {
       );
     },
   );
+
+  it.effect(
+    "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (viper parity, not '5M' == 5MiB)",
+    () => {
+      // Verified empirically against `apps/cli-go/pkg/parser` + vendored
+      // `viper@v1.21.0`: a bare multiplier suffix with NO trailing "b"/"B" (e.g. "5M")
+      // is NOT 5 MiB in real Go — `parseSizeInBytes` only recognizes a multiplier when
+      // the string's LAST character is literally "b"/"B", so "5M" never strips a
+      // suffix and `cast.ToInt("5M")` fails whole, yielding 0. `viper.IsSet` is still
+      // true (the var IS present), so `parseFile`'s file-size auto-growth never runs
+      // — `parser.Split` falls back to its OWN hardcoded default cap
+      // (`MaxScannerCapacity`, 256KiB), not to "no limit" and not to a tiny 5-byte
+      // limit either. A statement past that hardcoded default must still fail.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-garbage-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(300_000)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "5M";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("bufio.Scanner: token too long");
+          // 256KiB (Go's `parser.MaxScannerCapacity` default), not "5MB" and not ~0KB.
+          expect(msg).toContain(
+            "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
+          );
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is set only in the project env (Go loadNestedEnv parity)",
+    () => {
+      // Go's `loadNestedEnv` (`pkg/config/config.go:1220`) `os.Setenv`s every
+      // project-`.env` key that isn't already in the shell env BEFORE the command body
+      // runs, so `viper.AutomaticEnv()` sees a `supabase/.env`-only
+      // `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported one.
+      // `legacyApplySchemaFiles`'s `projectEnv` parameter threads the caller's already
+      // -loaded `legacyLoadProjectEnv` map through to the same check.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-projectenv-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "100b" },
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("bufio.Scanner: token too long");
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous !== undefined) process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "shell env still wins over the project env for SUPABASE_SCANNER_BUFFER_SIZE (Go godotenv 'never overrides' parity)",
+    () => {
+      // `godotenv.Load`'s `overload=false` never sets a key already present in
+      // `os.Environ()` (`godotenv@v1.5.1/godotenv.go:184-200`) — the shell value must
+      // win even when a (different) project-env value is also threaded through.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-shellwins-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT '${"a".repeat(5000)}';\n`);
+      const { session, calls } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      // Shell explicitly unsets enforcement (0 → treated as unset, no check) while the
+      // project env sets a tiny limit — the shell value must win.
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "0";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "100b" },
+        );
+        expect(calls.some((c) => c.kind === "exec" && c.sql.startsWith("SELECT 'a"))).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
 });
