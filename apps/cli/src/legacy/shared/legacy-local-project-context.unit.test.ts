@@ -27,17 +27,67 @@ function writeDotEnv(workdir: string, contents: string): void {
   writeFileSync(join(workdir, ".env"), contents);
 }
 
+function writeConfigToml(workdir: string, contents: string): void {
+  const supabaseDir = join(workdir, "supabase");
+  mkdirSync(supabaseDir, { recursive: true });
+  writeFileSync(join(supabaseDir, "config.toml"), contents);
+}
+
 const tempRoot = useLegacyTempWorkdir("supabase-legacy-project-context-");
 
 describe("legacyLoadLocalProjectContext", () => {
   const previousDockerHost = process.env[DOCKER_HOST_KEY];
   const previousBitbucketCloneDir = process.env[BITBUCKET_CLONE_DIR_KEY];
+  const previousProjectId = process.env["SUPABASE_PROJECT_ID"];
 
   afterEach(() => {
     if (previousDockerHost === undefined) delete process.env[DOCKER_HOST_KEY];
     else process.env[DOCKER_HOST_KEY] = previousDockerHost;
     if (previousBitbucketCloneDir === undefined) delete process.env[BITBUCKET_CLONE_DIR_KEY];
     else process.env[BITBUCKET_CLONE_DIR_KEY] = previousBitbucketCloneDir;
+    if (previousProjectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+    else process.env["SUPABASE_PROJECT_ID"] = previousProjectId;
+  });
+
+  it.effect(
+    "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
+    () => {
+      // Regression (review: PRRT_kwDOErm0O86XHGDL) — `loadProjectConfig`'s own remote merge
+      // (`packages/config/src/io.ts`) already installs the matched block's `project_id` at
+      // Go's viper override tier before this reads it; letting an unrelated
+      // `SUPABASE_PROJECT_ID` win here would resolve the WRONG project id for the shadow's
+      // own network id/container labels on a linked `db diff`/`db pull`.
+      process.env["SUPABASE_PROJECT_ID"] = "local";
+      const ref = "abcdefghijklmnopqrst";
+      const workdir = tempRoot.current;
+      writeConfigToml(
+        workdir,
+        ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
+      );
+
+      return legacyLoadLocalProjectContext(workdir, (message) => new Error(message), ref).pipe(
+        Effect.map((context) => {
+          expect(context.loaded?.appliedRemote).toBe("prod");
+          expect(context.projectId).toBe(ref);
+        }),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const ref = "abcdefghijklmnopqrst";
+    const workdir = tempRoot.current;
+    writeConfigToml(workdir, ['project_id = "toml-project"', ""].join("\n"));
+
+    return legacyLoadLocalProjectContext(workdir, (message) => new Error(message), ref).pipe(
+      Effect.map((context) => {
+        expect(context.loaded?.appliedRemote).toBeUndefined();
+        expect(context.projectId).toBe("env-project");
+      }),
+      Effect.provide(BunServices.layer),
+    );
   });
 
   it.effect(

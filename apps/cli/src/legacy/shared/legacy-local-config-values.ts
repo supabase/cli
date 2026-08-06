@@ -2727,7 +2727,16 @@ export function legacyResolveLocalConfigValues(
   // `SUPABASE_PROJECT_ID` is checked via the same `legacyEnvOverride` precedence
   // every other field here uses, since Viper's `AutomaticEnv` binds it too
   // (`config.go:529-535`) and it can turn an explicit-empty file value (or an
-  // unsanitizable basename fallback) back into a valid override.
+  // unsanitizable basename fallback) back into a valid override. Deliberately NOT
+  // gated by `remoteWins("project_id")` (unlike the fields below): the ONLY consumer
+  // of this value is `legacyValidateResolvedConfig`'s emptiness check
+  // (`legacy-config-validate.ts:336`), and `legacyEnvOverride` (a plain, non-throwing
+  // string read) can never turn an already non-empty remote-merged `project_id` into
+  // an empty one, nor vice versa — so gating here would change no observable
+  // accept/reject outcome. The real "shadow's network id/labels resolve the wrong
+  // project id" bug this pattern otherwise guards against lives in
+  // `legacy-local-project-context.ts`'s OWN, separately-consumed project id (see its
+  // doc comment — review: PRRT_kwDOErm0O86XHGDL), not this validation-only field.
   const resolvedProjectId = legacyEnvOverride(
     "SUPABASE_PROJECT_ID",
     config.project_id ?? legacySanitizeProjectId(basename(workdir)),

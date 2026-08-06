@@ -2762,4 +2762,57 @@ describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)
       Effect.ensuring(restore(previous)),
     );
   });
+
+  it.effect(
+    "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
+    () => {
+      // Regression (review: PRRT_kwDOErm0O86XHGDL) — Go's `mergeRemoteConfig` installs the
+      // matched block's OWN `project_id` at viper's override tier, above `AutomaticEnv`
+      // (`apps/cli-go/pkg/config/config.go:718-724`); that block is selected BECAUSE its
+      // `project_id` equals the resolved ref, so it must win even when an unrelated
+      // `SUPABASE_PROJECT_ID` is set to something else entirely.
+      const previous = process.env["SUPABASE_PROJECT_ID"];
+      process.env["SUPABASE_PROJECT_ID"] = "local";
+      const ref = "abcdefghijklmnopqrst";
+      const dir = withConfig(
+        ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.appliedRemote).toBe("prod");
+            expect(v.remoteOverrideKeys.has("project_id")).toBe(true);
+            expect(Option.getOrNull(v.projectId)).toBe(ref);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.ensuring(restore(previous)),
+      );
+    },
+  );
+
+  it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const ref = "abcdefghijklmnopqrst";
+    const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBeUndefined();
+          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
 });

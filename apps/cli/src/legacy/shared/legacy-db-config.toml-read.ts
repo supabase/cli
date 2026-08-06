@@ -312,6 +312,11 @@ function legacyResolveValidatedRemoteProjectId(
  * `AutomaticEnv` — `config.go:635-637`), so the block value must beat the env override.
  */
 const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
+  // The matched `[remotes.<name>]` block's own `project_id` field is what selected it in the
+  // first place (`applyRemoteOverride` above matches on exactly this key), so it is ALWAYS
+  // present whenever a remote matched — same override-tier reasoning as every other key in
+  // this array, just guaranteed-present instead of block-dependent (review: PRRT_kwDOErm0O86XHGDL).
+  "project_id",
   "api.schemas",
   "db.port",
   "db.shadow_port",
@@ -1275,7 +1280,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `test db --local` joins `supabase_network_<toml-or-basename>` while Go honors the
   // env id. This is independent of the linked-ref resolver, which reads the env var on
   // its own chain; the env value is bound regardless of whether a config file exists.
-  const projectIdEnv = envOverride("SUPABASE_PROJECT_ID");
+  // UNLESS a matched `[remotes.<ref>]` block already set `project_id` at viper's override
+  // tier (`remoteOverrideKeys.has("project_id")`, always true whenever `appliedRemote` is
+  // set — see `LEGACY_ENV_OVERRIDABLE_KEYS`'s own doc comment on that key): that Set-tier
+  // value outranks `AutomaticEnv`, so a stale/differently-scoped `SUPABASE_PROJECT_ID` must
+  // not clobber it — otherwise a linked `db diff`/`db pull` mounts the wrong
+  // `supabase_edge_runtime_<id>` Deno-cache volume for the matched remote (review:
+  // PRRT_kwDOErm0O86XHGDL).
+  const projectIdEnv = remoteOverrideKeys.has("project_id")
+    ? undefined
+    : envOverride("SUPABASE_PROJECT_ID");
   if (projectIdEnv !== undefined) {
     projectId = nonEmptyString(legacyExpandEnv(projectIdEnv, lookup));
   }

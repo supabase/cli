@@ -166,9 +166,22 @@ export const legacyLoadLocalProjectContext = <E>(
     );
     const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
     const hostname = legacyGetHostname();
+    // `loaded?.appliedRemote !== undefined` means a `[remotes.<ref>]` block matched
+    // `projectRef` above and `loadProjectConfig` merged it over the base document
+    // (`packages/config/src/io.ts`'s `applyRemoteOverride`) — including that block's OWN
+    // `project_id` field, which is what selected it (`config.project_id` already equals
+    // `projectRef`). Go's `mergeRemoteConfig` installs that value at viper's override tier,
+    // above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:718-724`), so a stale/
+    // differently-scoped `SUPABASE_PROJECT_ID` must not win over it here either — otherwise
+    // this context's `projectId` (network id, container labels — same field
+    // `legacy-db-config.toml-read.ts`'s own `project_id` gating protects for the pg-delta
+    // context) resolves the WRONG id for a linked `db diff --linked`/`db pull` shadow
+    // (review: PRRT_kwDOErm0O86XHGDL).
     const projectId = legacySanitizeProjectId(
       legacyResolveLocalProjectId(
-        projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
+        loaded?.appliedRemote !== undefined
+          ? undefined
+          : (projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"]),
         config.project_id,
         workdir,
       ),
