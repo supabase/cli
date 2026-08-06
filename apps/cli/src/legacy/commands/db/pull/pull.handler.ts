@@ -395,6 +395,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
             // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
             connType === "linked" ? linkedRef : undefined,
+            // `toml`'s OWN remote-override-key tracking (same matched block) — so a
+            // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
+            // env var when deriving the shadow's container spec.
+            toml.remoteOverrideKeys,
           );
           const resolvedDeclShadowImage = yield* declLocalInputs.resolvePostgresImage;
           // `legacyPrepareRawShadow` needs none of the `setup`/declarative-branch fields the
@@ -631,6 +635,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
           // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
           connType === "linked" ? linkedRef : undefined,
+          // `toml`'s OWN remote-override-key tracking (same matched block) — so a
+          // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
+          // env var when deriving the shadow's container spec.
+          toml.remoteOverrideKeys,
         );
         // Go's `diffRemoteSchema` retries the ENTIRE `diff.DiffDatabase` call — shadow
         // provisioning included — against the pooler config on an IPv6 failure, not

@@ -33,6 +33,7 @@ import {
   legacyEnvOverrideMajorVersion,
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
+  LegacyInvalidRealtimeIpVersionEnvOverrideError,
 } from "../legacy-local-config-values.ts";
 import { legacyReadServiceVersionOverrides } from "../legacy-service-version-overrides.ts";
 import { ramInBytes } from "../legacy-size-units.ts";
@@ -42,6 +43,18 @@ export interface LegacyDbBootstrapConfigInput {
   readonly config: ProjectConfig;
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   readonly workdir: string;
+  /**
+   * Config keys a matched `[remotes.<ref>]` block contributed at viper's OVERRIDE tier
+   * (Go's `v.Set`, applied ABOVE `AutomaticEnv` — `apps/cli-go/pkg/config/config.go:
+   * 635-640`) — see `legacy-db-config.toml-read.ts`'s `LegacyRemoteOverride.
+   * remoteOverrideKeys` doc comment for the full precedence rationale. Every
+   * `legacyEnvOverride*` call below must NOT re-apply a `SUPABASE_*` value for a field
+   * the remote block already set. Defaults to empty: `db start`/`db reset` never resolve
+   * a remote block for this config read (see `legacyBuildLocalDbContainerInputs`'s own
+   * doc comment), so they're unaffected; `db diff --linked`/`db pull` (CLI-1956) pass
+   * the set their sibling `legacyReadDbToml` call already computed.
+   */
+  readonly remoteOverrideKeys?: ReadonlySet<string>;
 }
 
 export interface LegacyDbBootstrapConfig {
@@ -107,41 +120,59 @@ export const legacyResolveDbBootstrapConfig = <E>(
 ): Effect.Effect<LegacyDbBootstrapConfig, E> =>
   Effect.gen(function* () {
     const { config, projectEnvValues, workdir } = input;
+    const remoteOverrideKeys = input.remoteOverrideKeys ?? new Set<string>();
+    const remoteWins = (dottedFieldPath: string): boolean =>
+      remoteOverrideKeys.has(dottedFieldPath);
 
     // Go's `Config.Load` folds `SUPABASE_DB_MAJOR_VERSION` into `c.Db.MajorVersion` before the
     // image-selection switch runs (`pkg/config/config.go:585-586,819-827`) — every later read of
     // `utils.Config.Db.MajorVersion` sees this same value. Not wrapped: `legacyCheckDbToml`
     // (called by both callers before this function) already validates this override.
-    const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
+    // A matched remote block's `db.major_version` was installed at viper's OVERRIDE tier
+    // (above `AutomaticEnv`), so it must win over a conflicting `SUPABASE_DB_MAJOR_VERSION`.
+    const majorVersion = remoteWins("db.major_version")
+      ? config.db.major_version
+      : legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
     // `experimental.orioledb_version` -> `Config.Db.Image` rewrite (`pkg/config/config.go:
     // 1041-1046`), plus its four sibling S3 fields Go reads into the Postgres container's `S3_*`
     // env alongside it (`apps/cli-go/internal/db/start/start.go:70-77`). Both `legacyEnvOverride`
     // calls never throw (return the override or the configured value verbatim), so no wrap needed.
-    const orioledbVersion = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-      config.experimental.orioledb_version,
-      projectEnvValues,
-    );
-    const s3Host = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_HOST",
-      config.experimental.s3_host,
-      projectEnvValues,
-    );
-    const s3Region = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_REGION",
-      config.experimental.s3_region,
-      projectEnvValues,
-    );
-    const s3AccessKey = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
-      config.experimental.s3_access_key,
-      projectEnvValues,
-    );
-    const s3SecretKey = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
-      config.experimental.s3_secret_key,
-      projectEnvValues,
-    );
+    // Same remote-over-env precedence as `majorVersion` above applies to each of these.
+    const orioledbVersion = remoteWins("experimental.orioledb_version")
+      ? config.experimental.orioledb_version
+      : legacyEnvOverride(
+          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+          config.experimental.orioledb_version,
+          projectEnvValues,
+        );
+    const s3Host = remoteWins("experimental.s3_host")
+      ? config.experimental.s3_host
+      : legacyEnvOverride(
+          "SUPABASE_EXPERIMENTAL_S3_HOST",
+          config.experimental.s3_host,
+          projectEnvValues,
+        );
+    const s3Region = remoteWins("experimental.s3_region")
+      ? config.experimental.s3_region
+      : legacyEnvOverride(
+          "SUPABASE_EXPERIMENTAL_S3_REGION",
+          config.experimental.s3_region,
+          projectEnvValues,
+        );
+    const s3AccessKey = remoteWins("experimental.s3_access_key")
+      ? config.experimental.s3_access_key
+      : legacyEnvOverride(
+          "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
+          config.experimental.s3_access_key,
+          projectEnvValues,
+        );
+    const s3SecretKey = remoteWins("experimental.s3_secret_key")
+      ? config.experimental.s3_secret_key
+      : legacyEnvOverride(
+          "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
+          config.experimental.s3_secret_key,
+          projectEnvValues,
+        );
 
     // Go's one-shot fresh-DB setup jobs (`initSchema15`) read `utils.Config.
     // {Realtime,Storage,Auth}.Enabled` — the EFFECTIVE, env-overridden value — and run
@@ -153,34 +184,40 @@ export const legacyResolveDbBootstrapConfig = <E>(
     const realtimeEnabledForSetup = yield* wrapConfigOverride(
       "realtime.enabled",
       () =>
-        legacyEnvOverrideBool(
-          "SUPABASE_REALTIME_ENABLED",
-          config.realtime.enabled,
-          "realtime.enabled",
-          projectEnvValues,
-        ),
+        remoteWins("realtime.enabled")
+          ? config.realtime.enabled
+          : legacyEnvOverrideBool(
+              "SUPABASE_REALTIME_ENABLED",
+              config.realtime.enabled,
+              "realtime.enabled",
+              projectEnvValues,
+            ),
       mapConfigError,
     );
     const storageEnabledForSetup = yield* wrapConfigOverride(
       "storage.enabled",
       () =>
-        legacyEnvOverrideBool(
-          "SUPABASE_STORAGE_ENABLED",
-          config.storage.enabled,
-          "storage.enabled",
-          projectEnvValues,
-        ),
+        remoteWins("storage.enabled")
+          ? config.storage.enabled
+          : legacyEnvOverrideBool(
+              "SUPABASE_STORAGE_ENABLED",
+              config.storage.enabled,
+              "storage.enabled",
+              projectEnvValues,
+            ),
       mapConfigError,
     );
     const authEnabledForSetup = yield* wrapConfigOverride(
       "auth.enabled",
       () =>
-        legacyEnvOverrideBool(
-          "SUPABASE_AUTH_ENABLED",
-          config.auth.enabled,
-          "auth.enabled",
-          projectEnvValues,
-        ),
+        remoteWins("auth.enabled")
+          ? config.auth.enabled
+          : legacyEnvOverrideBool(
+              "SUPABASE_AUTH_ENABLED",
+              config.auth.enabled,
+              "auth.enabled",
+              projectEnvValues,
+            ),
       mapConfigError,
     );
 
@@ -190,16 +227,35 @@ export const legacyResolveDbBootstrapConfig = <E>(
     // `internal/start/start.go:922,928`, `internal/db/start/start.go:283,290`).
     const realtimeIpVersion = yield* wrapConfigOverride(
       "realtime.ip_version",
-      () => legacyEnvOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues),
+      () => {
+        // `legacyEnvOverrideRealtimeIpVersion` itself reads `process.env` unconditionally
+        // (`legacyEnvOverride`'s own fallback, regardless of `projectEnvValues`), so it can't
+        // simply be called with a neutered `projectEnvValues` here — that would still let a
+        // raw shell `SUPABASE_REALTIME_IP_VERSION` beat the remote block's viper OVERRIDE-tier
+        // value. Skip the override call entirely on this branch instead, re-validating into
+        // the same narrow type (the value is already guaranteed one of these two literals by
+        // `@supabase/config`'s own schema decode — `stringEnum(["IPv4","IPv6"])` — this only
+        // narrows the TS type to match {@link LegacyDbBootstrapConfig.realtimeIpVersion}).
+        if (remoteWins("realtime.ip_version")) {
+          const value = config.realtime.ip_version;
+          if (value !== "IPv4" && value !== "IPv6") {
+            throw new LegacyInvalidRealtimeIpVersionEnvOverrideError("realtime.ip_version", value);
+          }
+          return value;
+        }
+        return legacyEnvOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues);
+      },
       mapConfigError,
     );
     const realtimeMaxHeaderLength = yield* wrapConfigOverride(
       "realtime.max_header_length",
       () =>
-        legacyEnvOverrideRealtimeMaxHeaderLength(
-          config.realtime.max_header_length,
-          projectEnvValues,
-        ),
+        remoteWins("realtime.max_header_length")
+          ? config.realtime.max_header_length
+          : legacyEnvOverrideRealtimeMaxHeaderLength(
+              config.realtime.max_header_length,
+              projectEnvValues,
+            ),
       mapConfigError,
     );
 
@@ -212,12 +268,13 @@ export const legacyResolveDbBootstrapConfig = <E>(
     // `sizeInBytes.UnmarshalText`, `pkg/config/config.go:39-49`, decodes it unconditionally during
     // `Config.Load`, before either caller touches Docker) rather than left to surface only when a
     // container env builder happens to re-parse it.
-    const storageFileSizeLimit =
-      legacyEnvOverride(
-        "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
-        config.storage.file_size_limit,
-        projectEnvValues,
-      ) ?? config.storage.file_size_limit;
+    const storageFileSizeLimit = remoteWins("storage.file_size_limit")
+      ? config.storage.file_size_limit
+      : (legacyEnvOverride(
+          "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
+          config.storage.file_size_limit,
+          projectEnvValues,
+        ) ?? config.storage.file_size_limit);
     yield* wrapConfigOverride(
       "storage.file_size_limit",
       () => ramInBytes(storageFileSizeLimit),
@@ -248,11 +305,9 @@ export const legacyResolveDbBootstrapConfig = <E>(
     // Overridden by SUPABASE_DB_HEALTH_TIMEOUT — Go's Config.Load binds this generically before
     // StartDatabase's health wait reads it (pkg/config/config.go:580-586, internal/db/start/
     // start.go:180).
-    const dbHealthTimeout = legacyEnvOverride(
-      "SUPABASE_DB_HEALTH_TIMEOUT",
-      config.db.health_timeout,
-      projectEnvValues,
-    );
+    const dbHealthTimeout = remoteWins("db.health_timeout")
+      ? config.db.health_timeout
+      : legacyEnvOverride("SUPABASE_DB_HEALTH_TIMEOUT", config.db.health_timeout, projectEnvValues);
     const dbHealthTimeoutSeconds = yield* Effect.try({
       try: () => legacyResolveHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
       catch: (cause) =>

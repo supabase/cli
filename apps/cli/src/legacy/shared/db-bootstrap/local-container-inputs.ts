@@ -111,6 +111,16 @@ export const legacyBuildLocalDbContainerInputs = (
   // other config read. `db start`/`db reset` never pass this — see that function's own doc
   // comment.
   projectRef?: string,
+  // The `remoteOverrideKeys` the caller's OWN, separate `legacyReadDbToml(..., ref)` read
+  // already computed for the SAME matched `[remotes.<ref>]` block (`@supabase/config`'s
+  // `loadProjectConfig`, used by `legacyLoadLocalProjectContext` just above, merges the
+  // remote block's VALUES but tracks none of which keys it set) — threaded into
+  // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` below so a
+  // remote-set field (e.g. `db.major_version`) isn't re-overridden by a conflicting
+  // `SUPABASE_*` env var. Go's `mergeRemoteConfig` installs remote leaves at viper's
+  // OVERRIDE tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:635-640`).
+  // `db start`/`db reset` never pass a `projectRef` above, so they never need this either.
+  remoteOverrideKeys?: ReadonlySet<string>,
 ): Effect.Effect<
   LegacyLocalDbContainerInputs,
   LegacyDbConfigLoadError,
@@ -143,7 +153,7 @@ export const legacyBuildLocalDbContainerInputs = (
     const bootstrapConfig = yield* legacyResolveDbBootstrapConfig(
       fs,
       path,
-      { config, projectEnvValues, workdir },
+      { config, projectEnvValues, workdir, remoteOverrideKeys },
       mapError,
     );
 
@@ -176,7 +186,11 @@ export const legacyBuildLocalDbContainerInputs = (
         ...config.db,
         port: values.dbPort,
         major_version: bootstrapConfig.majorVersion,
-        settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+        settings: legacyResolveDbSettingsEnvOverrides(
+          config.db.settings,
+          projectEnvValues,
+          remoteOverrideKeys,
+        ),
       },
       experimental: {
         ...config.experimental,

@@ -416,6 +416,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // config uniformly on the linked path (`LoadConfig` seeds `flags.ProjectRef` before
       // every field read).
       connType === "linked" ? linkedRef : undefined,
+      // `cfg`'s OWN remote-override-key tracking (same matched block) — so a remote-set
+      // bootstrap field (e.g. `db.major_version`) isn't re-overridden by a conflicting
+      // `SUPABASE_*` env var when deriving the shadow's container spec.
+      cfg.remoteOverrideKeys,
     );
     const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
     const shadow = yield* legacyPrepareShadowSource(spawner, {

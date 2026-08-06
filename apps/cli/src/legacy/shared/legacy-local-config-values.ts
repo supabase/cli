@@ -1312,135 +1312,188 @@ function legacyEnvOverrideSessionReplicationRole(
  * serialize — mirroring the `db.port`/`db.major_version`-style fix already
  * applied at this same `start` call site, just fanned out across every
  * `[db.settings]` field instead of one.
+ *
+ * `remoteOverrideKeys` (default empty, so `db start`/`db reset` — which never resolve a
+ * `[remotes.<ref>]` block for this config read — see exactly the same behavior as
+ * before): the `db.settings.*` keys a matched remote block set at viper's OVERRIDE tier
+ * (`v.Set`, above `AutomaticEnv`, `apps/cli-go/pkg/config/config.go:635-640`) — a remote
+ * value for, say, `max_connections` must beat a conflicting `SUPABASE_DB_SETTINGS_MAX_
+ * CONNECTIONS`, exactly like `legacy-db-config.toml-read.ts`'s own `db.major_version`
+ * gate. `db diff --linked`/`db pull` (CLI-1956) pass the set their sibling `legacyReadDbToml`
+ * call already computed, via `legacyBuildLocalDbContainerInputs`.
  */
 export function legacyResolveDbSettingsEnvOverrides(
   settings: ProjectConfig["db"]["settings"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): NonNullable<ProjectConfig["db"]["settings"]> {
+  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
   return {
-    effective_cache_size: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_EFFECTIVE_CACHE_SIZE",
-      settings?.effective_cache_size,
-      projectEnvValues,
-    ),
-    logical_decoding_work_mem: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_LOGICAL_DECODING_WORK_MEM",
-      settings?.logical_decoding_work_mem,
-      projectEnvValues,
-    ),
-    maintenance_work_mem: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_MAINTENANCE_WORK_MEM",
-      settings?.maintenance_work_mem,
-      projectEnvValues,
-    ),
-    max_connections: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
-      "db.settings.max_connections",
-      settings?.max_connections,
-      projectEnvValues,
-    ),
-    max_locks_per_transaction: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_LOCKS_PER_TRANSACTION",
-      "db.settings.max_locks_per_transaction",
-      settings?.max_locks_per_transaction,
-      projectEnvValues,
-    ),
-    max_parallel_maintenance_workers: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_MAINTENANCE_WORKERS",
-      "db.settings.max_parallel_maintenance_workers",
-      settings?.max_parallel_maintenance_workers,
-      projectEnvValues,
-    ),
-    max_parallel_workers: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS",
-      "db.settings.max_parallel_workers",
-      settings?.max_parallel_workers,
-      projectEnvValues,
-    ),
-    max_parallel_workers_per_gather: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS_PER_GATHER",
-      "db.settings.max_parallel_workers_per_gather",
-      settings?.max_parallel_workers_per_gather,
-      projectEnvValues,
-    ),
-    max_replication_slots: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_REPLICATION_SLOTS",
-      "db.settings.max_replication_slots",
-      settings?.max_replication_slots,
-      projectEnvValues,
-    ),
-    max_slot_wal_keep_size: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_MAX_SLOT_WAL_KEEP_SIZE",
-      settings?.max_slot_wal_keep_size,
-      projectEnvValues,
-    ),
-    max_standby_archive_delay: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_MAX_STANDBY_ARCHIVE_DELAY",
-      settings?.max_standby_archive_delay,
-      projectEnvValues,
-    ),
-    max_standby_streaming_delay: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_MAX_STANDBY_STREAMING_DELAY",
-      settings?.max_standby_streaming_delay,
-      projectEnvValues,
-    ),
-    max_wal_size: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_MAX_WAL_SIZE",
-      settings?.max_wal_size,
-      projectEnvValues,
-    ),
-    max_wal_senders: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_WAL_SENDERS",
-      "db.settings.max_wal_senders",
-      settings?.max_wal_senders,
-      projectEnvValues,
-    ),
-    max_worker_processes: envOverrideOptionalUint(
-      "SUPABASE_DB_SETTINGS_MAX_WORKER_PROCESSES",
-      "db.settings.max_worker_processes",
-      settings?.max_worker_processes,
-      projectEnvValues,
-    ),
-    session_replication_role: legacyEnvOverrideSessionReplicationRole(
-      settings?.session_replication_role,
-      projectEnvValues,
-    ),
-    shared_buffers: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
-      settings?.shared_buffers,
-      projectEnvValues,
-    ),
-    statement_timeout: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_STATEMENT_TIMEOUT",
-      settings?.statement_timeout,
-      projectEnvValues,
-    ),
-    track_activity_query_size: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_TRACK_ACTIVITY_QUERY_SIZE",
-      settings?.track_activity_query_size,
-      projectEnvValues,
-    ),
-    track_commit_timestamp: legacyEnvOverrideOptionalBool(
-      "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP",
-      settings?.track_commit_timestamp,
-      "db.settings.track_commit_timestamp",
-      projectEnvValues,
-    ),
-    wal_keep_size: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_WAL_KEEP_SIZE",
-      settings?.wal_keep_size,
-      projectEnvValues,
-    ),
-    wal_sender_timeout: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_WAL_SENDER_TIMEOUT",
-      settings?.wal_sender_timeout,
-      projectEnvValues,
-    ),
-    work_mem: legacyEnvOverride(
-      "SUPABASE_DB_SETTINGS_WORK_MEM",
-      settings?.work_mem,
-      projectEnvValues,
-    ),
+    effective_cache_size: remoteWins("db.settings.effective_cache_size")
+      ? settings?.effective_cache_size
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_EFFECTIVE_CACHE_SIZE",
+          settings?.effective_cache_size,
+          projectEnvValues,
+        ),
+    logical_decoding_work_mem: remoteWins("db.settings.logical_decoding_work_mem")
+      ? settings?.logical_decoding_work_mem
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_LOGICAL_DECODING_WORK_MEM",
+          settings?.logical_decoding_work_mem,
+          projectEnvValues,
+        ),
+    maintenance_work_mem: remoteWins("db.settings.maintenance_work_mem")
+      ? settings?.maintenance_work_mem
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_MAINTENANCE_WORK_MEM",
+          settings?.maintenance_work_mem,
+          projectEnvValues,
+        ),
+    max_connections: remoteWins("db.settings.max_connections")
+      ? settings?.max_connections
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
+          "db.settings.max_connections",
+          settings?.max_connections,
+          projectEnvValues,
+        ),
+    max_locks_per_transaction: remoteWins("db.settings.max_locks_per_transaction")
+      ? settings?.max_locks_per_transaction
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_LOCKS_PER_TRANSACTION",
+          "db.settings.max_locks_per_transaction",
+          settings?.max_locks_per_transaction,
+          projectEnvValues,
+        ),
+    max_parallel_maintenance_workers: remoteWins("db.settings.max_parallel_maintenance_workers")
+      ? settings?.max_parallel_maintenance_workers
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_PARALLEL_MAINTENANCE_WORKERS",
+          "db.settings.max_parallel_maintenance_workers",
+          settings?.max_parallel_maintenance_workers,
+          projectEnvValues,
+        ),
+    max_parallel_workers: remoteWins("db.settings.max_parallel_workers")
+      ? settings?.max_parallel_workers
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS",
+          "db.settings.max_parallel_workers",
+          settings?.max_parallel_workers,
+          projectEnvValues,
+        ),
+    max_parallel_workers_per_gather: remoteWins("db.settings.max_parallel_workers_per_gather")
+      ? settings?.max_parallel_workers_per_gather
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS_PER_GATHER",
+          "db.settings.max_parallel_workers_per_gather",
+          settings?.max_parallel_workers_per_gather,
+          projectEnvValues,
+        ),
+    max_replication_slots: remoteWins("db.settings.max_replication_slots")
+      ? settings?.max_replication_slots
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_REPLICATION_SLOTS",
+          "db.settings.max_replication_slots",
+          settings?.max_replication_slots,
+          projectEnvValues,
+        ),
+    max_slot_wal_keep_size: remoteWins("db.settings.max_slot_wal_keep_size")
+      ? settings?.max_slot_wal_keep_size
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_MAX_SLOT_WAL_KEEP_SIZE",
+          settings?.max_slot_wal_keep_size,
+          projectEnvValues,
+        ),
+    max_standby_archive_delay: remoteWins("db.settings.max_standby_archive_delay")
+      ? settings?.max_standby_archive_delay
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_MAX_STANDBY_ARCHIVE_DELAY",
+          settings?.max_standby_archive_delay,
+          projectEnvValues,
+        ),
+    max_standby_streaming_delay: remoteWins("db.settings.max_standby_streaming_delay")
+      ? settings?.max_standby_streaming_delay
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_MAX_STANDBY_STREAMING_DELAY",
+          settings?.max_standby_streaming_delay,
+          projectEnvValues,
+        ),
+    max_wal_size: remoteWins("db.settings.max_wal_size")
+      ? settings?.max_wal_size
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_MAX_WAL_SIZE",
+          settings?.max_wal_size,
+          projectEnvValues,
+        ),
+    max_wal_senders: remoteWins("db.settings.max_wal_senders")
+      ? settings?.max_wal_senders
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_WAL_SENDERS",
+          "db.settings.max_wal_senders",
+          settings?.max_wal_senders,
+          projectEnvValues,
+        ),
+    max_worker_processes: remoteWins("db.settings.max_worker_processes")
+      ? settings?.max_worker_processes
+      : envOverrideOptionalUint(
+          "SUPABASE_DB_SETTINGS_MAX_WORKER_PROCESSES",
+          "db.settings.max_worker_processes",
+          settings?.max_worker_processes,
+          projectEnvValues,
+        ),
+    session_replication_role: remoteWins("db.settings.session_replication_role")
+      ? settings?.session_replication_role
+      : legacyEnvOverrideSessionReplicationRole(
+          settings?.session_replication_role,
+          projectEnvValues,
+        ),
+    shared_buffers: remoteWins("db.settings.shared_buffers")
+      ? settings?.shared_buffers
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
+          settings?.shared_buffers,
+          projectEnvValues,
+        ),
+    statement_timeout: remoteWins("db.settings.statement_timeout")
+      ? settings?.statement_timeout
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_STATEMENT_TIMEOUT",
+          settings?.statement_timeout,
+          projectEnvValues,
+        ),
+    track_activity_query_size: remoteWins("db.settings.track_activity_query_size")
+      ? settings?.track_activity_query_size
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_TRACK_ACTIVITY_QUERY_SIZE",
+          settings?.track_activity_query_size,
+          projectEnvValues,
+        ),
+    track_commit_timestamp: remoteWins("db.settings.track_commit_timestamp")
+      ? settings?.track_commit_timestamp
+      : legacyEnvOverrideOptionalBool(
+          "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP",
+          settings?.track_commit_timestamp,
+          "db.settings.track_commit_timestamp",
+          projectEnvValues,
+        ),
+    wal_keep_size: remoteWins("db.settings.wal_keep_size")
+      ? settings?.wal_keep_size
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_WAL_KEEP_SIZE",
+          settings?.wal_keep_size,
+          projectEnvValues,
+        ),
+    wal_sender_timeout: remoteWins("db.settings.wal_sender_timeout")
+      ? settings?.wal_sender_timeout
+      : legacyEnvOverride(
+          "SUPABASE_DB_SETTINGS_WAL_SENDER_TIMEOUT",
+          settings?.wal_sender_timeout,
+          projectEnvValues,
+        ),
+    work_mem: remoteWins("db.settings.work_mem")
+      ? settings?.work_mem
+      : legacyEnvOverride("SUPABASE_DB_SETTINGS_WORK_MEM", settings?.work_mem, projectEnvValues),
   };
 }
 

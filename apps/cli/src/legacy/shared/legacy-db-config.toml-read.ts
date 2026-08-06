@@ -114,6 +114,17 @@ interface LegacyDbTomlValues {
    * (Go's `Loading config override: [remotes.<name>]` line), else `undefined`.
    */
   readonly appliedRemote: string | undefined;
+  /**
+   * The config keys the matched remote block contributed at viper's OVERRIDE tier — see
+   * {@link LegacyRemoteOverride.remoteOverrideKeys}'s own doc comment for the full
+   * precedence rationale. Exposed here (in addition to being used internally, above) so a
+   * caller resolving a SEPARATE config read for the same linked ref — `legacyBuildLocalDbContainerInputs`,
+   * whose `@supabase/config`-backed loader merges the same remote block's VALUES but
+   * tracks none of which keys it set — can preserve the identical remote-over-env
+   * precedence for the shadow's own bootstrap fields (`db diff --linked`/`db pull`,
+   * CLI-1956), without re-deriving this set a third time. Empty when no remote matched.
+   */
+  readonly remoteOverrideKeys: ReadonlySet<string>;
 }
 
 /** `[db.seed]` config surfaced for `migration down`'s seed step. */
@@ -306,6 +317,45 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "analytics.gcp_project_id",
   "analytics.gcp_project_number",
   "analytics.gcp_jwt_path",
+  // Not read by THIS reader's own resolved fields — tracked so `remoteOverrideKeys` (exposed
+  // on this module's return value, see its own doc comment) also covers every field
+  // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides`
+  // (`legacy/shared/db-bootstrap/`) resolve for the shadow's own container spec on the
+  // `db diff --linked`/`db pull` native-provisioning path (CLI-1956).
+  "experimental.orioledb_version",
+  "experimental.s3_host",
+  "experimental.s3_region",
+  "experimental.s3_access_key",
+  "experimental.s3_secret_key",
+  "realtime.enabled",
+  "realtime.ip_version",
+  "realtime.max_header_length",
+  "storage.enabled",
+  "storage.file_size_limit",
+  "db.health_timeout",
+  "db.settings.effective_cache_size",
+  "db.settings.logical_decoding_work_mem",
+  "db.settings.maintenance_work_mem",
+  "db.settings.max_connections",
+  "db.settings.max_locks_per_transaction",
+  "db.settings.max_parallel_maintenance_workers",
+  "db.settings.max_parallel_workers",
+  "db.settings.max_parallel_workers_per_gather",
+  "db.settings.max_replication_slots",
+  "db.settings.max_slot_wal_keep_size",
+  "db.settings.max_standby_archive_delay",
+  "db.settings.max_standby_streaming_delay",
+  "db.settings.max_wal_size",
+  "db.settings.max_wal_senders",
+  "db.settings.max_worker_processes",
+  "db.settings.session_replication_role",
+  "db.settings.shared_buffers",
+  "db.settings.statement_timeout",
+  "db.settings.track_activity_query_size",
+  "db.settings.track_commit_timestamp",
+  "db.settings.wal_keep_size",
+  "db.settings.wal_sender_timeout",
+  "db.settings.work_mem",
 ];
 
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */
@@ -1996,6 +2046,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote,
+    remoteOverrideKeys,
   };
   return values;
 });
