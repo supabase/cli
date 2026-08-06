@@ -936,6 +936,56 @@ describe("legacyRespondToComplete", () => {
       expect(boundaryValid?.candidates.map((c) => c.name)).toContain("--profile");
     });
 
+    it("accepts a comma-separated fractional second for gen bearer-jwt --exp", () => {
+      // Go's time.Parse(time.RFC3339, s) accepts either `.` or `,` before the
+      // fractional-seconds digits (verified empirically against go1.26
+      // time.Parse: "2024-01-02T15:04:05,5Z" parses identically to
+      // "...05.5Z"; a bare "," with no following digit, or mixing both
+      // separators in one timestamp, both still fail — CLI-1965 review
+      // finding).
+      const commaFraction = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "bearer-jwt",
+        "--role",
+        "anon",
+        "--exp",
+        "2024-01-02T15:04:05,5Z",
+        "--p",
+      ]);
+      expect(commaFraction?.candidates.map((c) => c.name)).toContain("--profile");
+
+      const emptyCommaFraction = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "bearer-jwt",
+        "--role",
+        "anon",
+        "--exp",
+        "2024-01-02T15:04:05,Z",
+        "--p",
+      ]);
+      expect(emptyCommaFraction).toEqual({
+        candidates: [],
+        directive: LegacyCompletionDirective.Default,
+      });
+
+      const mixedSeparators = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "gen",
+        "bearer-jwt",
+        "--role",
+        "anon",
+        "--exp",
+        "2024-01-02T15:04:05.5,5Z",
+        "--p",
+      ]);
+      expect(mixedSeparators).toEqual({
+        candidates: [],
+        directive: LegacyCompletionDirective.Default,
+      });
+    });
+
     it("rejects a negative value for storage cp --jobs even though it's a string-typed flag in TS", () => {
       // Go registers --jobs as a UintVarP (cmd/storage.go:107), the same as
       // functions deploy/migration down/db reset above — but storage cp
