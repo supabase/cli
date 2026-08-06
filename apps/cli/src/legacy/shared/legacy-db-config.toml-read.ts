@@ -374,6 +374,15 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.root_key",
   "api.port",
   "api.tls.enabled",
+  // Not read by `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` above,
+  // same as `api.tls.enabled`/`api.port` — these feed `legacyResolveLocalConfigValues`'s own
+  // `readApiTlsFiles` gate (`apiEnabled && apiTlsEnabled`), which the shadow's own
+  // `db diff --linked`/`db pull` setup input also consumes on the same path. Without this,
+  // a matched remote's override-tier `api.tls.cert_path`/`key_path` could still lose to a
+  // stale/missing ambient `SUPABASE_API_TLS_CERT_PATH`/`SUPABASE_API_TLS_KEY_PATH` (review:
+  // PRRT_kwDOErm0O86W8ZYk).
+  "api.tls.cert_path",
+  "api.tls.key_path",
   "api.external_url",
   "auth.jwt_secret",
   "auth.jwt_expiry",

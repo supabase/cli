@@ -2759,16 +2759,18 @@ export function legacyResolveLocalConfigValues(
         "api.enabled",
         projectEnvValues,
       );
-  const apiTlsCertPath = legacyEnvOverride(
-    "SUPABASE_API_TLS_CERT_PATH",
-    config.api.tls.cert_path,
-    projectEnvValues,
-  );
-  const apiTlsKeyPath = legacyEnvOverride(
-    "SUPABASE_API_TLS_KEY_PATH",
-    config.api.tls.key_path,
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as `apiTlsEnabled`/`apiPort` above: a matched remote
+  // block's `api.tls.cert_path`/`key_path` were installed at viper's OVERRIDE tier (above
+  // `AutomaticEnv`), so they must win over a conflicting `SUPABASE_API_TLS_CERT_PATH`/
+  // `SUPABASE_API_TLS_KEY_PATH` — otherwise a stale/missing ambient env path can fail
+  // `readApiTlsFiles` below even though the remote block already supplied a valid path
+  // Go would actually use (review: PRRT_kwDOErm0O86W8ZYk).
+  const apiTlsCertPath = remoteWins("api.tls.cert_path")
+    ? config.api.tls.cert_path
+    : legacyEnvOverride("SUPABASE_API_TLS_CERT_PATH", config.api.tls.cert_path, projectEnvValues);
+  const apiTlsKeyPath = remoteWins("api.tls.key_path")
+    ? config.api.tls.key_path
+    : legacyEnvOverride("SUPABASE_API_TLS_KEY_PATH", config.api.tls.key_path, projectEnvValues);
   if (apiEnabled && apiTlsEnabled) {
     readApiTlsFiles(workdir, apiTlsCertPath, apiTlsKeyPath);
   }

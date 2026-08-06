@@ -3030,6 +3030,56 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
     expect(values.rootKey).toBe("remote-root-key");
   });
 
+  describe("api.tls.cert_path/key_path — remoteOverrideKeys (review: PRRT_kwDOErm0O86W8ZYk)", () => {
+    const tempRoot = useLegacyTempWorkdir("supabase-api-tls-remote-test-");
+
+    function writeTlsFile(workdir: string, name: string, contents = "dummy") {
+      const supabaseDir = join(workdir, "supabase");
+      mkdirSync(supabaseDir, { recursive: true });
+      writeFileSync(join(supabaseDir, name), contents);
+    }
+
+    afterEach(() => {
+      delete process.env["SUPABASE_API_TLS_CERT_PATH"];
+      delete process.env["SUPABASE_API_TLS_KEY_PATH"];
+    });
+
+    it("prefers a remote-set api.tls.cert_path/key_path over a conflicting (missing-file) env override", () => {
+      // The ambient env vars point at files that don't exist — if they won, `readApiTlsFiles`
+      // would throw. Go's `mergeRemoteConfig` installs the matched remote block's cert/key
+      // paths at viper's OVERRIDE tier (above `AutomaticEnv`), so they must win instead and the
+      // load must succeed using the real, remote-supplied paths.
+      writeTlsFile(tempRoot.current, "cert.pem");
+      writeTlsFile(tempRoot.current, "key.pem");
+      process.env["SUPABASE_API_TLS_CERT_PATH"] = "missing-cert.pem";
+      process.env["SUPABASE_API_TLS_KEY_PATH"] = "missing-key.pem";
+      const config = baseConfig({
+        api: { tls: { enabled: true, cert_path: "cert.pem", key_path: "key.pem" } },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          tempRoot.current,
+          undefined,
+          undefined,
+          new Set(["api.tls.cert_path", "api.tls.key_path"]),
+        ),
+      ).not.toThrow();
+    });
+
+    it("still uses the env override when no remote block matched", () => {
+      writeTlsFile(tempRoot.current, "cert.pem");
+      process.env["SUPABASE_API_TLS_CERT_PATH"] = "missing-cert.pem";
+      const config = baseConfig({
+        api: { tls: { enabled: true, cert_path: "cert.pem", key_path: "cert.pem" } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "failed to read TLS cert: ",
+      );
+    });
+  });
+
   it("prefers remote-set api.port/api.tls.enabled/api.external_url over conflicting env overrides", () => {
     process.env["SUPABASE_API_PORT"] = "9999";
     process.env["SUPABASE_API_TLS_ENABLED"] = "true";
