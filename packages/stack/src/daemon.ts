@@ -118,6 +118,10 @@ export async function runDaemon(
     process.disconnect?.();
 
     const daemon = await daemonRuntime.runPromise(DaemonServer);
+    // A terminal activation deadline has already disposed the stack's scoped processes and port
+    // leases. Treat that as a whole-runtime failure: keeping the management or proxy servers alive
+    // would expose partially disposed state. This path deliberately does not drain unrelated
+    // in-flight proxy requests; callers should reconnect after starting a fresh daemon.
     await Promise.race([
       daemonRuntime.runPromise(daemon.awaitShutdown),
       localAppRuntime.runPromise(apiProxy.awaitTerminalFailure),

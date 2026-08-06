@@ -1208,6 +1208,41 @@ describe("Orchestrator", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
+    it.live("completed dependency waits through a transient failed restart", () => {
+      let setupSpawns = 0;
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("setup", {
+            restart: "on-failure",
+            maxRestarts: 1,
+          }),
+          svc("app", {
+            restart: "no",
+            dependencies: [{ service: "setup", condition: "completed" }],
+            dependencyTimeoutSeconds: 5,
+          }),
+        ],
+        {
+          perService: {
+            setup: {
+              getExitCode: () => (++setupSpawns === 1 ? 1 : 0),
+              exitDelay: "10 millis",
+            },
+            app: { exitDelay: "5 seconds" },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("app");
+
+        expect(proc.spawned.filter((spawn) => spawn.command === "setup")).toHaveLength(2);
+        expect((yield* orc.getState("app")).status).not.toBe("Failed");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
     it.live("no timeout when dependency resolves before deadline", () => {
       const { layer } = setupOrchestrator(
         [
