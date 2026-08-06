@@ -469,6 +469,22 @@ function legacyFormatStatementLocation(
  * would under-truncate (or not truncate at all) relative to Go's 120-byte limit, changing the
  * legacy stderr contract for an already-failed apply.
  *
+ * `\p{White_Space}+`, not `\s+`: `sql` is a user-authored SQL statement pulled verbatim from
+ * `supabase/declarative`, so — unlike this file's JSON envelope, whose key/shape is controlled
+ * by the embedded producer script — it can genuinely contain any Unicode code point a user's
+ * editor wrote, including NEL (code point 0x85) or a BOM (code point 0xFEFF) pasted into a
+ * comment or string literal. Go's `strings.Fields`/`unicode.IsSpace` and ECMAScript's `\s`
+ * disagree on both: verified empirically — Go's `unicode.IsSpace(rune(0x85))` (NEL) is `true`
+ * (`strings.Fields` collapses it, splitting `"a"+NEL+"b"` into two fields) while
+ * `unicode.IsSpace(rune(0xFEFF))` (BOM) is `false` (`strings.Fields` preserves it inside one
+ * field); ECMAScript's `\s` is the exact opposite (`/\s/u.test(String.fromCodePoint(0x85))` is
+ * `false`, `/\s/u.test(String.fromCodePoint(0xfeff))` is `true`). `\p{White_Space}` matches the
+ * Unicode `White_Space` property Go's `unicode.IsSpace` is itself built from (confirmed
+ * empirically against the same two code points, plus NBSP `0xA0` and ideographic space
+ * `0x3000`), so it reproduces Go's classification instead of ECMAScript's — both the rendered
+ * SQL text and, for a statement long enough to need it, the 120-byte truncation boundary now
+ * line up with Go's.
+ *
  * Returns a `Buffer`, not a `string`: Go's `[:maxLen-3]` is a raw byte slice with no regard
  * for codepoint boundaries, so a multibyte (e.g. non-ASCII identifier) character straddling
  * byte 117 is cut mid-sequence, leaving an intentionally INVALID trailing UTF-8 fragment —
@@ -485,7 +501,7 @@ function legacyFormatStatementLocation(
  */
 function legacyFormatStatementSql(sql: string): Buffer {
   const normalized = sql
-    .split(/\s+/u)
+    .split(/\p{White_Space}+/u)
     .filter((part) => part.length > 0)
     .join(" ");
   const maxLen = 120;

@@ -122,6 +122,52 @@ describe("legacyFormatApplyFailure", () => {
     expect(message).not.toContain(sql);
   });
 
+  test("collapses a NEL (U+0085) as whitespace, matching Go's unicode.IsSpace, unlike ECMAScript's `\\s`", () => {
+    // Go's `formatStatementSQL` (`apply.go:277-283`) normalizes via `strings.Fields`, which
+    // splits on `unicode.IsSpace` — and `unicode.IsSpace(0x85)` (NEL) is `true` (verified
+    // empirically), so a NEL embedded in a user's SQL statement is collapsed like any other
+    // run of whitespace. ECMAScript's `\s` does NOT match NEL, so a naive `.split(/\s+/u)`
+    // would preserve it verbatim instead of collapsing it.
+    const nel = String.fromCodePoint(0x85);
+    const sql = `select${nel}1;`;
+    const issue: LegacyPgDeltaApplyIssue = {
+      message: "boom",
+      statement: { id: "001_a", sql },
+    };
+    const result: LegacyPgDeltaApplyResult = {
+      status: "error",
+      totalApplied: 0,
+      totalRounds: 1,
+      totalSkipped: 0,
+      errors: [issue],
+    };
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
+    expect(message).toContain("  SQL: select 1;");
+    expect(message).not.toContain(nel);
+  });
+
+  test("preserves a BOM (U+FEFF) instead of treating it as whitespace, matching Go's unicode.IsSpace, unlike ECMAScript's `\\s`", () => {
+    // The opposite gap from the NEL case above: `unicode.IsSpace(0xFEFF)` (BOM) is `false`
+    // (verified empirically), so Go's `strings.Fields` keeps a BOM embedded mid-statement as
+    // part of the surrounding "word" rather than treating it as a separator. ECMAScript's `\s`
+    // DOES match a BOM, so a naive `.split(/\s+/u)` would incorrectly split on it.
+    const bom = String.fromCodePoint(0xfeff);
+    const sql = `select${bom}1;`;
+    const issue: LegacyPgDeltaApplyIssue = {
+      message: "boom",
+      statement: { id: "001_a", sql },
+    };
+    const result: LegacyPgDeltaApplyResult = {
+      status: "error",
+      totalApplied: 0,
+      totalRounds: 1,
+      totalSkipped: 0,
+      errors: [issue],
+    };
+    const message = legacyFormatApplyFailure(result, false).toString("utf-8");
+    expect(message).toContain(`  SQL: select${bom}1;`);
+  });
+
   test("preserves Go's exact (possibly invalid-UTF-8) truncated bytes when the byte cut lands mid-codepoint", () => {
     // Unlike the boundary-aligned CJK-repeat case above, a single leading ASCII byte shifts
     // every subsequent 3-byte CJK character by one, so the byte-117 cut now lands ONE byte
