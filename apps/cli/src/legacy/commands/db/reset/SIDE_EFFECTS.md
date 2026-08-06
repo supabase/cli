@@ -28,11 +28,11 @@ is still handled by Go (CLI-1955 scope, unaffected by CLI-1958).
 
 ## Files Written
 
-| Path                                                                            | Format | When                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | `--linked` (post-run cache)                                                                                                                                                                                                                                                                                                                                                                           |
-| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                                                                                                                                                                     |
-| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | remote path only, best-effort, after either branch (schema-files or migrations) + seeding succeed, when no `--version`/`--last` resolved a version AND pg-delta is enabled (`[experimental.pgdelta].enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the reset (Go's `down.ResetAll` → `pgcache.TryCacheMigrationsCatalog`, `down.go:58-59`) — see Notes |
+| Path                                                                            | Format | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | `--linked` (post-run cache)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after migrations/seeding succeed, when no `--version`/`--last` resolved a version AND pg-delta is enabled (`[experimental.pgdelta].enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the reset — see Notes. **Remote path** (native TS, `<prefix>` = the project ref/URL hash): after either apply branch (schema-files or migrations) (Go's `down.ResetAll` → `pgcache.TryCacheMigrationsCatalog`, `down.go:58-59`). **Local path** (inherited from the real Go binary via the `db __db-bootstrap` seam, `<prefix>` = `"local"`): PG15 only, after `MigrateAndSeed` inside `start.SetupLocalDatabase` (`start.go:359-381`) — the PG≤14 branch (`resetDatabase14`) never calls this at all, so a PG≤14 local project never writes this file regardless of pg-delta config |
 
 On the local path the Go seam additionally recreates the `supabase_db_<project>`
 container/volume and applies the initial schema (`SetupLocalDatabase`).
@@ -182,19 +182,31 @@ path has no confirmation prompt.
   `encrypted:` vault secrets are NOT skipped on the remote path — `legacyCheckDbToml`
   decrypts them into `toml.vault`, and `legacyUpsertVaultSecrets` upserts the decrypted
   values unconditionally, before either branch (schema-files or migrations) runs.
-- **Migrations catalog cache**: ported (Go's best-effort `down.ResetAll` →
-  `pgcache.TryCacheMigrationsCatalog`, `down.go:48-61`). Runs on the remote path only,
-  after either apply branch (schema-files or migrations) and seeding complete, gated on
-  BOTH no `--version`/`--last` having resolved a version AND pg-delta being enabled
-  (`[experimental.pgdelta].enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA` — see
-  Environment Variables); a versioned reset never refreshes the cache, matching Go's
-  own `len(version) > 0` no-op inside `TryCacheMigrationsCatalog` itself. Exports the
-  target's pg-delta catalog via the edge-runtime stack and writes it under
-  `supabase/.temp/pgdelta/` (see Files Written), pruning older snapshots for the same
-  prefix (retains 2). A failure only warns on stderr and never fails the reset, matching
-  Go exactly. Reuses `legacyExportCatalogPgDelta` and `legacyTryCacheMigrationsCatalog`
-  — the same helpers `db push` uses for its own post-apply cache (see that command's
-  SIDE_EFFECTS Notes) — rather than a second copy.
+- **Migrations catalog cache**: gated on BOTH no `--version`/`--last` having resolved
+  a version AND pg-delta being enabled (`[experimental.pgdelta].enabled` or
+  `SUPABASE_EXPERIMENTAL_PG_DELTA` — see Environment Variables); a versioned reset
+  never refreshes the cache, matching Go's own `len(version) > 0` no-op inside
+  `TryCacheMigrationsCatalog` itself. A failure only warns on stderr and never fails
+  the reset, matching Go exactly. Writes under `supabase/.temp/pgdelta/` (see Files
+  Written), pruning older snapshots for the same prefix (retains 2). This is NOT
+  remote-only — both paths write it, on different call chains:
+  - **Remote path** (native TS, ported): Go's best-effort `down.ResetAll` →
+    `pgcache.TryCacheMigrationsCatalog` (`down.go:48-61`), after either apply branch
+    (schema-files or migrations) and seeding complete. Exports the target's pg-delta
+    catalog via the edge-runtime stack. Reuses `legacyExportCatalogPgDelta` and
+    `legacyTryCacheMigrationsCatalog` — the same helpers `db push` uses for its own
+    post-apply cache (see that command's SIDE_EFFECTS Notes) — rather than a second
+    copy.
+  - **Local path** (inherited automatically from the real Go binary behind the
+    `db __db-bootstrap --mode recreate` seam — not reimplemented in TS, CLI-1955
+    scope): `start.SetupLocalDatabase` (`start.go:359-381`) calls the same
+    `pgcache.TryCacheMigrationsCatalog` (with prefix `"local"`) right after
+    `apply.MigrateAndSeed` succeeds, warning the same way on failure. This only
+    happens on the **PG15** recreate branch (`resetDatabase15` → `SetupLocalDatabase`,
+    `reset.go:146-174`) — the **PG≤14** branch (`resetDatabase14`, `reset.go:128-144`)
+    returns immediately after `apply.MigrateAndSeed` and never calls
+    `pgcache.TryCacheMigrationsCatalog` at all, so a PG≤14 local project never writes
+    this file, no matter how pg-delta is configured.
 - The local path's own `--experimental` schema-files branch is still handled by the
   Go child behind the `db __db-bootstrap` seam (CLI-1955 scope) — this command's
   handler forwards `--experimental` to that seam but does not implement the branch
