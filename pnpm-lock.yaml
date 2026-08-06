@@ -71,6 +71,9 @@ overrides:
   '@effect/platform-node-shared': 4.0.0-beta.103
   '@launchql/protobufjs>@types/node': 24.10.4
 
+patchedDependencies:
+  '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
+
 importers:
 
   .:
@@ -7815,7 +7818,7 @@ snapshots:
       '@types/node': 24.10.4
       long: 5.3.2
 
-  '@libpg-query/parser@17.6.10':
+  '@libpg-query/parser@17.6.10(patch_hash=ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3)':
     dependencies:
       '@launchql/protobufjs': 7.2.6
       '@pgsql/types': 17.6.2
@@ -12728,7 +12731,7 @@ snapshots:
 
   plpgsql-parser@0.5.16:
     dependencies:
-      '@libpg-query/parser': 17.6.10
+      '@libpg-query/parser': 17.6.10(patch_hash=ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3)
       '@pgsql/traverse': 17.2.6
       '@pgsql/types': 17.6.2
       pgsql-deparser: 17.18.5
