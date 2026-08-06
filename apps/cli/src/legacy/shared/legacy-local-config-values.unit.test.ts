@@ -2814,6 +2814,9 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_AUTH_SERVICE_ROLE_KEY",
       "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
       "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+      "SUPABASE_AUTH_ENABLED",
+      "SUPABASE_ANALYTICS_ENABLED",
+      "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
     ]) {
       delete process.env[name];
     }
@@ -2990,6 +2993,93 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
         new Set(["db.settings.max_connections"]),
       ),
     ).not.toThrow();
+  });
+
+  it("suppresses a malformed SUPABASE_AUTH_ENABLED when a remote block already set auth.enabled", () => {
+    // Regression (review: PRRT_kwDOErm0O86W30n6): `auth.enabled` gates the signing-keys file
+    // read/validate-only auth block below but has no `authEnabled` field on its own return type —
+    // before this fix, the ungated `legacyEnvOverrideBool` call still decoded a conflicting env
+    // var unconditionally, so a malformed value the remote block should have made irrelevant
+    // failed this WHOLE function (and therefore the shadow's `dbPort`/`jwtSecret`/etc. it also
+    // resolves) instead of the command proceeding on the remote's value, matching Go.
+    process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ auth: { enabled: false } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["auth.enabled"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_AUTH_ENABLED when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ auth: { enabled: false } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_ANALYTICS_ENABLED when a remote block already set analytics.enabled", () => {
+    // Same class of gap as `auth.enabled` above — `analytics.enabled` is also in
+    // `LEGACY_ENV_OVERRIDABLE_KEYS` and `analyticsEnabled` is never read by the shadow's own
+    // container inputs, but an ungated `legacyEnvOverrideBool` call still aborts this whole
+    // function on a malformed override the remote block should have made irrelevant.
+    process.env["SUPABASE_ANALYTICS_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ analytics: { enabled: false } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["analytics.enabled"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_ANALYTICS_ENABLED when no remote block matched", () => {
+    process.env["SUPABASE_ANALYTICS_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ analytics: { enabled: false } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      'Invalid config for analytics.enabled: cannot parse "not-a-bool" as a bool',
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED when a remote block already set auth.third_party.firebase.enabled", () => {
+    // Same class of gap as `auth.enabled`/`analytics.enabled` above, for this function's OWN
+    // validation-only `thirdParty` block (distinct from `legacyResolveLocalJwks`'s own, already-
+    // gated `thirdParty` — see that param's doc comment). Auth must be enabled for this block to
+    // run at all.
+    process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
+    const config = baseConfig({
+      auth: { enabled: true, third_party: { firebase: { enabled: false } } },
+    });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["auth.enabled", "auth.third_party.firebase.enabled"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
+    const config = baseConfig({
+      auth: { enabled: true, third_party: { firebase: { enabled: false } } },
+    });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      'Invalid config for auth.third_party.firebase.enabled: cannot parse "not-a-bool" as a bool',
+    );
   });
 });
 
@@ -3249,6 +3339,7 @@ describe("legacyResolveLocalJwks", () => {
         "SUPABASE_AUTH_SIGNING_KEYS_PATH",
         "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
         "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+        "SUPABASE_AUTH_ENABLED",
       ]) {
         delete process.env[name];
       }
@@ -3317,6 +3408,33 @@ describe("legacyResolveLocalJwks", () => {
       expect(parsed.keys.some((key) => key["kid"] === "remote-key")).toBe(true);
       fetchMock.mockRestore();
     });
+
+    it("suppresses a malformed SUPABASE_AUTH_ENABLED when a remote block already set auth.enabled", async () => {
+      // Regression (review: PRRT_kwDOErm0O86W30n6): this function recomputes `authEnabled`
+      // itself (see its own doc comment) to gate `resolveThirdPartyIssuerUrl`'s throwing validate
+      // path — before this fix, the ungated `legacyEnvOverrideBool` call still decoded a
+      // conflicting env var unconditionally, so a malformed value the remote block should have
+      // made irrelevant failed the shadow's PG15+ one-shot auth-migration job outright.
+      process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
+      const config = baseConfig({ auth: { enabled: false } });
+      await expect(
+        legacyResolveLocalJwks(
+          config,
+          WORKDIR,
+          "a".repeat(32),
+          undefined,
+          new Set(["auth.enabled"]),
+        ),
+      ).resolves.toEqual(expect.any(String));
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_ENABLED when no remote block matched", async () => {
+      process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
+      const config = baseConfig({ auth: { enabled: false } });
+      await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+      );
+    });
   });
 });
 
@@ -3345,6 +3463,7 @@ describe("legacyResolveConfiguredSigningKeys — remoteOverrideKeys (linked shad
 
   afterEach(() => {
     delete process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"];
+    delete process.env["SUPABASE_AUTH_ENABLED"];
   });
 
   it("prefers a remote-set auth.signing_keys_path over a conflicting SUPABASE_AUTH_SIGNING_KEYS_PATH", () => {
@@ -3369,6 +3488,30 @@ describe("legacyResolveConfiguredSigningKeys — remoteOverrideKeys (linked shad
     const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
     expect(() => legacyResolveConfiguredSigningKeys(config, tempRoot.current, undefined)).toThrow(
       "failed to read signing keys: ",
+    );
+  });
+
+  it("suppresses a malformed SUPABASE_AUTH_ENABLED when a remote block already set auth.enabled", () => {
+    // Regression (review: PRRT_kwDOErm0O86W30n6): this function's own `authEnabled` recompute
+    // (see its doc comment) used to be ungated, so a malformed override the remote block should
+    // have made irrelevant aborted the anon/service_role asymmetric-signing path outright.
+    process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ auth: { enabled: false } });
+    expect(() =>
+      legacyResolveConfiguredSigningKeys(
+        config,
+        tempRoot.current,
+        undefined,
+        new Set(["auth.enabled"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a malformed SUPABASE_AUTH_ENABLED when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
+    const config = baseConfig({ auth: { enabled: false } });
+    expect(() => legacyResolveConfiguredSigningKeys(config, tempRoot.current, undefined)).toThrow(
+      'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
     );
   });
 });

@@ -360,13 +360,25 @@ export class LegacyInvalidAnalyticsBackendEnvOverrideError extends Error {
  * analytics.ts:31-39`) already guards the `config.toml`-sourced value at
  * decode time, so this is belt-and-suspenders for that source and the sole
  * guard for the env-override one, which bypasses that schema entirely.
+ *
+ * `skipEnvOverride` (default `false`) is `legacyResolveLocalConfigValues`'s `remoteWins
+ * ("analytics.backend")` — `analytics.backend` is in `LEGACY_ENV_OVERRIDABLE_KEYS`
+ * (`legacy-db-config.toml-read.ts`), so a matched remote block's value must win over a
+ * conflicting `SUPABASE_ANALYTICS_BACKEND` the same way every other gated field in that function
+ * does (review: PRRT_kwDOErm0O86W30n6). Threaded as a parameter (rather than gating at the call
+ * site with a bare ternary) so the single validation check below still narrows `configured`
+ * itself to the return type on the remote-wins path — `ProjectConfig["analytics"]["backend"]`'s
+ * declared type is a plain `string`, not the literal union, so a call-site ternary would
+ * re-widen the result.
  */
 function envOverrideAnalyticsBackend(
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  skipEnvOverride = false,
 ): "postgres" | "bigquery" {
-  const value =
-    legacyEnvOverride("SUPABASE_ANALYTICS_BACKEND", undefined, projectEnvValues) ?? configured;
+  const value = skipEnvOverride
+    ? configured
+    : (legacyEnvOverride("SUPABASE_ANALYTICS_BACKEND", undefined, projectEnvValues) ?? configured);
   if (value !== "postgres" && value !== "bigquery") {
     throw new LegacyInvalidAnalyticsBackendEnvOverrideError("analytics.backend", value);
   }
@@ -825,6 +837,12 @@ function loadSigningKeys(workdir: string, signingKeysPath: string): ReadonlyArra
  * shadow's PG15+ one-shot auth-migration job on the `db diff --linked`/`db pull` path (CLI-1956,
  * review: PRRT_kwDOErm0O86W3Ox_), and `legacyResolveLocalConfigValues`'s own `signingKey` (used
  * to sign `anonKey`/`serviceRoleKey`, already remote-gated fields) reaches the same shadow.
+ * `auth.enabled` itself needs the identical gate: it's in `LEGACY_ENV_OVERRIDABLE_KEYS`
+ * (`legacy-db-config.toml-read.ts`), and an ungated `legacyEnvOverrideBool` call THROWS on a
+ * malformed `SUPABASE_AUTH_ENABLED` even when a matched remote block already set `auth.enabled`
+ * at viper's OVERRIDE tier — a value Go's `Validate` never even evaluates the env var for in
+ * that case — which would otherwise abort this whole resolver (and the shadow it feeds) on an
+ * env value Go silently ignores (review: PRRT_kwDOErm0O86W30n6).
  */
 export function legacyResolveConfiguredSigningKeys(
   config: ProjectConfig,
@@ -832,12 +850,14 @@ export function legacyResolveConfiguredSigningKeys(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ReadonlyArray<LegacyJwk> | undefined {
-  const authEnabled = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
+  const authEnabled = remoteOverrideKeys.has("auth.enabled")
+    ? config.auth.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLED",
+        config.auth.enabled,
+        "auth.enabled",
+        projectEnvValues,
+      );
   const signingKeysPath = remoteOverrideKeys.has("auth.signing_keys_path")
     ? config.auth.signing_keys_path
     : legacyEnvOverride(
@@ -2574,13 +2594,23 @@ export function legacyResolveLocalConfigValues(
    * OTHER shadow-bootstrap fields (review: PRRT_kwDOErm0O86W2tRi, following on from
    * PRRT_kwDOErm0O86W2LL4's fix to those two). Defaults to empty: `db start`/`db reset`/
    * `status`/`stop` never resolve a remote block for this config read (they never pass a
-   * `projectRef`), so they are unaffected. The dozens of OTHER fields this function resolves
-   * (studio/smtp/passkey/mfa/analytics, plus this function's OWN validation-only `thirdParty`
-   * block feeding `Auth.ThirdParty.validate()`'s "at most one enabled" check) are never read by
-   * that caller — grepped confirmed no other consumer reads `LegacyLocalConfigValues` beyond
-   * those — so they are deliberately NOT gated here; gating them would be inert (no caller ever
-   * passes a non-empty `remoteOverrideKeys` that could reach them) rather than a genuine parity
-   * gap. This is NOT the same `third_party` as {@link legacyResolveLocalJwks}'s/
+   * `projectRef`), so they are unaffected. `auth.enabled` is ALSO gated below even though its
+   * resolved value itself is never part of the returned `LegacyLocalConfigValues` — an ungated
+   * `legacyEnvOverrideBool` call there would THROW on a malformed `SUPABASE_AUTH_ENABLED` even
+   * when the remote block already set `auth.enabled`, which would abort this entire function
+   * (and every field it DOES return) on an env value Go silently ignores (review:
+   * PRRT_kwDOErm0O86W30n6) — "not read by the caller" is not the same as "cannot abort the
+   * caller." The dozens of remaining OTHER fields this function resolves (studio/smtp/passkey/
+   * mfa/analytics, the auth `enable_signup`/`enable_anonymous_sign_ins`/refresh-token/
+   * manual-linking/password-length/-requirements group, plus this function's OWN
+   * validation-only `thirdParty` block feeding `Auth.ThirdParty.validate()`'s "at most one
+   * enabled" check) are never read by that caller AND their own `legacyEnvOverride*` calls
+   * cannot throw before a value the caller needs has already been resolved — grepped confirmed
+   * no other consumer reads `LegacyLocalConfigValues` beyond those — so they are deliberately
+   * NOT gated here; gating them would be inert (no caller ever passes a non-empty
+   * `remoteOverrideKeys` that could reach them, and none of them can abort resolution of a field
+   * the caller does read) rather than a genuine parity gap. This is NOT the same `third_party` as
+   * {@link legacyResolveLocalJwks}'s/
    * {@link legacyResolveConfiguredSigningKeys}'s own, SEPARATE third-party/signing-keys
    * resolution, which DOES feed the shadow's JWKS document and IS gated (see those functions'
    * own doc comments).
@@ -2824,12 +2854,23 @@ export function legacyResolveLocalConfigValues(
   // any other field (`config.go:582-586`), so `Validate`'s gate reads the
   // POST-`SUPABASE_AUTH_ENABLED`-override value, not the raw TOML one — hence
   // `legacyEnvOverrideBool` here instead of `config.auth.enabled` directly.
-  const authEnabled = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as every other gated field above — `auth.enabled` IS in
+  // `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`) and that reader's own
+  // resolver already gates it (`remoteOverrideKeys.has("auth.enabled")`); this resolver must
+  // match, since an ungated `legacyEnvOverrideBool` call THROWS on a malformed
+  // `SUPABASE_AUTH_ENABLED` even when a matched remote block already set `auth.enabled` at
+  // viper's OVERRIDE tier — a value Go's `Validate` never even evaluates the env var for in
+  // that case — which would otherwise abort this whole function (and the shadow it feeds via
+  // `legacyBuildLocalDbContainerInputs`) on an env value Go silently ignores
+  // (review: PRRT_kwDOErm0O86W30n6).
+  const authEnabled = remoteWins("auth.enabled")
+    ? config.auth.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLED",
+        config.auth.enabled,
+        "auth.enabled",
+        projectEnvValues,
+      );
   // Go's `Config.Validate` checks `auth.site_url` first inside `if c.Auth.Enabled`
   // (`pkg/config/config.go:1086-1090`), before the signing-keys read below —
   // `@supabase/config`'s schema only defaults `site_url` when the key is ABSENT
@@ -3083,14 +3124,26 @@ export function legacyResolveLocalConfigValues(
     // value-typed, so `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides always apply — including
     // `workos`, whose default template omits `[auth.third_party.workos]` entirely — before
     // `Auth.ThirdParty.validate()` runs; no raw-document presence gate needed.
+    // Each provider's `enabled` check is gated the same as every other throw-capable field above:
+    // `auth.third_party.<provider>.enabled` is in `LEGACY_ENV_OVERRIDABLE_KEYS`
+    // (`legacy-db-config.toml-read.ts`) and `legacyEnvOverrideBool` THROWS on a malformed
+    // override, so an ungated call here would abort this whole function (and the shadow it
+    // feeds) on a malformed `SUPABASE_AUTH_THIRD_PARTY_*_ENABLED` even when a matched remote
+    // block already set that provider's `enabled` at viper's OVERRIDE tier — same `auth.enabled`
+    // bug class (review: PRRT_kwDOErm0O86W30n6). The per-provider REQUIRED-FIELD strings below
+    // stay ungated: `legacyEnvOverride` never throws, and — this being the SEPARATE,
+    // validation-only `thirdParty` (not {@link legacyResolveLocalJwks}'s own, gated one) — their
+    // resolved values are never read by the shadow either way.
     const thirdParty: Array<LegacyThirdPartyInput> = [];
     if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        config.auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        projectEnvValues,
-      )
+      remoteWins("auth.third_party.firebase.enabled")
+        ? config.auth.third_party.firebase.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+            config.auth.third_party.firebase.enabled,
+            "auth.third_party.firebase.enabled",
+            projectEnvValues,
+          )
     ) {
       thirdParty.push({
         provider: "firebase",
@@ -3103,12 +3156,14 @@ export function legacyResolveLocalConfigValues(
       });
     }
     if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        config.auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        projectEnvValues,
-      )
+      remoteWins("auth.third_party.auth0.enabled")
+        ? config.auth.third_party.auth0.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+            config.auth.third_party.auth0.enabled,
+            "auth.third_party.auth0.enabled",
+            projectEnvValues,
+          )
     ) {
       thirdParty.push({
         provider: "auth0",
@@ -3121,12 +3176,14 @@ export function legacyResolveLocalConfigValues(
       });
     }
     if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        config.auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        projectEnvValues,
-      )
+      remoteWins("auth.third_party.aws_cognito.enabled")
+        ? config.auth.third_party.aws_cognito.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+            config.auth.third_party.aws_cognito.enabled,
+            "auth.third_party.aws_cognito.enabled",
+            projectEnvValues,
+          )
     ) {
       thirdParty.push({
         provider: "cognito",
@@ -3144,12 +3201,14 @@ export function legacyResolveLocalConfigValues(
       });
     }
     if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        config.auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        projectEnvValues,
-      )
+      remoteWins("auth.third_party.clerk.enabled")
+        ? config.auth.third_party.clerk.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+            config.auth.third_party.clerk.enabled,
+            "auth.third_party.clerk.enabled",
+            projectEnvValues,
+          )
     ) {
       thirdParty.push({
         provider: "clerk",
@@ -3162,12 +3221,14 @@ export function legacyResolveLocalConfigValues(
       });
     }
     if (
-      legacyEnvOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        config.auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        projectEnvValues,
-      )
+      remoteWins("auth.third_party.workos.enabled")
+        ? config.auth.third_party.workos.enabled
+        : legacyEnvOverrideBool(
+            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+            config.auth.third_party.workos.enabled,
+            "auth.third_party.workos.enabled",
+            projectEnvValues,
+          )
     ) {
       thirdParty.push({
         provider: "workos",
@@ -3211,13 +3272,29 @@ export function legacyResolveLocalConfigValues(
   // `@supabase/config`'s `stringEnum` (`packages/config/src/analytics.ts:17-41`),
   // but that schema doesn't see the `SUPABASE_ANALYTICS_BACKEND` env-override
   // path — see {@link envOverrideAnalyticsBackend} for that case.
-  const analyticsEnabled = legacyEnvOverrideBool(
-    "SUPABASE_ANALYTICS_ENABLED",
-    config.analytics.enabled,
-    "analytics.enabled",
+  // `analytics.enabled`/`analytics.backend` are both in `LEGACY_ENV_OVERRIDABLE_KEYS`
+  // (`legacy-db-config.toml-read.ts`) and both THROW on a malformed override
+  // (`LegacyInvalidBoolEnvOverrideError`/`LegacyInvalidAnalyticsBackendEnvOverrideError`) — same
+  // `auth.enabled` bug class (review: PRRT_kwDOErm0O86W30n6): an ungated call here would abort
+  // this whole function (and the shadow it feeds) on a malformed `SUPABASE_ANALYTICS_*` env var
+  // even when a matched remote block already set the field at viper's OVERRIDE tier, a value
+  // Go's `Validate` never evaluates the env var for in that case. `gcpProjectId`/
+  // `gcpProjectNumber`/`gcpJwtPath` below stay ungated: `legacyEnvOverride` (plain string) never
+  // throws, so there's no abort risk, and their resolved values are unused by the shadow either
+  // way (same "inert" reasoning as this function's other unconsumed fields).
+  const analyticsEnabled = remoteWins("analytics.enabled")
+    ? config.analytics.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_ANALYTICS_ENABLED",
+        config.analytics.enabled,
+        "analytics.enabled",
+        projectEnvValues,
+      );
+  const analyticsBackend = envOverrideAnalyticsBackend(
+    config.analytics.backend,
     projectEnvValues,
+    remoteWins("analytics.backend"),
   );
-  const analyticsBackend = envOverrideAnalyticsBackend(config.analytics.backend, projectEnvValues);
   const gcpProjectId = legacyEnvOverride(
     "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
     config.analytics.gcp_project_id,
@@ -3631,12 +3708,22 @@ export async function legacyResolveLocalJwks(
   // resolver here is safe/redundant-but-harmless. When auth is disabled, that earlier validation
   // is (correctly) skipped, so this function must NOT re-introduce it — using the unchecked,
   // no-throw `IssuerURL()`-only builder instead, matching Go exactly.
-  const authEnabled = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
+  // Same remote-over-env precedence as every other field above — `auth.enabled` is in
+  // `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`) and an ungated
+  // `legacyEnvOverrideBool` call THROWS on a malformed `SUPABASE_AUTH_ENABLED` even when a
+  // matched remote block already set `auth.enabled` at viper's OVERRIDE tier — a value Go's
+  // `Validate` never even evaluates the env var for in that case — which would otherwise abort
+  // this whole function (and the shadow's PG15+ one-shot auth-migration job it feeds via
+  // `legacyBuildLocalDbContainerInputs`) on an env value Go silently ignores
+  // (review: PRRT_kwDOErm0O86W30n6).
+  const authEnabled = remoteWins("auth.enabled")
+    ? config.auth.enabled
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_ENABLED",
+        config.auth.enabled,
+        "auth.enabled",
+        projectEnvValues,
+      );
   let issuerUrl: string | undefined;
   if (authEnabled) {
     try {
