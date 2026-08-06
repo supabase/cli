@@ -136,7 +136,9 @@ The stack accepts an explicit, fully resolved Functions bundle. Paths must be ab
 caller owns project-file discovery, environment-file parsing, and manifest interpretation:
 
 ```typescript
+const projectDir = "/absolute/project";
 const stack = await createStack({
+  projectDir,
   functions: {
     env: { SHARED_VALUE: "available to every function" },
     functions: [
@@ -152,6 +154,9 @@ const stack = await createStack({
   },
 });
 ```
+
+Every referenced path must be contained by `projectDir` so the same bundle works when Edge Runtime
+runs in Docker and the project directory is bind-mounted into the container.
 
 Per-function environment values override shared values. Stack-owned runtime URLs and credentials
 take final precedence. To update the active bundle, call

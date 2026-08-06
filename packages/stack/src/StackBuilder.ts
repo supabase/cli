@@ -45,8 +45,13 @@ const dockerOnlyServices = SERVICE_NAMES.filter(
   (service) => serviceMetadata(service).runtimeSupport === "docker-only",
 );
 
-// Longest serial health-check path to analytics; keep aligned with its transitive dependencies.
+// Serial health-check paths used by dependency waits; keep each path aligned
+// with the corresponding service's transitive dependencies.
+const postgresStartupPath: ReadonlyArray<ServiceName> = ["postgres"];
+const storageStartupPath: ReadonlyArray<ServiceName> = ["postgres", "storage"];
 const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics"];
+
+const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
 const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDependency> =>
   hasPostgresInit
@@ -270,6 +275,7 @@ export class StackBuilder extends Context.Service<
               autoExposeNewTables: config.postgres.autoExposeNewTables,
               dependencies: [{ service: "postgres", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -301,6 +307,7 @@ export class StackBuilder extends Context.Service<
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -339,6 +346,7 @@ export class StackBuilder extends Context.Service<
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -367,6 +375,7 @@ export class StackBuilder extends Context.Service<
                   platformOs: platform.os,
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -405,6 +414,7 @@ export class StackBuilder extends Context.Service<
               platformOs: platform.os,
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -432,6 +442,7 @@ export class StackBuilder extends Context.Service<
               dependencies: postgresDeps,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -448,6 +459,7 @@ export class StackBuilder extends Context.Service<
               platformOs: platform.os,
               dependencies: [{ service: "storage", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices(storageStartupPath),
             enabled: true,
           });
         }
@@ -464,6 +476,7 @@ export class StackBuilder extends Context.Service<
               platformOs: platform.os,
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -482,6 +495,7 @@ export class StackBuilder extends Context.Service<
               backend: config.analytics.backend,
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -524,6 +538,7 @@ export class StackBuilder extends Context.Service<
               secretKeyBase: config.pooler.secretKeyBase,
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }

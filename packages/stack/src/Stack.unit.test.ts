@@ -3,12 +3,13 @@ import { BunServices } from "@effect/platform-bun";
 import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { chmod, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
+import { StackBuildError } from "./errors.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { functionsRuntimeConfigPath, type ResolvedFunctionsBundle } from "./functions.ts";
 import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
@@ -180,6 +181,7 @@ describe("Stack", () => {
     const replacementBundle = functionsBundle(runtimeRoot, "replacement-secret");
     const config = {
       ...edgeRuntimeConfig,
+      projectDir: runtimeRoot,
       runtimeRoot,
       functions: initialBundle,
     } satisfies ResolvedStackConfig;
@@ -227,6 +229,25 @@ describe("Stack", () => {
       yield* stack.reloadFunctions();
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
+      const duplicateBundle = {
+        ...replacementBundle,
+        functions: [replacementBundle.functions[0]!, replacementBundle.functions[0]!],
+      };
+      expect(
+        (yield* stack.reloadFunctions({ functions: duplicateBundle }).pipe(Effect.flip))._tag,
+      ).toBe("StackBuildError");
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
+      const runtimeDirectory = join(runtimeRoot, "edge-runtime");
+      yield* Effect.promise(() => chmod(runtimeDirectory, 0o500));
+      const failedBundle = functionsBundle(runtimeRoot, "failed-secret");
+      const error = yield* stack.reloadFunctions({ functions: failedBundle }).pipe(Effect.flip);
+      expect(error._tag).toBe("StackBuildError");
+
+      yield* Effect.promise(() => chmod(runtimeDirectory, 0o700));
+      yield* stack.reloadFunctions();
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
       yield* stack.dispose();
       expect(
         yield* Effect.promise(() =>
@@ -238,7 +259,12 @@ describe("Stack", () => {
       ).toBe(false);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
+      Effect.ensuring(
+        Effect.promise(async () => {
+          await chmod(join(runtimeRoot, "edge-runtime"), 0o700).catch(() => {});
+          await rm(runtimeRoot, { recursive: true, force: true });
+        }),
+      ),
       Effect.timeout("5 seconds"),
     );
   });
@@ -525,6 +551,47 @@ describe("Stack", () => {
       const startedContainers = spawner.spawned.filter((record) => record.args[0] === "run");
       expect(startedContainers).toEqual([]);
     }).pipe(Effect.provide(providedLayer));
+  });
+
+  it.live("can retry start after a build failure before services start", () => {
+    let buildAttempts = 0;
+    const graph = Effect.runSync(
+      buildGraph([{ name: "postgres", command: "true", restart: "no" }]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.suspend(() => {
+          buildAttempts += 1;
+          return buildAttempts === 1
+            ? Effect.fail(new StackBuildError({ detail: "transient build failure" }))
+            : Effect.succeed({
+                graph,
+                cleanupTargets: { dockerContainerNames: [] },
+                serviceProjection: new Map<string, { readonly visibility: "public" }>([
+                  ["postgres", { visibility: "public" }],
+                ]),
+              });
+        }),
+    });
+    const resolver = mockBinaryResolver();
+    const spawner = mockChildProcessSpawner();
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+
+      expect(Exit.isFailure(yield* stack.start().pipe(Effect.exit))).toBe(true);
+      yield* stack.start();
+
+      expect(buildAttempts).toBe(2);
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
   it.live("a partial startup failure disposes resources from services already started", () => {

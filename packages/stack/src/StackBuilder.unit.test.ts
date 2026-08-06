@@ -211,6 +211,12 @@ describe("StackBuilder", () => {
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("postgrest"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("auth"));
 
+      for (const name of ["postgres-init", "postgrest", "auth"]) {
+        expect(
+          graph.startOrder.find((service) => service.name === name)?.dependencyTimeoutSeconds,
+        ).toBeGreaterThan(120);
+      }
+
       expect(serviceProjection.get("postgres")).toEqual({ visibility: "public" });
       expect(serviceProjection.get("postgres-init")).toEqual({
         visibility: "internal",
@@ -352,6 +358,7 @@ describe("StackBuilder", () => {
 
       const authDef = graph.startOrder.find((s) => s.name === "auth");
       expect(authDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(authDef?.dependencyTimeoutSeconds).toBeGreaterThan(120);
     }).pipe(Effect.provide(layer));
   });
 

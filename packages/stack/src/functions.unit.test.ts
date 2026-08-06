@@ -84,7 +84,7 @@ const authFailureCases = [
 describe("stack Functions runtime config", () => {
   it("projects an explicit bundle without project discovery", async () => {
     const root = makeTempProject();
-    const stackConfig = await resolveConfig({ functions: makeBundle(root) });
+    const stackConfig = await resolveConfig({ projectDir: root, functions: makeBundle(root) });
     const config = resolveFunctionsRuntimeConfig(
       stackConfig,
       { hostname: "127.0.0.1" },
@@ -125,6 +125,35 @@ describe("stack Functions runtime config", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("validates explicit bundles at config resolution", async () => {
+    const root = makeTempProject();
+    const bundle = makeBundle(root);
+
+    await expect(
+      resolveConfig({
+        projectDir: root,
+        functions: {
+          ...bundle,
+          functions: [bundle.functions[0]!, bundle.functions[0]!],
+        },
+      }),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      detail: "Invalid Edge Functions bundle",
+    });
+    await expect(
+      resolveConfig({
+        projectDir: join(root, "project"),
+        functions: bundle,
+      }),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      detail: "Invalid Edge Functions bundle",
+    });
+
+    await rm(root, { recursive: true, force: true });
+  });
+
   it("keeps placeholder mode when no functions are supplied", async () => {
     const stackConfig = await resolveConfig({ functions: false });
 
@@ -149,7 +178,7 @@ describe("stack Functions runtime config", () => {
     return Effect.gen(function* () {
       const bundle = makeBundle(cwd);
       const stackConfig = yield* Effect.promise(() =>
-        resolveConfig({ runtimeRoot: cwd, functions: bundle }),
+        resolveConfig({ projectDir: cwd, runtimeRoot: cwd, functions: bundle }),
       );
       yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, bundle);
       const filePath = functionsRuntimeConfigPath(stackConfig.runtimeRoot);

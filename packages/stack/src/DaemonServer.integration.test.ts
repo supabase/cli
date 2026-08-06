@@ -416,6 +416,7 @@ describe("DaemonServer", () => {
 
     expect(res.status).toBe(400);
     expect(responseText).toContain("Invalid Edge Functions reload payload");
+    expect(JSON.parse(responseText)).toMatchObject({ code: "STACK_BUILD_ERROR" });
     expect(responseText).not.toContain(secret);
     expect(responseText).not.toContain("relative/index.ts");
   });

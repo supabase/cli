@@ -33,7 +33,7 @@ export class DaemonServer extends Context.Service<
         const server = yield* HttpServer.HttpServer;
         const shutdownDeferred = yield* Deferred.make<void>();
         const textEncoder = new TextEncoder();
-        const errorResponse = (body: DaemonErrorResponse, status: 404 | 500) =>
+        const errorResponse = (body: DaemonErrorResponse, status: 400 | 404 | 500) =>
           HttpServerResponse.jsonUnsafe(body, { status });
         const notFoundResponse = (name: string) =>
           errorResponse(
@@ -53,9 +53,9 @@ export class DaemonServer extends Context.Service<
         const buildErrorResponse = (detail: string) =>
           errorResponse({ code: "STACK_BUILD_ERROR", error: detail }, 500);
         const invalidReloadPayloadResponse = () =>
-          HttpServerResponse.jsonUnsafe(
-            { error: "Invalid Edge Functions reload payload" },
-            { status: 400 },
+          errorResponse(
+            { code: "STACK_BUILD_ERROR", error: "Invalid Edge Functions reload payload" },
+            400,
           );
         const readinessTimeoutResponse = (target: string, timeoutMs: number, detail: string) =>
           errorResponse(

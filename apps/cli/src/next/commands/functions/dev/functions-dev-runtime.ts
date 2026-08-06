@@ -221,53 +221,51 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
     ...opts,
     edgeRuntime: edgeRuntimeState.config,
   });
-  yield* ensureFunctionsDirectory();
-  yield* reloadEdgeRuntime(stack, opts, edgeRuntimeState.config);
-  const info = yield* stack.getInfo();
-  const watchPathList = yield* functionsDevWatchPaths(opts.envFile);
+  const restoreFunctions = startedByCommand
+    ? undefined
+    : yield* resolveFunctionsBundle({ envFile: Option.none(), noVerifyJwt: false });
 
-  yield* output.success("Edge Functions dev server is running.", {
-    functions_url: `${info.url}/functions/v1`,
-  });
-  yield* output.info(`Functions URL: ${info.url}/functions/v1/<function-name>`);
+  yield* Effect.gen(function* () {
+    yield* ensureFunctionsDirectory();
+    yield* reloadEdgeRuntime(stack, opts, edgeRuntimeState.config);
+    const info = yield* stack.getInfo();
+    const watchPathList = yield* functionsDevWatchPaths(opts.envFile);
 
-  const restartOnChange = watchPaths(watchPathList).pipe(
-    Stream.runForEach((change) =>
-      Effect.gen(function* () {
-        const result = yield* applyWatchedChange(edgeRuntimeState, change);
-        if (result.action === "edge-runtime") {
-          yield* output.info("Edge runtime config changed. Restarting edge-runtime...");
-          yield* reloadEdgeRuntime(stack, opts, result.state.config);
+    yield* output.success("Edge Functions dev server is running.", {
+      functions_url: `${info.url}/functions/v1`,
+    });
+    yield* output.info(`Functions URL: ${info.url}/functions/v1/<function-name>`);
+
+    const restartOnChange = watchPaths(watchPathList).pipe(
+      Stream.runForEach((change) =>
+        Effect.gen(function* () {
+          const result = yield* applyWatchedChange(edgeRuntimeState, change);
+          if (result.action === "edge-runtime") {
+            yield* output.info("Edge runtime config changed. Restarting edge-runtime...");
+            yield* reloadEdgeRuntime(stack, opts, result.state.config);
+            edgeRuntimeState = result.state;
+            return;
+          }
           edgeRuntimeState = result.state;
-          return;
-        }
-        edgeRuntimeState = result.state;
-        yield* output.info("Function files changed. Restarting edge-runtime...");
-        yield* stack.reloadFunctions({ functions: yield* resolveFunctionsBundle(opts) });
-      }).pipe(
-        Effect.catch((error) =>
-          output.error(error instanceof Error ? error.message : String(error)),
+          yield* output.info("Function files changed. Restarting edge-runtime...");
+          yield* stack.reloadFunctions({ functions: yield* resolveFunctionsBundle(opts) });
+        }).pipe(
+          Effect.catch((error) =>
+            output.error(error instanceof Error ? error.message : String(error)),
+          ),
         ),
       ),
-    ),
-  );
+    );
 
-  const logs = logEntryStream(stack).pipe(Stream.runForEach((event) => output.event(event)));
-  const shutdown = processControl.awaitShutdown;
+    const logs = logEntryStream(stack).pipe(Stream.runForEach((event) => output.event(event)));
+    const shutdown = processControl.awaitShutdown;
 
-  yield* Effect.raceFirst(Effect.raceFirst(restartOnChange, logs), shutdown).pipe(
+    yield* Effect.raceFirst(Effect.raceFirst(restartOnChange, logs), shutdown);
+  }).pipe(
     Effect.ensuring(
-      Effect.gen(function* () {
-        if (startedByCommand) {
-          yield* stack.dispose().pipe(Effect.ignore);
-        } else {
-          const functions = yield* resolveFunctionsBundle({
-            envFile: Option.none(),
-            noVerifyJwt: false,
-          });
-          yield* stack.reloadFunctions({ functions }).pipe(Effect.ignore);
-        }
-      }).pipe(Effect.ignore),
+      startedByCommand
+        ? stack.dispose().pipe(Effect.ignore)
+        : stack.reloadFunctions({ functions: restoreFunctions }).pipe(Effect.ignore),
     ),
   );
 });

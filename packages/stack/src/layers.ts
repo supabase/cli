@@ -45,7 +45,7 @@ export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack> => {
+): Layer.Layer<Stack | ApiProxy> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -63,8 +63,6 @@ export const foregroundLayer = (
 
   const proxyConfig: ProxyConfig = {
     listenPort: config.apiPort,
-    activationTimeout:
-      config.readiness.mode === "infinite" ? "infinite" : config.readiness.timeoutMs,
     gotruePort: config.auth !== false ? config.auth.port : 0,
     postgrestPort: config.postgrest !== false ? config.postgrest.port : 0,
     postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
@@ -115,8 +113,6 @@ export const foregroundDaemonLayer = (
   );
   const proxyConfig: ProxyConfig = {
     listenPort: config.apiPort,
-    activationTimeout:
-      config.readiness.mode === "infinite" ? "infinite" : config.readiness.timeoutMs,
     gotruePort: config.auth !== false ? config.auth.port : 0,
     postgrestPort: config.postgrest !== false ? config.postgrest.port : 0,
     postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
