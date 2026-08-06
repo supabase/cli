@@ -690,78 +690,95 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a
             // local target with declarative schema files gets a second
             // `contrib_regression` shadow returned as the target override.
-            const shadow = yield* legacyPrepareShadowSource(pullSpawner, {
-              ...legacyShadowRunInputFromLocalContainerInputs(
-                pullLocalInputs,
-                resolvedPullShadowImage,
-                toml,
-                fs,
-                path,
-              ),
-              targetLocal: resolved.isLocal,
-              usePgDelta: usePgDeltaDiff,
-              schemaPaths: pullLocalInputs.context.config.db.migrations.schema_paths,
-              pgDelta: toml.pgDelta,
-              ctx,
-            });
-            return yield* Effect.gen(function* () {
-              // Use the declarative target override when present (Go substitutes it
-              // for the diff target, `diff.go:196-197`); for remote pulls it's
-              // undefined, so this is this attempt's resolved target URL.
-              const target = shadow.targetUrlOverride ?? targetRef;
-              yield* output.raw(
-                diffSchema.length > 0
-                  ? `Diffing schemas: ${diffSchema.join(",")}\n`
-                  : "Diffing schemas...\n",
-                "stderr",
-              );
-              if (usePgDeltaDiff) {
-                // With PGDELTA_DEBUG set, capture the shadow baseline catalog so an
-                // empty diff can be inspected later (Go's DiffDatabase,
-                // `internal/db/diff/diff.go:205-214`); a failed export only warns.
-                const debug = legacyIsPgDeltaDebugEnabled();
-                const sourceCatalog = debug
-                  ? yield* legacyExportCatalogPgDelta(ctx, {
-                      targetRef: shadow.sourceUrl,
-                      role: "postgres",
-                    }).pipe(
-                      Effect.catch((error) =>
-                        output
-                          .raw(
-                            `Warning: failed to export shadow pg-delta catalog: ${error.message}\n`,
-                            "stderr",
-                          )
-                          .pipe(Effect.as(undefined)),
-                      ),
-                    )
-                  : undefined;
-                const result = yield* legacyDiffPgDelta(ctx, {
-                  sourceRef: shadow.sourceUrl,
-                  targetRef: target,
-                  schema: diffSchema,
-                  formatOptions,
-                });
-                return {
-                  sql: result.sql,
-                  files: result.files,
-                  capture: debug ? { sourceCatalog, stderr: result.stderr } : undefined,
-                };
-              }
-              const sql = yield* legacyDiffMigra(ctx, {
-                source: shadow.sourceUrl,
-                target,
-                schema: diffSchema,
-                connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              });
-              return { sql, files: undefined, capture: undefined };
-            }).pipe(
-              Effect.ensuring(
+            //
+            // `Effect.acquireUseRelease`, NOT a separate `yield* legacyPrepareShadowSource(...)`
+            // followed by a later `.pipe(Effect.ensuring(...))` (see `diff.handler.ts`'s
+            // identical call site for the full rationale): the latter shape leaves a gap
+            // between the shadow's successful creation and the `Effect.ensuring` finalizer
+            // actually being attached, where a fiber interrupt would skip
+            // `legacyRemoveShadowDatabase` and leak the shadow container + its staged secret
+            // directory. `acquireUseRelease` registers the release finalizer in the same
+            // uninterruptible continuation the acquire resolves into, matching Go's `defer
+            // DockerRemove` immediately after successful preparation (review: PRRT_kwDOErm0O86XDr4Y).
+            return yield* Effect.acquireUseRelease(
+              legacyPrepareShadowSource(pullSpawner, {
+                ...legacyShadowRunInputFromLocalContainerInputs(
+                  pullLocalInputs,
+                  resolvedPullShadowImage,
+                  toml,
+                  fs,
+                  path,
+                ),
+                targetLocal: resolved.isLocal,
+                usePgDelta: usePgDeltaDiff,
+                // `toml.schemaPathPatterns`, NOT `pullLocalInputs.context.config.db.migrations.
+                // schema_paths`: the latter is the raw `@supabase/config` field, which never
+                // applies `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` (`@supabase/config` has no
+                // viper-`AutomaticEnv` equivalent) — `toml` above (`legacyReadDbToml`) already
+                // resolves that env override the same way Go's `utils.Config.Db.Migrations.
+                // SchemaPaths` does (review: PRRT_kwDOErm0O86XDr4S).
+                schemaPaths: toml.schemaPathPatterns,
+                pgDelta: toml.pgDelta,
+                ctx,
+              }),
+              (shadow) =>
+                Effect.gen(function* () {
+                  // Use the declarative target override when present (Go substitutes it
+                  // for the diff target, `diff.go:196-197`); for remote pulls it's
+                  // undefined, so this is this attempt's resolved target URL.
+                  const target = shadow.targetUrlOverride ?? targetRef;
+                  yield* output.raw(
+                    diffSchema.length > 0
+                      ? `Diffing schemas: ${diffSchema.join(",")}\n`
+                      : "Diffing schemas...\n",
+                    "stderr",
+                  );
+                  if (usePgDeltaDiff) {
+                    // With PGDELTA_DEBUG set, capture the shadow baseline catalog so an
+                    // empty diff can be inspected later (Go's DiffDatabase,
+                    // `internal/db/diff/diff.go:205-214`); a failed export only warns.
+                    const debug = legacyIsPgDeltaDebugEnabled();
+                    const sourceCatalog = debug
+                      ? yield* legacyExportCatalogPgDelta(ctx, {
+                          targetRef: shadow.sourceUrl,
+                          role: "postgres",
+                        }).pipe(
+                          Effect.catch((error) =>
+                            output
+                              .raw(
+                                `Warning: failed to export shadow pg-delta catalog: ${error.message}\n`,
+                                "stderr",
+                              )
+                              .pipe(Effect.as(undefined)),
+                          ),
+                        )
+                      : undefined;
+                    const result = yield* legacyDiffPgDelta(ctx, {
+                      sourceRef: shadow.sourceUrl,
+                      targetRef: target,
+                      schema: diffSchema,
+                      formatOptions,
+                    });
+                    return {
+                      sql: result.sql,
+                      files: result.files,
+                      capture: debug ? { sourceCatalog, stderr: result.stderr } : undefined,
+                    };
+                  }
+                  const sql = yield* legacyDiffMigra(ctx, {
+                    source: shadow.sourceUrl,
+                    target,
+                    schema: diffSchema,
+                    connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+                  });
+                  return { sql, files: undefined, capture: undefined };
+                }),
+              (shadow) =>
                 legacyRemoveShadowDatabase(pullSpawner, {
                   containerId: shadow.container,
                   secretDirId: shadow.secretDirId,
                   workdir: cliConfig.workdir,
                 }),
-              ),
             );
           });
         const diffOutcome = yield* withPoolerFallback(targetUrl, runShadowDiff);

@@ -442,58 +442,75 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       cfg.remoteOverrideKeys,
     );
     const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
-    const shadow = yield* legacyPrepareShadowSource(spawner, {
-      ...legacyShadowRunInputFromLocalContainerInputs(
-        localInputs,
-        resolvedShadowImage,
-        cfg,
-        fs,
-        path,
-      ),
-      targetLocal: resolved.isLocal,
-      usePgDelta: useDelta,
-      schemaPaths: localInputs.context.config.db.migrations.schema_paths,
-      pgDelta: cfg.pgDelta,
-      ctx,
-    });
-
-    const diffResult = yield* Effect.gen(function* () {
-      const target = shadow.targetUrlOverride ?? targetUrl;
-      yield* output.raw(
-        flags.schema.length > 0
-          ? `Diffing schemas: ${flags.schema.join(",")}\n`
-          : "Diffing schemas...\n",
-        "stderr",
-      );
-      if (useDelta) {
-        const result = yield* legacyDiffPgDelta(ctx, {
-          sourceRef: shadow.sourceUrl,
-          targetRef: target,
-          schema: flags.schema,
-          formatOptions,
-        });
-        // Keep the per-unit plan files so a multi-unit plan can be written as one
-        // migration file each (Go's `DatabaseDiff.Files`); `sql` stays the flattened
-        // join for stdout review + machine payloads.
-        return { sql: result.sql, files: result.files };
-      }
-      const sql = yield* legacyDiffMigra(ctx, {
-        source: shadow.sourceUrl,
-        target,
-        schema: flags.schema,
-        connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-      });
-      // The migra engine has no execution-aware plan units, so it always writes a
-      // single migration file (Go's `SaveDiff` single-file path).
-      return { sql, files: undefined };
-    }).pipe(
-      Effect.ensuring(
+    // `Effect.acquireUseRelease`, NOT a separate `yield* legacyPrepareShadowSource(...)`
+    // followed by a later `.pipe(Effect.ensuring(...))`: the latter shape leaves a real gap
+    // between the shadow's successful creation and the `Effect.ensuring` finalizer actually
+    // being attached — a fiber interrupt landing in that gap (between the two `yield*`
+    // statements) would skip `legacyRemoveShadowDatabase` entirely, leaking the live shadow
+    // container and its staged secret directory and leaving the shadow port occupied.
+    // `acquireUseRelease` closes that: `acquire` runs inside an `uninterruptibleMask`, and the
+    // release finalizer is registered in the SAME uninterruptible continuation `acquire`
+    // resolves into (verified against `effect`'s own `internal/effect.js`:
+    // `uninterruptibleMask(restore => flatMap(acquire, a => onExitPrimitive(restore(use(a)),
+    // exit => release(a, exit), true)))`) — matching Go's `defer DockerRemove` immediately
+    // after successful preparation, which has no equivalent gap (review: PRRT_kwDOErm0O86XDr4Y).
+    const diffResult = yield* Effect.acquireUseRelease(
+      legacyPrepareShadowSource(spawner, {
+        ...legacyShadowRunInputFromLocalContainerInputs(
+          localInputs,
+          resolvedShadowImage,
+          cfg,
+          fs,
+          path,
+        ),
+        targetLocal: resolved.isLocal,
+        usePgDelta: useDelta,
+        // `cfg.schemaPathPatterns`, NOT `localInputs.context.config.db.migrations.schema_paths`:
+        // the latter is the raw `@supabase/config` field, which never applies
+        // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` (`@supabase/config` has no viper-`AutomaticEnv`
+        // equivalent) — `cfg` above (`legacyReadDbToml`) already resolves that env override the
+        // same way Go's `utils.Config.Db.Migrations.SchemaPaths` does (review: PRRT_kwDOErm0O86XDr4S).
+        schemaPaths: cfg.schemaPathPatterns,
+        pgDelta: cfg.pgDelta,
+        ctx,
+      }),
+      (shadow) =>
+        Effect.gen(function* () {
+          const target = shadow.targetUrlOverride ?? targetUrl;
+          yield* output.raw(
+            flags.schema.length > 0
+              ? `Diffing schemas: ${flags.schema.join(",")}\n`
+              : "Diffing schemas...\n",
+            "stderr",
+          );
+          if (useDelta) {
+            const result = yield* legacyDiffPgDelta(ctx, {
+              sourceRef: shadow.sourceUrl,
+              targetRef: target,
+              schema: flags.schema,
+              formatOptions,
+            });
+            // Keep the per-unit plan files so a multi-unit plan can be written as one
+            // migration file each (Go's `DatabaseDiff.Files`); `sql` stays the flattened
+            // join for stdout review + machine payloads.
+            return { sql: result.sql, files: result.files };
+          }
+          const sql = yield* legacyDiffMigra(ctx, {
+            source: shadow.sourceUrl,
+            target,
+            schema: flags.schema,
+            connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+          });
+          // The migra engine has no execution-aware plan units, so it always writes a
+          // single migration file (Go's `SaveDiff` single-file path).
+          return { sql, files: undefined };
+        }),
+      (shadow) =>
         legacyRemoveShadowDatabase(spawner, {
           containerId: shadow.container,
           secretDirId: shadow.secretDirId,
           workdir: cliConfig.workdir,
         }),
-      ),
     );
     const out = diffResult.sql;
 
