@@ -496,6 +496,25 @@ describe("RemoteStack integration", () => {
     expect(mock.functionReloads).toEqual([{ functions: functionsBundle }]);
   });
 
+  test("reloadFunctions returns a typed build error for an invalid bundle", async () => {
+    const invalidBundle = {
+      ...functionsBundle,
+      functions: [{ ...functionsBundle.functions[0]!, entrypointPath: "relative/index.ts" }],
+    };
+
+    const error = await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) =>
+        stack.reloadFunctions({ functions: invalidBundle }).pipe(Effect.flip),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(StackBuildError);
+    expect(error._tag).toBe("StackBuildError");
+    if (error._tag === "StackBuildError") {
+      expect(error.detail).toBe("Invalid Edge Functions reload payload");
+    }
+  });
+
   test("reloadEdgeRuntime records the call", async () => {
     await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) =>

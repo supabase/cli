@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { chmod, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
@@ -180,6 +180,7 @@ describe("Stack", () => {
     const replacementBundle = functionsBundle(runtimeRoot, "replacement-secret");
     const config = {
       ...edgeRuntimeConfig,
+      projectDir: runtimeRoot,
       runtimeRoot,
       functions: initialBundle,
     } satisfies ResolvedStackConfig;
@@ -227,6 +228,25 @@ describe("Stack", () => {
       yield* stack.reloadFunctions();
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
+      const duplicateBundle = {
+        ...replacementBundle,
+        functions: [replacementBundle.functions[0]!, replacementBundle.functions[0]!],
+      };
+      expect(
+        (yield* stack.reloadFunctions({ functions: duplicateBundle }).pipe(Effect.flip))._tag,
+      ).toBe("StackBuildError");
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
+      const runtimeDirectory = join(runtimeRoot, "edge-runtime");
+      yield* Effect.promise(() => chmod(runtimeDirectory, 0o500));
+      const failedBundle = functionsBundle(runtimeRoot, "failed-secret");
+      const error = yield* stack.reloadFunctions({ functions: failedBundle }).pipe(Effect.flip);
+      expect(error._tag).toBe("StackBuildError");
+
+      yield* Effect.promise(() => chmod(runtimeDirectory, 0o700));
+      yield* stack.reloadFunctions();
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
       yield* stack.dispose();
       expect(
         yield* Effect.promise(() =>
@@ -238,7 +258,12 @@ describe("Stack", () => {
       ).toBe(false);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
+      Effect.ensuring(
+        Effect.promise(async () => {
+          await chmod(join(runtimeRoot, "edge-runtime"), 0o700).catch(() => {});
+          await rm(runtimeRoot, { recursive: true, force: true });
+        }),
+      ),
       Effect.timeout("5 seconds"),
     );
   });

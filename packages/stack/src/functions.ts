@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
 
@@ -53,6 +53,48 @@ export const ResolvedFunctionsBundleSchema = Schema.Struct({
 export interface ResolvedFunctionsBundle extends Schema.Schema.Type<
   typeof ResolvedFunctionsBundleSchema
 > {}
+
+function isWithinProjectDir(projectDir: string, candidate: string): boolean {
+  const relativePath = relative(resolve(projectDir), candidate);
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
+  );
+}
+
+/**
+ * Docker mounts `projectDir` at the same absolute path as the host. Keeping all
+ * referenced files below that root gives native and Docker runtimes the same
+ * bundle contract, including after a reload.
+ */
+export const resolvedFunctionsBundleSchemaForProject = (projectDir: string) =>
+  ResolvedFunctionsBundleSchema.check(
+    Schema.makeFilter((bundle) => {
+      for (let index = 0; index < bundle.functions.length; index += 1) {
+        const fn = bundle.functions[index];
+        if (fn === undefined) continue;
+
+        const paths = [
+          { field: "entrypointPath", value: fn.entrypointPath },
+          ...(fn.importMapPath === null
+            ? []
+            : [{ field: "importMapPath", value: fn.importMapPath }]),
+          ...fn.staticFiles.map((value, staticIndex) => ({
+            field: `staticFiles.${staticIndex}`,
+            value,
+          })),
+        ];
+        const outsideProject = paths.find(({ value }) => !isWithinProjectDir(projectDir, value));
+        if (outsideProject !== undefined) {
+          return {
+            path: ["functions", index, outsideProject.field],
+            issue: "Function paths must be within projectDir",
+          };
+        }
+      }
+      return undefined;
+    }),
+  );
 
 export const FunctionsReloadConfigSchema = Schema.Struct({
   functions: Schema.optionalKey(ResolvedFunctionsBundleSchema),
@@ -148,7 +190,6 @@ const writeFunctionsRuntimeConfig = Effect.fnUntraced(function* (
     });
     yield* fs.chmod(temporaryPath, 0o600);
     yield* fs.rename(temporaryPath, filePath);
-    yield* fs.chmod(filePath, 0o600);
   }).pipe(Effect.ensuring(fs.remove(temporaryPath).pipe(Effect.ignore)));
 });
 

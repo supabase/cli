@@ -2,7 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
-import { toStackError } from "./errors.ts";
+import { StackBuildError, toStackError } from "./errors.ts";
+import { resolvedFunctionsBundleSchemaForProject } from "./functions.ts";
 import {
   defaultJwtSecret,
   defaultPublishableKey,
@@ -297,8 +298,17 @@ function resolveEdgeRuntimeConfig(
   };
 }
 
-function resolveFunctionsConfig(config: StackConfig) {
-  return config.functions ?? false;
+async function resolveFunctionsConfig(config: StackConfig, projectDir: string) {
+  if (config.functions === undefined || config.functions === false) {
+    return false;
+  }
+  try {
+    return await Schema.decodeUnknownPromise(resolvedFunctionsBundleSchemaForProject(projectDir))(
+      config.functions,
+    );
+  } catch (cause) {
+    throw new StackBuildError({ detail: "Invalid Edge Functions bundle", cause });
+  }
 }
 
 function resolveStorageConfig(
@@ -429,6 +439,7 @@ export async function resolveConfig(
 ): Promise<ResolvedStackConfig> {
   const config = input ?? {};
   const projectDir = config.projectDir ?? process.cwd();
+  const functions = await resolveFunctionsConfig(config, projectDir);
   const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
@@ -509,7 +520,7 @@ export async function resolveConfig(
     dbPort: ports.dbPort,
     publishableKey: config.publishableKey ?? defaultPublishableKey,
     secretKey: config.secretKey ?? defaultSecretKey,
-    functions: resolveFunctionsConfig(config),
+    functions,
     autoManagedPaths: roots.autoManagedPaths,
     anonJwt,
     serviceRoleJwt,

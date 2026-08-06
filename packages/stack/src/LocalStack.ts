@@ -11,6 +11,7 @@ import {
   Layer,
   Path,
   Ref,
+  Schema,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -22,6 +23,7 @@ import { StackBuildError, StackNotRunningError, StackReadinessError } from "./er
 import {
   clearFunctionsRuntimeConfig,
   configureFunctionsRuntime,
+  resolvedFunctionsBundleSchemaForProject,
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
@@ -435,11 +437,23 @@ export const localStackLayer = (
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         );
+      const decodeFunctionsBundle = (bundle: unknown) =>
+        Schema.decodeUnknownEffect(resolvedFunctionsBundleSchemaForProject(config.projectDir))(
+          bundle,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackBuildError({
+                detail: "Invalid Edge Functions bundle",
+                cause,
+              }),
+          ),
+        );
       const configureFunctions = (
         nextConfig: ResolvedStackConfig,
+        bundle: ResolvedFunctionsBundle | undefined,
       ): Effect.Effect<void, StackBuildError> =>
         Effect.gen(function* () {
-          const bundle = yield* Ref.get(functionsBundleRef);
           yield* providePlatform(configureFunctionsRuntime(nextConfig, yield* runtimeHost, bundle));
         }).pipe(
           Effect.mapError(
@@ -701,7 +715,7 @@ export const localStackLayer = (
             yield* requireMutable("start");
             yield* Ref.set(phaseRef, "starting");
             const runtime = yield* ensureRuntime;
-            yield* configureFunctions(config);
+            yield* configureFunctions(config, yield* Ref.get(functionsBundleRef));
 
             if (config.startupMode === "lazy") {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
@@ -802,10 +816,13 @@ export const localStackLayer = (
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload functions");
               yield* requireKnownService("edge-runtime");
-              if (opts?.functions !== undefined) {
-                yield* Ref.set(functionsBundleRef, opts.functions);
-              }
-              yield* configureFunctions(config);
+              const currentBundle = yield* Ref.get(functionsBundleRef);
+              const nextBundle =
+                opts?.functions === undefined
+                  ? currentBundle
+                  : yield* decodeFunctionsBundle(opts.functions);
+              yield* configureFunctions(config, nextBundle);
+              yield* Ref.set(functionsBundleRef, nextBundle);
               const runtime = yield* ensureRuntime;
               const state = yield* runtime.orchestrator.getState("edge-runtime");
               if (state.desired !== "running") {
@@ -824,9 +841,11 @@ export const localStackLayer = (
               yield* requireMutable("reload Edge Runtime");
               yield* requireKnownService("edge-runtime");
               const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
-              if (opts.functions !== undefined) {
-                yield* Ref.set(functionsBundleRef, opts.functions);
-              }
+              const currentBundle = yield* Ref.get(functionsBundleRef);
+              const nextBundle =
+                opts.functions === undefined
+                  ? currentBundle
+                  : yield* decodeFunctionsBundle(opts.functions);
               const prepared = yield* ensurePrepared;
               const runtime = yield* ensureRuntime;
               const buildResult = yield* builder.build(nextConfig, prepared);
@@ -838,7 +857,8 @@ export const localStackLayer = (
                 return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
               }
 
-              yield* configureFunctions(nextConfig);
+              yield* configureFunctions(nextConfig, nextBundle);
+              yield* Ref.set(functionsBundleRef, nextBundle);
               yield* runtime.orchestrator
                 .updateServiceDefinition("edge-runtime", edgeRuntimeDef)
                 .pipe(
