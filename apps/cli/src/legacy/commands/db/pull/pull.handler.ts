@@ -13,6 +13,7 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
@@ -224,37 +225,39 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       : Option.isSome(flags.local)
         ? "local"
         : "linked";
+
+    // Go's `ParseDatabaseConfig` resolves the linked ref via the hard `LoadProjectRef`, THEN
+    // reads the `[remotes.<ref>]`-merged config (`LoadConfig`, which prints "Loading config
+    // override" unconditionally the moment a remote matches — `pkg/config/config.go:605`) —
+    // and only AFTER that calls `NewDbConfigWithPassword`, which does the actual connection
+    // work (TCP probe / temp-role mint over the Management API, `internal/utils/flags/
+    // db_url.go:87-97`). Pre-load the ref and re-read config here, before `resolver.resolve()`
+    // below, so the override print (and the merged-config validation) happen in that same
+    // order. Previously this read — and its print — ran AFTER `resolve()`, so a `resolve()`
+    // failure (bad password, unreachable host, network-ban lookup, …) left the user never
+    // knowing which `[remotes.*]` block had matched (review: PRRT_kwDOErm0O86XHvYl). `--local`/
+    // `--db-url` never merge a remote block, so only the linked path pre-resolves a ref.
+    let linkedRef: string | undefined;
+    if (connType === "linked") {
+      const projectRefResolver = yield* LegacyProjectRefResolver;
+      linkedRef = yield* projectRefResolver.loadProjectRef(Option.none());
+    }
+    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    if (toml.appliedRemote !== undefined) {
+      yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
+    }
+
     const resolved = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType,
       dnsResolver,
       password: flags.password ?? Option.none(),
     });
-    const linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
+    if (linkedRef === undefined) {
+      linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
+    }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = legacyToPostgresURL(resolved.conn);
-
-    // Reload config with the resolved linked ref so a matching `[remotes.<ref>]`
-    // block merges before the engine/format/runtime/declarative paths are read —
-    // Go loads config after `LoadProjectRef` on the linked path
-    // (`internal/utils/flags/db_url.go:87-97`). `--local`/`--db-url` never merge a
-    // remote block, so only the linked path passes the ref.
-    const toml = yield* legacyReadDbToml(
-      fs,
-      path,
-      cliConfig.workdir,
-      connType === "linked" ? linkedRef : undefined,
-    );
-    // Go's `flags.LoadConfig` prints this unconditionally as part of the config load
-    // itself, the moment a `[remotes.<ref>]` block matches (`pkg/config/config.go:605`)
-    // — before any provisioning happens. `legacy-db-config.toml-read.ts` already surfaces
-    // the matched name as `appliedRemote`; every other native command that threads a
-    // linked ref through this same reader (`db reset`, `db push`, `config push`, `secrets
-    // set`, `storage {mv,ls,rm,cp}`) already prints it right after the load — this one
-    // (and `diff.handler.ts`'s equivalent) had dropped it.
-    if (toml.appliedRemote !== undefined) {
-      yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
-    }
     const ctx: LegacyPgDeltaContext = {
       // Go's `UpdateDockerIds` derives `EdgeRuntimeId` from the ALREADY-sanitized
       // `Config.ProjectId` singleton (`internal/utils/config.go:57-76`, sanitized once by
@@ -554,6 +557,38 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // `ensureMigrationWritten` (`pull.go:68,263-268`): an empty dump + empty diff
         // is "in sync", a non-empty dump is a valid initial migration on its own.
         let seedWroteBytes = false;
+
+        // Build (and validate) the shadow's own container inputs BEFORE the initial-dump
+        // write below, not after: `legacyBuildLocalDbContainerInputs` → `legacyResolveLocalConfigValues`/
+        // `legacyResolveDbBootstrapConfig` read/validate fields (e.g. enabled API TLS's
+        // cert/key files) that `toml` above never touches (`legacy-db-config.toml-read.ts`
+        // only tracks their dotted keys for remote-override gating, it doesn't read the
+        // files). Go performs this exact validation as part of `LoadConfig`, in the root
+        // `PersistentPreRunE`, before `pull.Run` — and hence before `dumpRemoteSchema` — ever
+        // executes (`internal/utils/flags/db_url.go:87-93` → `config_path.go:11-12`). Building
+        // this here, before `seededFromDump`'s dump write, matches that: a bad config throws
+        // before any migration file exists, instead of leaving a dumped-but-uncommitted
+        // migration behind that then reads as a local/remote history conflict on the next
+        // pull (review: PRRT_kwDOErm0O86XHvYo). Cheap to build early: image resolution stays
+        // lazy (`resolvePostgresImage`), so this doesn't pull the shadow's Docker image yet.
+        const pullSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const pullRuntimeInfo = yield* RuntimeInfo;
+        const pullNetworkIdFlag = yield* LegacyNetworkIdFlag;
+        const pullLocalInputs = yield* legacyBuildLocalDbContainerInputs(
+          pullSpawner,
+          cliConfig.workdir,
+          pullNetworkIdFlag,
+          pullRuntimeInfo.platform,
+          debug,
+          // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
+          // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
+          connType === "linked" ? linkedRef : undefined,
+          // `toml`'s OWN remote-override-key tracking (same matched block) — so a
+          // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
+          // env var when deriving the shadow's container spec.
+          toml.remoteOverrideKeys,
+        );
+
         if (seededFromDump) {
           yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
@@ -655,23 +690,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // For the initial pull (no local migrations) the schema filter is ignored,
         // matching Go's `diffRemoteSchema(ctx, nil, …)`.
         const diffSchema = sync.kind === "missing" ? [] : flags.schema;
-        const pullSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const pullRuntimeInfo = yield* RuntimeInfo;
-        const pullNetworkIdFlag = yield* LegacyNetworkIdFlag;
-        const pullLocalInputs = yield* legacyBuildLocalDbContainerInputs(
-          pullSpawner,
-          cliConfig.workdir,
-          pullNetworkIdFlag,
-          pullRuntimeInfo.platform,
-          debug,
-          // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
-          // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
-          connType === "linked" ? linkedRef : undefined,
-          // `toml`'s OWN remote-override-key tracking (same matched block) — so a
-          // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
-          // env var when deriving the shadow's container spec.
-          toml.remoteOverrideKeys,
-        );
         // Go's `diffRemoteSchema` retries the ENTIRE `diff.DiffDatabase` call — shadow
         // provisioning included — against the pooler config on an IPv6 failure, not
         // just the diff step (`internal/db/pull/pull.go:176-190`): `DiffDatabase`

@@ -9,6 +9,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_FAKE_SHADOW_CONTAINER_ID,
+  LEGACY_VALID_REF,
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
@@ -26,6 +27,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
   LegacyDbConnection,
@@ -201,6 +203,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
+  // The linked ref is now pre-loaded (for the config-override print, ahead of
+  // `resolver.resolve()`'s own network work — review: PRRT_kwDOErm0O86XHvYl) via
+  // `LegacyProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
+  // its resolved `ref` above, so both stay consistent regardless of whether a test sets
+  // `opts.linkedRef` (mirrors `reset.integration.test.ts`'s identical mock).
+  const projectRefResolver = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? LEGACY_VALID_REF)),
+    loadProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+  });
+
   const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
   const proxyCaptureCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> =
     [];
@@ -229,6 +244,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
     resolver,
+    projectRefResolver,
     proxy,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),

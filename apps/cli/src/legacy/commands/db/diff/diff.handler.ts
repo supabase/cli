@@ -11,6 +11,7 @@ import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -354,35 +355,40 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       : Option.isSome(flags.linked)
         ? "linked"
         : "local";
+
+    // Go's `ParseDatabaseConfig` resolves the linked ref via the hard `LoadProjectRef`, THEN
+    // reads the `[remotes.<ref>]`-merged config (`LoadConfig`, which prints "Loading config
+    // override" unconditionally the moment a remote matches — `pkg/config/config.go:605`) —
+    // and only AFTER that calls `NewDbConfigWithPassword`, which does the actual connection
+    // work (TCP probe / temp-role mint over the Management API, `flags/db_url.go:87-97`).
+    // Pre-load the ref and read config here, before `resolver.resolve()` below, so the
+    // override print (and the merged-config validation) happen in that same order.
+    // Previously this read — and its print — ran AFTER `resolve()`, so a `resolve()` failure
+    // (bad password, unreachable host, network-ban lookup, …) left the user never knowing
+    // which `[remotes.*]` block had matched (review: PRRT_kwDOErm0O86XHvYl, pull.handler.ts's
+    // identical fix). The default `db diff` target is local/db-url, which never merges a
+    // remote block, so only the linked path pre-resolves a ref.
+    let linkedRef: string | undefined;
+    if (connType === "linked") {
+      const projectRefResolver = yield* LegacyProjectRefResolver;
+      linkedRef = yield* projectRefResolver.loadProjectRef(Option.none());
+    }
+    const cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    if (cfg.appliedRemote !== undefined) {
+      yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
+    }
+
     const resolved = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType,
       dnsResolver,
       password: Option.none(),
     });
-    const linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
+    if (linkedRef === undefined) {
+      linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
+    }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = legacyToPostgresURL(resolved.conn);
-
-    // Read config with the resolved linked ref so a matching `[remotes.<ref>]`
-    // block merges before the engine/format/runtime are read — Go loads config
-    // after `LoadProjectRef` on the linked path (`flags/db_url.go:87-97`). The
-    // default `db diff` target is local/db-url, which never merges a remote block,
-    // so it reads the base config here (Go's local/direct `LoadConfig`, no ref).
-    const cfg =
-      connType === "linked" && linkedRef !== undefined
-        ? yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef)
-        : yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-    // Go's `flags.LoadConfig` prints this unconditionally as part of the config load
-    // itself, the moment a `[remotes.<ref>]` block matches (`pkg/config/config.go:605`)
-    // — before any provisioning happens. `legacy-db-config.toml-read.ts` already surfaces
-    // the matched name as `appliedRemote`; every other native command that threads a
-    // linked ref through this same reader (`db reset`, `db push`, `config push`, `secrets
-    // set`, `storage {mv,ls,rm,cp}`) already prints it right after the load — this one
-    // (and `pull.handler.ts`'s equivalent) had dropped it.
-    if (cfg.appliedRemote !== undefined) {
-      yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
-    }
     const ctx: LegacyPgDeltaContext = {
       // Go's `UpdateDockerIds` derives `EdgeRuntimeId` from the ALREADY-sanitized
       // `Config.ProjectId` singleton (`internal/utils/config.go:57-76`, sanitized once by

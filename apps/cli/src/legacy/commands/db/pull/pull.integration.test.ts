@@ -8,6 +8,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
+  LEGACY_VALID_REF,
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
@@ -31,6 +32,7 @@ import {
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
@@ -267,6 +269,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  // The linked ref is now pre-loaded (for the config-override print, ahead of
+  // `resolver.resolve()`'s own network work — review: PRRT_kwDOErm0O86XHvYl) via
+  // `LegacyProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
+  // its `db.<ref>.<host>` connection host above, so both stay consistent regardless of
+  // whether a test sets `opts.resolvedRef` (mirrors `reset.integration.test.ts`'s
+  // identical mock).
+  const projectRefResolver = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.resolvedRef ?? LEGACY_VALID_REF)),
+    loadProjectRef: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+  });
+
   const baseLayer = Layer.mergeAll(
     // `BunServices.layer` is listed FIRST so every fake service layer below (most
     // importantly `shadowSpawner.layer`'s fake `ChildProcessSpawner`) OVERRIDES its
@@ -283,6 +299,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
     resolver,
+    projectRefResolver,
     proxy,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
