@@ -43,7 +43,7 @@ import {
   legacyResolveDeclarativeFromArgs,
   legacyResolvePullDiffEngine,
   legacyShouldUsePgDelta,
-} from "../shared/legacy-diff-engine.ts";
+} from "../../../shared/legacy-diff-engine.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyDumpOptions, legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
@@ -65,7 +65,7 @@ import {
   legacyDiffPgDelta,
   legacyExportCatalogPgDelta,
   legacyIsPgDeltaDebugEnabled,
-} from "../shared/legacy-pgdelta.ts";
+} from "../../../shared/legacy-pgdelta.ts";
 import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";

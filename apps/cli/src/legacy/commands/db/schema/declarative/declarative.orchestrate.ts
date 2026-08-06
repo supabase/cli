@@ -1,10 +1,14 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import {
   type LegacyPgDeltaContext,
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
-} from "../../shared/legacy-pgdelta.ts";
+} from "../../../../shared/legacy-pgdelta.ts";
+import {
+  type LegacySetupInputs,
+  legacyGetMigrationsCatalogRef,
+} from "../../../../shared/legacy-pgdelta.cache.ts";
 import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
 import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
 import { legacyFindDropStatements } from "../../../../shared/legacy-sql-split.ts";
@@ -39,14 +43,18 @@ export interface LegacyDeclarativeSyncResult {
 /**
  * Computes the diff between local migrations state and the declarative schema.
  * Mirrors Go's `DiffDeclarativeToMigrations` (`declarative.go:170`): the
- * migrations catalog (source) and declarative catalog (target) are provisioned
- * via the Go seam (shadow DB + `SetupDatabase` + migrate / apply), then diffed
- * natively with pg-delta.
+ * declarative catalog (target) is still provisioned via the Go seam (shadow DB +
+ * `SetupDatabase` + declarative apply); the migrations catalog (source) resolves
+ * natively (CLI-1959) via `legacyGetMigrationsCatalogRef`, which mirrors Go's
+ * `getMigrationsCatalogRef` (`declarative.go:368-430`) exactly. Both are then
+ * diffed natively with pg-delta, as before.
  */
 export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
   run: LegacyDeclarativeRunContext,
+  setupInputs: LegacySetupInputs,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const seam = yield* LegacyDeclarativeSeam;
 
   const exists = yield* fs.exists(run.declarativeDir).pipe(Effect.orElseSucceed(() => false));
@@ -59,7 +67,10 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
     );
   }
 
-  const sourceRef = yield* seam.exportCatalog({ mode: "migrations", noCache: run.noCache });
+  const sourceRef = yield* legacyGetMigrationsCatalogRef(fs, path, run.pgDelta, setupInputs, {
+    noCache: run.noCache,
+    ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
+  });
   const targetRef = yield* seam.exportCatalog({ mode: "declarative", noCache: run.noCache });
   const diff = yield* legacyDiffPgDelta(run.pgDelta, {
     sourceRef,

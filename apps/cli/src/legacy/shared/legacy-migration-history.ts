@@ -1,6 +1,6 @@
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
-import { legacyListLocalMigrations } from "../commands/db/shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "./legacy-pgdelta.cache.ts";
 import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";

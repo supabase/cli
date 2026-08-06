@@ -5,9 +5,10 @@
  * `dashboard_url` (used by `legacySuggestUpgrade` to build the billing URL)
  * live here so we have a single source of truth.
  *
- * YAML-mode profiles do not currently carry `project_host` or `dashboard_url`
- * in the TS port; they fall back to the production endpoints, matching Go's
- * behavior when an external profile YAML omits those keys.
+ * YAML-mode profiles carry their own `project_host` and `dashboard_url`
+ * (both `required`, loaded by `legacyLoadProfile`). The `?? DEFAULT_ENDPOINTS`
+ * fallbacks below only serve callers that key a lookup on an already-resolved
+ * profile NAME, which for a YAML profile is its `name:` field, not a table key.
  */
 
 import type { LegacyProfileName } from "../config/legacy-cli-config.service.ts";
