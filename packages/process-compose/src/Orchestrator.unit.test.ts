@@ -1243,6 +1243,39 @@ describe("Orchestrator", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
+    it.live("dependency waits use the running generation restart policy", () => {
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("setup", { restart: "no" }),
+          svc("app", {
+            restart: "no",
+            dependencies: [{ service: "setup", condition: "completed" }],
+            dependencyTimeoutSeconds: 1,
+          }),
+        ],
+        {
+          perService: {
+            setup: { exitCode: 1, exitDelay: "200 millis" },
+            app: { exitDelay: "5 seconds" },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("setup");
+
+        // The replacement applies on the next explicit restart. The running
+        // generation still uses restart:no and must remain authoritative.
+        yield* orc.updateServiceDefinition("setup", svc("setup", { restart: "always" }));
+
+        const state = yield* waitForFailed(orc, "app");
+        expect(state.error).toContain("Dependency setup failed");
+        expect(state.error).not.toContain("Timed out");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
     it.live("no timeout when dependency resolves before deadline", () => {
       const { layer } = setupOrchestrator(
         [
