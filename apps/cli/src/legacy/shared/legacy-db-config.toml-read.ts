@@ -137,8 +137,14 @@ interface LegacyDbVaultSecretToml {
   readonly resolved: boolean;
 }
 
-/** Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`. */
-interface LegacyBaselineTomlConfig {
+/**
+ * Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`.
+ * Exported so callers that build this cache-key subset directly (e.g.
+ * `legacyResolveSetupInputs` in `legacy-pgdelta.cache.ts`) reference this shape
+ * instead of re-declaring it inline, making field drift a compile error rather
+ * than a silent cache-key gap.
+ */
+export interface LegacyBaselineTomlConfig {
   /** `[auth] enabled`, default true. Gates `initSchema`'s auth service migration. */
   readonly authEnabled: boolean;
   /** `[storage] enabled`, default true. */

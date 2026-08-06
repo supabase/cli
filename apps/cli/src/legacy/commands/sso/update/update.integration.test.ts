@@ -1526,6 +1526,8 @@ describe("legacy sso update integration", () => {
 
   const withProfileEnv = (value: string | undefined) => {
     const previous = process.env["SUPABASE_PROFILE"];
+    const previousNoKeyring = process.env["SUPABASE_NO_KEYRING"];
+    process.env["SUPABASE_NO_KEYRING"] = "1";
     if (value === undefined) {
       delete process.env["SUPABASE_PROFILE"];
     } else {
@@ -1536,6 +1538,11 @@ describe("legacy sso update integration", () => {
         delete process.env["SUPABASE_PROFILE"];
       } else {
         process.env["SUPABASE_PROFILE"] = previous;
+      }
+      if (previousNoKeyring === undefined) {
+        delete process.env["SUPABASE_NO_KEYRING"];
+      } else {
+        process.env["SUPABASE_NO_KEYRING"] = previousNoKeyring;
       }
     });
   };

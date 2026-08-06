@@ -26,6 +26,7 @@ import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-
 import {
   legacyListLocalMigrations,
   legacyPgDeltaTempPath,
+  legacyResolveSetupInputs,
 } from "../../../../../shared/legacy-pgdelta.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
@@ -259,15 +260,25 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
         // regardless of --no-cache (the warm is skipped, the line is not). It prints
         // `utils.GetDeclarativeDir()` — the relative dir above, never a resolved
-        // absolute path, because Go chdirs into the workdir (CLI-1980). NOTE:
-        // `generate`'s port of this same Go line still prints the absolute dir
-        // today — a follow-up candidate for the same relative-dir treatment.
+        // absolute path, because Go chdirs into the workdir (CLI-1980).
         yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
       }
 
       // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
+      // `setupInputs` is the cache-key/baseline-setup subset of `toml` that the now-
+      // native migrations-catalog resolution needs (CLI-1959) — see
+      // `legacyResolveSetupInputs`'s doc comment.
+      const setupInputs = yield* legacyResolveSetupInputs(
+        fs,
+        path,
+        cliConfig.workdir,
+        toml.majorVersion,
+        Option.getOrUndefined(toml.orioledbVersion),
+        toml.baseline,
+      );
       const result: LegacyDeclarativeSyncResult = yield* legacyDiffDeclarativeToMigrations(
         run,
+        setupInputs,
       ).pipe(
         Effect.tapError((error) =>
           Effect.gen(function* () {

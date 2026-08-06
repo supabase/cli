@@ -46,6 +46,7 @@ import {
   type FileWatchEvent,
 } from "../runtime/file-watcher.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
+import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import {
   buildDockerBinds,
   discoverFunctionSlugs,
@@ -95,7 +96,7 @@ const ignoredDirNames = new Set([
 ]);
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
-const legacyDefaultEdgeRuntimeVersion = "v1.74.2";
+const legacyDefaultEdgeRuntimeImage = dockerfileServiceImage("edgeruntime");
 const defaultSupabaseEnv = "development";
 const serveMainContainerPath = "/root/index.ts";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1337,17 +1338,19 @@ const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: stri
 const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
-  // Bare `kong reload`, exactly Go's `restartEdgeRuntime`
-  // (`internal/functions/serve/serve.go:129`). The `--nginx-conf
-  // /home/kong/custom_nginx.template` argument belongs to `start`'s Kong
-  // bring-up entrypoint (`internal/start/start.go:589-592`, mirrored by
-  // `legacy/commands/start/services/kong.service.ts`) — `kong reload` reuses
-  // the prefix configuration that bring-up already prepared, so passing the
-  // template again here is not part of Go's serve path.
-  const result = yield* runChildProcess("docker", ["exec", kongId, "kong", "reload"], {
-    stdout: "ignore",
-    stderr: "pipe",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  // Reload re-renders nginx.conf from Kong's default template, so it needs the
+  // template bring-up wrote (`kong.service.ts`; formerly Go's
+  // `start.go:589-592`, deleted as unreachable in CLI-1966, last present at
+  // commit a253ccba2) handed back — otherwise it drops that template's
+  // `email_templates` server (#6059). Go's own `restartEdgeRuntime`
+  // (`internal/functions/serve/serve.go:129`) passes the same flag for the
+  // same reason — an earlier revision of this file dropped it believing it was
+  // start-only (#5976), which #6065 proved wrong.
+  const result = yield* runChildProcess(
+    "docker",
+    ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
+    { stdout: "ignore", stderr: "pipe" },
+  ).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
 
   if (result.exitCode !== 0) {
     const suffix = result.stderr.trim().length > 0 ? ` ${result.stderr.trim()}` : "";
@@ -1415,7 +1418,8 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
  * `serve.PopulatePerFunctionConfigs` (`internal/functions/serve/serve.go:
  * 277-318`), called both from Edge Runtime bring-up below (as part of its
  * own loop) and, standalone, from `start`'s Studio container spec
- * (`internal/start/start.go:1149-1159`), which needs only the bind mounts,
+ * (formerly `internal/start/start.go:1149-1159`, deleted as unreachable in
+ * CLI-1966; last present at commit a253ccba2), which needs only the bind mounts,
  * unconditionally of whether Edge Runtime itself is enabled or excluded.
  * `PopulatePerFunctionConfigs` logs `Skipped serving Function: <slug>`
  * unconditionally for every disabled function, regardless of which of its
@@ -1487,7 +1491,9 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
  * `ServeFunctions` (`internal/functions/serve/serve.go:135-252`), called both
  * by standalone `functions serve` (indirectly, via `startEdgeRuntime` below,
  * mirroring Go's `restartEdgeRuntime` wrapper) and directly by `start`'s own
- * bring-up (`internal/start/start.go:1101-1108`, no wrapper step in between).
+ * bring-up (formerly `internal/start/start.go:1101-1108`, no wrapper step in
+ * between; `internal/start` was deleted as unreachable in CLI-1966, last
+ * present at commit a253ccba2).
  * Deliberately excludes everything `ServeFunctions` itself excludes too: no
  * config-loading (caller resolves {@link StartEdgeRuntimeContainerInput.config}/
  * {@link StartEdgeRuntimeContainerInput.authArtifacts} itself, matching how
@@ -1749,14 +1755,15 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     ).pipe(
       Effect.map((value) => value.trim()),
       Effect.catch(() => Effect.succeed("")),
-      Effect.map((value) => value || legacyDefaultEdgeRuntimeVersion),
     );
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
       resolved.edgeRuntime.deno_version,
       edgeRuntimeVersionOverride,
     );
     const image = legacyGetRegistryImageUrl(
-      `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+      edgeRuntimeVersion.length === 0
+        ? legacyDefaultEdgeRuntimeImage
+        : `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
     );
 
     yield* assertLocalDbRunning(projectId);

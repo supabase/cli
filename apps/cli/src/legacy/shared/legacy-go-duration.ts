@@ -8,7 +8,9 @@
  * (nanoseconds as `int64`). Go itself re-serializes the PARSED value with
  * `fmt.Sprintf("%v", duration)` when building a container's env (e.g.
  * `GOTRUE_SESSIONS_TIMEBOX`, `GOTRUE_SMS_MAX_FREQUENCY` in
- * `apps/cli-go/internal/start/start.go`'s `buildGotrueEnv`), which normalizes
+ * `apps/cli-go/internal/start/start.go`'s `buildGotrueEnv`, deleted along with
+ * the rest of `internal/start` as unreachable, CLI-1966; last present at
+ * commit a253ccba2), which normalizes
  * the string to Go's canonical form — `"1h"` becomes `"1h0m0s"`,
  * `"90s"` becomes `"1m30s"` — so callers needing byte-exact parity must
  * round-trip through both functions below, not just pass the configured

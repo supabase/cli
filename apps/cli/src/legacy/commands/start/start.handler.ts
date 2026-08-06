@@ -1,3 +1,11 @@
+/**
+ * Native TS port of Go's `internal/start` (`start.go`) + the Postgres-container
+ * half of `internal/db/start` (`start.go`) -- see `SIDE_EFFECTS.md`. Below, a
+ * bare `start.go:NNN` citation means the FORMER `apps/cli-go/internal/start/start.go`
+ * (deleted outright as unreachable, CLI-1966; last present at commit
+ * a253ccba25c21356ccd33044c4474aecb77d1ae4) unless explicitly prefixed
+ * `internal/db/start/`, which is still present and unaffected.
+ */
 import { inferFunctionsManifest, resolveProjectSubtree } from "@supabase/config";
 import { join } from "node:path";
 import { Effect, FileSystem, Option, Path, Result } from "effect";

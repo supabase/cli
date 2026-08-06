@@ -6,7 +6,10 @@
  * container (always `fromBackup: undefined`, matching `apps/cli-go/internal/
  * start/start.go:295`'s always-empty `fromBackup` call) and `db start`'s own
  * native container bootstrap, which is the only real caller of the
- * `fromBackup` branch.
+ * `fromBackup` branch. Below, a bare `start.go:NNN` means `internal/db/start/
+ * start.go` (still live) unless prefixed `internal/start/`, which is the
+ * deleted, unreachable `internal/start/start.go` (CLI-1966; last present at
+ * commit a253ccba25c21356ccd33044c4474aecb77d1ae4) -- see `../SIDE_EFFECTS.md`.
  *
  * Deliberately out of scope, per the approved start-port plan:
  *  - `SetupLocalDatabase` (initial schema bootstrap, `start.go:184-187`) — an

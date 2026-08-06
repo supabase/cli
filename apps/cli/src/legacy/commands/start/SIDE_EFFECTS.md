@@ -1,7 +1,33 @@
 # `supabase start`
 
 Native TypeScript port of Go's `internal/start` (+ the Postgres-container half of
-`internal/db/start`). Talks directly to Docker via subprocess (`docker`/`podman`),
+`internal/db/start`).
+
+> **`internal/start` no longer exists in this repo.** It was deleted outright
+> (CLI-1966), not just excluded from the bundled binary: it was unreachable from
+> the TypeScript CLI, directly (native TS `start` talks to Docker directly and
+> never proxies to Go for it) or indirectly (no other still-live TS→Go
+> delegation seam ever called into it either — confirmed via a repo-wide `grep`
+> of `apps/cli-go` showing the only reference was `internal/start`'s own cobra
+> registration). Every `apps/cli-go/internal/start/start.go:NNN` /
+> `start_test.go:NNN` citation throughout this command's files (and the shared
+> files `legacy-service-catalog.ts`, `legacy-go-duration.ts`,
+> `legacy-local-config-values.ts` + its unit test, `shared/auth/jwks.ts`,
+> `shared/cli/run.ts`, `shared/functions/serve.ts`,
+> `legacy/commands/db/start/start.handler.ts`, and
+> `legacy/commands/db/shared/legacy-pgdelta.seam.service.ts`) refers to that
+> file's last state, permanently viewable at commit
+> `a253ccba25c21356ccd33044c4474aecb77d1ae4`:
+> https://github.com/supabase/cli/blob/a253ccba25c21356ccd33044c4474aecb77d1ae4/apps/cli-go/internal/start/start.go
+> (and `.../internal/start/start_test.go`, `.../internal/start/templates/`).
+> `internal/db/start` (referenced throughout this doc, and still present at
+> `apps/cli-go/internal/db/start/start.go`) is a separate, still-live package
+> and is unaffected — a bare `start.go:NNN` below 435 lines could otherwise be
+> mistaken for it; `start.handler.ts`, `postgres.service.ts`, and
+> `start.rollback.ts` carry their own explicit per-citation disambiguation
+> since they cite both files.
+
+This port talks directly to Docker via subprocess (`docker`/`podman`),
 mirroring Go's sequential per-container `DockerStart` — it does not use Docker Compose
 (the one `docker/compose` import Go has is an internal, best-effort concurrent
 image-pre-pull helper this port never depends on) and it does not go through

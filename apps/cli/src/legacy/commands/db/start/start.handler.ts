@@ -105,15 +105,16 @@ function wrapDbConfigOverride<T>(
  * removed entirely.
  *
  * Parity notes: this is `db start`, NOT the top-level `supabase start`. It does NOT print
- * a status table and does NOT fire `cli_stack_started` — those belong to
- * `internal/start/start.go`. There is no `Finished` line. Unlike `supabase start`, there
- * is no `--exclude`/`--ignore-health-check` here at all (Go's `db start` has neither
- * flag) — a health-check timeout always fails the command UNLESS `--from-backup` is set,
- * in which case `legacyStartDatabase` itself swallows it (a large restore can take longer
- * than the health timeout, `start.go:179-181`) and the command still succeeds.
- * `--exclude`'s absence also means the fresh-volume one-shot setup jobs (realtime/storage/
- * auth migrate) are gated purely on each service's own `enabled` flag, with no `--exclude`
- * filtering to layer on top.
+ * a status table and does NOT fire `cli_stack_started` — those belonged to
+ * `internal/start/start.go`, deleted outright as unreachable (CLI-1966; last present at
+ * commit a253ccba2) and now natively ported in `legacy/commands/start/`. There is no
+ * `Finished` line. Unlike `supabase start`, there is no `--exclude`/`--ignore-health-check`
+ * here at all (Go's `db start` has neither flag) — a health-check timeout always fails the
+ * command UNLESS `--from-backup` is set, in which case `legacyStartDatabase` itself
+ * swallows it (a large restore can take longer than the health timeout, `start.go:179-181`)
+ * and the command still succeeds. `--exclude`'s absence also means the fresh-volume
+ * one-shot setup jobs (realtime/storage/auth migrate) are gated purely on each service's
+ * own `enabled` flag, with no `--exclude` filtering to layer on top.
  */
 export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: LegacyDbStartFlags) {
   const output = yield* Output;

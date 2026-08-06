@@ -1,10 +1,11 @@
 import { execSync, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
+import { LEGACY_START_KONG_YML_TEMPLATE } from "../../legacy/commands/start/templates/kong.yml.ts";
 import { LEGACY_EDGE_RUNTIME_IMAGE } from "../../legacy/shared/legacy-edge-runtime-image.ts";
 import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
@@ -117,12 +118,14 @@ function containerLogs(container: string): string {
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
-  const template = await readFile(
-    new URL("../../../../cli-go/internal/start/templates/kong.yml", import.meta.url),
-    "utf8",
-  );
-  const config = template
-    .replaceAll("{{ .EdgeRuntimeId }}", edgeRuntimeContainer)
+  // Was: read straight from apps/cli-go/internal/start/templates/kong.yml. That
+  // package was deleted outright (CLI-1966; unreachable from the TS CLI, directly
+  // or indirectly), so this now uses the TS transcription of the same template
+  // that legacy `start`'s Kong service already ports byte-for-byte.
+  const config = LEGACY_START_KONG_YML_TEMPLATE.replaceAll(
+    "{{ .EdgeRuntimeId }}",
+    edgeRuntimeContainer,
+  )
     .replaceAll("{{ .BearerToken }}", "$((headers.authorization or headers.apikey))")
     .replaceAll("{{ .QueryToken }}", "$((query_params.apikey))")
     .replace(/{{ \.[A-Za-z]+ }}/g, "unused");

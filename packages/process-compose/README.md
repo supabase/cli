@@ -1,32 +1,39 @@
-# @supabase/process-compose
+# `@supabase/process-compose`
 
-TypeScript port of [process-compose](https://github.com/F1bonacc1/process-compose) for Bun. Orchestrates multiple processes with health checks, an HTTP API, and structured logging. Zero runtime dependencies.
+An Effect-based TypeScript library for supervising dependency-ordered process graphs under Bun or
+Node.js.
 
-## Usage
-
-As a library:
+The package accepts in-memory `ServiceDef` values and provides lifecycle control, readiness,
+health probes, restart policies, state streams, log streams, and optional orphan supervision. It
+does not expose a CLI, parse YAML, or run an HTTP server.
 
 ```ts
-import { createProcessCompose } from "@supabase/process-compose";
+import { buildGraph, Orchestrator } from "@supabase/process-compose";
+import { Effect } from "effect";
 
-const pc = await createProcessCompose({
-  configPath: "process-compose.yaml",
-  apiPort: 8080,
-});
+const graph = await Effect.runPromise(
+  buildGraph([
+    { name: "database", command: "postgres" },
+    {
+      name: "api",
+      command: "api-server",
+      dependencies: [{ service: "database", condition: "healthy" }],
+    },
+  ]),
+);
 
-await pc.start();
+// Orchestrator.layer(graph) requires a LogBuffer layer and the caller's
+// ChildProcessSpawner Adapter.
+const orchestratorLayer = Orchestrator.layer(graph);
 ```
 
-As a CLI:
-
-```sh
-bun run packages/process-compose/src/cli.ts -f process-compose.yaml
-```
+See [the architecture guide](./docs/architecture.md) for the lifecycle, supervision, and compiled
+runtime contracts.
 
 ## Development
 
 ```sh
-pnpm run check:all   # Run all quality checks in parallel
-pnpm run fix:all     # Auto-fix lint, format, and unused exports in parallel
-pnpm run test        # Run tests
+pnpm check:all
+pnpm fix:all
+pnpm test:core
 ```
