@@ -61,9 +61,13 @@ interface LegacyDeclarativeSeamShape {
   /**
    * Runs the bundled Go binary with the given args, inheriting stdio (so the
    * user sees its output) and returning its exit code — without exiting the
-   * host process. Used for the sync apply-failure recovery (`db reset --local`),
-   * where the failure must be catchable rather than terminating the process
-   * (`db reset` is still a `wrapped` Go command).
+   * host process. Used for the sync apply-failure recovery, which shells out
+   * to the Go binary's own `db reset --local` (`declarative.smart-target.ts`)
+   * rather than calling the native TS `legacyDbReset` handler in-process —
+   * `db reset` itself is `ported`, but its handler isn't yet structured to be
+   * invoked from other TS commands rather than the CLI's own dispatch. Known,
+   * documented scope-leak (not a porting-status gap): two live `db reset`
+   * implementations remain until `legacyDbReset` is made in-process-callable.
    */
   readonly execInherit: (
     args: ReadonlyArray<string>,
@@ -71,11 +75,15 @@ interface LegacyDeclarativeSeamShape {
   /**
    * Go's `ensureLocalDatabaseStarted` for the `--local` declarative paths
    * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`): inspects the local
-   * Postgres container and, when it is not running, starts the stack via the
-   * bundled `supabase-go start` (the stack-start subsystem is not yet ported).
-   * A no-op when the container is already running, so
-   * `db schema declarative generate --local` bootstraps a stopped stack instead
-   * of failing to connect, matching Go.
+   * Postgres container and, when it is not running, starts it via the bundled
+   * Go binary's own DB-only `db start` (`internal/db/start.Run`, the same path
+   * `supabase db start` uses — not the full `supabase start` stack, so this
+   * avoids failing on unavailable auth/storage/etc. ports or images). TS's own
+   * native `db start` (`legacy/commands/db/start/`) exists but is not yet
+   * in-process-callable either, so this seam shells out to the Go binary
+   * directly rather than to the TS handler. A no-op when the container is
+   * already running, so `db schema declarative generate --local` bootstraps a
+   * stopped stack instead of failing to connect, matching Go.
    */
   readonly ensureLocalDatabaseStarted: () => Effect.Effect<void, LegacyDeclarativeShadowDbError>;
   /**
