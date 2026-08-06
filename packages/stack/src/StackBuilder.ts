@@ -50,8 +50,13 @@ const dockerOnlyServices = SERVICE_NAMES.filter(
   (service) => serviceMetadata(service).runtimeSupport === "docker-only",
 );
 
-// Longest serial health-check path to analytics; keep aligned with its transitive dependencies.
+// Serial health-check paths used by dependency waits; keep each path aligned
+// with the corresponding service's transitive dependencies.
+const postgresStartupPath: ReadonlyArray<ServiceName> = ["postgres"];
+const storageStartupPath: ReadonlyArray<ServiceName> = ["postgres", "storage"];
 const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics"];
+
+const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
 const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDependency> =>
   hasPostgresInit
@@ -274,6 +279,7 @@ export class StackBuilder extends Context.Service<
               dbPort: config.dbPort,
               autoExposeNewTables: config.postgres.autoExposeNewTables,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -311,6 +317,7 @@ export class StackBuilder extends Context.Service<
               : {
                   dependencies: [{ service: "postgres", condition: "healthy" as const }],
                 }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -349,6 +356,7 @@ export class StackBuilder extends Context.Service<
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -377,6 +385,7 @@ export class StackBuilder extends Context.Service<
                   networkArgs: dockerNetworkArgs(platform.os, [config.edgeRuntime.port]),
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -418,6 +427,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.realtime.port]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -445,6 +455,7 @@ export class StackBuilder extends Context.Service<
               dependencies: postgresDeps,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -461,6 +472,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.imgproxy.port]),
               dependencies: [{ service: "storage", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices(storageStartupPath),
             enabled: true,
           });
         }
@@ -477,6 +489,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.pgmeta.port]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -504,6 +517,7 @@ export class StackBuilder extends Context.Service<
               ]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -557,6 +571,7 @@ export class StackBuilder extends Context.Service<
               ]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }

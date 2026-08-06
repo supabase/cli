@@ -1,10 +1,11 @@
 import type { LogEntry } from "@supabase/process-compose";
-import { Effect, type Layer, ManagedRuntime, Stream } from "effect";
+import { Context, Effect, type Layer, ManagedRuntime, Stream } from "effect";
 import { FileSystem, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import type { CleanupTargets } from "./CleanupTargets.ts";
+import { ApiProxy } from "./ApiProxy.ts";
 import { toStackError } from "./errors.ts";
 import type { FunctionsConfig } from "./functions.ts";
 import { daemonLayer, foregroundLayer, type DaemonStartError } from "./layers.ts";
@@ -138,11 +139,8 @@ export async function createStack(
 
     try {
       const services = await runtime.context();
-      const localStack = await runtime.runPromise(
-        Effect.gen(function* () {
-          return yield* Stack;
-        }),
-      );
+      const localStack = Context.get(services, Stack);
+      const apiProxy = Context.get(services, ApiProxy);
       const info = await runtime.runPromise(localStack.getInfo());
 
       const run = <A>(effect: Effect.Effect<A, unknown>) =>
@@ -150,9 +148,18 @@ export async function createStack(
           throw toStackError(error);
         });
 
-      const gracefulDispose = async () => {
-        await runtime.dispose().catch(() => {});
+      let disposal: Promise<void> | undefined;
+      const gracefulDispose = () => {
+        disposal ??= runtime.dispose().catch(() => {});
+        return disposal;
       };
+
+      // A terminal lazy-activation timeout disposes LocalStack. Close the
+      // foreground runtime as well so the public API port cannot outlive it.
+      void runtime
+        .runPromise(apiProxy.awaitTerminalFailure)
+        .then(gracefulDispose)
+        .catch(() => {});
 
       const stack: StackHandle = {
         url: info.url,
