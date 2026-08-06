@@ -195,6 +195,20 @@ const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
  * leading `"0"` from the `"x"` — not a real prefix, so it's parsed as legacy
  * octal digits `"x100000"`) all fail, matching Go exactly.
  */
+// `strconv.ParseInt(s, 0, 0)`'s bitSize-0 mode requires the result to fit in Go's `int`
+// — 64 bits on every platform this CLI ships for (amd64/arm64). A magnitude outside
+// this range is a range error (`strconv.ErrRange`), and `cast.ToInt` (`spf13/cast@v1.10.0
+// /number.go:407-414`'s `parseInt[T]`) discards ANY `parseFn` error — range or
+// syntax — and returns exactly `0`, not the (possibly huge, saturated-to-max-magnitude)
+// value `strconv.ParseInt` itself returns alongside that error. Verified empirically
+// against the pinned `spf13/cast@v1.10.0`: `cast.ToInt("9223372036854775808")` (one over
+// `math.MaxInt64`) → `0`. `Number.parseInt` has no such range check (it silently rounds
+// via IEEE-754 double precision instead), so this port must reject the same magnitudes
+// Go does, or it would treat an out-of-range override as an enormous-but-finite limit
+// instead of falling back to the 256KiB default like Go (review CLI-1958 round 18).
+const GO_MAX_INT64 = 9223372036854775807n;
+const GO_MIN_INT64 = -9223372036854775808n;
+
 const parseGoBaseZeroInt = (value: string): number | undefined => {
   const negative = value.startsWith("-");
   const unsigned = negative || value.startsWith("+") ? value.slice(1) : value;
@@ -229,7 +243,15 @@ const parseGoBaseZeroInt = (value: string): number | undefined => {
   );
   if (!validPattern.test(digits)) return undefined;
 
-  const n = Number.parseInt(digits.replace(/_/g, ""), base);
+  const cleanDigits = digits.replace(/_/g, "");
+  // Exact-magnitude range check via BigInt — `Number.parseInt` below loses precision
+  // past 2^53 and never errors, so the int64 bound must be checked independently of it.
+  const bigPrefix = base === 16 ? "0x" : base === 8 ? "0o" : base === 2 ? "0b" : "";
+  const magnitude = BigInt(`${bigPrefix}${cleanDigits}`);
+  const signedMagnitude = negative ? -magnitude : magnitude;
+  if (signedMagnitude > GO_MAX_INT64 || signedMagnitude < GO_MIN_INT64) return undefined;
+
+  const n = Number.parseInt(cleanDigits, base);
   return negative ? -n : n;
 };
 
@@ -355,9 +377,17 @@ const checkScannerBufferSize = <E>(
         ),
       );
     }
+    // Go's `token = scanner.Text()` (`pkg/parser/token.go:96`) runs on EVERY successful
+    // `Scan()` — unconditionally, before the `len(trim) > 0` gate that decides whether to
+    // `append` to `stats` — so `token` (and therefore the eventual `bufio.ErrTooLong`
+    // message) reflects the last RAW text scanned even when that statement trimmed to
+    // empty and was never appended (e.g. a lone `;` immediately before an oversized
+    // statement reports "After statement N: ;", not a blank token). `emitted` mirrors
+    // Go's `len(stats)` (append-gated); `lastRaw` must NOT share that gate — verified
+    // against the Go source directly (review CLI-1958 round 18).
+    lastRaw = token.raw;
     if (token.trimmed.length > 0) {
       emitted += 1;
-      lastRaw = token.raw;
     }
   }
   return Effect.void;

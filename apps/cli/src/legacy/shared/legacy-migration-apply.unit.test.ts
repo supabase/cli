@@ -563,6 +563,57 @@ describe("legacyApplySchemaFiles", () => {
   );
 
   it.effect(
+    "reports the last scanned RAW token in the too-long error even when it trimmed to empty (Go scanner.Text() parity, review CLI-1958)",
+    () => {
+      // Go's `token = scanner.Text()` (`pkg/parser/token.go:96`) runs on EVERY
+      // successful `Scan()`, unconditionally — BEFORE the `len(trim) > 0` gate that
+      // decides whether to append to `stats`. So when a statement trims to empty
+      // (a lone ";") immediately before an oversized one, Go's `bufio.ErrTooLong`
+      // message still reports that lone ";" as the last-scanned text, not a blank
+      // token — `len(stats)` (this port's `emitted`) stays gated on non-empty trim,
+      // but the reported RAW text must not share that gate.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-empty-token-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `;\nSELECT '${"a".repeat(5000)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "100b";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("bufio.Scanner: token too long");
+          // 0 statements were EMITTED (the lone ";" trimmed to empty and was never
+          // appended), but the last scanned RAW token (";") must still show — not a
+          // blank token, which a trim-gated tracker would wrongly report instead.
+          expect(msg).toContain("After statement 0: ;");
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
     "applies an oversized statement fine when SUPABASE_SCANNER_BUFFER_SIZE is unset (Go's default auto-grows to file size)",
     () => {
       const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-default-"));
@@ -786,6 +837,103 @@ describe("legacyApplySchemaFiles", () => {
         ).pipe(Effect.exit);
         // The 5116-byte statement fits comfortably under the 256KiB default
         // fallback, so an invalid underscore placement must NOT fail the apply.
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE overflows Go's signed int range (strconv.ParseInt/cast.ToInt range-error parity, review CLI-1958)",
+    () => {
+      // "9223372036854775808" is one more than `math.MaxInt64`. Go's
+      // `strconv.ParseInt(s, 0, 0)` rejects it with a range error, and `cast.ToInt`
+      // (`spf13/cast@v1.10.0/number.go:407-414`) discards ANY `parseFn` error —
+      // range or syntax — returning exactly `0`, never the huge (if imprecise)
+      // magnitude `Number.parseInt` would otherwise accept. `viper.IsSet` is still
+      // true, so this falls back to the 256KiB hardcoded default, same as a
+      // genuinely unparseable value ("5M" above) — NOT to "no limit". Verified
+      // empirically against the pinned `spf13/cast@v1.10.0`
+      // (`cast.ToInt("9223372036854775808")` → `0`).
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-int64-overflow-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(300_000)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "9223372036854775808";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("bufio.Scanner: token too long");
+          // 256KiB (Go's hardcoded default), not "no limit" — a treat-as-unbounded
+          // bug would let this 300_000-byte statement apply successfully instead.
+          expect(msg).toContain(
+            "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
+          );
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "still accepts the exact int64 boundary magnitudes for SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt range-boundary parity, review CLI-1958)",
+    () => {
+      // `math.MaxInt64` itself ("9223372036854775807", one less than the overflow
+      // test above) is NOT a range error in Go — only magnitudes strictly beyond it
+      // are. A range check that's off-by-one in the strict direction would wrongly
+      // reject this legitimate (if enormous) configured size and fall back to the
+      // 256KiB default instead of the requested cap.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-int64-boundary-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "9223372036854775807";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        // The 5116-byte statement fits comfortably under the (enormous) configured
+        // limit, so this must succeed, not fall back to the 256KiB default.
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(
         Effect.ensuring(
