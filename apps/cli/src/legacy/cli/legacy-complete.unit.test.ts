@@ -1524,36 +1524,44 @@ describe("legacyTryComplete", () => {
       exit: (code) => {
         exits.push(code);
       },
+      // A no-op here keeps this suite's own focus (candidate-computation
+      // wiring, not telemetry) pure and synchronous-fast — the real
+      // production capture (`legacyCaptureCompleteTelemetryEffect`,
+      // `legacyDefaultCompleteDeps`'s own default) is covered separately in
+      // `legacy-complete.integration.test.ts`.
+      captureTelemetry: async () => {},
       ...overrides,
     };
     return { deps, stdoutWrites, exits };
   }
 
-  it("returns false and does nothing for non-__complete argv", () => {
+  // `legacyTryComplete` returns `Promise<boolean>` (CLI-1965 review finding —
+  // it now awaits `deps.captureTelemetry` before calling `deps.exit`).
+  it("returns false and does nothing for non-__complete argv", async () => {
     const { deps, stdoutWrites, exits } = makeDeps({ argv: ["migration", "list"] });
-    expect(legacyTryComplete(deps)).toBe(false);
+    expect(await legacyTryComplete(deps)).toBe(false);
     expect(stdoutWrites).toEqual([]);
     expect(exits).toEqual([]);
   });
 
-  it("writes the formatted response to stdout and exits 0 for a real completion request", () => {
+  it("writes the formatted response to stdout and exits 0 for a real completion request", async () => {
     const { deps, stdoutWrites, exits } = makeDeps();
-    expect(legacyTryComplete(deps)).toBe(true);
+    expect(await legacyTryComplete(deps)).toBe(true);
     expect(stdoutWrites).toHaveLength(1);
     expect(stdoutWrites[0]).toContain("list\t");
     expect(stdoutWrites[0]).toMatch(/:4\n$/);
     expect(exits).toEqual([0]);
   });
 
-  it("respects __completeNoDesc by stripping descriptions from the written response", () => {
+  it("respects __completeNoDesc by stripping descriptions from the written response", async () => {
     const { deps, stdoutWrites } = makeDeps({ argv: ["__completeNoDesc", "migration", "li"] });
-    legacyTryComplete(deps);
+    await legacyTryComplete(deps);
     expect(stdoutWrites[0]).toBe("list\n:4\n");
   });
 
-  it("exits 1 and does not write anything to stdout for zero completion args", () => {
+  it("exits 1 and does not write anything to stdout for zero completion args", async () => {
     const { deps, stdoutWrites, exits } = makeDeps({ argv: ["__complete"] });
-    expect(legacyTryComplete(deps)).toBe(true);
+    expect(await legacyTryComplete(deps)).toBe(true);
     expect(stdoutWrites).toEqual([]);
     expect(exits).toEqual([1]);
   });

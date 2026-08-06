@@ -1,4 +1,5 @@
-import { Option } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Layer, Option } from "effect";
 import { GlobalFlag } from "effect/unstable/cli";
 import type { Command, Param, Primitive } from "effect/unstable/cli";
 import process from "node:process";
@@ -9,6 +10,16 @@ import {
 import { legacyUnwrapParam } from "../shared/legacy-param-introspection.ts";
 import { legacyIsValidBase0Int64, legacyParseUintBase0 } from "../shared/legacy-parse-uint.ts";
 import { legacyParseStringSliceFlag } from "../shared/legacy-string-slice-flag.ts";
+import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
+import { Analytics } from "../../shared/telemetry/analytics.service.ts";
+import {
+  EventCommandExecuted,
+  PropDurationMs,
+  PropExitCode,
+  PropOutputFormat,
+} from "../../shared/telemetry/event-catalog.ts";
+import { standaloneAnalyticsConfigLayer } from "../../shared/telemetry/standalone-analytics-config.layer.ts";
+import { legacyAnalyticsLayer } from "../telemetry/legacy-analytics.layer.ts";
 
 /**
  * Native TypeScript reimplementation of cobra's dynamic-completion protocol
@@ -105,6 +116,16 @@ export interface LegacyCompleteDeps {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly stdoutWrite: (message: string) => void;
   readonly exit: (code: number) => void;
+  /**
+   * Fires the `cli_command_executed` telemetry capture for this request —
+   * see `legacyCaptureCompleteTelemetryEffect`'s doc comment for what it
+   * records and why. Injected the same way `stdoutWrite`/`exit` already are,
+   * so tests can run `legacyCaptureCompleteTelemetryEffect` against a mocked
+   * `Analytics` boundary without spawning a real subprocess or touching the
+   * real, consent-gated production layer `legacyDefaultCompleteDeps` wires by
+   * default — see `legacy-complete.integration.test.ts`.
+   */
+  readonly captureTelemetry: (exitCode: number, durationMs: number) => Promise<void>;
 }
 
 /* ========================================================================== */
@@ -1677,22 +1698,116 @@ export function legacyFormatCompletionResponse(
 /* ========================================================================== */
 
 /**
+ * The `cli_command_executed` capture for a `__complete`/`__completeNoDesc`
+ * request, matching Go's `Execute()` (`apps/cli-go/cmd/root.go:168-204`),
+ * which captures this event for every resolved command — including cobra's
+ * hidden `__complete` — regardless of the handler's own outcome (CLI-1965
+ * review finding: the deleted Go passthrough fired this on every tab press;
+ * this native interceptor silently stopped firing it). `command` is always
+ * the literal `"__complete"`, never `"__completeNoDesc"`: cobra registers
+ * `__completeNoDesc` as an ALIAS of `__complete` (`completions.go:234`), and
+ * Go's `commandName()` derives the recorded value from `cmd.Name()` — the
+ * command's own primary name, not the alias it was invoked as. `output_format`
+ * is the fixed literal `"text"`: `__complete` is `DisableFlagParsing: true`,
+ * so there is no resolved `--output`/`-o` value to mirror here.
+ *
+ * Deliberately narrower than `withLegacyCommandInstrumentation`
+ * (`legacy/telemetry/legacy-command-instrumentation.ts`): that wrapper is
+ * shaped for a real Effect `Command` handler running inside `runCli`'s full
+ * runtime (`CommandRuntime`/`Output`/`ProcessControl`/`Stdio`), none of which
+ * exist here — this interceptor runs before Effect's argv parser, before
+ * `runCli` ever bootstraps. This also deliberately does NOT reproduce the
+ * rest of Go's `Execute()`/`PersistentPreRunE` — profile loading, the workdir
+ * change, or the GitHub upgrade check — none of that has any bearing on the
+ * analytics contract, and real generated completion scripts discard this
+ * process's stderr outright, so reproducing the upgrade message would be a
+ * pure regression. Do not "fix" this back toward full `Execute()` parity.
+ *
+ * Only requires `Analytics` from context (not the concrete production
+ * layer) so tests can provide `mockAnalytics()` directly instead of the
+ * real, consent-gated `legacyAnalyticsLayer` — see
+ * `legacyCaptureCompleteTelemetry` below for the production wiring, and
+ * `legacy-complete.integration.test.ts` for the test double usage.
+ */
+export function legacyCaptureCompleteTelemetryEffect(
+  exitCode: number,
+  durationMs: number,
+): Effect.Effect<void, never, Analytics> {
+  return Effect.gen(function* () {
+    const analytics = yield* Analytics;
+    yield* analytics.capture(EventCommandExecuted, {
+      [PropExitCode]: exitCode,
+      [PropDurationMs]: durationMs,
+      [PropOutputFormat]: "text",
+    });
+  }).pipe(
+    withAnalyticsContext({
+      command_run_id: crypto.randomUUID(),
+      command: "__complete",
+      flags: undefined,
+    }),
+  );
+}
+
+const LEGACY_COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
+
+// `legacyAnalyticsLayer` on its own still needs `CliConfig | RuntimeInfo | Tty`
+// (via the `telemetryRuntimeLayer` it folds in) on top of the `FileSystem`/
+// `Path` platform layer — `shared/cli/run.ts` normally supplies those as part
+// of its own much larger composed tree. `standaloneAnalyticsConfigLayer`
+// packages the same small set for a caller running outside that tree.
+const legacyCompleteAnalyticsLayer = legacyAnalyticsLayer.pipe(
+  Layer.provide(standaloneAnalyticsConfigLayer),
+  Layer.provide(BunServices.layer),
+);
+
+/**
+ * Production default for `LegacyCompleteDeps.captureTelemetry`: runs
+ * `legacyCaptureCompleteTelemetryEffect` against the real, consent-gated
+ * `legacyAnalyticsLayer`.
+ *
+ * Best-effort and bounded: a missing consent, network hiccup, or DNS failure
+ * must never hang or fail a user's tab press. `deps.exit` (see
+ * `legacyTryComplete` below) ultimately calls `process.exit`, which kills the
+ * process immediately without waiting for pending async work — callers must
+ * `await` this BEFORE exiting, or the capture will very likely never reach
+ * PostHog.
+ */
+function legacyCaptureCompleteTelemetry(exitCode: number, durationMs: number): Promise<void> {
+  return Effect.runPromise(
+    legacyCaptureCompleteTelemetryEffect(exitCode, durationMs).pipe(
+      Effect.provide(legacyCompleteAnalyticsLayer),
+      Effect.timeout(LEGACY_COMPLETE_TELEMETRY_TIMEOUT),
+      Effect.ignore,
+    ),
+  );
+}
+
+/**
  * Entry-point interceptor with the same shape/contract as the old
  * `tryCompletePassthrough`: runs before Effect's CLI argv parser, returns
  * `false` immediately (no side effects) when `deps.argv[0]` isn't a
- * completion request, otherwise fully handles it and returns `true`.
+ * completion request, otherwise fully handles it and returns `true`. Async
+ * only because of `deps.captureTelemetry` above — every other helper in this
+ * file (`legacyRespondToComplete` and everything it calls) stays pure and
+ * synchronous; awaiting the capture here, before `deps.exit(...)`, is what
+ * lets it actually reach PostHog (see `legacyCaptureCompleteTelemetry`'s doc
+ * comment).
  */
-export function legacyTryComplete(deps: LegacyCompleteDeps): boolean {
+export async function legacyTryComplete(deps: LegacyCompleteDeps): Promise<boolean> {
   if (deps.argv[0] !== "__complete" && deps.argv[0] !== "__completeNoDesc") return false;
 
+  const startedAt = Date.now();
   const response = legacyRespondToComplete(deps.root, deps.argv);
   if (response === undefined) {
+    await deps.captureTelemetry(1, Date.now() - startedAt);
     deps.exit(1);
     return true;
   }
 
   const includeDescriptions = legacyResolveIncludeDescriptions(deps.argv[0], deps.env);
   deps.stdoutWrite(legacyFormatCompletionResponse(response, includeDescriptions));
+  await deps.captureTelemetry(0, Date.now() - startedAt);
   deps.exit(0);
   return true;
 }
@@ -1708,5 +1823,6 @@ export function legacyDefaultCompleteDeps(root: Command.Command.Any): LegacyComp
     exit: (code) => {
       process.exit(code);
     },
+    captureTelemetry: legacyCaptureCompleteTelemetry,
   };
 }
