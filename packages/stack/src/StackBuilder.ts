@@ -32,7 +32,10 @@ import {
 } from "./services/storage.ts";
 import { makeStudioServiceDocker } from "./services/studio.ts";
 import { makeVectorServiceDocker } from "./services/vector.ts";
-import { dependencyTimeoutSecondsForServices } from "./services/health-budgets.ts";
+import {
+  dependencyTimeoutSecondsForServices,
+  POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
+} from "./services/health-budgets.ts";
 import type { PreparedStackArtifacts, ServiceResolution } from "./StackPreparation.ts";
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
@@ -246,6 +249,17 @@ export class StackBuilder extends Context.Service<
         );
         const hasPostgresInit = postgresResolution.type === "binary";
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
+        const postgresInitCompletionBudgetSeconds = hasPostgresInit
+          ? POSTGRES_INIT_COMPLETION_BUDGET_SECONDS
+          : 0;
+        const postgresConsumerDependencyTimeoutSeconds =
+          postgresDependencyTimeoutSeconds + postgresInitCompletionBudgetSeconds;
+        const storageDependencyTimeoutSeconds =
+          dependencyTimeoutSecondsForServices(storageStartupPath) +
+          postgresInitCompletionBudgetSeconds;
+        const analyticsDependencyTimeoutSeconds =
+          dependencyTimeoutSecondsForServices(analyticsStartupPath) +
+          postgresInitCompletionBudgetSeconds;
         const jwtJwks = generateJwks(config.jwtSecret);
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
@@ -317,7 +331,7 @@ export class StackBuilder extends Context.Service<
               : {
                   dependencies: [{ service: "postgres", condition: "healthy" as const }],
                 }),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -356,7 +370,7 @@ export class StackBuilder extends Context.Service<
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,
                 })),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -385,7 +399,7 @@ export class StackBuilder extends Context.Service<
                   networkArgs: dockerNetworkArgs(platform.os, [config.edgeRuntime.port]),
                   dependencies: postgresDeps,
                 })),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -427,7 +441,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.realtime.port]),
               dependencies: postgresDeps,
             }),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -455,7 +469,7 @@ export class StackBuilder extends Context.Service<
               dependencies: postgresDeps,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
             }),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -472,7 +486,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.imgproxy.port]),
               dependencies: [{ service: "storage", condition: "healthy" }],
             }),
-            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices(storageStartupPath),
+            dependencyTimeoutSeconds: storageDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -489,7 +503,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, [config.pgmeta.port]),
               dependencies: postgresDeps,
             }),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -517,7 +531,7 @@ export class StackBuilder extends Context.Service<
               ]),
               dependencies: postgresDeps,
             }),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -535,7 +549,7 @@ export class StackBuilder extends Context.Service<
               networkArgs: dockerNetworkArgs(platform.os, []),
               dependencies: [{ service: "analytics", condition: "healthy" }],
             }),
-            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices(analyticsStartupPath),
+            dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -571,7 +585,7 @@ export class StackBuilder extends Context.Service<
               ]),
               dependencies: postgresDeps,
             }),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -606,7 +620,7 @@ export class StackBuilder extends Context.Service<
                       { service: "analytics", condition: "healthy" },
                     ],
             }),
-            dependencyTimeoutSeconds: dependencyTimeoutSecondsForServices(analyticsStartupPath),
+            dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
             enabled: true,
           });
         }
