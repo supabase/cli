@@ -30,6 +30,19 @@ export interface LegacyDockerRunOpts {
   readonly extraHosts: ReadonlyArray<string>;
   readonly network: LegacyDockerNetwork;
   /**
+   * Docker labels (`--label k=v`) applied to the container. Go's `DockerStart`
+   * unconditionally sets `com.supabase.cli.project`/`com.docker.compose.project`
+   * on every container it starts (`apps/cli-go/internal/utils/docker.go:371-376`),
+   * including one-shot jobs — omitted here (defaults to none) for callers whose
+   * container is always synchronously reaped by the SAME process before it could
+   * ever need project-label-based discovery (e.g. `db dump`/`pg_prove`/edge-runtime
+   * one-shot runs); set by callers whose container can outlive an interrupted
+   * process (e.g. `start`'s fresh-volume PG15+ realtime/storage/auth migrate jobs)
+   * so `supabase stop`/rollback's project-label filter
+   * (`legacy-docker-remove-all.ts`) can still find and remove it if orphaned.
+   */
+  readonly labels?: Readonly<Record<string, string>>;
+  /**
    * Skips this layer's own image resolution (`legacyMakeDockerImageResolver`) when the
    * caller already resolved `image` itself through a `projectEnvValues`-aware path (e.g.
    * `start`'s one-shot fresh-DB setup jobs, resolved via `legacyEnsureImagesCached` before

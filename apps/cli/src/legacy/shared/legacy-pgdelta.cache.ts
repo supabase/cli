@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { Clock, Effect, type FileSystem, Option, type Path } from "effect";
 
-import { Output } from "../../../../shared/output/output.service.ts";
-import type { LegacyBaselineTomlConfig } from "../../../shared/legacy-db-config.toml-read.ts";
-import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
-import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import type { LegacyBaselineTomlConfig } from "./legacy-db-config.toml-read.ts";
+import { legacyResolveDbImage } from "./legacy-db-image.ts";
+import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "./legacy-pgdelta.ts";
-import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
+import { LegacyDeclarativeSeam } from "../commands/db/shared/legacy-pgdelta.seam.service.ts";
 
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported

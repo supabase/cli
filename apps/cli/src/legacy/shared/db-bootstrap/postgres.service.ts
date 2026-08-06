@@ -1,34 +1,36 @@
 /**
  * Port of Go's `NewContainerConfig`/`NewHostConfig`
- * (`apps/cli-go/internal/db/start/start.go:63-131`): builds the
- * {@link LegacyStartContainerSpec} for `supabase start`'s Postgres container.
- * Below, a bare `start.go:NNN` means `internal/db/start/start.go` (still
- * live) unless prefixed `internal/start/`, which is the deleted, unreachable
- * `internal/start/start.go` (CLI-1966; last present at commit
- * a253ccba25c21356ccd33044c4474aecb77d1ae4) -- see `../SIDE_EFFECTS.md`.
+ * (`apps/cli-go/internal/db/start/start.go:63-131`), plus `StartDatabase`'s
+ * `fromBackup` entrypoint/bind override (`start.go:143-164`): builds the
+ * {@link LegacyStartContainerSpec} for both `supabase start`'s Postgres
+ * container (always `fromBackup: undefined`, matching `apps/cli-go/internal/
+ * start/start.go:295`'s always-empty `fromBackup` call) and `db start`'s own
+ * native container bootstrap, which is the only real caller of the
+ * `fromBackup` branch. Below, a bare `start.go:NNN` means `internal/db/start/
+ * start.go` (still live) unless prefixed `internal/start/`, which is the
+ * deleted, unreachable `internal/start/start.go` (CLI-1966; last present at
+ * commit a253ccba25c21356ccd33044c4474aecb77d1ae4) -- see `../SIDE_EFFECTS.md`.
  *
  * Deliberately out of scope, per the approved start-port plan:
- *  - `StartDatabase`'s `fromBackup` restore branch (`start.go:143-164`,
- *    `templates/restore.sh`) — `supabase start` always calls `StartDatabase`
- *    with an empty `fromBackup` (`apps/cli-go/internal/start/start.go:295`),
- *    so that whole branch is dead code on this path.
  *  - `SetupLocalDatabase` (initial schema bootstrap, `start.go:184-187`) — an
  *    explicit follow-up, not container construction.
  *  - Actually creating/starting the container and waiting for it to become
- *    healthy — that's {@link legacyStartContainer} (`../lib/container-lifecycle.ts`)
- *    and {@link legacyWaitForHealthyServices} (`../lib/health-check.ts`), wired
- *    up by a later `start.handler.ts` task.
+ *    healthy — that's {@link legacyStartContainer} (`./container-lifecycle.ts`)
+ *    and {@link legacyWaitForHealthyServices} (`./health-check.ts`), wired
+ *    up by each caller's own handler.
  */
 
 import type { ProjectConfig } from "@supabase/config";
 
-import { localDbContainerId } from "../../../shared/legacy-docker-ids.ts";
-import { encodeToml } from "../../../shared/legacy-go-output.encoders.ts";
-import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../../../shared/legacy-local-config-values.ts";
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
-import { LEGACY_START_DB_SCHEMA_SQL } from "../templates/db-schema.sql.ts";
-import { LEGACY_START_DB_SUPABASE_SQL } from "../templates/db-supabase.sql.ts";
-import { LEGACY_START_DB_WEBHOOK_SQL } from "../templates/db-webhook.sql.ts";
+import { localDbContainerId } from "../legacy-docker-ids.ts";
+import { legacyToDockerPath } from "../legacy-docker-path.ts";
+import { encodeToml } from "../legacy-go-output.encoders.ts";
+import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
+import type { LegacyStartContainerSpec } from "./docker-create-args.ts";
+import { LEGACY_START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
+import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
+import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
+import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 
 /** Go's `Db.Password` default (`pkg/config/config.go:459`). `db.password` has no
  * config.toml field (`toml:"-"`, `pkg/config/db.go:88`), so this is the only value
@@ -39,7 +41,7 @@ const LEGACY_POSTGRES_PASSWORD = "postgres";
 
 /**
  * The exact in-container path Go's PG >= 15 entrypoint heredocs the pgsodium
- * root key to (`start.go:96`) — now a `secretFiles` bind-mount target instead
+ * root key to (`start.go:96`) — now a `secretFiles` `docker cp` target instead
  * (see {@link legacyBuildPostgresStartContainerSpec}), not a heredoc.
  */
 const LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_root.key";
@@ -70,7 +72,7 @@ export interface LegacyPostgresStartServiceInput {
   readonly projectId: string;
   /** `utils.NetId` — the local stack's docker network id. */
   readonly networkId: string;
-  /** `utils.Config.Db.Image`, already resolved/pulled (see `../lib/image-prepull.ts`) — the container's own image. */
+  /** `utils.Config.Db.Image`, already resolved/pulled (see `./image-prepull.ts`) — the container's own image. */
   readonly image: string;
   /**
    * `utils.Config.Db.Image` BEFORE registry resolution — Go's
@@ -85,6 +87,18 @@ export interface LegacyPostgresStartServiceInput {
   readonly configImage: string;
   /** Already-resolved `db.root_key` value. Defaults to {@link LEGACY_POSTGRES_DEFAULT_ROOT_KEY} when omitted — see that constant's doc comment for why. */
   readonly rootKey?: string;
+  /**
+   * Absolute host path to a `--from-backup` logical-dump file, already resolved against the
+   * caller's cwd (Go's `filepath.Join(utils.CurrentDirAbs, fromBackup)`, `start.go:160-161`) —
+   * `db start`'s ONLY caller. When set, switches to a THIRD entrypoint variant
+   * ({@link legacyPostgresEntrypointScriptRestore}) regardless of `db.major_version` (Go's
+   * `StartDatabase` override applies unconditionally, `start.go:143-159`) and appends the
+   * `<hostPath>:/etc/backup.sql:ro` bind Go's own `StartDatabase` appends
+   * (`start.go:163`, via `utils.ToDockerPath` — {@link legacyToDockerPath} here). `undefined` for
+   * `supabase start`, which always calls `StartDatabase` with an empty `fromBackup`
+   * (`apps/cli-go/internal/start/start.go:295`).
+   */
+  readonly fromBackup?: string;
 }
 
 /**
@@ -231,11 +245,12 @@ function legacyPostgresExtraEnv(
  * `Docker.ContainerCreate` over the Engine API directly rather than shelling
  * out. THIS PORT SHELLS OUT to a real `docker create`, so it deliberately
  * diverges here: the pgsodium root key travels via
- * {@link LegacyStartContainerSpec.secretFiles} instead (a HOST temp file,
- * mode `0644` — world-readable, because Postgres's entrypoint drops root and
- * reads this file back as the `postgres` user, and a Linux/Podman bind mount
- * preserves the host file's mode verbatim; see `legacyStageStartSecretFiles`'s
- * doc comment — bind-mounted read-only at that exact path — see
+ * {@link LegacyStartContainerSpec.secretFiles} instead (a short-lived HOST
+ * temp file, mode `0644` — world-readable, because Postgres's entrypoint drops
+ * root and reads this file back as the `postgres` user, and `docker cp`'s tar
+ * transfer preserves the host file's mode verbatim; see
+ * `legacyCopyStartSecretFileIntoContainer`'s doc comment — `docker cp`'d
+ * straight into the container at that exact path — see
  * {@link legacyBuildPostgresStartContainerSpec}), so it never appears in this
  * process's own `docker create` argv (CWE-214/522).
  *
@@ -285,8 +300,41 @@ function legacyPostgresEntrypointScriptPg14(postgresConfig: string): string {
 }
 
 /**
- * Builds the {@link LegacyStartContainerSpec} for `supabase start`'s Postgres
- * container — see this module's header for what's deliberately out of scope.
+ * `--from-backup` entrypoint (`StartDatabase`'s unconditional `Entrypoint` override,
+ * `start.go:143-159`) — applies regardless of `db.major_version`, unlike the two scripts above.
+ * Three heredocs, not four: unlike Go's literal script (which heredocs the pgsodium root key
+ * inline), this port always carries the root key via {@link LegacyStartContainerSpec.secretFiles}
+ * instead (see {@link legacyBuildPostgresStartContainerSpec}'s call site) — an intentional,
+ * pre-existing TS divergence for every entrypoint variant, not something to "fix toward Go" here.
+ * Schema heredoc is `initialSchema + _supabaseSchema` — deliberately NO `webhookSchema` (present in
+ * {@link legacyPostgresEntrypointScriptPg15}, absent here, matching Go's own
+ * `` ` + initialSchema + ` ` + _supabaseSchema + ` `` with no `webhookSchema` splice in the
+ * `fromBackup` branch). Postgres config gets one extra literal line appended,
+ * `cron.launch_active_jobs = off`, matching Go's own trailing append.
+ */
+function legacyPostgresEntrypointScriptRestore(postgresConfig: string): string {
+  return (
+    "\n" +
+    "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
+    "cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \\\n" +
+    "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
+    "docker-entrypoint.sh postgres -D /etc/postgresql\n" +
+    `${LEGACY_START_DB_SCHEMA_SQL}\n` +
+    `${LEGACY_START_DB_SUPABASE_SQL}\n` +
+    "EOF\n" +
+    `${LEGACY_START_DB_RESTORE_SH}\n` +
+    "EOF\n" +
+    `${postgresConfig}\n` +
+    "cron.launch_active_jobs = off\n" +
+    "EOF"
+  );
+}
+
+/**
+ * Builds the {@link LegacyStartContainerSpec} for the Postgres container — shared by `supabase
+ * start` (always {@link LegacyPostgresStartServiceInput.fromBackup} `undefined`) and `db start`'s
+ * native bootstrap (the only caller that ever sets it) — see this module's header for what's
+ * deliberately out of scope.
  */
 export function legacyBuildPostgresStartContainerSpec(
   input: LegacyPostgresStartServiceInput,
@@ -295,6 +343,7 @@ export function legacyBuildPostgresStartContainerSpec(
   const rootKeyValue = input.rootKey ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY;
   const postgresConfig = legacyPostgresSettingsToPostgresConfig(input.db.settings);
   const isPg14OrEarlier = input.db.major_version <= 14;
+  const isRestore = input.fromBackup !== undefined;
 
   const env: Record<string, string> = {
     POSTGRES_PASSWORD: LEGACY_POSTGRES_PASSWORD,
@@ -304,9 +353,11 @@ export function legacyBuildPostgresStartContainerSpec(
     ...legacyPostgresExtraEnv(input.experimental, input.configImage),
   };
 
-  const script = isPg14OrEarlier
-    ? legacyPostgresEntrypointScriptPg14(postgresConfig)
-    : legacyPostgresEntrypointScriptPg15(postgresConfig);
+  const script = isRestore
+    ? legacyPostgresEntrypointScriptRestore(postgresConfig)
+    : isPg14OrEarlier
+      ? legacyPostgresEntrypointScriptPg14(postgresConfig)
+      : legacyPostgresEntrypointScriptPg15(postgresConfig);
 
   return {
     image: input.image,
@@ -314,9 +365,23 @@ export function legacyBuildPostgresStartContainerSpec(
     env,
     entrypoint: "sh",
     cmd: ["-c", script],
-    binds: [`${containerName}:/var/lib/postgresql/data`],
+    binds: [
+      `${containerName}:/var/lib/postgresql/data`,
+      // Go's `StartDatabase` (`start.go:163`) appends this bind ONLY on the `fromBackup` branch —
+      // `hostConfig.Binds` is otherwise built solely from `NewHostConfig()`'s own volume bind above.
+      ...(input.fromBackup === undefined
+        ? []
+        : [`${legacyToDockerPath(input.fromBackup)}:/etc/backup.sql:ro`]),
+    ],
+    // Go's `NewHostConfig()` sets `Tmpfs` purely off `db.major_version` (`start.go:127-129`) — that
+    // check is NOT part of `StartDatabase`'s `fromBackup` override, so this stays keyed on
+    // `isPg14OrEarlier` alone, independent of `isRestore`.
     ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
-    ...(isPg14OrEarlier
+    // The pgsodium root key heredoc/bind is present whenever the ACTUAL entrypoint in use embeds
+    // it: both `legacyPostgresEntrypointScriptPg15` and `legacyPostgresEntrypointScriptRestore` do
+    // (Go's `fromBackup` override always re-adds its own root-key heredoc, `start.go:147,155`,
+    // regardless of major version); only the PG<=14 script never references it.
+    ...(isPg14OrEarlier && !isRestore
       ? {}
       : {
           secretFiles: [

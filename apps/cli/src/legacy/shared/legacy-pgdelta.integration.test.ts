@@ -6,13 +6,13 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   type LegacyEdgeRuntimeRunResult,
   LegacyEdgeRuntimeScript,
-} from "../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+} from "./legacy-edge-runtime-script.service.ts";
+import { LegacyEdgeRuntimeScriptError } from "./legacy-edge-runtime-script.errors.ts";
+import { LegacyPgDeltaSslProbe } from "./legacy-pgdelta-ssl-probe.service.ts";
 import {
   LEGACY_DEFAULT_PG_DELTA_NPM_VERSION,
   LEGACY_PG_DELTA_NPM_VERSION_PLACEHOLDER,
-} from "./legacy-pgdelta.deno-templates.ts";
+} from "../commands/db/shared/legacy-pgdelta.deno-templates.ts";
 import {
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,

@@ -20,7 +20,7 @@
  *      `docker.go:379-383`), each gated on its own service's `enabled` flag and none
  *      of which touch `conn` directly:
  *      - `initRealtimeJob` (`start.go:268-295`) — reuses
- *        `../services/realtime.service.ts`'s `legacyBuildRealtimeEnv`, which builds
+ *        `./realtime-env.ts`'s `legacyBuildRealtimeEnv`, which builds
  *        the byte-identical env-var literal Go's own `initRealtimeJob` embeds
  *        verbatim (both are the same Go `Env` list, just addressed from two call
  *        sites: the long-running container and this one-shot job).
@@ -49,6 +49,34 @@
  * 5. **`apply.MigrateAndSeed`** (`start.go:368`, via the already-ported
  *    `legacyMigrateAndSeed`) with `version: ""` — every pending migration, matching
  *    `SetupLocalDatabase`'s own call in the `start` context.
+ * 6. **`pgcache.TryCacheMigrationsCatalog`** (`start.go:371-379`) — a best-effort
+ *    warmup of the `catalog-local-migrations-*` snapshot subsequent pg-delta
+ *    workflows (`db diff`/`db push`) consume, via the already-ported
+ *    `legacyTryCacheMigrationsCatalog` ({@link legacy-pgdelta.cache.ts}, the exact
+ *    same function `db push` already calls after its own migration apply). Gated
+ *    identically to Go's `ShouldCacheMigrationsCatalog()` (`pgcache/cache.go:93-95`):
+ *    `toml.pgDelta.enabled` OR the `SUPABASE_EXPERIMENTAL_PG_DELTA` env override —
+ *    Go's other half of the gate, `len(version) == 0`, is unconditionally true here
+ *    since step 5 above always runs with `version: ""`. A failure prints Go's exact
+ *    warning (`Warning: failed to cache migrations catalog: <err>`, `start.go:378`)
+ *    to stderr and is otherwise swallowed, reusing the identical best-effort
+ *    catch/warn shape `legacy-db-push-core.ts` already established for its own call
+ *    — this step never fails {@link legacyStartSetupLocalDatabase} or the caller's
+ *    `start`/`db start` run. Requires `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe`
+ *    in this function's own effect environment (widened accordingly below), so both
+ *    `start.command.ts` and `db/start/start.layers.ts` now compose
+ *    `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer`, matching `db push`'s
+ *    own layer composition (`push.layers.ts`). The underlying `legacyExportCatalogPgDelta`
+ *    reads `PGDELTA_NPM_REGISTRY` straight off bare `process.env` ({@link
+ *    legacy-pgdelta.ts}'s `legacyPgDeltaNpmRegistryOption`) — Go's `Config.Load` already
+ *    `os.Setenv`'d the project `.env` into the process before `start`/`db start` ever
+ *    reaches this call (`loadNestedEnv`, `config.go:788`), so a registry override set
+ *    only in `supabase/.env` (not the shell) must be visible here too. This module never
+ *    mutates `process.env` globally the way `start`/`db start`'s own config resolution
+ *    does — every other Go env override is threaded explicitly via `projectEnvValues` —
+ *    so this ONE call is scoped with `legacyApplyProjectEnv` (the same opt-in helper
+ *    `db push`/`db pull`/`db dump`/`bootstrap` already use around their own pg-delta/image
+ *    work) for just its own duration, then reverted.
  *
  * Go's `initCurrentBranch` (`start.go:233-241`, writes `supabase/.branches/
  * _current_branch` = `"main"` if absent) is NOT part of this pipeline, even though
@@ -58,50 +86,48 @@
  * which only runs on a fresh volume. `start.handler.ts` calls it directly, outside
  * the `isFreshVolume` gate that wraps {@link legacyStartSetupLocalDatabase}.
  *
- * Go's best-effort `pgcache.TryCacheMigrationsCatalog` warning (`start.go:371-379`)
- * is intentionally NOT ported — same accepted, documented divergence as
- * `db/reset/reset.handler.ts`'s identical comment (no output impact either way).
- *
  * This module also duplicates ONE config-load pass: `legacyCheckDbToml` is called
  * internally (not threaded in from the caller) to resolve `[db.vault]`, `[db.seed]`,
  * `db.migrations.enabled`, and the effective `api.auto_expose_new_tables` tri-state —
- * the same accepted duplication `db start`'s own handler already takes
- * independently of the top-level `start` command's own config resolution (see
- * `commands/db/start/start.handler.ts:40`).
+ * the same accepted duplication `db start`'s own handler (`commands/db/start/
+ * start.handler.ts`) already takes independently of the top-level `supabase start`
+ * command's own config resolution.
  */
 
 import type { ProjectConfig } from "@supabase/config";
-import { Data, Effect, type FileSystem, Option, type Path } from "effect";
+import { Clock, Data, Effect, type FileSystem, Option, type Path } from "effect";
+import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { Output } from "../../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
-import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
-import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import {
-  LegacyDockerRun,
-  type LegacyDockerRunOpts,
-} from "../../../shared/legacy-docker-run.service.ts";
-import { legacyMigrateAndSeed } from "../../../shared/legacy-migrate-and-seed.ts";
-import {
-  LegacyMigrationApplyError,
-  legacyExecSqlFile,
-} from "../../../shared/legacy-migration-apply.ts";
-import type { LegacyMigrationSeedError } from "../../../shared/legacy-seed.ts";
-import { ramInBytes } from "../../../shared/legacy-size-units.ts";
-import {
-  LegacyMigrationVaultError,
-  legacyUpsertVaultSecrets,
-} from "../../../shared/legacy-vault.ts";
-import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "../services/realtime.service.ts";
-import { LEGACY_START_DB_GLOBALS_SQL } from "../templates/db-globals.sql.ts";
-import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "../templates/db-initial-schema-13.sql.ts";
-import { LEGACY_START_DB_INITIAL_SCHEMA_14_SQL } from "../templates/db-initial-schema-14.sql.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { legacyTryCacheMigrationsCatalog } from "../legacy-pgdelta.cache.ts";
+import type { LegacyPgDeltaContext } from "../legacy-pgdelta.ts";
+import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
+import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
+import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
+import { redactLegacyConnectionString } from "../legacy-db-config.parse.ts";
+import { legacyApplyProjectEnv, legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
+import { LEGACY_CLI_PROJECT_LABEL, legacyServiceContainerName } from "../legacy-docker-ids.ts";
+import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
+import { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
+import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
+import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
+import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migration-apply.ts";
+import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
+import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
+import { ramInBytes } from "../legacy-size-units.ts";
+import { LegacyMigrationVaultError, legacyUpsertVaultSecrets } from "../legacy-vault.ts";
+import { LEGACY_COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
+import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "./realtime-env.ts";
+import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
+import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
+import { LEGACY_START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
 } from "./internal-db-connection.ts";
+
+type Spawner = ChildProcessSpawner["Service"];
 
 /**
  * Go's inline `RevokeDefaultDataApiPrivilegesSql` constant (`start.go:405-412`) —
@@ -135,7 +161,8 @@ export type LegacyStartSetupLocalDatabaseError =
   | LegacyStartDbSetupError
   | LegacyMigrationVaultError
   | LegacyMigrationApplyError
-  | LegacyMigrationSeedError;
+  | LegacyMigrationSeedError
+  | LegacyImagePrepullError;
 
 /** Already-resolved Docker images for the three PG15+ one-shot migrate jobs (`initSchema15`'s `initJobs`). */
 export interface LegacyStartDbSetupImages {
@@ -172,6 +199,13 @@ export interface LegacyStartSetupLocalDatabaseInput {
   readonly majorVersion: number;
   /** Go's `Config.ProjectId`, already sanitized (`legacySanitizeProjectId`) — derives the `db` container's internal Docker name for the PG15+ one-shot jobs (`legacyServiceContainerName("db", projectId)`, Go's `utils.DbId`). */
   readonly projectId: string;
+  /**
+   * `--experimental`/`SUPABASE_EXPERIMENTAL`, resolved by the caller (Go's
+   * `viper.GetBool("EXPERIMENTAL")`) — threaded straight into
+   * {@link legacyMigrateAndSeed}'s own `experimental` gate (`internal/migration/apply/
+   * apply.go:19`); this module has no other use for it.
+   */
+  readonly experimental: boolean;
   /** The `start` run's Docker network id (Go's `utils.NetId` or the `--network-id` override) — every PG15+ one-shot job joins it, matching `DockerStart`'s own default (`docker.go:379-383`). */
   readonly networkId: string;
   /** `LegacyLocalConfigValues.dbUrl` — reused (not recomputed) to derive the internal DB password via `legacyStartInternalDbPassword`, matching every other `start/services/*.service.ts` builder. */
@@ -210,6 +244,23 @@ export interface LegacyStartSetupLocalDatabaseInput {
   /** Go's `utils.Config.Storage.TargetMigration` (`toml:"-"`, resolved from a version-pin file) — the caller passes `""` when absent, matching Go's zero-value default. */
   readonly storageTargetMigration: string;
   readonly images: LegacyStartDbSetupImages;
+  /**
+   * Project-`.env`-scoped `SUPABASE_INTERNAL_IMAGE_REGISTRY`/mirror overrides — threaded
+   * through to each one-shot migrate job's OWN per-image `legacyEnsureImagesCached` resolve
+   * (see {@link legacyRunStartMigrateJob}), matching Go's real process-env registry override,
+   * which applies uniformly to every `DockerResolveImageIfNotCached` call regardless of which
+   * code path triggers it. `LegacyDockerRun.runCapture`'s own ambient-only ChildProcessSpawner-
+   * scoped ancestor resolver (used for the long-running containers) does NOT see this — it only
+   * reads bare `process.env`.
+   */
+  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /**
+   * `--debug` — threaded to each PG15+ one-shot migrate job (see
+   * {@link legacyRunStartMigrateJob}'s own doc comment) so a failed Realtime/Storage/Auth
+   * migration job's own stderr is visible, matching Go's `initSchema15` passing
+   * `utils.GetDebugLogger()` as the job's stderr writer (`start.go:349-353`).
+   */
+  readonly debug: boolean;
 }
 
 const errMessage = (e: unknown): string =>
@@ -282,24 +333,59 @@ const legacyStartInitSchemaPre15 = Effect.fnUntraced(function* (
  * Runs one PG15+ one-shot service-migration job to completion (Go's
  * `utils.DockerRunJob` = `DockerRunOnceWithStream`, `docker.go:457-459,469-487`):
  * foreground, same Docker network as `db`, no entrypoint override (Go's plain
- * `Cmd` field), stdout discarded and stderr not teed (Go discards both outside
- * `--debug` — `utils.GetDebugLogger()`, `logger.go:10-15`). A non-zero exit fails
- * with the same shape as Go's `error running container: <cause>`.
+ * `Cmd` field), stdout always discarded (Go's own `stdout` writer here is always
+ * `io.Discard`, `start.go:352`) and stderr teed to the parent process's own stderr ONLY
+ * under `--debug` — Go passes `logger := utils.GetDebugLogger()` as the job's stderr
+ * writer (`os.Stderr` under `--debug`, else `io.Discard`, `logger.go:10-15`) — so a
+ * fresh-volume Realtime/Storage/Auth migration job's own diagnostics are visible when
+ * `db start --debug`/`supabase start --debug` is used, not just its exit code. A
+ * non-zero exit fails with the same shape as Go's `error running container: <cause>`.
+ *
+ * Resolves `opts.image` itself, individually, right here — via `legacyEnsureImagesCached`
+ * (NOT `LegacyDockerRun.runStream`'s own ambient-only resolver, which never sees
+ * `opts.projectEnvValues`) — immediately before running THIS job, matching Go's
+ * `DockerRunJob` -> `DockerStart` -> `DockerResolveImageIfNotCached` (`docker.go:363-365`)
+ * resolving each one-shot job's own image individually, sequentially, exactly where it's
+ * used: neither caller pre-pulls these three images as a batch ahead of time (see
+ * `start-database.ts`'s own doc comment for why), and Go's registry-override env var applies
+ * uniformly to every `DockerResolveImageIfNotCached` call, including project-`.env`-scoped
+ * values — this call must see the same override the long-running containers' own resolve does.
+ *
+ * Labels the container with `com.supabase.cli.project`/`com.docker.compose.project`
+ * (`opts.projectId`), matching Go's `DockerStart`, which sets both unconditionally for
+ * every container it starts, one-shot jobs included (`docker.go:371-376`) — so if the
+ * client is interrupted or the daemon disconnects while this job is still running, the
+ * orphaned container is still discoverable (and removable) by `supabase stop`/rollback's
+ * project-label filter (`legacy-docker-remove-all.ts`), not left invisible to both
+ * (review: Codex, PR #6022).
  */
-const legacyRunStartMigrateJob = Effect.fnUntraced(function* (opts: {
-  readonly image: string;
-  readonly env: Readonly<Record<string, string>>;
-  readonly cmd: ReadonlyArray<string>;
-  readonly networkId: string;
-}) {
+const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
+  spawner: Spawner,
+  opts: {
+    readonly image: string;
+    readonly env: Readonly<Record<string, string>>;
+    readonly cmd: ReadonlyArray<string>;
+    readonly networkId: string;
+    readonly projectId: string;
+    readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+    /** `--debug` — Go's `utils.GetDebugLogger()`, see this function's own doc comment. */
+    readonly debug: boolean;
+  },
+) {
   const docker = yield* LegacyDockerRun;
   const runtimeInfo = yield* RuntimeInfo;
+  const resolvedImages = yield* legacyEnsureImagesCached(
+    spawner,
+    [opts.image],
+    opts.projectEnvValues,
+  );
+  const resolvedImage = resolvedImages.get(opts.image) ?? opts.image;
   // Go's `DockerStart` unconditionally appends the Linux-only `host.docker.internal:
   // host-gateway` extra host for every container it starts (`docker_linux.go`),
   // including one-shot jobs routed through the same `DockerStart` path.
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
   const runOpts: LegacyDockerRunOpts = {
-    image: opts.image,
+    image: resolvedImage,
     cmd: opts.cmd,
     env: opts.env,
     binds: [],
@@ -307,14 +393,22 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (opts: {
     securityOpt: [],
     extraHosts,
     network: { _tag: "named", name: opts.networkId },
-    // `opts.image` is already fully resolved (`start.handler.ts`'s `resolveImage`, which
-    // threads `projectEnvValues` through `legacyEnsureImagesCached`) — this layer's own
-    // ambient-only resolver must not re-resolve it. See `LegacyDockerRunOpts.
-    // skipImageResolve`'s doc comment.
+    labels: {
+      [LEGACY_CLI_PROJECT_LABEL]: opts.projectId,
+      [LEGACY_COMPOSE_PROJECT_LABEL]: opts.projectId,
+    },
+    // Already resolved, immediately above — `LegacyDockerRun.runCapture`'s own ambient-only
+    // resolver must not re-resolve it (it doesn't see `opts.projectEnvValues` at all).
     skipImageResolve: true,
   };
+  // `runStream` (not `runCapture`) so stdout is actually discarded chunk-by-chunk as it
+  // arrives, matching Go's `io.Discard` writer for this job (`start.go:352`, and this
+  // function's own doc comment above) at constant memory — `runCapture` would instead
+  // buffer the ENTIRE stdout stream into `stdoutChunks` even though nothing here ever
+  // reads it, which a large/verbose migration job's output could grow without bound
+  // (review: Codex, PR #6022).
   const result = yield* docker
-    .runCapture(runOpts)
+    .runStream(runOpts, { onStdout: () => Effect.void, teeStderr: opts.debug })
     .pipe(Effect.mapError((cause) => new LegacyStartDbSetupError({ message: cause.message })));
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
@@ -391,15 +485,19 @@ function legacyStartAuthMigrateEnv(input: {
  * fixed order (realtime, storage, auth).
  */
 const legacyStartInitSchema15 = Effect.fnUntraced(function* (
+  spawner: Spawner,
   input: LegacyStartSetupLocalDatabaseInput,
 ) {
   const dbHost = legacyServiceContainerName("db", input.projectId);
   const dbPassword = legacyStartInternalDbPassword(input.dbUrl);
 
   if (input.config.realtime.enabled) {
-    yield* legacyRunStartMigrateJob({
+    yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.realtime,
       networkId: input.networkId,
+      projectId: input.projectId,
+      projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: legacyBuildRealtimeEnv({
         ipVersion: input.config.realtime.ip_version,
         maxHeaderLength: input.config.realtime.max_header_length,
@@ -445,17 +543,23 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
           message: `invalid config for storage: ${errMessage(cause)}`,
         }),
     });
-    yield* legacyRunStartMigrateJob({
+    yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.storage,
       networkId: input.networkId,
+      projectId: input.projectId,
+      projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: storageEnv,
       cmd: ["node", "dist/scripts/migrate-call.js"],
     });
   }
   if (input.config.auth.enabled) {
-    yield* legacyRunStartMigrateJob({
+    yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.auth,
       networkId: input.networkId,
+      projectId: input.projectId,
+      projectEnvValues: input.projectEnvValues,
+      debug: input.debug,
       env: legacyStartAuthMigrateEnv({
         apiUrl: input.apiUrl,
         authExternalUrl: input.authExternalUrl,
@@ -476,6 +580,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
  * `if utils.Config.Db.MajorVersion <= 14` check.
  */
 const legacyStartInitSchema = Effect.fnUntraced(function* (
+  spawner: Spawner,
   input: LegacyStartSetupLocalDatabaseInput,
   tmpDir: string,
 ) {
@@ -491,7 +596,7 @@ const legacyStartInitSchema = Effect.fnUntraced(function* (
     );
     return;
   }
-  yield* legacyStartInitSchema15(input);
+  yield* legacyStartInitSchema15(spawner, input);
 });
 
 /**
@@ -551,7 +656,13 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
         }),
     ),
   );
-  yield* fs.writeFileString(currentBranchPath, "main").pipe(
+  // Go's `utils.WriteFile` writes through `afero.WriteFile(fsys, path, contents, 0644)`
+  // (`internal/utils/misc.go:280-286`) — an explicit mode, not the platform default. Effect's
+  // `writeFileString` falls back to Node's default file mode (`0666` before the umask) when no
+  // `mode` is given, so under a permissive/group-writable umask (`000`/`002`) this file could be
+  // created `0666`/`0664` instead of Go's `0644`, making project branch metadata writable by
+  // additional local users.
+  yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 }).pipe(
     Effect.mapError(
       (error) =>
         new LegacyStartDbSetupError({
@@ -569,16 +680,40 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
  * no health/readiness checks of its own.
  */
 export const legacyStartSetupLocalDatabase = (
+  spawner: Spawner,
   input: LegacyStartSetupLocalDatabaseInput,
 ): Effect.Effect<
   void,
   LegacyStartSetupLocalDatabaseError,
-  Output | LegacyDockerRun | RuntimeInfo
+  | Output
+  | LegacyDockerRun
+  | RuntimeInfo
+  | LegacyEdgeRuntimeScript
+  | LegacyPgDeltaSslProbe
+  // `legacyTryCacheMigrationsCatalog`'s own pg-delta export call resolves
+  // `FileSystem.FileSystem`/`Path.Path` from the effect context itself (not from
+  // the `fs`/`path` values this function already threads through as plain data —
+  // see `legacy-pgdelta.ts`'s `legacyExportCatalogPgDelta`), so both must be
+  // ambient here too; every real caller already gets them from `BunServices.layer`
+  // at the CLI root runtime, same as `db push`'s own composition.
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    const toml = yield* legacyCheckDbToml(fs, path, workdir);
+    // `warnOnUnresolvedEnv: false` — both `start.handler.ts` and `db/start/
+    // start.handler.ts` already ran an earlier, same-invocation `legacyCheckDbToml`
+    // purely for its Go-parity validation side effect (their own callers discard the
+    // result) before ever reaching this fresh-volume setup, so that earlier call
+    // already printed Go's single `assertEnvLoaded` OrioleDB S3 WARN, if any. Without
+    // this, this module's own accepted duplicate config-load pass (see this module's
+    // header) would print the SAME warning a second time — a real, observable stderr
+    // divergence from Go's exactly-once `flags.LoadConfig`, unlike the harmless
+    // resolved-value duplication the header describes.
+    const toml = yield* legacyCheckDbToml(fs, path, workdir, undefined, {
+      warnOnUnresolvedEnv: false,
+    });
 
     // SetupDatabase: initSchema -> ApplyApiPrivileges (start.go:383-389).
     yield* Effect.scoped(
@@ -593,7 +728,7 @@ export const legacyStartSetupLocalDatabase = (
                 }),
             ),
           );
-        yield* legacyStartInitSchema(input, tmpDir);
+        yield* legacyStartInitSchema(spawner, input, tmpDir);
         yield* legacyStartApplyApiPrivileges(input, tmpDir, toml.baseline.apiAutoExposeNewTables);
       }),
     );
@@ -635,16 +770,82 @@ export const legacyStartSetupLocalDatabase = (
 
     // apply.MigrateAndSeed(ctx, "", conn, fsys) — empty version = every pending
     // migration, matching `SetupLocalDatabase`'s own call in the `start` context
-    // (start.go:368).
+    // (start.go:368). `experimental`/`pgDeltaEnabled`/`schemaPaths` gate
+    // `legacyMigrateAndSeed`'s own declarative-schema-files branch (apply.go:19) — see its
+    // doc comment; `toml.pgDelta.enabled` and `toml.schemaPaths` are this module's own
+    // already-loaded config (the latter already resolved + `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`
+    // env-overridden by `legacyCheckDbToml`, `legacy-db-config.toml-read.ts`), not re-read from
+    // the caller's raw, unresolved `ProjectConfig`.
     yield* legacyMigrateAndSeed(session, fs, path, workdir, "", {
       migrationsEnabled: toml.migrationsEnabled,
       seed: toml.seed,
+      experimental: input.experimental,
+      pgDeltaEnabled: toml.pgDelta.enabled,
+      schemaPaths: toml.schemaPaths,
     });
 
-    // Go's best-effort pgcache catalog warning (`pgcache.TryCacheMigrationsCatalog`,
-    // start.go:371-379) is not ported (no output impact) — same accepted, documented
-    // divergence as `db/reset/reset.handler.ts`.
-    //
+    // pgcache.TryCacheMigrationsCatalog(ctx, pgconn.Config{Host: Config.Hostname,
+    // Port: Config.Db.Port, User: "postgres", Password: Config.Db.Password, Database:
+    // "postgres"}, "local", version, fsys, ...) (start.go:371-379): best-effort, run
+    // immediately after MigrateAndSeed above, on every call — this function's
+    // `version` is always `""` (the line above), matching the `len(version) == 0`
+    // half of Go's `ShouldCacheMigrationsCatalog()` gate unconditionally. `cacheEnabled`
+    // reproduces the OTHER half of that gate (`pgcache/cache.go:93-95`) exactly — the
+    // same `toml.pgDelta.enabled || SUPABASE_EXPERIMENTAL_PG_DELTA` formula
+    // `legacy-db-push-core.ts` already uses for its own call. `input.dbUrl` is already
+    // the HOST-facing `postgresql://postgres:<password>@<hostname>:<port>/postgres`
+    // address (see its own doc comment) — the exact same shape Go's `utils.
+    // ToPostgresURL(config)` builds from that literal `pgconn.Config` here, so it's
+    // reused directly as `targetUrl` rather than re-derived. `conn`'s fields are only
+    // ever read by `legacyCatalogPrefixFromConfig` on a non-local prefix fallback,
+    // unreachable here since `isLocal` is always `true`.
+    const cacheEnabled =
+      toml.pgDelta.enabled || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
+    const pgDeltaCtx: LegacyPgDeltaContext = {
+      projectId: input.projectId,
+      cwd: workdir,
+      npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+      denoVersion: toml.denoVersion,
+    };
+    const hostDbUrl = new URL(input.dbUrl);
+    // Scope the `PGDELTA_NPM_REGISTRY`-from-project-`.env` apply to just this call:
+    // `legacyExportCatalogPgDelta` reads it off bare `process.env`
+    // (`legacyPgDeltaNpmRegistryOption`), same as `db push`/`db pull`/`db dump`/
+    // `bootstrap`'s own calls into pg-delta — Go's `loadNestedEnv` already made it
+    // process-wide by this point (`config.go:788`), but this module otherwise threads
+    // every override through `projectEnvValues` explicitly rather than mutating
+    // `process.env`, so this one shared-code call needs the same opt-in helper those
+    // other commands use. `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* legacyApplyProjectEnv(input.projectEnvValues ?? {});
+        yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
+          enabled: cacheEnabled,
+          targetUrl: input.dbUrl,
+          conn: {
+            host: hostDbUrl.hostname,
+            port: Number(hostDbUrl.port),
+            user: "postgres",
+            database: "postgres",
+          },
+          isLocal: true,
+          migrationsDir: path.join(workdir, "supabase", "migrations"),
+          nowMillis: yield* Clock.currentTimeMillis,
+        }).pipe(
+          // Best-effort: Go's own `TryCacheMigrationsCatalog` failure only ever warns
+          // (`fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)`,
+          // start.go:378) and never fails `SetupLocalDatabase` — same shape
+          // `legacy-db-push-core.ts` already established for this exact call.
+          Effect.catch((error) =>
+            output.raw(
+              `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
+              "stderr",
+            ),
+          ),
+        );
+      }),
+    );
+
     // `initCurrentBranch` (start.go:233-241) is NOT called here — see this
     // module's header for why it moved to the caller instead.
   });

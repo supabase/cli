@@ -6,8 +6,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { Output } from "../../../../shared/output/output.service.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   type LegacySetupInputs,
   legacyBaselineCatalogFileName,

@@ -62,11 +62,11 @@ import {
 } from "../../../shared/legacy-go-duration.ts";
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import type { LegacyResolvedAuthEmail } from "../../../shared/legacy-local-config-values.ts";
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
-} from "../lib/internal-db-connection.ts";
+} from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 /** `utils.GotrueAliases[0]` (`apps/cli-go/internal/utils/config.go:38`) — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
 const LEGACY_GOTRUE_CONTAINER_SUFFIX = "auth";

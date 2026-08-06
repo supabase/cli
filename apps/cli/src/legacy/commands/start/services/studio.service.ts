@@ -31,7 +31,7 @@
 import { join } from "node:path";
 
 import { legacyToDockerPath } from "../../../shared/legacy-docker-path.ts";
-import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
 /** Container-internal port Studio listens on — Go's hardcoded `3000/tcp` (`start.go:1166,1174`). */
 const STUDIO_CONTAINER_PORT = 3000;

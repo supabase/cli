@@ -1,10 +1,11 @@
 import type { ProjectConfig } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
-import { LEGACY_START_DB_SCHEMA_SQL } from "../templates/db-schema.sql.ts";
-import { LEGACY_START_DB_SUPABASE_SQL } from "../templates/db-supabase.sql.ts";
-import { LEGACY_START_DB_WEBHOOK_SQL } from "../templates/db-webhook.sql.ts";
-import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../../../shared/legacy-local-config-values.ts";
+import { LEGACY_START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
+import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
+import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
+import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
+import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import {
   legacyBuildPostgresStartContainerSpec,
   legacyPostgresImageVersionTag,
@@ -234,6 +235,69 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
     const spec = legacyBuildPostgresStartContainerSpec(baseInput({ projectId: "my project!" }));
     expect(spec.containerName).toBe("supabase_db_my_project_");
     expect(spec.binds).toEqual(["supabase_db_my_project_:/var/lib/postgresql/data"]);
+  });
+
+  test("--from-backup: PG >= 15 uses the restore entrypoint (schema.sql + _supabase.sql, no webhook.sql), appends migrate.sh/postgresql.conf heredocs and cron.launch_active_jobs=off, and still carries the root key as a secretFile", () => {
+    const spec = legacyBuildPostgresStartContainerSpec(
+      baseInput({ db: baseDb({ major_version: 17 }), fromBackup: "/abs/host/backup.sql" }),
+    );
+
+    expect(spec.entrypoint).toBe("sh");
+    const script = spec.cmd?.[1];
+    expect(script).toBe(
+      "\n" +
+        "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
+        "cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \\\n" +
+        "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
+        "docker-entrypoint.sh postgres -D /etc/postgresql\n" +
+        `${LEGACY_START_DB_SCHEMA_SQL}\n` +
+        `${LEGACY_START_DB_SUPABASE_SQL}\n` +
+        "EOF\n" +
+        `${LEGACY_START_DB_RESTORE_SH}\n` +
+        "EOF\n" +
+        `${POSTGRES_CONFIG_HEADER}\n` +
+        "cron.launch_active_jobs = off\n" +
+        "EOF",
+    );
+    expect(script).not.toContain(LEGACY_START_DB_WEBHOOK_SQL);
+    expect(script).not.toContain(LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
+    expect(spec.secretFiles).toEqual([
+      {
+        containerPath: "/etc/postgresql-custom/pgsodium_root.key",
+        content: LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
+      },
+    ]);
+    expect(spec.binds).toEqual([
+      "supabase_db_myproj:/var/lib/postgresql/data",
+      "/abs/host/backup.sql:/etc/backup.sql:ro",
+    ]);
+  });
+
+  test("--from-backup: PG <= 14 still uses the restore entrypoint (unconditional override) but keeps the PG<=14 initdb tmpfs mount", () => {
+    const spec = legacyBuildPostgresStartContainerSpec(
+      baseInput({ db: baseDb({ major_version: 14 }), fromBackup: "/abs/host/backup.sql" }),
+    );
+
+    expect(spec.cmd?.[1]).toContain("/docker-entrypoint-initdb.d/migrate.sh");
+    expect(spec.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });
+    expect(spec.secretFiles).toEqual([
+      {
+        containerPath: "/etc/postgresql-custom/pgsodium_root.key",
+        content: LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
+      },
+    ]);
+  });
+
+  test("--from-backup: converts a Windows-style host path through legacyToDockerPath for the backup bind", () => {
+    const spec = legacyBuildPostgresStartContainerSpec(
+      baseInput({ fromBackup: "C:\\Users\\me\\backup.sql" }),
+    );
+    expect(spec.binds).toContain("/Users/me/backup.sql:/etc/backup.sql:ro");
+  });
+
+  test("no --from-backup: binds only the data volume, matching the pre-existing behavior", () => {
+    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
+    expect(spec.binds).toEqual(["supabase_db_myproj:/var/lib/postgresql/data"]);
   });
 
   test("network id, aliases, restart policy, and image pass through unchanged", () => {

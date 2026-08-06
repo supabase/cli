@@ -54,7 +54,7 @@
 import {
   legacyBindMountSpecSource,
   legacyIsBindMountSource,
-} from "../../../shared/legacy-docker-bind-classify.ts";
+} from "../legacy-docker-bind-classify.ts";
 
 /**
  * `container.HealthConfig` (`docker/docker/api/types/container`). Not
@@ -109,14 +109,13 @@ interface LegacyStartExposedPortSpec {
 }
 
 /**
- * One entry a caller must stage as a HOST temp file and bind-mount read-only
- * into the container — see {@link LegacyStartContainerSpec.secretFiles}'s doc
- * comment for the full contract. Not exported on its own — callers reference
- * it structurally through that field; nothing outside this module needs to
- * name the shape directly.
+ * One entry a caller must `docker cp` into the container via a short-lived HOST temp file — see
+ * {@link LegacyStartContainerSpec.secretFiles}'s doc comment for the full contract. Not exported
+ * on its own — callers reference it structurally through that field; nothing outside this module
+ * needs to name the shape directly.
  */
 interface LegacyStartSecretFileSpec {
-  /** The fixed path INSIDE the container the caller's generated bind mount targets. */
+  /** The fixed path INSIDE the container the caller's `docker cp` call targets. */
   readonly containerPath: string;
   /** The secret content to write to a HOST temp file — never emitted into argv. */
   readonly content: string;
@@ -154,17 +153,31 @@ export interface LegacyStartContainerSpec {
    *
    * NOT consumed here: {@link legacyBuildStartContainerCreateArgs} stays
    * pure/no-I/O and never reads this field. `container-lifecycle.ts`'s
-   * `legacyStartContainer` is the sole consumer — it writes each entry's
-   * `content` to a HOST-side temp file (mode `0644` — world-readable, so the
-   * non-root in-container user reading it (e.g. Kong, Postgres) doesn't hit
-   * `EACCES` once the bind mount preserves this host mode verbatim; see
-   * `legacyStageStartSecretFiles`'s doc comment — in a fresh temp
-   * directory) and appends a `<tempHostPath>:<containerPath>:ro,Z` bind (the
-   * bind's SOURCE is a generated temp-file path, never the secret itself —
-   * safe in argv) to {@link binds} BEFORE this builder ever sees the spec,
-   * then removes the temp file/directory once the container is created and
-   * started. Generic by design — any future service's spec can set this, not
-   * just the three call sites that need it today.
+   * `legacyStartContainer` is the sole consumer — once `docker create` returns
+   * a container id, it writes each entry's `content` to a SHORT-LIVED
+   * HOST-side temp file (mode `0644` — world-readable, so the non-root
+   * in-container user reading it (e.g. Kong, Postgres) doesn't hit `EACCES`;
+   * `docker cp`'s tar transfer preserves the host file's mode verbatim, same
+   * as a bind mount did — see `legacyCopyStartSecretFileIntoContainer`'s doc
+   * comment) and `docker cp`s it straight into the (created, not yet started)
+   * container at `containerPath`, removing the temp file immediately
+   * afterward — never a host bind mount. Generic by design — any future
+   * service's spec can set this, not just the three call sites that need it
+   * today.
+   *
+   * `docker cp` streams the file's content over the same Docker CLI/Engine
+   * API connection as `docker create`/`docker start`, so — unlike the
+   * bind-mount approach this replaced (supabase/cli#6022) — it works
+   * identically whether `DOCKER_HOST`/Docker-context points at a local or a
+   * REMOTE daemon: a bind mount's host-side path is resolved by the daemon
+   * itself
+   * (https://docs.docker.com/engine/storage/bind-mounts/#considerations-and-constraints),
+   * so it silently broke against a remote daemon (a scenario this codebase
+   * otherwise explicitly supports — see `legacy-hostname.ts`'s
+   * `legacyGetHostname`) even though the daemon itself was reachable. `docker
+   * cp` has no such requirement, matching Go's own heredoc/`Cmd`-embed
+   * delivery (the content travels inside the container-create request itself,
+   * over the Engine API) for that same reason.
    */
   readonly secretFiles?: ReadonlyArray<LegacyStartSecretFileSpec>;
   /**
@@ -377,6 +390,14 @@ const DOCKER_CLIENT_ENV_KEYS: ReadonlySet<string> = new Set([
   "DOCKER_CERT_PATH",
   "DOCKER_CONTEXT",
   "DOCKER_API_VERSION",
+  // `docker/cli`'s own `EnvOverrideConfigDir` (`cli/config/config.go:25`) — the same env var
+  // `legacyGetHostname`'s `dockerConfigDir()` reads to locate `config.json`/the context store.
+  // Without this, a project dotenv that sets ONLY `DOCKER_CONFIG` (no `DOCKER_HOST`/
+  // `DOCKER_CONTEXT`) would never reach `process.env` via `legacy-local-project-context.ts`'s
+  // Docker-client-env loop, so both hostname resolution and every `docker`/`podman` subprocess
+  // this process spawns would silently fall back to the ambient `~/.docker` config instead of the
+  // project-selected one — the same class of bug already fixed for `DOCKER_HOST`/`DOCKER_CONTEXT`.
+  "DOCKER_CONFIG",
 ]);
 
 /** Whether `key` configures the Docker/Podman CLI client itself — see {@link DOCKER_CLIENT_ENV_KEYS}. */

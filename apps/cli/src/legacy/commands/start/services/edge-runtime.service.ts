@@ -14,7 +14,7 @@
  *
  * Unlike its 12 siblings in this directory, this module does NOT build a
  * `LegacyStartContainerSpec` for `legacyStartContainer`
- * (`../lib/container-lifecycle.ts`) to create+start uniformly. That
+ * (`../../../shared/db-bootstrap/container-lifecycle.ts`) to create+start uniformly. That
  * unification (`docker create`/`docker start`, `-e KEY`-only env with values
  * supplied via the spawned process's own environment) was evaluated against
  * what `shared/functions/serve.ts`'s `startEdgeRuntimeContainer` actually
@@ -53,7 +53,7 @@
  * (`start.go:66-72,1103`) uses the real `dbConfig` — the `db` container's own
  * sanitized name and `config.db.password` — exactly like the other 12
  * services' `dbHost`/`dbPassword` derivation
- * (`../lib/internal-db-connection.ts`). {@link legacyStartEdgeRuntimeContainer}
+ * (`../../../shared/db-bootstrap/internal-db-connection.ts`). {@link legacyStartEdgeRuntimeContainer}
  * reproduces that real value, not `functions serve`'s alias-based default.
  */
 
@@ -68,7 +68,7 @@ import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
-} from "../lib/internal-db-connection.ts";
+} from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 export interface LegacyEdgeRuntimeBringUpInput {
   /** Go's `Config.ProjectId`, already sanitized — see `legacyServiceContainerName`'s callers. */
@@ -145,7 +145,7 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * Resolves to the same `StartedRuntime` shape `functions serve` itself
  * gets back. `containerId` is what the caller adds to its post-bring-up
  * health-wait list (pairing it with an `edgeRuntime` gateway on
- * `LegacyWaitForHealthyServicesOptions`, `../lib/health-check.ts` — the same
+ * `LegacyWaitForHealthyServicesOptions`, `../../../shared/db-bootstrap/health-check.ts` — the same
  * shape as the existing `postgrest` gateway). `watchSpecs` is
  * `functions serve`-only file-watch plumbing and can be ignored here.
  *
@@ -161,9 +161,13 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * intentionally omits `--restart` too. Its bind-mounted host paths must
  * still exist for as long as the container itself can be reattached to
  * (e.g. a plain `docker start` by the user, or discovery by a later CLI
- * invocation) — the same reasoning `legacyStageStartSecretFiles`
- * (`../lib/container-lifecycle.ts`) already applies to every other service's
- * staged secret files. `startEdgeRuntimeContainer` (`shared/functions/
+ * invocation) — unlike Kong/Postgres/Supavisor's `secretFiles`, which
+ * `container-lifecycle.ts`'s `legacyStartContainer` now `docker cp`s straight
+ * into the container instead of staging on host disk (see
+ * `legacyCopyStartSecretFileIntoContainer`'s doc comment), Edge Runtime's own
+ * bind-mounted env-file/multiline-env-script/serve-main-template artifacts
+ * still need this host persistence, since `docker run -d` bind-mounts them
+ * rather than copying their content in. `startEdgeRuntimeContainer` (`shared/functions/
  * serve.ts`) already runs `cleanup` internally on any failed or interrupted
  * bring-up (`Effect.onError`, covering the whole staging-write-through-
  * `docker run` window, not just a non-zero exit code), so the caller only

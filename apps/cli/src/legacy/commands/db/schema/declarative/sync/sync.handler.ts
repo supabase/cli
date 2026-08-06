@@ -27,7 +27,7 @@ import {
   legacyListLocalMigrations,
   legacyPgDeltaTempPath,
   legacyResolveSetupInputs,
-} from "../../../shared/legacy-pgdelta.cache.ts";
+} from "../../../../../shared/legacy-pgdelta.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
   type LegacyDebugBundle,

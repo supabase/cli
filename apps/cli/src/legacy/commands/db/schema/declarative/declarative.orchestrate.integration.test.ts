@@ -19,7 +19,7 @@ import {
   legacyMigrationsCatalogCacheKey,
   legacySetupInputsToken,
   type LegacySetupInputs,
-} from "../../shared/legacy-pgdelta.cache.ts";
+} from "../../../../shared/legacy-pgdelta.cache.ts";
 import {
   type LegacyCatalogMode,
   LegacyDeclarativeSeam,

@@ -17,7 +17,7 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "../../../../../shared/legacy-pgdelta.cache.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,

@@ -5,12 +5,21 @@ import type { LegacyDbBootstrapError } from "./legacy-db-bootstrap.errors.ts";
 
 /**
  * Seam over the bundled Go binary's hidden `db __db-bootstrap` command, exposing
- * the container-bootstrap primitives that native `db start` / `db reset --local`
- * still need but that are not ported to TypeScript: the local-stack "is running?"
- * probe, the database container create/recreate flows, and the storage health gate
- * before bucket seeding. The TS handlers orchestrate everything else (user-facing
- * messages, version resolution, bucket seeding, the git-branch line, telemetry,
- * and `--output-format` shaping); only the Docker lifecycle lives behind here.
+ * the container-bootstrap primitives that native `db reset --local` still needs
+ * but that are not ported to TypeScript: the database container recreate flow and
+ * the storage health gate before bucket seeding. The TS handlers orchestrate
+ * everything else (user-facing messages, version resolution, bucket seeding, the
+ * git-branch line, telemetry, and `--output-format` shaping); only the Docker
+ * lifecycle lives behind here.
+ *
+ * `db start`'s own container bootstrap (`start.StartDatabase`) was removed from
+ * this seam by CLI-1954 — it is now a fully native TS implementation
+ * (`commands/db/start/start.handler.ts`), reusing `commands/start/`'s already-ported
+ * container-bootstrap primitives instead of shelling out to the Go binary. The
+ * local-stack "is running?" probe (`legacyIsLocalDbRunning`) was already a native
+ * TS implementation before CLI-1954 — that same change also hoisted it out of this
+ * seam into `legacy/shared/db-bootstrap/local-db-running.ts`, since it never shelled
+ * out to Go and is shared by both `db start` and `db reset`.
  *
  * Mirrors {@link LegacyDeclarativeSeam} (`db __shadow`): each method shells out to
  * the same resolved `supabase-go`, with the child's telemetry disabled so the
@@ -18,25 +27,6 @@ import type { LegacyDbBootstrapError } from "./legacy-db-bootstrap.errors.ts";
  * stderr.
  */
 interface LegacyDbBootstrapSeamShape {
-  /**
-   * Go's `utils.AssertSupabaseDbIsRunning` (`internal/utils/misc.go:144`): inspect
-   * the local Postgres container. `true` when it exists (the stack is up), `false`
-   * when Docker reports "No such container" (Go's `ErrNotRunning`). Any other
-   * inspect failure (e.g. the Docker daemon is unreachable) fails with
-   * {@link LegacyDbBootstrapError}, matching Go, which returns the wrapped inspect
-   * error rather than treating the database as stopped.
-   */
-  readonly isDbRunning: () => Effect.Effect<boolean, LegacyDbBootstrapError>;
-  /**
-   * `db start`'s container bootstrap — `start.StartDatabase(fromBackup)` plus Go's
-   * `DockerRemoveAll` cleanup on failure (`internal/db/start/start.go:54-60`):
-   * create the Postgres container, wait for health, apply the initial schema +
-   * roles + migrations + seed on a fresh volume, and write `_current_branch`.
-   * Progress (`Starting database...`, `Initialising schema...`) is teed to stderr.
-   */
-  readonly startDatabase: (opts: {
-    readonly fromBackup?: string;
-  }) => Effect.Effect<void, LegacyDbBootstrapError | LegacyGoChildExitError>;
   /**
    * The PG14/PG15 container-recreate half of local `db reset`
    * (`reset.RecreateLocalDatabase`): recreate the db container/volume, init schema,

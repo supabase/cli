@@ -8,6 +8,8 @@
 
 import { basename } from "node:path";
 
+import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
+
 /**
  * Resolve the project id Go feeds into `utils.DbId`/`utils.NetId`. viper sets
  * `Config.ProjectId` from config.toml's `project_id`, then `AutomaticEnv` overrides it
@@ -73,6 +75,36 @@ export function localDbContainerId(projectId: string) {
 /** `utils.NetId` fallback — the default generated docker network name. */
 export function localNetworkId(projectId: string) {
   return legacyServiceContainerName("network", projectId);
+}
+
+/**
+ * `utils.NetId`/`DockerStart`'s network-mode resolution (`apps/cli-go/internal/utils/docker.go:
+ * 379-383`, `internal/utils/config.go:62`): an explicit `--network-id` flag wins, then
+ * `SUPABASE_NETWORK_ID` — `network-id` is one of the persistent flags Go binds to viper under
+ * `SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` (`cmd/root.go:318-334`, same mechanism as
+ * `SUPABASE_YES`/`SUPABASE_EXPERIMENTAL`), and `viper.GetString("network-id")` reads the
+ * (dotenv-merged) process env fresh at `DockerStart`'s own call site — deep inside container
+ * bring-up, well after `Config.Load`'s dotenv pass already ran — unlike `utils.Config.Hostname`,
+ * which is fixed once via `GetHostname()` at the `utils` package's `var` init, before `main()`
+ * ever runs a command's `Config.Load` (see {@link legacyGetHostname}'s own doc comment for why a
+ * project-dotenv-only override does NOT reach that field). Only when both the flag and the env
+ * are absent does Go fall back to the generated `supabase_network_<projectId>` name.
+ *
+ * `db start` and `start` both compute this identically — hoisted here (rather than duplicated in
+ * each handler) per the "hoist before you duplicate" rule (`apps/cli/CLAUDE.md`).
+ */
+export function legacyResolveNetworkId(
+  flagValue: string | undefined,
+  projectId: string,
+  projectEnvValues: Readonly<Record<string, string>>,
+): string {
+  if (flagValue !== undefined && flagValue.length > 0) return flagValue;
+  const envNetworkId = legacyViperEnvStringWithProjectFallback(
+    "SUPABASE_NETWORK_ID",
+    projectEnvValues,
+  );
+  if (envNetworkId.length > 0) return envNetworkId;
+  return localNetworkId(projectId);
 }
 
 /** Go's `utils.CliProjectLabel` (`apps/cli-go/internal/utils/docker.go:59`) — the

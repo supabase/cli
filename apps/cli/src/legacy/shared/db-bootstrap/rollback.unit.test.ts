@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { Data, Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { LegacyHealthCheckTimeoutError } from "./lib/health-check.ts";
-import { legacyIsUnhealthyStartError, legacyRollbackStart } from "./start.rollback.ts";
+import { LegacyHealthCheckTimeoutError } from "./health-check.ts";
+import { legacyIsUnhealthyStartError, legacyRollbackStart } from "./rollback.ts";
 
 function captureStderr() {
   return vi.spyOn(process.stderr, "write").mockImplementation(() => true);

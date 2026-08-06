@@ -1,19 +1,23 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
+import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
+import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
+import { LegacyEdgeRuntimeScriptError } from "../legacy-edge-runtime-script.errors.ts";
 import {
-  LegacyDockerRun,
-  type LegacyDockerRunOpts,
-} from "../../../shared/legacy-docker-run.service.ts";
-import { LegacyDockerRunError } from "../../../shared/legacy-docker-run.errors.ts";
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyStartDbSetupError,
   legacyStartInitCurrentBranch,
@@ -65,19 +69,57 @@ function fakeSession() {
 
 function mockDockerRun(opts: { exitCode?: number } = {}) {
   const runs: Array<LegacyDockerRunOpts> = [];
+  const captureOptsCalls: Array<{ readonly teeStderr?: boolean } | undefined> = [];
   const layer = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.succeed(opts.exitCode ?? 0),
-    runCapture: (runOpts) => {
+    runCapture: (runOpts, captureOpts) => {
       runs.push(runOpts);
+      captureOptsCalls.push(captureOpts);
       return Effect.succeed({
         exitCode: opts.exitCode ?? 0,
         stdout: new Uint8Array(),
         stderr: "",
       });
     },
-    runStream: () => Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" }),
+    // `legacyRunStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
+    // `runCapture`), matching Go's `io.Discard` writer for these one-shot jobs — this
+    // suite's `docker.runs`/`captureOptsCalls` assertions track THIS method's calls, not
+    // `runCapture`'s (which nothing under test still calls).
+    runStream: (runOpts, streamOpts) => {
+      runs.push(runOpts);
+      captureOptsCalls.push({ teeStderr: streamOpts.teeStderr });
+      return Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
+    },
   });
-  return { layer, runs };
+  return { layer, runs, captureOptsCalls };
+}
+
+/**
+ * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0 (image
+ * already cached) — feeds `legacyRunStartMigrateJob`'s own per-image `legacyEnsureImagesCached`
+ * resolve (see `db-setup.ts`), so every job's `image` resolves to the SAME raw string this
+ * suite's `baseInput` already asserts on, without needing a real Docker daemon.
+ */
+function mockAlwaysCachedSpawner(): ChildProcessSpawner.ChildProcessSpawner["Service"] {
+  return ChildProcessSpawner.make((_command) =>
+    Effect.gen(function* () {
+      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        exitCode: Deferred.await(exitDeferred),
+        isRunning: Effect.succeed(false),
+        stdin: Sink.drain,
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
 }
 
 function mockDockerRunFails() {
@@ -87,6 +129,35 @@ function mockDockerRunFails() {
     runStream: () => Effect.fail(new LegacyDockerRunError({ message: "failed to run docker" })),
   });
   return { layer };
+}
+
+/**
+ * `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe` back
+ * `legacyTryCacheMigrationsCatalog`'s own pg-delta catalog-export call (`db-setup.ts`'s
+ * pgcache-warmup step) — required by {@link legacyStartSetupLocalDatabase}'s own widened
+ * effect environment regardless of whether a given test's config actually enables
+ * pg-delta (the early `!params.enabled` return means these mocks are never invoked at
+ * runtime unless a test opts in via `writeConfigToml`'s `[experimental.pgdelta]`).
+ */
+function mockEdgeRuntime(opts: { readonly stdout?: string; readonly failWith?: string } = {}) {
+  const calls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      calls.push(runOpts);
+      if (opts.failWith !== undefined) {
+        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.failWith }));
+      }
+      return Effect.succeed({ stdout: opts.stdout ?? '{"version":1}', stderr: "" });
+    },
+  });
+  return { layer, calls };
+}
+
+function mockPgDeltaSslProbeLayer() {
+  return Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
 }
 
 function makeWorkdir(): string {
@@ -110,6 +181,7 @@ function baseInput(
     session,
     workdir,
     config: defaultConfig,
+    experimental: false,
     majorVersion: 17,
     projectId: "proj",
     networkId: "supabase_network_proj",
@@ -126,6 +198,8 @@ function baseInput(
       storage: "public.ecr.aws/supabase/storage-api:v1.0.0",
       auth: "public.ecr.aws/supabase/gotrue:v2.170.0",
     },
+    projectEnvValues: undefined,
+    debug: false,
     ...overrides,
   };
 }
@@ -134,11 +208,16 @@ const run = (
   input: Omit<LegacyStartSetupLocalDatabaseInput, "fs" | "path">,
   out: ReturnType<typeof mockOutput>,
   docker: ReturnType<typeof mockDockerRun> | ReturnType<typeof mockDockerRunFails>,
+  edgeRuntime: ReturnType<typeof mockEdgeRuntime> = mockEdgeRuntime(),
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* legacyStartSetupLocalDatabase({ ...input, fs, path });
+    return yield* legacyStartSetupLocalDatabase(mockAlwaysCachedSpawner(), {
+      ...input,
+      fs,
+      path,
+    });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -146,6 +225,8 @@ const run = (
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
+        edgeRuntime.layer,
+        mockPgDeltaSslProbeLayer(),
       ),
     ),
   );
@@ -262,6 +343,33 @@ describe("legacyStartSetupLocalDatabase", () => {
     });
 
     it.effect(
+      "labels every one-shot job with the project's Docker labels, matching Go's DockerStart (review: Codex, PR #6022)",
+      () => {
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        // Default config: realtime, storage, and auth are all enabled — 3 jobs.
+        return run(
+          baseInput(workdir, session, { majorVersion: 15, projectId: "labeled-proj" }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            expect(docker.runs.length).toBe(3);
+            for (const job of docker.runs) {
+              expect(job.labels).toEqual({
+                "com.supabase.cli.project": "labeled-proj",
+                "com.docker.compose.project": "labeled-proj",
+              });
+            }
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
       "the realtime job's env matches `legacyBuildRealtimeEnv` on the internal db address + jwks",
       () => {
         const workdir = makeWorkdir();
@@ -360,6 +468,51 @@ describe("legacyStartSetupLocalDatabase", () => {
         );
       },
     );
+
+    it.effect(
+      "--debug tees every one-shot job's stderr, matching Go's utils.GetDebugLogger()",
+      () => {
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const config = decodeConfig({
+          realtime: { enabled: true },
+          storage: { enabled: false },
+          auth: { enabled: true },
+        });
+        return run(
+          baseInput(workdir, session, { majorVersion: 15, config, debug: true }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            expect(docker.runs.length).toBe(2);
+            expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect("without --debug, one-shot jobs run with teeStderr off", () => {
+      const workdir = makeWorkdir();
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
+      return run(
+        baseInput(workdir, session, { majorVersion: 15, config, debug: false }),
+        out,
+        docker,
+      ).pipe(
+        Effect.map(() => {
+          expect(docker.runs.length).toBe(1);
+          expect(docker.captureOptsCalls).toEqual([{ teeStderr: false }]);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
 
     it.effect("a non-zero exit from a one-shot job fails the whole pipeline", () => {
       const workdir = makeWorkdir();
@@ -475,6 +628,157 @@ describe("legacyStartSetupLocalDatabase", () => {
               (c) => c.kind === "exec" && c.sql.includes("custom_role"),
             );
             expect(rolesCallIndex).toBe(-1);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+  });
+
+  describe("pgcache migrations-catalog warmup (start.go:371-379)", () => {
+    it.effect("does not attempt to cache the migrations catalog when pg-delta is disabled", () => {
+      const workdir = makeWorkdir();
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const edgeRuntime = mockEdgeRuntime();
+      return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker, edgeRuntime).pipe(
+        Effect.map(() => {
+          expect(edgeRuntime.calls).toHaveLength(0);
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
+
+    it.effect(
+      "caches the migrations catalog after MigrateAndSeed when [experimental.pgdelta] is enabled",
+      () => {
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(1);
+            expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+            const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
+            const catalogFiles = readdirSync(tempDir).filter((name) =>
+              name.startsWith("catalog-local-migrations-"),
+            );
+            expect(catalogFiles).toHaveLength(1);
+            expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
+      "caches the migrations catalog when SUPABASE_EXPERIMENTAL_PG_DELTA is enabled via project .env",
+      () => {
+        const workdir = makeWorkdir();
+        mkdirSync(join(workdir, "supabase"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(1);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
+      "applies PGDELTA_NPM_REGISTRY from the project .env for the catalog export, then reverts it",
+      () => {
+        // Go's `Config.Load` already `os.Setenv`'d the project `.env` into the process
+        // (`loadNestedEnv`, config.go:788) long before `SetupLocalDatabase` runs, so a
+        // PGDELTA_NPM_REGISTRY set only in supabase/.env (not the shell) reaches
+        // `PgDeltaNpmRegistryOption` there. This module threads config overrides via
+        // `projectEnvValues` rather than mutating `process.env` globally, so the
+        // cache-warmup step must scope-apply it around just `legacyExportCatalogPgDelta`'s
+        // call (`legacyPgDeltaNpmRegistryOption` reads bare `process.env`) and revert
+        // afterwards — mirroring `db push`/`db pull`/`db dump`/`bootstrap`'s own use of
+        // `legacyApplyProjectEnv` for the same shared pg-delta code.
+        const previous = process.env["PGDELTA_NPM_REGISTRY"];
+        delete process.env["PGDELTA_NPM_REGISTRY"];
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        mkdirSync(join(workdir, "supabase"), { recursive: true });
+        writeFileSync(
+          join(workdir, "supabase", ".env"),
+          "PGDELTA_NPM_REGISTRY=https://registry.example.com/supabase\n",
+        );
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, {
+            majorVersion: 14,
+            projectEnvValues: { PGDELTA_NPM_REGISTRY: "https://registry.example.com/supabase" },
+          }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(1);
+            expect(edgeRuntime.calls[0]?.extraEnv?.["PGDELTA_NPM_REGISTRY"]).toBe(
+              "https://registry.example.com/supabase",
+            );
+            expect(edgeRuntime.calls[0]?.extraEnv?.["NPM_CONFIG_REGISTRY"]).toBe(
+              "https://registry.example.com/supabase",
+            );
+            // Reverted: the scope closes once the cache-warmup call completes, so it
+            // never leaks into subsequent steps or other tests.
+            expect(process.env["PGDELTA_NPM_REGISTRY"]).toBeUndefined();
+            if (previous === undefined) delete process.env["PGDELTA_NPM_REGISTRY"];
+            else process.env["PGDELTA_NPM_REGISTRY"] = previous;
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
+      "warns without failing legacyStartSetupLocalDatabase when the catalog export fails",
+      () => {
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({
+          failWith: "edge-runtime script produced no output",
+        });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(out.stderrText).toContain(
+              "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+            );
             rmSync(workdir, { recursive: true, force: true });
           }),
         );

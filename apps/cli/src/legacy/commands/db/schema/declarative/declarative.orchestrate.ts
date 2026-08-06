@@ -4,11 +4,11 @@ import {
   type LegacyPgDeltaContext,
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
-} from "../../shared/legacy-pgdelta.ts";
+} from "../../../../shared/legacy-pgdelta.ts";
 import {
   type LegacySetupInputs,
   legacyGetMigrationsCatalogRef,
-} from "../../shared/legacy-pgdelta.cache.ts";
+} from "../../../../shared/legacy-pgdelta.cache.ts";
 import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
 import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
 import { legacyFindDropStatements } from "../../../../shared/legacy-sql-split.ts";

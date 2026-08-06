@@ -18,9 +18,9 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 import {
   legacySpawnContainerCliWithRuntime,
   type LegacyContainerRuntime,
-} from "../../../shared/legacy-container-cli.ts";
-import { legacyInspectContainerState } from "../../../shared/legacy-docker-lifecycle.ts";
-import { legacyKongAuthHeaders } from "../../../shared/legacy-kong-auth.ts";
+} from "../legacy-container-cli.ts";
+import { legacyInspectContainerState } from "../legacy-docker-lifecycle.ts";
+import { legacyKongAuthHeaders } from "../legacy-kong-auth.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
