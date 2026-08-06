@@ -82,7 +82,6 @@ export async function runDaemon(
 
     // Build the stack (services are started later via POST /start)
     const localStack = await localAppRuntime.runPromise(Stack);
-    const apiProxy = await localAppRuntime.runPromise(ApiProxy);
     const localStackLifecycle = await localAppRuntime.runPromise(LocalStackLifecycle);
     const info = await localAppRuntime.runPromise(localStack.getInfo());
     const localStateManager = await localAppRuntime.runPromise(StateManager);
@@ -93,8 +92,9 @@ export async function runDaemon(
       Layer.provide(daemonServerFactory(socketPath)),
     );
 
-    daemonRuntime = ManagedRuntime.make(daemonLayer);
-    await daemonRuntime.runPromise(DaemonServer);
+    const localDaemonRuntime = ManagedRuntime.make(daemonLayer);
+    daemonRuntime = localDaemonRuntime;
+    await localDaemonRuntime.runPromise(DaemonServer);
 
     // Claim live state before acknowledging startup to the parent.
     const state: StackState = {
@@ -121,14 +121,19 @@ export async function runDaemon(
     process.send!(response);
     process.disconnect?.();
 
-    const daemon = await daemonRuntime.runPromise(DaemonServer);
+    const daemon = await localDaemonRuntime.runPromise(DaemonServer);
     // Any terminal stack disposal is a whole-runtime failure: keeping the management or proxy
-    // servers alive would expose disposed state. This path deliberately does not drain unrelated
-    // in-flight proxy requests; callers should reconnect after starting a fresh daemon.
+    // servers alive would expose disposed state. Route it through the server's delayed shutdown
+    // signal so the request that caused disposal can flush its typed response first.
+    const shutdownAfterLocalStackDisposal = localAppRuntime
+      .runPromise(localStackLifecycle.awaitDisposed)
+      .then(async () => {
+        await localDaemonRuntime.runPromise(daemon.beginShutdown);
+        await localDaemonRuntime.runPromise(daemon.awaitShutdown);
+      });
     await Promise.race([
-      daemonRuntime.runPromise(daemon.awaitShutdown),
-      localAppRuntime.runPromise(apiProxy.awaitTerminalFailure),
-      localAppRuntime.runPromise(localStackLifecycle.awaitDisposed),
+      localDaemonRuntime.runPromise(daemon.awaitShutdown),
+      shutdownAfterLocalStackDisposal,
       waitForSignal(),
     ]);
     await shutdownDaemon({ appRuntime, daemonRuntime });
