@@ -9,8 +9,11 @@ import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyDbBootstrapSeamLayer } from "../shared/legacy-db-bootstrap.seam.layer.ts";
@@ -24,6 +27,17 @@ import { legacyDbBootstrapSeamLayer } from "../shared/legacy-db-bootstrap.seam.l
  * is fully native. The local path's container primitives still reach `LegacyGoProxy`
  * through the bootstrap seam below (`legacyDbBootstrapSeamLayer`, ambient from the
  * root) — that native port is CLI-1955's scope, not this one.
+ *
+ * `legacyDockerRunLayer` + `edgeRuntime` + `legacyPgDeltaSslProbeLayer` (same shape
+ * as `db push`'s `legacyDbPushRuntimeLayer`) are required by the post-reset
+ * best-effort pg-delta catalog cache below (`legacyTryCacheMigrationsCatalog` →
+ * `legacyExportCatalogPgDelta` → `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe`,
+ * `legacy-pgdelta.ts`/`legacy-pgdelta-ssl.ts`). Without them, a versionless remote
+ * reset with pg-delta enabled (`[experimental.pgdelta].enabled` or
+ * `SUPABASE_EXPERIMENTAL_PG_DELTA`) would hit an unhandled missing-service defect
+ * — not caught by the handler's typed `Effect.catch` — AFTER the remote database
+ * has already been reset, instead of writing the catalog or emitting Go's
+ * best-effort warning (review CLI-1958).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -58,9 +72,17 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(legacyIdentityStitchLayer),
 );
 
+const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(cliConfig),
+);
+
 export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
+  legacyDockerRunLayer,
+  edgeRuntime,
+  legacyPgDeltaSslProbeLayer,
   cliConfig,
   httpClient,
   credentials,
