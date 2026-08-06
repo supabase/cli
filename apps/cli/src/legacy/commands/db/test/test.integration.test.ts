@@ -55,9 +55,16 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
+  LegacyAgentFlag,
+  LegacyCreateTicketFlag,
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
+  LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
+  LegacyOutputFlag,
+  LegacyProfileFlag,
+  LegacyWorkdirFlag,
+  LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { CurrentAnalyticsContext } from "../../../../shared/telemetry/analytics-context.ts";
@@ -73,6 +80,7 @@ import {
   type LegacyDockerRunOpts,
 } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyRunTestDbCommand } from "../../../shared/legacy-test-db.command-handler.ts";
+import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { legacyDbCommand } from "../db.command.ts";
 
 const LOCAL_CONN: LegacyPgConnInput = {
@@ -243,6 +251,23 @@ describe("legacy db test (alias) integration", () => {
         CliOutput.layer(textCliOutputFormatter()),
         Stdio.layerTest({ args: Effect.succeed(args) }),
         Layer.succeed(CliArgs, { args }),
+        // `legacyDbCommand` is the whole `db` subtree, so the root's R
+        // includes every sibling subcommand's global-flag/Go-delegation
+        // requirements too, even though this test only dispatches `db test`.
+        Layer.succeed(LegacyAgentFlag, "auto"),
+        Layer.succeed(LegacyCreateTicketFlag, false),
+        Layer.succeed(LegacyDebugFlag, false),
+        Layer.succeed(LegacyDnsResolverFlag, "native"),
+        Layer.succeed(LegacyExperimentalFlag, false),
+        Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+        Layer.succeed(LegacyOutputFlag, Option.none()),
+        Layer.succeed(LegacyProfileFlag, "supabase"),
+        Layer.succeed(LegacyWorkdirFlag, Option.none()),
+        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(LegacyGoProxy, {
+          exec: () => Effect.die("LegacyGoProxy not needed for `db test` dispatch"),
+          execCapture: () => Effect.die("LegacyGoProxy not needed for `db test` dispatch"),
+        }),
       );
       const root = Command.make("supabase").pipe(
         Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
