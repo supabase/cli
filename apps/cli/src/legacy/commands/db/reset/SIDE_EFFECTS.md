@@ -204,15 +204,12 @@ path has no confirmation prompt.
   (the removed seam forwarded `--experimental` straight through to its own Go child),
   and `legacyMigrateAndSeed` (reused by both PG14 and PG15) already implements Go's
   `apply.MigrateAndSeed` declarative-schema-files branch.
-- **Accepted, documented divergence**: the best-effort pg-delta migrations-catalog
-  cache write (`pgcache.TryCacheMigrationsCatalog`, reachable from the PG15 recreate
-  via `SetupLocalDatabase`) is not ported — same accepted gap as `db start`. This is a
-  performance-only gap (the next pg-delta-enabled `db push`/`db schema declarative`
-  re-extracts the catalog itself instead of reusing a freshly-primed cache), not a
-  correctness or observable-output one (the write is silent on success, warning-only
-  on failure in Go). Porting it would require wiring `legacyEdgeRuntimeScriptLayer` +
-  `legacyPgDeltaSslProbeLayer` into `db reset`'s runtime purely for this optional,
-  feature-flagged step — left as an explicit follow-up rather than silently dropped.
+- The best-effort pg-delta migrations-catalog cache write
+  (`pgcache.TryCacheMigrationsCatalog`, reachable from the PG15 recreate via
+  `SetupLocalDatabase`) IS reached on the local PG15 path, same as `db start` —
+  `reset.layers.ts` composes `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer`
+  for it (see `db-setup.ts`'s own header for the exact gate). The write is silent on
+  success; a failure only warns on stderr and never fails the reset, matching Go.
 - `encrypted:` vault secrets are skipped on the remote path.
 - **Known, deliberate scope boundary**: `db schema declarative`/`db schema sync` still
   invoke `db reset --local` via the Go binary's own real `reset.Run` command (a

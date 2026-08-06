@@ -36,7 +36,7 @@ import { Effect, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyRenderStartVectorYaml } from "../lib/template-render.ts";
 
 type Spawner = ChildProcessSpawner["Service"];

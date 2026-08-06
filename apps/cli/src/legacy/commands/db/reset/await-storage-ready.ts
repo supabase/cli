@@ -29,7 +29,7 @@ import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
-} from "../../../shared/containers/health-check.ts";
+} from "../../../shared/db-bootstrap/health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 

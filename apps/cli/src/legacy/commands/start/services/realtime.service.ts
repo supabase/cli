@@ -18,7 +18,7 @@ import {
   LEGACY_REALTIME_TENANT_ID,
   legacyBuildRealtimeEnv,
 } from "../../../shared/db-bootstrap/realtime-env.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyStartInternalDbPassword } from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 export interface LegacyRealtimeContainerSpecInput {

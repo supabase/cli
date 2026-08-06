@@ -110,9 +110,12 @@ func trimLeadingSQLComments(sql string) string {
 	}
 }
 
-// ExecBatch is also reached from the shipped supabase-go sidecar: local `db
-// start` / `db reset` delegate migration apply to the `db __db-bootstrap`
-// seam (apps/cli-go/cmd/db.go), which calls this via apply.MigrateAndSeed.
+// ExecBatch is also reached from the shipped supabase-go sidecar via the
+// remaining Go-delegated paths (e.g. remote `db push`/`db reset`'s
+// apply.MigrateAndSeed) — local `db start`/`db reset` no longer delegate here
+// at all: CLI-1954/CLI-1955 removed the hidden `db __db-bootstrap` seam
+// (apps/cli-go/cmd/db.go) this comment used to describe, in favor of a fully
+// native TypeScript container-bootstrap port.
 func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 	batch := &pgconn.Batch{}
 	batchSize := 0

@@ -1,8 +1,11 @@
 /**
- * Pure Postgres connection-string helpers. Ports of Go's `utils.ToPostgresURL`
- * (`apps/cli-go/internal/utils/connect.go`) and the db-config derivation in
- * `flags.NewDbConfigWithPassword`, reduced to just the connection-string
- * components bootstrap needs (no live DB connection).
+ * Pure Postgres connection-string helpers, ported from Go's `utils.ToPostgresURL`
+ * (`apps/cli-go/internal/utils/connect.go`). Used only to build the `.env` file's
+ * `POSTGRES_URL`/derived keys (`bootstrap.dotenv.ts`) — no live DB connection here.
+ * The push step's actual connection is resolved separately, by
+ * `legacyResolveLinkedConn` (`legacy-db-config.layer.ts`), which reproduces the
+ * *rest* of `NewDbConfigWithPassword` this module doesn't: the direct-host
+ * reachability probe and the IPv4 pooler fallback for IPv6-only projects.
  */
 
 export interface LegacyDbConfig {
@@ -58,10 +61,15 @@ export function toPostgresUrl(config: LegacyDbConfig): string {
 }
 
 /**
- * Derives the remote project's direct (session-mode) connection config. Mirrors
- * Go's `flags.NewDbConfigWithPassword`: `host = db.<ref>.<projectHost>`,
- * `user = postgres`, `database = postgres`, direct port `5432`. The pooled
- * (transaction-mode) variant uses the same config with port `6543`.
+ * Derives the remote project's naive direct (session-mode) connection shape —
+ * `host = db.<ref>.<projectHost>`, `user = postgres`, `database = postgres`,
+ * direct port `5432` — for the `.env` file only. Unlike
+ * `flags.NewDbConfigWithPassword`, this never probes reachability or falls back
+ * to the IPv4 pooler, so on an IPv6-only project the `.env`'s `POSTGRES_URL`
+ * (and derived keys) point at a host the user's own machine may not be able to
+ * reach directly — a pre-existing, narrow divergence from Go tracked as
+ * out-of-scope for CLI-1953 (which fixed this same gap for the actual push
+ * connection; see `legacyResolveLinkedConn`).
  */
 export function deriveDbConfig(ref: string, password: string, projectHost: string): LegacyDbConfig {
   return {

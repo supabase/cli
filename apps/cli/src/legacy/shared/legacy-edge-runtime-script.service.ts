@@ -41,6 +41,15 @@ export interface LegacyEdgeRuntimeRunOpts {
    * pg-delta runs under the configured Deno version. Absent → the base-config value.
    */
   readonly denoVersion?: number;
+  /**
+   * The caller's authoritative target directory (e.g. `LegacyPgDeltaContext.cwd`),
+   * used to resolve the `supabase/.temp/edge-runtime-version` image pin (and, when
+   * `denoVersion` is absent, the base-config fallback read). Overrides the layer's
+   * own `LegacyCliConfig.workdir` — needed because that layer is built once, before
+   * a command's own `process.chdir` (e.g. `bootstrap`, whose real target directory
+   * only exists after its handler runs). Absent → the layer's `LegacyCliConfig.workdir`.
+   */
+  readonly workdir?: string;
 }
 
 export interface LegacyEdgeRuntimeRunResult {

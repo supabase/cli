@@ -4,7 +4,6 @@ import {
   DEFAULT_MANAGED_STACK_NAME,
   StateManager,
   daemonLayer,
-  resolveDaemonConfig,
   stackMetadata,
   type StackMetadata,
 } from "@supabase/stack/effect";
@@ -195,22 +194,24 @@ export const startCommand = Command.make("start", flags).pipe(
         ...baseStackConfig,
         postgres: { ...baseStackConfig.postgres, autoExposeNewTables },
       };
-      const resolvedConfig = yield* Effect.promise(() =>
-        resolveDaemonConfig({
+      yield* output.intro("Start local Supabase stack");
+      yield* ensureProjectStateIgnored(projectHome.projectRoot);
+
+      const stackLayer = yield* daemonLayer(
+        {
           cacheRoot: cliConfig.supabaseHome,
           cwd: runtimeInfo.cwd,
           projectDir: projectHome.projectRoot,
           projectStateRoot: projectHome.projectHomeDir,
           name: flags.stack,
           ...stackConfig,
-        }),
+        },
+        daemonEntryPoint,
       );
-
-      yield* output.intro("Start local Supabase stack");
-      yield* ensureProjectStateIgnored(projectHome.projectRoot);
+      const daemonState = yield* stateManager.read(flags.stack);
 
       const metadata = stackMetadata({
-        ports: resolvedConfig.ports,
+        ports: daemonState.ports,
         services: serviceVersionContext.pinnedBaseline,
         launch: { mode: flags.mode, excludedServices: flags.exclude },
         lastNotifiedUpdateFingerprint:
@@ -222,15 +223,6 @@ export const startCommand = Command.make("start", flags).pipe(
               }),
       });
       yield* stateManager.writeMetadata(flags.stack, metadata);
-
-      const stackLayer = yield* daemonLayer(
-        {
-          ...resolvedConfig,
-          name: flags.stack,
-          projectDir: projectHome.projectRoot,
-        },
-        daemonEntryPoint,
-      );
 
       return {
         stackLayer,

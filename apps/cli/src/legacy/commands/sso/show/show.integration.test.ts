@@ -19,12 +19,11 @@ const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 const PROVIDER = {
   id: VALID_PROVIDER_ID,
   saml: {
-    id: "8682fcf4-4056-455c-bd93-f33295604929",
     entity_id: "https://example.com",
     metadata_url: "https://example.com",
     metadata_xml: '<?xml version="2.0"?>',
   },
-  domains: [{ id: "d1", domain: "example.com" }],
+  domains: [{ domain: "example.com" }],
   created_at: "2023-03-28T13:50:14.464Z",
   updated_at: "2023-03-28T13:50:14.464Z",
 };

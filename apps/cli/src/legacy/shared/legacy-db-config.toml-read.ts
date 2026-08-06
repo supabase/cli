@@ -44,7 +44,7 @@ type EnvLookup = (name: string) => string | undefined;
  * defaults, but a **malformed** file is a hard error (Go returns the decode error
  * and aborts the command rather than running against the default local database).
  */
-interface LegacyDbTomlValues {
+export interface LegacyDbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
   /**
    * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)
@@ -137,8 +137,14 @@ interface LegacyDbVaultSecretToml {
   readonly resolved: boolean;
 }
 
-/** Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`. */
-interface LegacyBaselineTomlConfig {
+/**
+ * Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`.
+ * Exported so callers that build this cache-key subset directly (e.g.
+ * `legacyResolveSetupInputs` in `legacy-pgdelta.cache.ts`) reference this shape
+ * instead of re-declaring it inline, making field drift a compile error rather
+ * than a silent cache-key gap.
+ */
+export interface LegacyBaselineTomlConfig {
   /** `[auth] enabled`, default true. Gates `initSchema`'s auth service migration. */
   readonly authEnabled: boolean;
   /** `[storage] enabled`, default true. */
@@ -297,6 +303,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.seed.sql_paths",
   "auth.enabled",
   "edge_runtime.deno_version",
+  "experimental.webhooks.enabled",
   "experimental.pgdelta.enabled",
   "experimental.pgdelta.declarative_schema_path",
   "experimental.pgdelta.format_options",
@@ -546,8 +553,15 @@ const DEFAULT_SUPABASE_ENV = "development";
 /**
  * Keys {@link legacyApplyProjectEnv} copies from the project `.env` into
  * `process.env`. Kept to an allowlist of values that are read *only* via
- * `process.env` (no project-env map path) and must reflect `supabase/.env` —
- * currently just `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`).
+ * `process.env` (no project-env map path) and must reflect `supabase/.env`:
+ * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`) and
+ * `PGDELTA_NPM_REGISTRY` (`legacyPgDeltaNpmRegistryOption`, read straight from
+ * `process.env` for every pg-delta edge-runtime invocation — diff, declarative
+ * export/sync, and the push/pull/dump migrations-catalog cache). Go's
+ * `godotenv.Load` (`loadNestedEnv`) `os.Setenv`s every key from the project
+ * `.env`, so both readers see a `.env`-only value there; omitting either here
+ * would leave that one process.env-only reader blind to a project-`.env`-scoped
+ * override the shell never set.
  * Everything else is read from {@link legacyLoadProjectEnv}'s returned map
  * (`envLookup`, `legacyResolveYesWithProjectEnv`, `resolveDbPassword`) or resolved
  * eagerly from the shell before any `.env` load — Go's root globals (workdir /
@@ -555,7 +569,10 @@ const DEFAULT_SUPABASE_ENV = "development";
  * writing them here would let our lazily-built resolvers diverge from Go (retarget
  * the project, switch the env-file set, or leak into the Go `--experimental` proxy).
  */
-const LEGACY_PROCESS_ENV_APPLY_KEYS = ["SUPABASE_INTERNAL_IMAGE_REGISTRY"] as const;
+const LEGACY_PROCESS_ENV_APPLY_KEYS = [
+  "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+  "PGDELTA_NPM_REGISTRY",
+] as const;
 
 /**
  * Load the project's nested `.env` files into a lookup map. **Pure**: it reads the
@@ -626,10 +643,11 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
 /**
  * Apply the allowlisted project-`.env` keys (see {@link LEGACY_PROCESS_ENV_APPLY_KEYS})
  * to `process.env` **for the duration of the current scope**, then revert. This is
- * the opt-in counterpart to the pure {@link legacyLoadProjectEnv}: `db dump` /
- * `db pull` run it around their pg_dump / diff container work so a
- * `SUPABASE_INTERNAL_IMAGE_REGISTRY` set in `supabase/.env` reaches
- * `legacyGetRegistryImageUrl` (which reads `process.env` synchronously) — mirroring
+ * the opt-in counterpart to the pure {@link legacyLoadProjectEnv}: `bootstrap` /
+ * `db push` / `db pull` / `db dump` run it around their pg_dump / migration / pg-delta
+ * container work so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` or `PGDELTA_NPM_REGISTRY` set
+ * only in `supabase/.env` still reaches `legacyGetRegistryImageUrl` /
+ * `legacyPgDeltaNpmRegistryOption` (both read `process.env` synchronously) — mirroring
  * the `os.Setenv` half of Go's `loadNestedEnv`. Kept out of the shared loader so
  * SUPABASE_YES / db-password reads stay side-effect-free.
  *
@@ -1246,6 +1264,73 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const denoVersion =
     typeof denoVersionResolved === "number" ? denoVersionResolved : DEFAULT_DENO_VERSION;
 
+  // `[experimental.webhooks]`. Go's `*webhooks` is a nil-unless-declared pointer sibling of
+  // `*PgDeltaConfig` below (`config.go:335`) — checked FIRST within `Experimental.validate()`
+  // (`config.go:1846-1848`, immediately before the pgdelta check right below). The section only
+  // exists to be turned ON: Go rejects ANY present `[experimental.webhooks]` whose `enabled`
+  // isn't explicitly `true`, including when the key is simply omitted (bool zero-value `false`).
+  // `webhooksPresent`/`webhooksEnabled` feed `legacyValidateResolvedConfig`'s existing
+  // `experimental.webhooks` check (`legacy-config-validate.ts:676-680`) — this D pipeline never
+  // populated that input pair, so the check never ran for any of D's ~15 db/migration-command
+  // callers (`db start`, `db reset`, `db push`, `start`, migrate-and-seed), unlike L's
+  // `legacyResolveLocalConfigValues`, which already computes the identical pair from its own
+  // decoded config + raw document (review: PRRT_kwDOErm0O86WE42i).
+  //
+  // UNLIKE `experimental.pgdelta.enabled` below, the `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED`
+  // env override is NOT presence-independent — verified empirically against
+  // `apps/cli-go/pkg/config` (`config.Load` with an in-memory fs, no `[experimental.webhooks]`
+  // section, and a malformed env value): Go's `Load()` succeeds and `Experimental.Webhooks`
+  // stays `nil`, silently ignoring the override, where the equivalent pgdelta probe fails to
+  // load. The difference is `mergeDefaultValues` (`config.go:690-699`): it merges the `Eject()`
+  // template BEFORE the user's file, and that template declares `[experimental.pgdelta]`
+  // (`pkg/config/templates/config.toml:409`) but has no `[experimental.webhooks]` entry at all
+  // — so `pgdelta.enabled` is always a "known" viper key (env-bindable via `AutomaticEnv`
+  // regardless of the user's own file), while `webhooks.enabled` is only known, and therefore
+  // only env-overridable, when the section itself is declared (by the user's file or a matching
+  // `[remotes.*]` block — both already folded into `experimentalRaw` above). Gate the env read
+  // itself on `webhooksPresent`, not just the later validation check, so a bogus/irrelevant
+  // `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED` in the shell or project `.env` doesn't abort a load
+  // that has no `[experimental.webhooks]` section to apply it to (review: this thread).
+  const webhooksRaw = asRecord(experimentalRaw?.["webhooks"]);
+  const webhooksPresent = webhooksRaw !== undefined;
+  const webhooksEnabledRaw = webhooksRaw?.["enabled"];
+  const webhooksEnabledEnv = webhooksPresent
+    ? remoteOverrideKeys.has("experimental.webhooks.enabled")
+      ? undefined
+      : envOverride("SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED")
+    : undefined;
+  let webhooksEnabled: boolean;
+  if (webhooksEnabledEnv !== undefined) {
+    const expandedWebhooksEnabledEnv = legacyExpandEnv(webhooksEnabledEnv, lookup);
+    const parsed = legacyParseGoBool(expandedWebhooksEnabledEnv);
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandedWebhooksEnabledEnv}.`,
+        }),
+      );
+    }
+    webhooksEnabled = parsed;
+  } else if (typeof webhooksEnabledRaw === "boolean") {
+    webhooksEnabled = webhooksEnabledRaw;
+  } else if (typeof webhooksEnabledRaw === "number") {
+    // Go decodes the whole config under mapstructure's weak typing, so a numeric `enabled = 1`
+    // is true (`value != 0`) — same rule as `experimental.pgdelta.enabled` below.
+    webhooksEnabled = webhooksEnabledRaw !== 0;
+  } else if (typeof webhooksEnabledRaw === "string") {
+    const parsed = legacyParseGoBool(legacyExpandEnv(webhooksEnabledRaw, lookup));
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to parse config: invalid experimental.webhooks.enabled: ${legacyExpandEnv(webhooksEnabledRaw, lookup)}.`,
+        }),
+      );
+    }
+    webhooksEnabled = parsed;
+  } else {
+    webhooksEnabled = false;
+  }
+
   // `[experimental.pgdelta]`. `enabled` is a TOML bool (Go decodes weakly, so an
   // `env(VAR)`/string "true" also counts); `declarative_schema_path` is resolved
   // to a `supabase/`-prefixed path when relative (Go's `config.resolve`).
@@ -1711,6 +1796,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     gcpJwtPath,
   };
   const experimentalInput: LegacyExperimentalInput = {
+    webhooksPresent,
+    webhooksEnabled,
     pgdeltaFormatOptions: formatOptionsExpanded,
   };
   const validationInput: LegacyConfigValidationInput = {

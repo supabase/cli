@@ -75,6 +75,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // so tests can assert output ordering relative to the exports (e.g. the bootstrap's
   // written-to line lands after the declarative warm, before the diff's exports).
   const exportCatalogCalls: Array<{ mode: string; rawChunksAt: number }> = [];
+  // The migrations-catalog source now resolves natively (CLI-1959) via
+  // `legacyGetMigrationsCatalogRef`, which provisions its shadow through
+  // `provisionShadow` (Go's unchanged `db __shadow --mode diff`) instead of the
+  // retired `exportCatalog({mode:"migrations"})` seam call. "baseline"/
+  // "declarative" still go through `exportCatalog`.
+  const provisionShadowCalls: Array<{ mode: string; targetLocal: boolean; rawChunksAt: number }> =
+    [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) =>
       Effect.sync(() => {
@@ -101,11 +108,25 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             : Effect.void,
         ),
       ),
-    provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
+    provisionShadow: ({ mode, targetLocal }) =>
+      Effect.sync(() => {
+        provisionShadowCalls.push({ mode, targetLocal, rawChunksAt: out.rawChunks.length });
+        return {
+          container: "shadow-1",
+          sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
+          targetUrlOverride: undefined,
+        };
+      }),
     removeShadowContainer: () => Effect.void,
   });
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      // The native migrations-catalog resolution's shadow export — return a fixed,
+      // non-empty snapshot so it never trips `legacyExportCatalogPgDelta`'s
+      // empty-output check regardless of what `opts.diffSql` a given test sets.
+      if (runOpts.errPrefix === "error exporting pg-delta catalog") {
+        return Effect.succeed({ stdout: '{"schemas":[]}', stderr: "" });
+      }
       if (
         opts.exportJson !== undefined &&
         runOpts.errPrefix === "error exporting declarative schema"
@@ -203,6 +224,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     cache,
     localPostgresImageChecks,
     exportCatalogCalls,
+    provisionShadowCalls,
   };
 }
 
@@ -490,9 +512,11 @@ describe("legacy db schema declarative sync integration", () => {
       // The warm (first declarative-mode export) fires before the line is printed…
       const warm = s.exportCatalogCalls.find((c) => c.mode === "declarative");
       expect(warm?.rawChunksAt).toBeLessThanOrEqual(lineAt);
-      // …and the diff's first export (migrations catalog) fires after it, so the
-      // line sits at the end of the bootstrap, matching Go's ordering.
-      const diffStart = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+      // …and the diff's migrations-catalog resolution (now native, CLI-1959 —
+      // provisions its shadow via `provisionShadow` instead of a seam `exportCatalog`
+      // call) fires after it, so the line sits at the end of the bootstrap, matching
+      // Go's ordering.
+      const diffStart = s.provisionShadowCalls.find((c) => c.mode === "diff" && !c.targetLocal);
       expect(diffStart?.rawChunksAt).toBeGreaterThan(lineAt);
       // The generated files actually landed in the printed (resolved) dir.
       expect(

@@ -19,7 +19,7 @@
 import { join } from "node:path";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
 /** `utils.LogflareAliases[0]` (`apps/cli-go/internal/utils/config.go:47`) — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
 const LEGACY_LOGFLARE_CONTAINER_SUFFIX = "analytics";
@@ -46,12 +46,16 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
 /**
  * Go's Logflare entrypoint script (`start.go:358-362`): the image's own
  * entrypoint conflicts with the container healthcheck due to a 15-second
- * sleep, so Go writes its own `run.sh` and runs that instead. Transcribed
- * byte-for-byte, including the trailing newline after `EOF` (Go's raw string
- * literal ends with a newline before the closing backtick).
+ * sleep, so Go writes its own `run.sh` and runs that instead.
+ *
+ * Deliberate divergence from Go, do not revert in a parity sweep (issue
+ * #6088): `migrate && start`, so a failed migrate exits the container and the
+ * `unless-stopped` restart policy retries until the db is ready — Go boots
+ * Logflare against the unmigrated database, where Oban dies on the missing
+ * `public.oban_jobs`.
  */
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
-  "cat <<'EOF' > run.sh && sh run.sh\n./logflare eval Logflare.Release.migrate\n./logflare start --sname logflare\nEOF\n";
+  "cat <<'EOF' > run.sh && sh run.sh\n./logflare eval Logflare.Release.migrate &&\n./logflare start --sname logflare\nEOF\n";
 
 export interface LegacyLogflareContainerSpecInput {
   /**

@@ -19,8 +19,8 @@ const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 
 const PROVIDER = {
   id: VALID_PROVIDER_ID,
-  saml: { id: "x", entity_id: "https://example.com" },
-  domains: [{ id: "d1", domain: "example.com" }],
+  saml: { entity_id: "https://example.com" },
+  domains: [{ domain: "example.com" }],
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-remove-int-");

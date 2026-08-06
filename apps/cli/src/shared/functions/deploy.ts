@@ -298,10 +298,23 @@ function toBundledFileUrl(hostPath: string) {
   return url.toString();
 }
 
+const DOCKER_BIND_MODE_PATTERN = /:(?:ro|rw)(?:,[zZ])?$/;
+
 export function dockerBindHostPath(bind: string) {
-  const withoutMode = bind.replace(/:(?:ro|rw)$/, "");
+  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
   const separatorIndex = withoutMode.lastIndexOf(":");
   return separatorIndex === -1 ? withoutMode : withoutMode.slice(0, separatorIndex);
+}
+
+/**
+ * Container side of a `host:container[:mode]` bind. Unlike {@link dockerBindHostPath},
+ * a bind with no separator yields `""` rather than the whole string, so a malformed
+ * entry can never prefix-match a real container path.
+ */
+export function dockerBindContainerPath(bind: string) {
+  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
+  const separatorIndex = withoutMode.lastIndexOf(":");
+  return separatorIndex === -1 ? "" : withoutMode.slice(separatorIndex + 1);
 }
 
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
@@ -1617,7 +1630,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
         ...(bundleOnly ? { bundleOnly: true } : {}),
         body: {
           metadata,
-          ...(files.length > 0 ? { file: files } : {}),
+          file: files,
         },
       })
       .pipe(

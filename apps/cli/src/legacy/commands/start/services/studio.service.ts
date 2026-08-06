@@ -1,9 +1,11 @@
 /**
  * Studio env + container spec builder — port of Go's "Start Studio" block
- * (`apps/cli-go/internal/start/start.go:1148-1191`) and its `buildStudioEnv`
+ * (formerly `apps/cli-go/internal/start/start.go:1148-1191`) and its `buildStudioEnv`
  * helper (`start.go:1319-1347`), ported faithfully as {@link legacyBuildStudioEnv}
- * — see `apps/cli-go/internal/start/start_test.go:522 TestBuildStudioEnv`,
- * ported in `studio.service.unit.test.ts`. Gated in Go by `config.studio.enabled`
+ * — see former `apps/cli-go/internal/start/start_test.go:522 TestBuildStudioEnv`,
+ * ported in `studio.service.unit.test.ts`. `internal/start` (source and tests) was
+ * deleted outright as unreachable in CLI-1966; last present at commit
+ * a253ccba25c21356ccd33044c4474aecb77d1ae4. Gated in Go by `config.studio.enabled`
  * and `!isContainerExcluded(config.studio.image, excluded)` — see
  * `legacy-service-catalog.ts`'s `studio` entry (`excludeKey: "studio"`, gated
  * on `studio.enabled`, depends on pg-meta being healthy/running). Gating,
@@ -29,7 +31,7 @@
 import { join } from "node:path";
 
 import { legacyToDockerPath } from "../../../shared/legacy-docker-path.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
 /** Container-internal port Studio listens on — Go's hardcoded `3000/tcp` (`start.go:1166,1174`). */
 const STUDIO_CONTAINER_PORT = 3000;
@@ -123,8 +125,9 @@ export interface LegacyBuildStudioEnvInput {
  * {@link LegacyStartContainerSpec.env}'s own shape, chosen so secret values
  * never round-trip through this process's own `docker create` argv (see that
  * field's doc comment in `docker-create-args.ts`). Pure — no Effect or I/O —
- * so every env var mapping is unit-testable in isolation; ported test:
- * `apps/cli-go/internal/start/start_test.go:522 TestBuildStudioEnv`.
+ * so every env var mapping is unit-testable in isolation; ported test: former
+ * `apps/cli-go/internal/start/start_test.go:522 TestBuildStudioEnv` (deleted
+ * as unreachable in CLI-1966; last present at commit a253ccba2).
  */
 export function legacyBuildStudioEnv(input: LegacyBuildStudioEnvInput): Record<string, string> {
   return {

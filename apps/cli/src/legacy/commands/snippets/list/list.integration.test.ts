@@ -21,7 +21,7 @@ import { legacySnippetsList } from "./list.handler.ts";
 
 type SnippetsResponse = typeof V1ListAllSnippetsOutput.Type;
 
-const SNIPPET_ID = "00000000-0000-0000-0000-000000000001";
+const SNIPPET_ID = "00000000-0000-4000-8000-000000000001";
 
 const SNIPPET_BASE = {
   id: SNIPPET_ID,

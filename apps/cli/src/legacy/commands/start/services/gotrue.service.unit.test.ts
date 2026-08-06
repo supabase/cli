@@ -12,7 +12,9 @@ import {
 } from "./gotrue.service.ts";
 
 // Mirrors the fixture Go's `TestBuildGotrueEnv` builds via `config.NewConfig()`
-// (`apps/cli-go/internal/start/start_test.go:440-520`), translated into this
+// (formerly `apps/cli-go/internal/start/start_test.go:440-520`, deleted along
+// with the rest of `internal/start` as unreachable in CLI-1966; last present
+// at commit a253ccba25c21356ccd33044c4474aecb77d1ae4), translated into this
 // pure function's explicit input shape. Every field not asserted by a
 // specific Go subtest below reflects `config.NewConfig()`'s own defaults.
 const baseEnvInput: LegacyBuildGotrueEnvInput = {

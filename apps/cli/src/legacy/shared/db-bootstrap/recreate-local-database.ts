@@ -70,11 +70,12 @@
  * call it), and no rollback on failure (Go's `cmd/db.go` only wraps `--mode
  * start` in a `DockerRemoveAll` cleanup — the recreate dispatch has none).
  *
- * `pgcache.TryCacheMigrationsCatalog`'s best-effort write (part of Go's
- * `SetupLocalDatabase`, hence reachable from the PG15 path above via
- * `legacyStartSetupLocalDatabase`) is intentionally left unported here too —
- * see `db-setup.ts`'s own header for the reasoning (a documented, deliberate
- * follow-up, not a silent drop: `db/reset/SIDE_EFFECTS.md`).
+ * `pgcache.TryCacheMigrationsCatalog`'s best-effort catalog warmup (part of Go's
+ * `SetupLocalDatabase`, reachable from the PG15 path above via
+ * `legacyStartSetupLocalDatabase`) IS reached here too — see `db-setup.ts`'s own
+ * header for the exact gate/citations. `reset.layers.ts` composes
+ * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` for it, matching
+ * `db start`'s own layer composition (`db/start/start.layers.ts`).
  */
 
 import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";
@@ -89,8 +90,10 @@ import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connectio
 import type { LegacyDbConnectError, LegacyDbExecError } from "../legacy-db-connection.errors.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
 import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
+import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
 import type { LegacyMigrationApplyError } from "../legacy-migration-apply.ts";
+import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
 import {
   legacyEnsureNetwork,
@@ -103,7 +106,7 @@ import {
   type LegacyContainerOpts,
   type LegacyNetworkCreateError,
   type LegacyVolumeRemoveError,
-} from "../containers/container-lifecycle.ts";
+} from "./container-lifecycle.ts";
 import {
   legacyRunFreshDbSetup,
   legacyResolveResetSeedConfig,
@@ -116,8 +119,8 @@ import {
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
-} from "../containers/health-check.ts";
-import type { LegacyImagePrepullError } from "../containers/image-prepull.ts";
+} from "./health-check.ts";
+import type { LegacyImagePrepullError } from "./image-prepull.ts";
 import { legacyStartInternalDbPassword } from "./internal-db-connection.ts";
 import {
   legacyBuildPostgresStartContainerSpec,
@@ -312,7 +315,15 @@ const legacyRecreateLocalDatabase15 = <E>(
 ): Effect.Effect<
   void,
   LegacyRecreateLocalDatabaseError | E,
-  Output | LegacyDbConnection | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient
+  | Output
+  | LegacyDbConnection
+  | LegacyDockerRun
+  | RuntimeInfo
+  | HttpClient.HttpClient
+  | LegacyEdgeRuntimeScript
+  | LegacyPgDeltaSslProbe
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
@@ -374,7 +385,15 @@ const legacyRecreateLocalDatabase14 = <E>(
 ): Effect.Effect<
   void,
   LegacyRecreateLocalDatabaseError | E,
-  Output | LegacyDbConnection | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient
+  | Output
+  | LegacyDbConnection
+  | LegacyDockerRun
+  | RuntimeInfo
+  | HttpClient.HttpClient
+  | LegacyEdgeRuntimeScript
+  | LegacyPgDeltaSslProbe
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   Effect.gen(function* () {
     const { setup, fs, path, workdir } = input;
@@ -461,7 +480,15 @@ export const legacyRecreateLocalDatabase = <E>(
 ): Effect.Effect<
   void,
   LegacyRecreateLocalDatabaseError | E,
-  Output | LegacyDbConnection | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient
+  | Output
+  | LegacyDbConnection
+  | LegacyDockerRun
+  | RuntimeInfo
+  | HttpClient.HttpClient
+  | LegacyEdgeRuntimeScript
+  | LegacyPgDeltaSslProbe
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   input.setup.majorVersion <= 14
     ? legacyRecreateLocalDatabase14(spawner, input)

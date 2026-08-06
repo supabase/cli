@@ -14,6 +14,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { toDockerPath } from "../../../../shared/functions/deploy.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -28,6 +29,8 @@ import {
   ProcessControl,
   type CliProcessSignal,
 } from "../../../../shared/runtime/process-control.service.ts";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
+import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
 
 const deployMockState = vi.hoisted(() => ({
@@ -488,6 +491,9 @@ describe("legacy functions serve integration", () => {
             value.endsWith(":/root/index.ts:ro,Z"),
           ),
         ).toBe(true);
+        expect(extractFlagValues(dockerRun.args, "--workdir")).toEqual([
+          toDockerPath(tempRoot.current),
+        ]);
         expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
           "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
         );
@@ -514,17 +520,21 @@ describe("legacy functions serve integration", () => {
           },
         });
 
-        // Bare `kong reload`, matching Go's `restartEdgeRuntime`
-        // (`internal/functions/serve/serve.go:129`) — the `--nginx-conf`
-        // template argument belongs to `start`'s Kong bring-up, not reload.
+        // The reload must carry bring-up's `--nginx-conf`; a bare `kong reload`
+        // re-renders nginx.conf from Kong's default template and drops the
+        // `email_templates` server GoTrue fetches (issue #6059).
         expect(deployMockState.runCalls).toContainEqual({
           command: "docker",
-          args: ["exec", "supabase_kong_test-project", "kong", "reload"],
+          args: [
+            "exec",
+            "supabase_kong_test-project",
+            "kong",
+            "reload",
+            "--nginx-conf",
+            "/home/kong/custom_nginx.template",
+          ],
           options: { stdout: "ignore", stderr: "pipe" },
         });
-        expect(deployMockState.runCalls.some((call) => call.args.includes("--nginx-conf"))).toBe(
-          false,
-        );
 
         expect(childSpawner.spawned).toEqual([
           {
@@ -613,6 +623,9 @@ describe("legacy functions serve integration", () => {
         throw new Error("expected docker run call");
       }
 
+      expect(dockerRun.args).toContain(
+        legacyGetRegistryImageUrl(dockerfileServiceImage("edgeruntime")),
+      );
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 

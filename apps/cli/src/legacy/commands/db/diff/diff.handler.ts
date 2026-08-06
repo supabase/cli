@@ -20,14 +20,15 @@ import {
   legacyParseBoolEnv,
   legacyResolveDiffEngine,
   legacyShouldUsePgDelta,
-} from "../shared/legacy-diff-engine.ts";
+} from "../../../shared/legacy-diff-engine.ts";
 import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+import { legacyResolveMigrationsCatalogRef } from "../../../shared/legacy-pgdelta.cache.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
-import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../shared/legacy-pgdelta.ts";
+import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyClassifyExplicitRef, legacyUnknownTargetMessage } from "./diff.explicit.ts";
@@ -43,6 +44,16 @@ import {
 // `--file` migration is written.
 const warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
 Run ${legacyAqua("supabase db reset")} to verify that the new migration does not generate errors.`;
+
+// TS-only deprecation notice (CLI-1960): `--use-pg-schema` wraps the in-process
+// Go library `stripe/pg-schema-diff` (`apps/cli-go/internal/db/diff/pgschema.go`),
+// which has no TS/container equivalent — a keep-in-Go exception, not a pending
+// port (see SIDE_EFFECTS.md). The flag itself is now deprecated in favor of the
+// pg-delta engine. This is additive to (and prints before) Go's own
+// "experimental" warning (`cmd/db.go:121`), which the delegated child still
+// prints unchanged. No removal timeline is promised: actual removal is out of
+// scope for CLI-1960.
+const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
 
 /**
  * Rebuilds the `db diff` argv for the pgAdmin / pg-schema delegate path. Flags
@@ -219,16 +230,29 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               }
               return legacyToPostgresURL(resolved.conn);
             }
-            case "migrations":
-              return yield* seam.exportCatalog({
-                mode: "migrations",
-                noCache: false,
-                // Pass the linked ref only if one resolved earlier in the cascade,
-                // so the `__catalog` child merges the same remote override Go's
-                // in-process migrations catalog sees (`explicit.go:88-126`). Absent
-                // otherwise → base config, matching Go's resolution order.
-                ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
-              });
+            case "migrations": {
+              // Native (CLI-1959): mirrors Go's `resolveMigrationsCatalogRef`
+              // (`explicit.go:88-126`) exactly — see `legacyResolveMigrationsCatalogRef`'s
+              // doc comment. The pg-delta context is built from whatever `cfg` is
+              // current at this point in the cascade (possibly re-merged by an
+              // earlier "linked" ref above), matching Go's stateful pre-run.
+              const migrationsCtx: LegacyPgDeltaContext = {
+                projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+                cwd: cliConfig.workdir,
+                npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
+                denoVersion: cfg.denoVersion,
+              };
+              // Pass the linked ref only if one resolved earlier in the cascade, so
+              // the shadow merges the same remote override Go's in-process
+              // migrations catalog sees (`explicit.go:88-126`). Absent otherwise →
+              // base config, matching Go's resolution order.
+              return yield* legacyResolveMigrationsCatalogRef(
+                fs,
+                path,
+                migrationsCtx,
+                mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {},
+              );
+            }
             case "url":
               return ref;
             default:
@@ -323,9 +347,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       return;
     }
     if (usePgSchema) {
-      // The delegated Go `db diff --use-pg-schema` prints the experimental
-      // warning itself in its RunE (`cmd/db.go`), so don't pre-print it here —
-      // doing so would double the warning. Mirror the --use-pgadmin branch above.
+      // CLI-1960: TS-only deprecation notice, printed before delegating (in both
+      // text and machine output modes — diagnostics stay stderr-only per CLI-1546).
+      // The delegated Go `db diff --use-pg-schema` still prints its own experimental
+      // warning itself in its RunE (`cmd/db.go`); this is additive, not a
+      // replacement, so don't drop it. Mirror the --use-pgadmin branch above.
+      yield* output.raw(`${warnPgSchemaDeprecated}\n`, "stderr");
       yield* delegateDiff("pg-schema");
       return;
     }

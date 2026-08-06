@@ -22,7 +22,7 @@ The legacy shell is a gradual TypeScript port of the Go CLI. Commands are ported
 - **Phase 0** — The command is defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
 - **Phase 1+** — The command is implemented natively in TypeScript.
 
-During Phase 0, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once all commands are ported to TypeScript, the Go binary will no longer be needed.
+During Phase 0, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once all commands are ported to TypeScript, the Go binary will no longer be needed. Not every Go command from the original CLI still exists in this binary, though — some are deleted outright once nothing in the TypeScript CLI can reach them, directly or indirectly; see "Removed commands" under Release Workflow below.
 
 ## Package Layout
 
@@ -98,6 +98,10 @@ This:
 3. Signs the macOS binaries (both `supabase` and `supabase-go`) before archiving, so every channel ships the signed bytes — see [release-process.md § Code signing (macOS)](./release-process.md#code-signing-macos) and [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md)
 4. Bundles both binaries into the platform archives (`.tar.gz` / `.zip`)
 5. Includes both binaries in the Linux package manager packages (deb/rpm/apk)
+
+### Removed commands
+
+`apps/cli-go/internal/start` (Go's `supabase start` implementation) was deleted outright (CLI-1966), not just excluded from the shipped binary. Native TS `start` talks to Docker directly and never proxies to Go for it, and no other still-live TS→Go delegation seam (`db test`, `db branch`/`db remote`, `db diff --use-pgadmin`/`--use-pg-schema`, `db pull --experimental`, the hidden `db __shadow`/`__catalog` seams — the sibling hidden `db __db-bootstrap` seam was removed outright by CLI-1955, once native `db reset --local` became its last remaining caller — etc.) ever called into `internal/start` either — a repo-wide `grep` for the import confirmed the only reference anywhere in `apps/cli-go` was `start`'s own cobra registration. `internal/start` alone previously accounted for roughly half the shipped Go binary's size via its exclusive dependency tree (docker-compose/v2, buildx, buildkit, k8s client-go, aws-sdk-go-v2, notary, secret-detector), which `go mod tidy` dropped entirely once the package was deleted. `cmd/start.go` keeps `start`'s cobra registration and flag surface (needed by the `__complete` passthrough) but its `RunE` is a permanent stub returning a "not available in supabase-go" error — see `apps/cli-go/cmd/start_test.go` for the pinned error text. There is no longer a `bundled` build tag: with no second implementation to select between, the Go CLI's `cmd` package has only one `start`.
 
 ## See Also
 

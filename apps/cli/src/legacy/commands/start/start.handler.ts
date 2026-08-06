@@ -1,3 +1,11 @@
+/**
+ * Native TS port of Go's `internal/start` (`start.go`) + the Postgres-container
+ * half of `internal/db/start` (`start.go`) -- see `SIDE_EFFECTS.md`. Below, a
+ * bare `start.go:NNN` citation means the FORMER `apps/cli-go/internal/start/start.go`
+ * (deleted outright as unreachable, CLI-1966; last present at commit
+ * a253ccba25c21356ccd33044c4474aecb77d1ae4) unless explicitly prefixed
+ * `internal/db/start/`, which is still present and unaffected.
+ */
 import { inferFunctionsManifest, resolveProjectSubtree } from "@supabase/config";
 import { join } from "node:path";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
@@ -32,6 +40,7 @@ import {
   legacyResolveApiTlsPath,
   legacyResolveEmailTemplateContentPath,
 } from "../../shared/legacy-config-validate.ts";
+import { legacyIsContainerNotFoundMessage } from "../../shared/legacy-container-cli.ts";
 import { legacyCheckDbToml } from "../../shared/legacy-db-config.toml-read.ts";
 import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
 import {
@@ -85,6 +94,7 @@ import {
   legacyResolveGotrueWeb3,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
+  legacyResolveThirdPartyProviders,
   type LegacyLocalConfigValues,
   type LegacyResolvedAuthEmail,
 } from "../../shared/legacy-local-config-values.ts";
@@ -134,13 +144,13 @@ import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
   legacyCreateContainer,
   type LegacyContainerOpts,
-} from "../../shared/containers/container-lifecycle.ts";
-import { legacyEnsureImagesCached } from "../../shared/containers/image-prepull.ts";
+} from "../../shared/db-bootstrap/container-lifecycle.ts";
+import { legacyEnsureImagesCached } from "../../shared/db-bootstrap/image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckPostgrestGateway,
   type LegacyHealthCheckTimeoutError,
-} from "../../shared/containers/health-check.ts";
+} from "../../shared/db-bootstrap/health-check.ts";
 import {
   legacyStartInternalDbPassword,
   LEGACY_START_INTERNAL_DB_NAME,
@@ -192,20 +202,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-/**
- * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect`: "No such
- * container" or "No such object" depending on daemon version/CLI path — the same pair already
- * handled in `shared/functions/serve.ts`/`legacy/shared/db-bootstrap/local-db-running.ts`/
- * `legacy-pgdelta.seam.layer.ts`.
- */
-function isContainerNotFoundMessage(message: string): boolean {
-  return (
-    /no such container/iu.test(message) ||
-    /no such object/iu.test(message) ||
-    /no container with name or id/iu.test(message)
-  );
 }
 
 /**
@@ -398,7 +394,7 @@ function buildKongEmailTemplateMounts(
 
 /**
  * What `--ignore-health-check` prints when it downgrades a health-check timeout
- * to a warning. That decision belongs to this caller, not `../../shared/containers/health-check.ts`
+ * to a warning. That decision belongs to this caller, not `../../shared/db-bootstrap/health-check.ts`
  * (which only implements the polling contract), and it writes straight to
  * stderr — bypassing the `Output.fail` renderer that would otherwise append the
  * error's `suggestion` for it.
@@ -589,6 +585,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         projectEnvValues,
       ),
     );
+    // Same gap for `auth.third_party.<provider>.{enabled,...}` — Go's `Auth.ThirdParty`
+    // (`pkg/config/auth.go:187-198`) is value-typed exactly like `auth.web3`/`auth.oauth_server`
+    // above, decoded in the SAME unconditional `Config.Load` pass regardless of `auth.enabled`,
+    // even though `(tpa *thirdParty) validate()` itself only runs `if c.Auth.Enabled`
+    // (`config.go:1151-1153`). `legacyResolveThirdPartyProviders` is otherwise never called by
+    // this handler at all (GoTrue's own container build never wires third-party JWT settings —
+    // Go's `internal/start/start.go` never references `Auth.ThirdParty` either, matching
+    // `db start`'s identical decode-only, discard-the-result battery) — so a malformed override
+    // (e.g. `SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=bogus`) would otherwise never fail this
+    // command at all, unlike Go (review: PRRT_kwDOErm0O86WXFqj).
+    yield* wrapConfigOverride("auth.third_party", () =>
+      legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
+    );
     // Go's `function` struct (`pkg/config/config.go:290-296`) has no `env` field — `Config.Load`'s
     // `v.UnmarshalExact` (`ErrorUnused: true`, `config.go:749,1041`) rejects any unknown key
     // unconditionally, well before any Docker work. `@supabase/config`'s own schema DOES model
@@ -668,7 +677,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // makes removing the Postgres container destructive.
     const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
+        legacyIsContainerNotFoundMessage(error.message)
+          ? Effect.succeed(undefined)
+          : Effect.fail(error),
       ),
     );
     const dbState = yield* inspectDbState;

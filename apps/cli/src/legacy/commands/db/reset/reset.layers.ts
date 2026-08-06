@@ -10,6 +10,8 @@ import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
@@ -24,11 +26,20 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * root. `legacyDockerRunLayer` backs the native local recreate's PG15+ one-shot
  * migrate jobs (`legacyStartSetupLocalDatabase`, reused via
  * `legacyRecreateLocalDatabase`) — same reasoning as `db start`'s own
- * `start.layers.ts`. `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/
- * `RuntimeInfo` are ambient from the root runtime (`shared/cli/run.ts`).
+ * `start.layers.ts`. `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back
+ * that same shared setup pipeline's best-effort pg-delta migrations-catalog warmup
+ * (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog` call, reachable from `db reset`'s
+ * PG15 recreate too) — the exact same pair `db start`/`db push` already compose for
+ * their own calls to that function (`db/start/start.layers.ts`, `push.layers.ts`).
+ * `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/`RuntimeInfo` are
+ * ambient from the root runtime (`shared/cli/run.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(cliConfig),
+);
 const credentials = legacyCredentialsLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDebugLoggerLayer),
@@ -81,5 +92,7 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   stdinLayer,
   // Backs the native local recreate's PG15+ one-shot migrate jobs.
   legacyDockerRunLayer,
+  edgeRuntime,
+  legacyPgDeltaSslProbeLayer,
   commandRuntimeLayer(["db", "reset"]),
 );

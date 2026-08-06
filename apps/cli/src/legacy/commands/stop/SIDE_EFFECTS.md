@@ -20,14 +20,16 @@ byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestratio
 
 The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartSecrets`,
 `legacy/shared/legacy-start-secrets-cleanup.ts`) — Go never stages secrets on host disk in
-the first place, so it has nothing to clean up here. `start` stages plaintext Kong TLS/
-`kong.yml`, Postgres pgsodium root key, Supavisor pooler tenant-script content
-(`legacyStageStartSecretFiles`, `legacy/shared/containers/container-lifecycle.ts`), and Edge Runtime's own
+the first place, so it has nothing to clean up here. Only Edge Runtime's own
 JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
-`writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) on host
-disk because this port shells out to `docker create`/`docker run` instead of using the
-Docker Engine API directly; without this cleanup those directories would survive `stop`
-indefinitely. The containers to clean are captured via `legacyDockerRemoveAll`'s own
+`writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) still
+land on host disk this way, because that container is a `docker run` this port shells out
+to directly rather than a struct call over the Docker Engine API; without this cleanup that
+directory would survive `stop` indefinitely. (Kong's TLS/`kong.yml`, Postgres's pgsodium
+root key, and Supavisor's pooler tenant-script content are delivered via `docker cp`
+straight into the created container instead — as of supabase/cli#6022 they never touch
+host disk at all, see `start`'s own `SIDE_EFFECTS.md` — so this sweep is now a no-op for
+those three.) The containers to clean are captured via `legacyDockerRemoveAll`'s own
 `onContainersRemoved` hook, which fires only once `docker container prune` has CONFIRMED
 they're actually gone — not at the initial `docker ps` listing, and not before the
 stop/prune stages have even run — so a container the stop stage itself failed on (meaning
@@ -49,8 +51,8 @@ now gone, so no future `stop` could rediscover them via `docker ps` either). Thi
 invocation's own `<workdir>` is used only as a fallback, for a container with no such label
 (created before this label existed).
 
-Best-effort: a missing directory (every service besides Kong/Postgres/Supavisor/Edge
-Runtime) is a no-op, and a real deletion error does not fail the command.
+Best-effort: a missing directory (every service besides Edge Runtime) is a no-op, and a
+real deletion error does not fail the command.
 
 ## API Routes
 

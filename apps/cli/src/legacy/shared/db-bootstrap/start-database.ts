@@ -69,18 +69,20 @@ import {
   type LegacyNetworkCreateError,
   type LegacyVolumeCreateError,
   type LegacyVolumeInspectError,
-} from "../containers/container-lifecycle.ts";
+} from "./container-lifecycle.ts";
 import {
   legacyRunFreshDbSetup,
   legacyStartInitCurrentBranch,
   type LegacyFreshDbSetupInput,
   type LegacyStartSetupLocalDatabaseError,
 } from "./db-setup.ts";
-import type { LegacyImagePrepullError } from "../containers/image-prepull.ts";
+import type { LegacyImagePrepullError } from "./image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
-} from "../containers/health-check.ts";
+} from "./health-check.ts";
+import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
+import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
   LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
   LEGACY_START_STARTING_DATABASE_MESSAGE,
@@ -165,7 +167,15 @@ export const legacyStartDatabase = <E>(
 ): Effect.Effect<
   void,
   LegacyStartDatabaseError | E,
-  Output | LegacyDbConnection | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient
+  | Output
+  | LegacyDbConnection
+  | LegacyDockerRun
+  | RuntimeInfo
+  | HttpClient.HttpClient
+  | LegacyEdgeRuntimeScript
+  | LegacyPgDeltaSslProbe
+  | FileSystem.FileSystem
+  | Path.Path
 > =>
   Effect.gen(function* () {
     const output = yield* Output;

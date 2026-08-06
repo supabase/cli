@@ -8,9 +8,13 @@ import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import { legacyLoadLocalProjectContext } from "./legacy-local-project-context.ts";
 
 /**
- * Docker-client env keys `legacyLoadLocalProjectContext` installs from a project `.env`
- * (see its own doc comment) are exactly `legacyIsDockerClientEnvKey`'s allowlist
- * (`db-bootstrap/docker-create-args.ts`) — `DOCKER_HOST` stands in for the whole set here.
+ * `DOCKER_HOST` stands in for the whole Docker-client key set (`legacyIsDockerClientEnvKey`,
+ * `db-bootstrap/docker-create-args.ts`) here — `legacyLoadLocalProjectContext` deliberately does
+ * NOT install any of these from a project `.env` (see its own doc comment; review:
+ * PRRT_kwDOErm0O86WXFqw): Go's Docker connectivity is the package-level
+ * `var Docker = NewDocker()` (`apps/cli-go/internal/utils/docker.go:39`), frozen at binary
+ * startup, well before `godotenv.Load` ever runs — so a project-dotenv-only override can never
+ * reach it, and installing it here would retarget native commands' Docker daemon relative to Go.
  */
 const DOCKER_HOST_KEY = "DOCKER_HOST";
 
@@ -41,7 +45,7 @@ describe("legacyLoadLocalProjectContext", () => {
   });
 
   it.effect(
-    "installs a project .env's DOCKER_HOST into process.env before resolving hostname, matching Go's godotenv.Load",
+    "does NOT install a project .env's DOCKER_HOST into process.env, matching Go's Docker client being frozen at binary startup, before godotenv.Load ever runs",
     () => {
       delete process.env[DOCKER_HOST_KEY];
       const workdir = tempRoot.current;
@@ -49,7 +53,7 @@ describe("legacyLoadLocalProjectContext", () => {
 
       return legacyLoadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
         Effect.map(() => {
-          expect(process.env[DOCKER_HOST_KEY]).toBe("tcp://project-dotenv-host:2375");
+          expect(process.env[DOCKER_HOST_KEY]).toBeUndefined();
         }),
         Effect.provide(BunServices.layer),
       );
@@ -57,7 +61,7 @@ describe("legacyLoadLocalProjectContext", () => {
   );
 
   it.effect(
-    "never overrides an already-set DOCKER_HOST, matching godotenv.Load's shell-env-wins semantics",
+    "leaves an already-set shell DOCKER_HOST untouched regardless of a conflicting project .env value",
     () => {
       process.env[DOCKER_HOST_KEY] = "tcp://real-shell-host:2375";
       const workdir = tempRoot.current;

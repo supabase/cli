@@ -1,6 +1,6 @@
 /**
  * GoTrue/Auth env + container spec builder — port of Go's "Start GoTrue"
- * block (`apps/cli-go/internal/start/start.go:629-851`) and its
+ * block (formerly `apps/cli-go/internal/start/start.go:629-851`) and its
  * `buildGotrueEnv`/`appendGotruePasskeyEnv`/`appendGotrueExternalProviderEnv`/
  * `formatMapForEnvConfig` helpers (`start.go:1305-1462`). Gated in Go by
  * `config.auth.enabled` and `!isContainerExcluded(config.auth.image,
@@ -17,8 +17,10 @@
  * signing keys, SMTP/Mailpit fallback, mailer template/notification URLs, the
  * fixed-priority SMS provider switch, CAPTCHA, the six auth hooks, MFA phone
  * extras, passkey/WebAuthn, external OAuth providers, Web3, OAuth server).
- * Ported test: `apps/cli-go/internal/start/start_test.go:440 TestBuildGotrueEnv`
+ * Ported test: former `apps/cli-go/internal/start/start_test.go:440 TestBuildGotrueEnv`
  * (+`:566 TestFormatMapForEnvConfig`), see `gotrue.service.unit.test.ts`.
+ * `internal/start` (source and tests) was deleted outright as unreachable in
+ * CLI-1966; last present at commit a253ccba25c21356ccd33044c4474aecb77d1ae4.
  *
  * `@supabase/config` schema gaps this module works around (all pre-existing,
  * not introduced here — see each input field's own doc comment):
@@ -60,7 +62,7 @@ import {
 } from "../../../shared/legacy-go-duration.ts";
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import type { LegacyResolvedAuthEmail } from "../../../shared/legacy-local-config-values.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,

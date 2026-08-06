@@ -8,7 +8,7 @@ import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
-import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
+import type { LegacyDeclarativeOutput } from "../../../shared/legacy-pgdelta.ts";
 import {
   legacyDeclarativeSchemaWrittenLine,
   legacyWriteDeclarativeSchemas,

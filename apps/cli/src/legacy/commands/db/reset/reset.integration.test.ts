@@ -38,6 +38,8 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -467,6 +469,18 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
+  // Never actually invoked by the tests in this file — the pg-delta migrations-catalog
+  // warmup `legacyStartSetupLocalDatabase` reaches on a PG15 recreate (`db-setup.ts`) gates
+  // on `[experimental.pgdelta] enabled`/`SUPABASE_EXPERIMENTAL_PG_DELTA`, neither of which
+  // any config here sets — present only to satisfy the effect's widened requirements, same
+  // as `db push`'s own integration tests (`push.integration.test.ts`).
+  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
+  });
+  const pgDeltaSslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -483,6 +497,8 @@ function setup(
       Layer.provide(child.layer),
       Layer.provide(mockProcessControl().layer),
     ),
+    edgeRuntime,
+    pgDeltaSslProbe,
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     // The remote-reset confirmation is answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
