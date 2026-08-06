@@ -5,6 +5,7 @@ import type {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
 } from "../config/legacy-project-ref.errors.ts";
+import type { LegacyProfileLoadError } from "./legacy-profile-load.ts";
 import type { LegacyProjectRefReadError } from "./legacy-temp-paths.ts";
 import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type {
@@ -46,7 +47,10 @@ export type LegacyDbConfigError =
   // auth-required / invalid-token / api-config errors surface from the resolver
   // effect — not a layer-build channel. `--linked --password` skips `make`
   // entirely and never raises these (Go's `NewDbConfigWithPassword`).
-  | LegacyPlatformApiFactoryError;
+  | LegacyPlatformApiFactoryError
+  // The lazy linked runtime rebuilds `legacyCliConfigLayer`, whose strict
+  // profile resolution can fail inside the resolver effect the same way.
+  | LegacyProfileLoadError;
 
 // The `--linked` path builds a lazy Management API runtime (so `--local` /
 // `--db-url` never resolve an access token) and provides ALL of its own
