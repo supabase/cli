@@ -166,8 +166,20 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
   const result: Array<string> = [];
   for (let index = 0; index < sorted.length; index++) {
     const name = sorted[index]!;
-    const stat = yield* fs.stat(path.join(migrationsDir, name)).pipe(Effect.option);
-    if (Option.isSome(stat) && stat.value.type === "Directory") continue;
+    const entryPath = path.join(migrationsDir, name);
+    // Go's `os.ReadDir`/`DirEntry.IsDir()` (`pkg/migration/list.go:34-43`) classifies a
+    // directory entry from its own type without following symlinks (verified empirically:
+    // `DirEntry.IsDir()` reports `false` for a `.sql` symlink whose target is a directory) —
+    // so a symlinked migration is never skipped as a directory in Go, only later, when
+    // `ApplyMigrations` fails to read it as a regular file. `fs.stat` below follows
+    // symlinks, so it would misclassify a symlink-to-directory as a plain directory and
+    // silently skip it here instead. Check `readLink` (which only succeeds for a symlink)
+    // first and skip the directory check entirely for symlinks, matching Go's `IsDir()`.
+    const isSymlink = Option.isSome(yield* fs.readLink(entryPath).pipe(Effect.option));
+    if (!isSymlink) {
+      const stat = yield* fs.stat(entryPath).pipe(Effect.option);
+      if (Option.isSome(stat) && stat.value.type === "Directory") continue;
+    }
     if (index === 0) {
       const init = INIT_SCHEMA_PATTERN.exec(name);
       if (init !== null && Number(init[1]) < INIT_SCHEMA_CUTOFF) {
@@ -185,7 +197,7 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
       );
       continue;
     }
-    result.push(path.join(migrationsDir, name));
+    result.push(entryPath);
   }
   return result as ReadonlyArray<string>;
 });

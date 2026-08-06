@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -183,6 +183,35 @@ describe("legacyListLocalMigrations", () => {
           }),
         ),
       ) as Effect.Effect<unknown>;
+    },
+  );
+
+  it.effect(
+    "includes a validly-named .sql symlink to a directory, matching Go's IsDir() (no follow)",
+    () => {
+      // Go's `os.ReadDir`/`DirEntry.IsDir()` (`pkg/migration/list.go:34-43`) classifies a
+      // directory entry from its own type without following symlinks, so a `.sql` symlink
+      // whose target is a directory is NOT skipped as a directory — it is only ever dropped
+      // later, if something actually tries to read it as a file. A naive `fs.stat`-based
+      // directory check (which follows symlinks) would misclassify it and silently skip it.
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const targetDir = join(dir, "outside-target");
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
+      symlinkSync(targetDir, join(migrationsDir, "20240102000000_link.sql"));
+      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
+        Effect.tap((paths) =>
+          Effect.sync(() => {
+            expect(paths.map((p) => p.split("/").pop())).toEqual([
+              "20240101120000_create.sql",
+              "20240102000000_link.sql",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
     },
   );
 
