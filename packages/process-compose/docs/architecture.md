@@ -223,9 +223,10 @@ optional timeout (default 5 seconds), plus `RemovePath` for filesystem cleanup. 
 receive the managed child's sanitized environment, without the supervisor self-dispatch protocol
 variables. The supervisor rejects a malformed decoded cleanup contract before spawning the child,
 while individual execution failures remain best-effort. Callers must choose idempotent commands
-because owner-loss signals can race. `RunCommand` actions execute synchronously and therefore
-serialize; callers that configure several commands must budget for an aggregate duration up to the
-sum of their individual timeouts. Filesystem retry delays may overlap command execution.
+because owner-loss signals can race. `RunCommand` actions execute serially, so their aggregate
+duration can approach the sum of their individual timeouts. Each command runs in its own process
+group on Unix, while Windows uses `taskkill /T`; a timeout therefore terminates the command tree
+rather than only its root. Filesystem retry delays may overlap command execution.
 
 ## Supervisor runtime
 
