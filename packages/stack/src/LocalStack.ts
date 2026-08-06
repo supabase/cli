@@ -669,10 +669,6 @@ export const localStackLayer = (
             disposeOnce().pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
-      const cleanupOnStartupFailure = <A, E, R>(
-        effect: Effect.Effect<A, E, R>,
-      ): Effect.Effect<A, E, R> => effect.pipe(Effect.onError(() => disposeOnce()));
-
       yield* Effect.addFinalizer(disposeOnce);
 
       const activateService = (name: ServiceName) =>
@@ -701,12 +697,14 @@ export const localStackLayer = (
 
       const stack = {
         getInfo: () => Effect.succeed(info),
-        start: () =>
-          Effect.gen(function* () {
+        start: () => {
+          let serviceStartupBegan = false;
+          return Effect.gen(function* () {
             yield* requireMutable("start");
             yield* Ref.set(phaseRef, "starting");
             const runtime = yield* ensureRuntime;
             yield* configureFunctions(config);
+            serviceStartupBegan = true;
 
             if (config.startupMode === "lazy") {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
@@ -751,8 +749,9 @@ export const localStackLayer = (
           }).pipe(
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
             withLifecycleLock,
-            cleanupOnStartupFailure,
-          ),
+            Effect.onError(() => (serviceStartupBegan ? disposeOnce() : Effect.void)),
+          );
+        },
         stop: () =>
           Effect.gen(function* () {
             if (disposed) {
