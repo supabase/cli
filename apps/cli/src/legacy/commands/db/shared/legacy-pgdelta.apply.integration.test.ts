@@ -165,13 +165,56 @@ describe("legacyApplyDeclarativePgDelta", () => {
   });
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when stdout is syntactically valid but non-object JSON",
+    "fails with a normal status-failure summary (not a parse error) when stdout is a top-level JSON null",
     () => {
-      // A configured or future pg-delta version emitting `null`/an array is valid JSON, so a
-      // bare `JSON.parse(...) as LegacyPgDeltaApplyResult` cast would let `parsed.status` throw
-      // an unhandled TypeError instead of failing typed.
+      // Go's `json.Unmarshal([]byte("null"), &result)` into the zero-valued (non-pointer)
+      // `ApplyResult` struct is a no-op that returns no error (verified empirically) — Go falls
+      // through to the normal `result.Status != "success"` branch and prints the usual
+      // failed-apply summary with every counter at its zero value, rather than treating `null`
+      // as a parse failure. `legacyApplyDeclarativePgDelta` must normalize `null` to `{}` before
+      // its own structural guard, matching that behavior (review: PRRT_kwDOErm0O86W8ZYo).
       const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({ stdout: "null" });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toBe(
+          "pg-delta declarative apply failed with status: ",
+        );
+        expect((failError(exit) as { message: string }).message).not.toContain(
+          "failed to parse pg-delta apply output",
+        );
+        expect(out.stderrText).toContain('pg-delta apply returned status "".');
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when stdout is syntactically valid but non-object, non-null JSON",
+    () => {
+      // Unlike `null` (see the sibling test above), Go's `json.Unmarshal` genuinely rejects an
+      // array/string/number/bool payload for a struct destination with an UnmarshalTypeError —
+      // so a bare `JSON.parse(...) as LegacyPgDeltaApplyResult` cast would let `parsed.status`
+      // throw an unhandled TypeError instead of failing typed.
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({ stdout: "42" });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

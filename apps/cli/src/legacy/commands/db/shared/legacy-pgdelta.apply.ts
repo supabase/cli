@@ -280,9 +280,15 @@ function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
 /**
  * Structural guard for Go's `ApplyResult` JSON shape, applied to an untrusted
  * `JSON.parse` of the pg-delta subprocess's stdout. A syntactically valid but non-object
- * payload (`null`, an array, a bare string/number — e.g. a future pg-delta release that
- * changes its output shape) must fail typed as {@link LegacyDeclarativeApplyError}, not
- * crash `parsed.status` with an unhandled `TypeError`.
+ * payload — an array, a bare string/number/bool (e.g. a future pg-delta release that
+ * changes its output shape) — must fail typed as {@link LegacyDeclarativeApplyError}, not
+ * crash `parsed.status` with an unhandled `TypeError`. A top-level `null` is NOT one of
+ * these: `json.Unmarshal([]byte("null"), &result)` into Go's zero-valued (non-pointer)
+ * `ApplyResult` struct is a no-op that returns no error (verified empirically), unlike the
+ * array/string/number/bool cases, which genuinely fail with an `UnmarshalTypeError` — so the
+ * caller normalizes a top-level `null` to `{}` before this guard ever sees it (review:
+ * PRRT_kwDOErm0O86W8ZYo), and this function only needs to reject the cases Go actually
+ * rejects.
  *
  * Every field `ApplyResult` itself declares a type for is checked when present — Go's
  * `json.Unmarshal` rejects the whole payload with an `UnmarshalTypeError` the moment any of
@@ -857,10 +863,16 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
   const parsed = yield* Effect.try({
     try: () => {
       const raw: unknown = JSON.parse(result.stdout);
-      if (!legacyIsPgDeltaApplyResult(raw)) {
+      // Go's `json.Unmarshal` accepts a top-level JSON `null` for the non-pointer
+      // `ApplyResult` destination and leaves it zero-valued, with no error (verified
+      // empirically) — so a `null` payload must fall through to the normal
+      // `status !== "success"` failure path below, not be misclassified as a parse
+      // failure. See {@link legacyIsPgDeltaApplyResult}'s own doc comment.
+      const normalized: unknown = raw === null ? {} : raw;
+      if (!legacyIsPgDeltaApplyResult(normalized)) {
         throw new Error("pg-delta apply output was not a JSON object");
       }
-      return raw;
+      return normalized;
     },
     catch: (cause) =>
       new LegacyDeclarativeApplyError({
