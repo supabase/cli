@@ -14,15 +14,17 @@ export type {
   PostgresConfig,
   PostgrestConfig,
   RealtimeConfig,
+  ReadinessPolicy,
+  ReadyOptions,
   StackConfig,
   StorageConfig,
   StudioConfig,
   VectorConfig,
-} from "./StackBuilder.ts";
+} from "./StackConfig.ts";
 
 export type { ServiceName, VersionManifest } from "./versions.ts";
-export type { ServiceResolution } from "./resolve.ts";
+export type { ServiceResolution } from "./StackPreparation.ts";
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
-export type { ReadyOptions, StackHandle } from "./createStack.ts";
+export type { StackHandle } from "./createStack.ts";
 export type { FunctionsConfig, FunctionsRuntimeConfig } from "./functions.ts";
 export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";

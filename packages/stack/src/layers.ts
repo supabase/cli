@@ -6,7 +6,7 @@ import { FileSystem, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
-import type { DaemonConfigInput, PlatformFactory } from "./createStack.ts";
+import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
 import { DaemonMessageSchema } from "./DaemonProtocol.ts";
 import type { PortLease } from "./PortAllocator.ts";
@@ -23,7 +23,9 @@ import {
   StateManager,
   singleStackStateManagerPaths,
 } from "./StateManager.ts";
-import { StackBuilder, type ResolvedStackConfig } from "./StackBuilder.ts";
+import { StackBuilder } from "./StackBuilder.ts";
+import type { ResolvedDaemonConfig, ResolvedStackConfig } from "./StackConfig.ts";
+import type { DaemonConfigInput } from "./StackConfigResolver.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
 import {
@@ -108,13 +110,8 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 // Daemon-backed mode
 // ---------------------------------------------------------------------------
 
-export interface DaemonConfig extends ResolvedStackConfig {
-  readonly name: string;
-  readonly projectDir: string;
-}
-
 export const foregroundDaemonLayer = (
-  config: DaemonConfig,
+  config: ResolvedDaemonConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
 ): Layer.Layer<Stack | StateManager> => {

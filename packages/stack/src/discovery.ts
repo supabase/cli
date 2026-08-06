@@ -1,7 +1,7 @@
 import { Data, Duration, Effect } from "effect";
 import { FileSystem, Path } from "effect";
 import { dockerForceRemove } from "./cleanup.ts";
-import { defaultManagedStackName } from "./createStack.ts";
+import { defaultManagedStackName } from "./StackConfigResolver.ts";
 import {
   InvalidStackMetadataError,
   InvalidStackStateError,

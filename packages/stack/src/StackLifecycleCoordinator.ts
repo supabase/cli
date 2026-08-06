@@ -34,12 +34,13 @@ import {
   StackBuilder,
   validateResolvedConfig,
   versionsForConfig,
-  type ResolvedStackConfig,
 } from "./StackBuilder.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
 import { projectStackStates, type StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
-import { SERVICE_NAMES, type ServiceName } from "./versions.ts";
+import { SERVICE_NAMES } from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
 type LifecyclePhase =
   | "idle"

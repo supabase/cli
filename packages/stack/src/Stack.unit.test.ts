@@ -11,7 +11,7 @@ import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import { StackBuilder } from "./StackBuilder.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long";
@@ -44,6 +44,7 @@ const defaultConfig: ResolvedStackConfig = {
   projectDir: "/tmp/supabase-project",
   mode: "native",
   startupMode: "eager",
+  readiness: DEFAULT_STACK_READINESS_POLICY,
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
   apiPort: 54321,
