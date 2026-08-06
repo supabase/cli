@@ -107,4 +107,53 @@ describe("legacyCleanupStartSecrets", () => {
       rmSync(workdir, { recursive: true, force: true });
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.effect(
+    "refuses to delete outside the staging root when secretDirId contains path-traversal segments",
+    () => {
+      // `secretDirId` is a Docker label value read back off whatever containers matched the
+      // caller's project-label filter — external metadata, not something this process
+      // generated. Any container carrying that label (Docker doesn't scope who may set it) plus
+      // a crafted `LEGACY_CLI_SECRET_DIR_LABEL` containing `..` segments must never be able to
+      // walk `rm -rf` outside `start-secrets/` and onto an unrelated host directory.
+      const workdir = mkdtempSync(join(tmpdir(), "legacy-start-secrets-cleanup-"));
+      const canary = join(workdir, "important");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(canary, { recursive: true });
+        yield* fs.writeFileString(path.join(canary, "do-not-delete"), "canary");
+        yield* legacyCleanupStartSecrets(
+          [{ id: "abc123", name: "sad_turing", workdir: "", secretDirId: "../../important" }],
+          workdir,
+        );
+        expect(yield* fs.exists(canary)).toBe(true);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.effect(
+    "refuses to delete the whole staging root when both secretDirId and name are empty",
+    () => {
+      // Degenerate case: an empty `dirId` would otherwise resolve to the staging root itself
+      // (`<workdir>/supabase/.temp/start-secrets`) and wipe every project's staged secrets in
+      // one call, not just this one container's.
+      const workdir = mkdtempSync(join(tmpdir(), "legacy-start-secrets-cleanup-"));
+      const stagingRoot = join(workdir, "supabase", ".temp", "start-secrets");
+      const otherProjectSecretDir = join(stagingRoot, "supabase_kong_other");
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(otherProjectSecretDir, { recursive: true });
+        yield* fs.writeFileString(path.join(otherProjectSecretDir, "secret-0"), "kong-secret");
+        yield* legacyCleanupStartSecrets(
+          [{ id: "abc123", name: "", workdir: "", secretDirId: "" }],
+          workdir,
+        );
+        expect(yield* fs.exists(otherProjectSecretDir)).toBe(true);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 });

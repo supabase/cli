@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve, sep } from "node:path";
 
 import { Effect } from "effect";
 
@@ -53,6 +53,20 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * Kong/Postgres/Supavisor, and the shadow database before CLI-1956) is a
  * harmless no-op, and a real deletion error is not worth failing
  * `stop`/rollback over.
+ *
+ * `dirId` is a Docker label value read back off whatever containers matched
+ * the caller's label filter (`legacyListContainerIdsAndNames`) — external
+ * metadata, not something this function generated itself, so it cannot be
+ * trusted as a bare path segment. A container that matches the project-label
+ * filter (any container can carry that label; Docker doesn't scope who may
+ * set it) but carries a crafted `LEGACY_CLI_SECRET_DIR_LABEL` value containing
+ * `..` segments must never be able to walk the subsequent `rm -rf` outside
+ * `start-secrets/` and onto arbitrary host paths. Resolve the candidate and
+ * require it to be a direct child of the staging root before deleting it —
+ * same defence-in-depth shape as `bootstrap.templates.ts`'s identical guard
+ * against a GitHub-supplied path escaping its target directory. This also
+ * covers the degenerate case where `dirId` ends up empty (would otherwise
+ * resolve to the staging root itself and wipe every project's secrets).
  */
 export function legacyCleanupStartSecrets(
   containers: ReadonlyArray<LegacyContainerIdName>,
@@ -63,7 +77,12 @@ export function legacyCleanupStartSecrets(
       containers.map((container) => {
         const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
         const dirId = container.secretDirId.length > 0 ? container.secretDirId : container.name;
-        return rm(join(workdir, "supabase", ".temp", "start-secrets", dirId), {
+        const stagingRoot = resolve(workdir, "supabase", ".temp", "start-secrets");
+        const target = resolve(stagingRoot, dirId);
+        if (target === stagingRoot || !target.startsWith(stagingRoot + sep)) {
+          return Promise.resolve();
+        }
+        return rm(target, {
           recursive: true,
           force: true,
         });
