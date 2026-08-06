@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, symlinkSync } from "node:fs";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -152,6 +152,40 @@ describe("stack Functions runtime config", () => {
     });
 
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("rejects bundle paths that escape projectDir through a symlink", async () => {
+    const root = makeTempProject();
+    const outside = makeTempProject();
+    const bundle = makeBundle(root);
+    symlinkSync(
+      outside,
+      join(root, "linked-outside"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    await expect(
+      resolveConfig({
+        projectDir: root,
+        functions: {
+          ...bundle,
+          functions: [
+            {
+              ...bundle.functions[0]!,
+              entrypointPath: join(root, "linked-outside", "index.ts"),
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      detail: "Invalid Edge Functions bundle",
+    });
+
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(outside, { recursive: true, force: true }),
+    ]);
   });
 
   it("keeps placeholder mode when no functions are supplied", async () => {
