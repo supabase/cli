@@ -177,10 +177,23 @@ const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
  * ABOVE first, same as any other value — that consumes the trailing `B` before
  * base-0 parsing ever sees it (`"0x1B"→1`, not `27`), which is a genuine Go quirk
  * this port reproduces automatically by keeping the same two-step order, not a bug.
- * Known residual delta: Go's base-0 grammar also permits `_` digit separators
- * (e.g. `"1_048_576"`, verified empirically to equal `1048576`) — not reproduced
- * here as a realistic byte-size override would never use one; flagging so a future
- * parity sweep doesn't rediscover it.
+ * Go's base-0 grammar also permits `_` digit separators (e.g. `"1_048_576"`) — see
+ * {@link parseGoBaseZeroInt}'s own doc comment for the exact placement grammar.
+ */
+/**
+ * Go's underscore digit-separator grammar (`go.dev/ref/spec#Integer_literals`,
+ * reproduced by `strconv.ParseInt`'s base-0 mode, review CLI-1958): a SINGLE `_`
+ * may sit immediately after a base prefix (explicit `0x`/`0o`/`0b`, or the bare
+ * leading `"0"` of legacy octal) or between two digits of the same base — never
+ * doubled, never leading a plain (no-prefix) decimal literal, and never trailing.
+ * Verified empirically against the real `strconv.ParseInt(s, 0, 64)`:
+ * `"1_048_576"→1048576`, `"0x_100000"/"0x10_0000"→1048576`,
+ * `"0o_40000"/"0o4_0000"→16384`, `"0b_100000000000000000000"→1048576`,
+ * `"0_755"/"07_55"→493` (legacy octal, underscore right after the leading `"0"`
+ * or between later octal digits); while `"_1048576"`, `"1048576_"`,
+ * `"1__048576"`, `"0x100000_"`, and `"0_x100000"` (underscore splitting the
+ * leading `"0"` from the `"x"` — not a real prefix, so it's parsed as legacy
+ * octal digits `"x100000"`) all fail, matching Go exactly.
  */
 const parseGoBaseZeroInt = (value: string): number | undefined => {
   const negative = value.startsWith("-");
@@ -206,11 +219,17 @@ const parseGoBaseZeroInt = (value: string): number | undefined => {
   }
   if (digits.length === 0) return undefined;
 
-  const validDigits =
-    base === 16 ? /^[0-9a-fA-F]+$/ : base === 8 ? /^[0-7]+$/ : base === 2 ? /^[01]+$/ : /^[0-9]+$/;
-  if (!validDigits.test(digits)) return undefined;
+  // Only a real base prefix (or the legacy-octal leading "0") may be followed
+  // immediately by an underscore; a plain decimal literal has no prefix to
+  // follow, so a leading underscore there is always invalid (matches Go).
+  const hadPrefix = base !== 10;
+  const digitClass = base === 16 ? "0-9a-fA-F" : base === 8 ? "0-7" : base === 2 ? "01" : "0-9";
+  const validPattern = new RegExp(
+    `^${hadPrefix ? "_?" : ""}[${digitClass}](?:_?[${digitClass}])*$`,
+  );
+  if (!validPattern.test(digits)) return undefined;
 
-  const n = Number.parseInt(digits, base);
+  const n = Number.parseInt(digits.replace(/_/g, ""), base);
   return negative ? -n : n;
 };
 

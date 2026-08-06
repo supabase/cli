@@ -704,6 +704,103 @@ describe("legacyApplySchemaFiles", () => {
   );
 
   it.effect(
+    "accepts underscore digit separators in a decimal SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt base-0 underscore-literal parity, review CLI-1958)",
+    () => {
+      // Go's base-0 integer grammar (`go.dev/ref/spec#Integer_literals`, reproduced
+      // by `strconv.ParseInt`) permits a single `_` between digits: "5_120" is the
+      // same 5120 (5KiB) byte count as the hex-literal test above's "0x1400" —
+      // verified empirically against the real `strconv.ParseInt("5_120", 0, 64)`.
+      // A parser that rejects underscores outright would silently fall back to the
+      // 256KiB default instead, so a statement between 5120 and 262144 bytes would
+      // apply in TS but Go would already have failed with "bufio.Scanner: token too
+      // long" at 5121 bytes.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-underscore-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "5_120";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const msg = JSON.stringify(exit.cause);
+          expect(msg).toContain("bufio.Scanner: token too long");
+          // 5KiB (5_120 bytes), not the 256KiB hardcoded fallback an
+          // underscore-rejecting parser would have silently used instead.
+          expect(msg).toContain(
+            "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
+          );
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "rejects an invalid underscore placement in SUPABASE_SCANNER_BUFFER_SIZE, unlike a valid digit separator (Go strconv.ParseInt underscore-grammar parity, review CLI-1958)",
+    () => {
+      // Go only permits a SINGLE underscore immediately after a base prefix or
+      // between two digits — never leading a plain (no-prefix) decimal literal,
+      // never doubled, never trailing. "_5120" (leading underscore, no prefix) is
+      // invalid in real Go (`strconv.ParseInt("_5120", 0, 64)` errors), so it falls
+      // back to the same 256KiB default as a genuinely unset/unparseable value —
+      // verified empirically against the real Go `strconv.ParseInt`.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-bad-underscore-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      const file = join(dir, "supabase", "big.sql");
+      writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
+      const { session } = fakeSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "_5120";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const exit = yield* legacyApplySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["supabase/big.sql"],
+          (message, suggestion) =>
+            new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+        ).pipe(Effect.exit);
+        // The 5116-byte statement fits comfortably under the 256KiB default
+        // fallback, so an invalid underscore placement must NOT fail the apply.
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
     "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is set only in the project env (Go loadNestedEnv parity)",
     () => {
       // Go's `loadNestedEnv` (`pkg/config/config.go:1220`) `os.Setenv`s every
