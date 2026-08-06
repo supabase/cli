@@ -368,6 +368,16 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       connType === "linked" && linkedRef !== undefined
         ? yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef)
         : yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+    // Go's `flags.LoadConfig` prints this unconditionally as part of the config load
+    // itself, the moment a `[remotes.<ref>]` block matches (`pkg/config/config.go:605`)
+    // — before any provisioning happens. `legacy-db-config.toml-read.ts` already surfaces
+    // the matched name as `appliedRemote`; every other native command that threads a
+    // linked ref through this same reader (`db reset`, `db push`, `config push`, `secrets
+    // set`, `storage {mv,ls,rm,cp}`) already prints it right after the load — this one
+    // (and `pull.handler.ts`'s equivalent) had dropped it.
+    if (cfg.appliedRemote !== undefined) {
+      yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
+    }
     const ctx: LegacyPgDeltaContext = {
       projectId: Option.getOrElse(cliConfig.projectId, () => ""),
       cwd: cliConfig.workdir,
