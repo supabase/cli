@@ -9,6 +9,7 @@ import {
 } from "./supervisor-protocol.ts";
 
 type RemovePathAction = Extract<ExternalCleanupAction, { readonly _tag: "RemovePath" }>;
+type RunCommandAction = Extract<ExternalCleanupAction, { readonly _tag: "RunCommand" }>;
 
 interface SupervisorRuntimeConfig {
   readonly command: string;
@@ -233,14 +234,10 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
     }
   };
 
-  const killChildTree = (signal: ChildProcess.Signal): void => {
-    if (child.pid == null) {
-      return;
-    }
-
+  const killProcessTree = (pid: number, signal: ChildProcess.Signal): void => {
     if (isWindows) {
       try {
-        execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
           stdio: "ignore",
           timeout: 5_000,
         });
@@ -250,16 +247,48 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
     }
 
     try {
-      process.kill(-child.pid, signal);
+      process.kill(-pid, signal);
       return;
     } catch {}
 
     try {
-      process.kill(child.pid, signal);
+      process.kill(pid, signal);
     } catch {}
   };
 
-  const runCleanup = () => {
+  const killChildTree = (signal: ChildProcess.Signal): void => {
+    if (child.pid != null) {
+      killProcessTree(child.pid, signal);
+    }
+  };
+
+  const runCleanupCommand = (action: RunCommandAction): Promise<void> =>
+    new Promise((resolve) => {
+      const cleanupChild = spawn(action.executable, action.args, {
+        detached: !isWindows,
+        env: childEnv,
+        stdio: "ignore",
+      });
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = () => {
+        if (timeoutId != null) {
+          clearTimeout(timeoutId);
+        }
+        resolve();
+      };
+
+      cleanupChild.once("error", finish);
+      cleanupChild.once("exit", finish);
+      timeoutId = setTimeout(() => {
+        if (cleanupChild.pid != null) {
+          killProcessTree(cleanupChild.pid, "SIGKILL");
+        }
+        finish();
+      }, action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS);
+    });
+
+  const runCleanup = async (): Promise<void> => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const removePathWithRetry = async (action: RemovePathAction): Promise<void> => {
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -275,25 +304,26 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
       }
     };
 
-    // `RunCommand` uses the synchronous child-process API, so command actions execute serially
-    // while `RemovePath` retry delays may overlap. Each command has its own timeout; the aggregate
-    // cleanup duration can therefore approach the sum of all command timeouts.
-    return Promise.all(
-      (config.cleanup ?? []).map(async (action) => {
+    const runCommands = async () => {
+      for (const action of config.cleanup ?? []) {
+        if (action._tag !== "RunCommand") {
+          continue;
+        }
+
         try {
-          if (action._tag === "RunCommand") {
-            execFileSync(action.executable, action.args, {
-              env: childEnv,
-              stdio: "ignore",
-              timeout: action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS,
-              killSignal: "SIGKILL",
-            });
-          } else if (action._tag === "RemovePath") {
-            await removePathWithRetry(action);
-          }
+          await runCleanupCommand(action);
         } catch {}
-      }),
-    ).then(() => undefined);
+      }
+    };
+
+    // Commands serialize so their worst-case timeouts add together. Each runs in its own Unix
+    // process group (or uses taskkill on Windows), allowing a timeout to terminate its whole tree.
+    await Promise.all([
+      runCommands(),
+      ...(config.cleanup ?? []).map((action) =>
+        action._tag === "RemovePath" ? removePathWithRetry(action) : Promise.resolve(),
+      ),
+    ]);
   };
 
   const shutdown = async (signal: ChildProcess.Signal): Promise<void> => {

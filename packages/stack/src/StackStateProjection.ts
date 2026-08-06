@@ -1,5 +1,4 @@
 import type { ServiceState as RawServiceState } from "@supabase/process-compose";
-import { Equal } from "effect";
 import {
   StackServiceState,
   type StackServiceStatus,
@@ -83,11 +82,4 @@ export function projectStackState(
   catalog: StackServiceProjectionCatalog,
 ): StackServiceState | undefined {
   return projectStackStates(rawStates, catalog).find((state) => state.name === name);
-}
-
-export function changedProjectedStates(
-  previous: ReadonlyMap<string, StackServiceState>,
-  next: ReadonlyArray<StackServiceState>,
-): ReadonlyArray<StackServiceState> {
-  return next.filter((state) => !Equal.equals(previous.get(state.name), state));
 }
