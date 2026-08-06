@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { Option } from "effect";
 
-import { buildLegacyPgProveArgs } from "./db.pg-prove-args.ts";
+import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
 
 describe("buildLegacyPgProveArgs", () => {
   test("defaults to <workdir>/supabase/tests when no paths are given", () => {

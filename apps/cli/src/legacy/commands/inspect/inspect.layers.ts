@@ -28,7 +28,7 @@ const dbConfig = legacyDbConfigLayer.pipe(
  * The services every `inspect` leaf shares, minus the command-runtime identity:
  * the DB-config resolver, the Postgres connection, the CLI config (for the
  * `--workdir` config rules `inspect report` reads), and telemetry state. Mirrors
- * `test/test.layers.ts` minus the docker layer.
+ * `legacy/shared/legacy-test-db.layers.ts` minus the docker layer.
  *
  * The Management API stack is NOT merged here — it resolves an access token
  * eagerly, which would break the auth-free `--local` / `--db-url` paths. The

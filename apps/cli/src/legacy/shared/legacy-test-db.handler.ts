@@ -1,29 +1,29 @@
 import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
-import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyTelemetryState } from "../telemetry/legacy-telemetry-state.service.ts";
+import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
+import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
+import { LegacyDbConnection } from "./legacy-db-connection.service.ts";
+import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
+import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
+import { resolveLegacyDbTargetFlags } from "./legacy-db-target-flags.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
-} from "../../../../shared/legacy/global-flags.ts";
-import { Output } from "../../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import type { LegacyTestDbFlags } from "./db.command.ts";
+} from "../../shared/legacy/global-flags.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import type { LegacyTestDbFlags } from "./legacy-test-db.command-handler.ts";
 import {
   LegacyTestDbEnablePgtapError,
   LegacyTestDbMutuallyExclusiveFlagsError,
   LegacyTestDbRunError,
-} from "./db.errors.ts";
-import { buildLegacyPgProveArgs } from "./db.pg-prove-args.ts";
+} from "./legacy-test-db.errors.ts";
+import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
 
 // Go: `apps/cli-go/internal/db/test/test.go:24-25`.
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
@@ -61,7 +61,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
 
   yield* Effect.gen(function* () {
     // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local")
-    // (`apps/cli-go/cmd/db.go:485`). Selection is keyed off flag PRESENCE (cobra's
+    // (`apps/cli-go/cmd/db.go:740`). Selection is keyed off flag PRESENCE (cobra's
     // `Changed`), not boolean value — `--linked=false` and `--no-linked` both count
     // as explicitly setting the `linked` flag (`db_url.go:46-63`).
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
@@ -101,7 +101,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     // Network selection mirrors Go's DockerRunOnceWithConfig: a non-empty
     // `--network-id` overrides everything (even host mode); otherwise local uses
     // the generated `supabase_network_<project_id>` network and remote uses host
-    // networking (`apps/cli-go/internal/utils/docker.go:267-271`, `test.go:79-87`).
+    // networking (`apps/cli-go/internal/utils/docker.go:379-384`, `test.go:79-87`).
     const networkId = Option.getOrUndefined(networkIdFlag);
     const network =
       networkId !== undefined && networkId.length > 0
@@ -163,7 +163,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
 
         // Bitbucket Pipelines rejects `--security-opt`, so Go clears
         // `hostConfig.SecurityOpt` when `BITBUCKET_CLONE_DIR` is set
-        // (`apps/cli-go/internal/utils/docker.go:288-293`). Match that exactly:
+        // (`apps/cli-go/internal/utils/docker.go:401-405`). Match that exactly:
         // omit the option in Bitbucket CI, where it would abort container creation.
         const inBitbucket = (process.env["BITBUCKET_CLONE_DIR"] ?? "") !== "";
         // Go adds `host.docker.internal:host-gateway` to every container's
