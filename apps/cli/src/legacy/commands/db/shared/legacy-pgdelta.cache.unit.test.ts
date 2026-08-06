@@ -8,6 +8,9 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
 import {
   type LegacySetupInputs,
   legacyBaselineCatalogFileName,
@@ -25,6 +28,7 @@ import {
   legacyResolveDeclarativeCatalogPath,
   legacySanitizedCatalogPrefix,
   legacySetupInputsToken,
+  legacyTryCacheMigrationsCatalog,
   legacyWriteMigrationCatalogSnapshot,
 } from "./legacy-pgdelta.cache.ts";
 
@@ -417,6 +421,71 @@ describe("legacyWriteMigrationCatalogSnapshot + cleanup", () => {
       }),
     ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
   });
+});
+
+describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-1958)", () => {
+  // `it.live` (not `it.effect`): the mocked export below uses a real `Effect.sleep`
+  // to create a measurable time gap, which needs the real wall clock, not
+  // `it.effect`'s virtual `TestClock` (which never auto-advances and would hang).
+  it.live(
+    "reads the clock AFTER the pg-delta export resolves, matching Go's WriteMigrationCatalogSnapshot ordering",
+    () => {
+      // Go's `TryCacheMigrationsCatalog` (`pgcache/cache.go:71-91`) resolves `hash`
+      // and `snapshot` FIRST and only THEN calls `WriteMigrationCatalogSnapshot`,
+      // which itself reads `time.Now().UTC()` (`pgcache/cache.go:151-163`) — i.e.
+      // Go's clock read happens LAST, right before the file write. The mocked
+      // edge-runtime export below sleeps for a real, measurable interval before
+      // resolving; the written snapshot's embedded timestamp must reflect a moment
+      // AFTER that sleep, proving the clock was read after the export — not
+      // captured up front by a caller before this function even started (the
+      // pre-fix bug).
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      // Mirrors `legacyPgDeltaTempPath` (`<workdir>/supabase/.temp/pgdelta`).
+      const tempDir = join(dir, "supabase", ".temp", "pgdelta");
+      const beforeCallMillis = Date.now();
+      const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
+        run: () =>
+          Effect.gen(function* () {
+            yield* Effect.sleep("30 millis");
+            return { stdout: "{}", stderr: "" };
+          }),
+      });
+      const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+        requireSsl: () => Effect.succeed(false),
+        requireSslForHost: () => Effect.succeed(false),
+      });
+      const ctx: LegacyPgDeltaContext = {
+        projectId: "test",
+        cwd: dir,
+        npmVersion: undefined,
+        denoVersion: 1,
+      };
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* legacyTryCacheMigrationsCatalog(fs, path, ctx, {
+          enabled: true,
+          targetUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+          conn: { host: "127.0.0.1", port: 5432, user: "postgres", database: "postgres" },
+          isLocal: true,
+          migrationsDir,
+        });
+        const names = (yield* fs.readDirectory(tempDir)).filter((n) =>
+          n.startsWith("catalog-local-migrations-"),
+        );
+        expect(names.length).toBe(1);
+        const match = /-(\d+)\.json$/.exec(names[0]!);
+        expect(match).not.toBeNull();
+        const embeddedMillis = Number(match![1]);
+        expect(embeddedMillis).toBeGreaterThanOrEqual(beforeCallMillis + 25);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer, edge, sslProbe)),
+        Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+      );
+    },
+  );
 });
 
 describe("legacyCleanupOldMigrationCatalogs", () => {

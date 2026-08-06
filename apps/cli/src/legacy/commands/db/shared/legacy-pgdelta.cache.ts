@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Effect, type FileSystem, Option, type Path } from "effect";
+import { Clock, Effect, type FileSystem, Option, type Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
@@ -398,6 +398,20 @@ export const legacyWriteMigrationCatalogSnapshot = Effect.fnUntraced(function* (
  * `diff/pgdelta.go` `ExportCatalogPgDelta`) rather than porting a second copy,
  * so this can't reintroduce the `/workspace` mount bug `pgcache/cache.go` had
  * (supabase/cli#5921).
+ *
+ * The snapshot's timestamp is read from `Clock` HERE — after `legacyHashMigrations`
+ * and `legacyExportCatalogPgDelta` (the network round-trip) have both resolved,
+ * immediately before the write — never accepted as a caller-supplied parameter.
+ * This mirrors Go's own call order exactly: `TryCacheMigrationsCatalog`
+ * (`pgcache/cache.go:71-91`) resolves `hash` and `snapshot` FIRST, and only THEN
+ * calls `WriteMigrationCatalogSnapshot`, which itself reads `time.Now().UTC()`
+ * (`pgcache/cache.go:151-163`) — i.e. Go's clock read happens LAST, right before
+ * the file write, not before the export. A caller capturing the timestamp before
+ * calling this function (review CLI-1958) would race a concurrent cache write
+ * from another process: Go would order the two snapshots by real write-time, but
+ * the early-captured timestamp could sort the wrong one as "latest" during
+ * catalog resolution/retention (`legacyResolveMigrationCatalogPath`,
+ * `legacyCleanupOldMigrationCatalogs`).
  */
 export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -414,7 +428,6 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
     };
     readonly isLocal: boolean;
     readonly migrationsDir: string;
-    readonly nowMillis: number;
   },
 ) {
   if (!params.enabled) return;
@@ -424,6 +437,7 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
     targetRef: params.targetUrl,
     role: "postgres",
   });
+  const nowMillis = yield* Clock.currentTimeMillis;
   yield* legacyWriteMigrationCatalogSnapshot(
     fs,
     path,
@@ -431,6 +445,6 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
     prefix,
     hash,
     snapshot,
-    params.nowMillis,
+    nowMillis,
   );
 });

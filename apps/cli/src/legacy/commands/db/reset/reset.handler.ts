@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
@@ -446,7 +446,6 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           conn: cfg.conn,
           isLocal: false,
           migrationsDir,
-          nowMillis: yield* Clock.currentTimeMillis,
         }).pipe(
           Effect.catch((error) =>
             output.raw(
