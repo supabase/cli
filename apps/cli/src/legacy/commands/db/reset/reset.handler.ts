@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Option, Path } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
@@ -31,7 +32,8 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
-import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
+import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
+import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
 import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyGetPendingSeeds, legacySeedData } from "../../../shared/legacy-seed-ops.ts";
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
@@ -110,6 +112,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* LegacyDnsResolverFlag;
 
@@ -310,8 +313,15 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       // relaxed, or refactored to stop validating.
       yield* legacyCheckDbToml(fs, path, workdir);
 
-      // AssertSupabaseDbIsRunning — error if the local db container is down.
-      const running = yield* seam.isDbRunning();
+      // AssertSupabaseDbIsRunning — error if the local db container is down. Native TS,
+      // hoisted out of the seam by CLI-1954 (see `legacyIsLocalDbRunning`'s own header).
+      const running = yield* legacyIsLocalDbRunning(
+        spawner,
+        fs,
+        path,
+        workdir,
+        Option.getOrUndefined(cliConfig.projectId),
+      );
       if (!running) {
         return yield* Effect.fail(
           new LegacyDbResetNotRunningError({

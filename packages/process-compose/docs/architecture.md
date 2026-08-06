@@ -40,7 +40,7 @@ construct its layer from a validated `ResolvedGraph`, a `ChildProcessSpawner` Ad
 
 - executable, arguments, environment, and working directory;
 - dependencies and a dependency wait timeout;
-- optional HTTP, TCP, or exec health check;
+- optional HTTP, TCP, or exec health check with separate startup and liveness failure thresholds;
 - shutdown signal and grace period;
 - restart policy and restart budget;
 - `started` and `healthy` lifecycle hooks;
@@ -98,6 +98,10 @@ service maintained, and `stopped` records an explicit stop. Desired state is ind
 intermediate observed states and is what prevents an explicit stop from being undone by restart
 policy.
 
+`pid` identifies only a currently live process. Process exit, supervisory termination, hook
+failure, restart, and forced shutdown clear it. A health-triggered termination does not fabricate
+an `exitCode`; the code remains `null` unless the process itself reports an exit.
+
 `ServiceState` extends `Data.Class`, so Effect's `Equal.equals` can compare values structurally. It
 does not make two separately allocated objects equal under JavaScript `===`, and
 `SubscriptionRef.set` is not itself a distinct-update filter. Callers that want to suppress
@@ -127,7 +131,8 @@ For each requested definition, `Orchestrator` runs this sequence:
 9. Stream stdout and stderr into `LogBuffer`.
 10. Run the health loop, or run `healthy` hooks immediately when no health check exists, then
     publish `Healthy`.
-11. Race process exit against an unhealthy-restart request and apply restart policy.
+11. Race process exit against unhealthy or hook failure, finalize the child, and apply restart
+    policy to process-exit and unhealthy causes.
 
 The service keeps the same state stream across restart generations. Restart backoff is
 `min(30 seconds, 2^(restartCount - 1))`.
@@ -140,7 +145,8 @@ declaration order. Each hook has a timeout (default: 30 seconds) and either:
 - `fail`: publish `HookFailed` and stop running later hooks for that trigger;
 - `ignore`: append a diagnostic log and continue.
 
-The supplied logger writes tagged stdout/stderr lines into the service's normal log stream.
+The supplied logger writes tagged stdout/stderr lines into the service's normal log stream. A
+failing hook finalizes its process generation before publishing terminal `Failed` state.
 
 ## Health and readiness
 
@@ -151,17 +157,25 @@ The supplied logger writes tagged stdout/stderr lines into the service's normal 
 - exec: successful for exit code `0`.
 
 After `initialDelaySeconds`, probes repeat every `periodSeconds`. Each attempt is bounded by
-`timeoutSeconds`; consecutive success and failure counters reset each other. The current
-implementation calls `onHealthy` after `successThreshold`, and calls `onUnhealthy` after
-`failureThreshold` only after that same process generation has first become healthy. Consequently,
-initial probe failures leave a service in `Running` rather than publishing `Unhealthy`; callers
-must not treat the current generic `waitReady` Interface as a startup deadline.
+`timeoutSeconds`; consecutive success and failure counters reset each other. Before a process
+generation has ever become healthy, `startupFailureThreshold` controls when it becomes
+`Unhealthy`. It defaults to `failureThreshold` for compatibility. After the first healthy result,
+all later failures use `failureThreshold`, including after an unhealthy-to-healthy recovery.
+Initial probe failures are therefore observable rather than leaving the service indefinitely in
+`Running`.
+
+An unhealthy process uses the same pure restart-budget decision as a process exit. When restart is
+enabled and the budget is exhausted, the supervisor terminates the child and publishes `Failed`
+with `pid: null`, `exitCode: null`, and a stable health-exhaustion error. With restart policy `no`,
+the live process remains observable as `Unhealthy`.
 
 `waitReady(name)` is intentionally unbounded. For long-running definitions it succeeds at
-`Healthy` and fails at a non-restarting terminal state. For `restart: "no"` one-shot definitions,
-successful completion is readiness. `waitAllReady()` considers only definitions whose desired
-state is `running`, so intentionally inactive definitions do not block lazy callers. Higher-level
-Modules own any finite user-facing deadline.
+`Healthy` and fails at a non-restarting terminal state. A `restart: "no"` definition without a
+health check is treated as one-shot work, where successful completion is readiness; a
+health-checked definition remains subject to health readiness even when restart is disabled.
+`waitAllReady()` considers only definitions whose desired state is `running`, so intentionally
+inactive definitions do not block lazy callers. Higher-level Modules own any finite user-facing
+deadline.
 
 ## Restart policies
 
@@ -187,7 +201,9 @@ interrupts its lifecycle fiber. The generation finalizer:
 
 Whole-graph stop sets desired state first and then stops dependents before dependencies. The global
 shutdown budget defaults to 60 seconds. If that budget expires, the orchestrator logs the timeout
-and clears all fibers; it does not fail with `ShutdownTimeoutError`.
+and force-terminates active children before waiting for teardown to finish. Services that were
+running reach terminal `Stopped` state with `pid: null` and exit code `143`; stop does not fail with
+`ShutdownTimeoutError`.
 
 In-process cleanup and orphan supervision solve different failure modes:
 

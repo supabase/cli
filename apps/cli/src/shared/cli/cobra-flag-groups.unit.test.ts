@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   cobraMutuallyExclusiveErrorMessage,
   hasExplicitLongFlag,
+  lastExplicitLongFlagValue,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
   pflagArgvScan,
@@ -47,6 +48,25 @@ describe("hasExplicitLongFlag", () => {
   test("falls back to a bare scan when the command path is not found", () => {
     expect(hasExplicitLongFlag(["--use-api"], COMMAND_PATH, "use-api")).toBe(true);
     expect(hasExplicitLongFlag(["--use-docker"], COMMAND_PATH, "use-api")).toBe(false);
+  });
+});
+
+describe("lastExplicitLongFlagValue", () => {
+  test("resolves repeated occurrences last-wins, like pflag", () => {
+    expect(
+      lastExplicitLongFlagValue(["link", "--profile", "a", "--profile", "b"], [], "profile"),
+    ).toBe("b");
+    expect(
+      lastExplicitLongFlagValue(["link", "--profile=a", "--profile", "b"], [], "profile"),
+    ).toBe("b");
+  });
+
+  test("reads inline and separate values, undefined when absent or valueless", () => {
+    expect(lastExplicitLongFlagValue(["--profile=x"], [], "profile")).toBe("x");
+    expect(lastExplicitLongFlagValue(["--profile="], [], "profile")).toBe("");
+    expect(lastExplicitLongFlagValue(["link"], [], "profile")).toBeUndefined();
+    expect(lastExplicitLongFlagValue(["link", "--profile"], [], "profile")).toBeUndefined();
+    expect(lastExplicitLongFlagValue(["--", "--profile", "x"], [], "profile")).toBeUndefined();
   });
 });
 

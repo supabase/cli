@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  activationTimeoutSecondsForService,
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
@@ -41,6 +42,12 @@ describe("service activation", () => {
     expect(activationTargetsForService(enabled, "storage")).toEqual(["storage"]);
     expect(activationTargetsForService(enabled, "analytics")).toEqual(["analytics"]);
     expect(activationTargetsForService(enabled, "studio")).toEqual(["analytics", "studio"]);
+  });
+
+  it("derives request activation timeouts from the transitive companion closure", () => {
+    expect(activationTimeoutSecondsForService("auth")).toBe(180);
+    expect(activationTimeoutSecondsForService("analytics")).toBe(554);
+    expect(activationTimeoutSecondsForService("studio")).toBe(825);
   });
 
   it("does not assign shared public dependencies to their consumers", () => {

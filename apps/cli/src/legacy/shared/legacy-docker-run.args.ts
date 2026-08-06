@@ -13,6 +13,7 @@ import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<string> {
   const { network, binds, env, securityOpt, extraHosts, workingDir, image, cmd } = opts;
   const entrypoint = opts.entrypoint ?? Option.none<string>();
+  const labels = opts.labels ?? {};
   const networkArgs: ReadonlyArray<string> =
     network._tag === "host"
       ? ["--network", "host"]
@@ -35,6 +36,15 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     ...Object.keys(env).flatMap((k) => ["-e", k]),
     ...securityOpt.flatMap((s) => ["--security-opt", s]),
     ...(Option.isSome(workingDir) ? ["-w", workingDir.value] : []),
+    // Go's `DockerStart` unconditionally sets `com.supabase.cli.project` and
+    // `com.docker.compose.project` on `config.Labels` for EVERY container it
+    // starts, one-shot jobs included (`apps/cli-go/internal/utils/docker.go:
+    // 371-376`) — `supabase stop` and this shell's own rollback both discover
+    // orphaned containers by that project-label filter
+    // (`legacy-docker-remove-all.ts`), so a one-shot job left running after a
+    // client interruption/daemon disconnect must carry the same labels to be
+    // found. Empty unless the caller opts in (review: Codex, PR #6022).
+    ...Object.entries(labels).flatMap(([k, v]) => ["--label", `${k}=${v}`]),
     // `--entrypoint` must precede the image (it is a `docker run` flag); the
     // remaining `cmd` tokens become the entrypoint's args, mirroring Go's
     // `Entrypoint: [value, ...cmd]`.

@@ -28,13 +28,15 @@ describe("ServiceTransition", () => {
     });
 
     it("Pending + DependencyFailed → Failed with error", () => {
-      const state = make("api");
+      const state = make("api", { pid: 1234, exitCode: 1 });
       const next = applyEvent(state, {
         _tag: "DependencyFailed",
         error: "db exited with code 1",
       });
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Failed");
+      expect(next!.pid).toBeNull();
+      expect(next!.exitCode).toBeNull();
       expect(next!.error).toBe("db exited with code 1");
     });
 
@@ -52,11 +54,13 @@ describe("ServiceTransition", () => {
     });
 
     it("Starting + SpawnFailed → Failed with error", () => {
-      const result = applyEvent(make("db", { status: "Starting" }), {
+      const result = applyEvent(make("db", { status: "Starting", pid: 1234, exitCode: 1 }), {
         _tag: "SpawnFailed",
         error: "spawn gate failed",
       });
       expect(result?.status).toBe("Failed");
+      expect(result?.pid).toBeNull();
+      expect(result?.exitCode).toBeNull();
       expect(result?.error).toBe("spawn gate failed");
     });
 
@@ -91,6 +95,7 @@ describe("ServiceTransition", () => {
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Stopped");
       expect(next!.exitCode).toBe(0);
+      expect(next!.pid).toBeNull();
     });
 
     it("Running + ProcessExited(1) → Failed", () => {
@@ -99,6 +104,7 @@ describe("ServiceTransition", () => {
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Failed");
       expect(next!.exitCode).toBe(1);
+      expect(next!.pid).toBeNull();
     });
 
     it("Running + StopRequested → Stopping", () => {
@@ -106,6 +112,13 @@ describe("ServiceTransition", () => {
       const next = applyEvent(state, { _tag: "StopRequested" });
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Stopping");
+    });
+
+    it("Running + HealthCheckFailed → Unhealthy", () => {
+      const state = make("db", { status: "Running", pid: 1234 });
+      const next = applyEvent(state, { _tag: "HealthCheckFailed" });
+      expect(next?.status).toBe("Unhealthy");
+      expect(next?.pid).toBe(1234);
     });
 
     it("Healthy + HealthCheckFailed → Unhealthy", () => {
@@ -219,6 +232,27 @@ describe("ServiceTransition", () => {
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Restarting");
       expect(next!.restartCount).toBe(1);
+      expect(next!.pid).toBeNull();
+    });
+
+    it("Unhealthy + UnhealthyRestartExhausted → terminal Failed", () => {
+      const state = make("db", { status: "Unhealthy", pid: 1234, exitCode: null });
+      const next = applyEvent(state, {
+        _tag: "UnhealthyRestartExhausted",
+        error: "Health check failed and restart budget was exhausted",
+      });
+      expect(next?.status).toBe("Failed");
+      expect(next?.pid).toBeNull();
+      expect(next?.exitCode).toBeNull();
+      expect(next?.error).toBe("Health check failed and restart budget was exhausted");
+    });
+
+    it("Unhealthy + ProcessTerminated clears its no-longer-live pid", () => {
+      const state = make("db", { status: "Unhealthy", pid: 1234 });
+      const next = applyEvent(state, { _tag: "ProcessTerminated" });
+      expect(next?.status).toBe("Unhealthy");
+      expect(next?.pid).toBeNull();
+      expect(next?.exitCode).toBeNull();
     });
 
     it("Pending + StopRequested → Stopped (no process to kill)", () => {
@@ -324,6 +358,7 @@ describe("ServiceTransition", () => {
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Failed");
       expect(next!.error).toBe("migration failed");
+      expect(next!.pid).toBeNull();
     });
 
     it("Healthy + HookFailed → Failed with error", () => {
@@ -332,6 +367,15 @@ describe("ServiceTransition", () => {
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Failed");
       expect(next!.error).toBe("seed failed");
+    });
+
+    it("Unhealthy + HookFailed → Failed with error", () => {
+      const state = make("db", { status: "Unhealthy", pid: 1234, startedAt: 1000 });
+      const next = applyEvent(state, { _tag: "HookFailed", error: "recovery failed" });
+      expect(next).not.toBeNull();
+      expect(next!.status).toBe("Failed");
+      expect(next!.error).toBe("recovery failed");
+      expect(next!.pid).toBeNull();
     });
 
     it("Starting + HookFailed → Failed with error", () => {
