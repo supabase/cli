@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -608,4 +608,32 @@ describe("legacyCleanupOldMigrationCatalogs", () => {
       }),
     ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
   });
+
+  it.effect(
+    "propagates a permission-denied directory read instead of treating it as empty (Go ReadDir parity)",
+    () => {
+      // Go's CleanupOldMigrationCatalogs only tolerates a genuinely MISSING temp dir
+      // (ensureTempDir already created it before ReadDir runs) — any other ReadDir
+      // failure propagates, so a permission-denied listing must fail here too rather
+      // than silently look like "no cached catalogs" (which would bypass retention
+      // indefinitely, since the caller's own best-effort warning never fires without
+      // a propagated failure).
+      const dir = withTemp();
+      const tempDir = join(dir, "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      writeFileSync(join(tempDir, "catalog-local-migrations-h-100.json"), "{}");
+      chmodSync(tempDir, 0o000);
+      return withServices((fs, path) =>
+        legacyCleanupOldMigrationCatalogs(fs, path, tempDir, "local").pipe(Effect.exit),
+      ).pipe(
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            chmodSync(tempDir, 0o755);
+            expect(Exit.isFailure(exit)).toBe(true);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

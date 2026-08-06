@@ -4,6 +4,7 @@ import { Data, Effect, FileSystem, Path } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyResolveUnderWorkdir } from "./legacy-glob.ts";
+import { checkScannerBufferSize } from "./legacy-migration-apply.ts";
 import {
   legacyCreateSeedTable,
   legacyReadSeedTable,
@@ -129,20 +130,27 @@ export const legacyApplySeedFiles = (
       // statements are in memory at a time, matching Go's `ExecBatchWithCache` →
       // `parseFile` inside the apply loop (`file.go:198-203`). A dirty seed only
       // updates its recorded hash, so Go never re-reads it — skip the read.
-      const statements = seed.dirty
-        ? []
-        : legacySplitAndTrim(
-            new TextDecoder().decode(
-              yield* fs.readFile(legacyResolveUnderWorkdir(path, workdir, seed.path)).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyMigrationSeedError({
-                      message: `failed to open seed file: ${cause.message}`,
-                    }),
-                ),
-              ),
+      let statements: ReadonlyArray<string> = [];
+      if (!seed.dirty) {
+        const content = new TextDecoder().decode(
+          yield* fs.readFile(legacyResolveUnderWorkdir(path, workdir, seed.path)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new LegacyMigrationSeedError({
+                  message: `failed to open seed file: ${cause.message}`,
+                }),
             ),
-          );
+          ),
+        );
+        // Go's `SeedFile.ExecBatchWithCache` parses through the same `parseFile` every
+        // other caller does, so it enforces `SUPABASE_SCANNER_BUFFER_SIZE` here too —
+        // see `checkScannerBufferSize`'s own doc comment.
+        yield* checkScannerBufferSize(
+          content,
+          (message) => new LegacyMigrationSeedError({ message }),
+        );
+        statements = legacySplitAndTrim(content);
+      }
       const txn = Effect.gen(function* () {
         yield* session.exec("BEGIN");
         if (!seed.dirty) {

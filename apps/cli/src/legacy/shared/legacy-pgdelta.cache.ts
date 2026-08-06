@@ -332,12 +332,30 @@ const parseCatalogTimestamp = (name: string): Option.Option<number> => {
   return Number.isInteger(ts) ? Option.some(ts) : Option.none();
 };
 
+/**
+ * Mirrors Go's `ensureTempDir` + `ReadDir` pairing (`pgcache/cache.go`,
+ * `declarative.go`): the temp dir's existence is already guaranteed by the
+ * `MkdirAll` that runs before every write into it, so Go's `ReadDir` only ever
+ * needs to tolerate a genuinely missing directory (a cache that was never
+ * written to) — every OTHER read failure (e.g. permission denied) propagates,
+ * same as {@link legacyListLocalMigrations} above. Swallowing every failure
+ * (as an earlier version of this did) let a real read error silently look like
+ * "no cached catalogs", which both bypasses catalog resolution's cache HIT and
+ * — for cleanup's caller — bypasses the retention limit indefinitely, since
+ * the caller's own warning path never fires without a propagated failure.
+ */
 const listJsonEntries = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, tempDir: string) {
-  const exists = yield* fs.exists(tempDir).pipe(Effect.orElseSucceed(() => false));
-  if (!exists) return [] as ReadonlyArray<string>;
-  return yield* fs
-    .readDirectory(tempDir)
-    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  return yield* fs.readDirectory(tempDir).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeed([] as ReadonlyArray<string>)
+        : Effect.fail(
+            new LegacyMigrationsReadError({
+              message: `failed to read directory: ${error.message}`,
+            }),
+          ),
+    ),
+  );
 });
 
 /**

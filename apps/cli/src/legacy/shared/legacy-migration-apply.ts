@@ -336,7 +336,7 @@ const legacyParseScannerBufferSize = (raw: string): number => {
  * one. Defaults to `{}` for callers that haven't threaded a project-env map through
  * (shell-only, same as before this parameter existed).
  */
-const checkScannerBufferSize = <E>(
+export const checkScannerBufferSize = <E>(
   content: string,
   mapError: (message: string, phase: "read" | "exec") => E,
   projectEnv: Readonly<Record<string, string>> = {},

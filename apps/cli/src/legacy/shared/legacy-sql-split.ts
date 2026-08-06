@@ -19,7 +19,11 @@ interface State {
 const BEGIN_ATOMIC = "ATOMIC";
 const END_ATOMIC = "END";
 
-const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{N}_$]/u.test(rune);
+// `\p{Nd}` (decimal digits only), not `\p{N}` (all Unicode numbers): Go's
+// `unicode.IsDigit` — what `isIdentifierRune`/`TagState.next` port — is an alias for
+// category `Nd` alone, so it rejects `No`/`Nl` runes like superscript-2 (`²`) that
+// `\p{N}` would wrongly accept as a valid identifier/dollar-tag character.
+const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{Nd}_$]/u.test(rune);
 
 function isBeginAtomic(data: string): boolean {
   let offset = data.length - BEGIN_ATOMIC.length;
@@ -114,8 +118,9 @@ class TagState implements State {
   constructor(private readonly offset: number) {}
   next(rune: string, data: string): State | null {
     if (rune === "$") return new DollarState(data.slice(this.offset));
-    // Valid dollar-tag characters.
-    if (/[\p{L}\p{N}_]/u.test(rune)) return this;
+    // Valid dollar-tag characters — see `isIdentifierRune`'s comment on why `\p{Nd}`,
+    // not `\p{N}`.
+    if (/[\p{L}\p{Nd}_]/u.test(rune)) return this;
     return new ReadyState().next(rune, data);
   }
 }

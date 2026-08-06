@@ -122,6 +122,35 @@ describe("legacySeedData (dirty parse)", () => {
     );
   });
 
+  it.effect(
+    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
+    () => {
+      // Go's SeedFile.ExecBatchWithCache parses through the same parseFile every
+      // other file type does, so an oversized statement must abort the seed run —
+      // same as legacy-migration-apply.unit.test.ts's equivalent case for migrations.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-seed-scanner-"));
+      // Raw text must exceed the 4096-byte floor Go's bufio.Scanner starts at
+      // regardless of the configured limit (see legacy-migration-apply.unit.test.ts's
+      // equivalent case for the exact same 4096-byte floor).
+      writeFileSync(join(dir, "big.sql"), `select '${"x".repeat(5000)}';`);
+      const { session, calls } = fakeSeedSession();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "100b";
+      return runSeed(session, dir, [{ path: "big.sql", hash: "newhash", dirty: false }]).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(calls.some((c) => c.sql.includes("select"))).toBe(false);
+            rmSync(dir, { recursive: true, force: true });
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("refreshes the hash for a dirty seed that parses, without running statements", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
     writeFileSync(join(dir, "data.sql"), "insert into t values (1);");

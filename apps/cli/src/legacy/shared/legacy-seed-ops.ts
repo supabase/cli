@@ -4,6 +4,7 @@ import { Effect, type FileSystem, type Path } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { checkScannerBufferSize } from "./legacy-migration-apply.ts";
 import { legacyCreateSeedTable } from "./legacy-migration-history.ts";
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
@@ -126,12 +127,16 @@ export const legacySeedData = <E>(
       // Go's `ExecBatchWithCache` parses the file (read + `SplitAndTrim`)
       // UNCONDITIONALLY before the dirty check (`file.go:198-211`), so a dirty seed
       // that is unreadable or contains malformed SQL still fails and leaves the
-      // previous hash — only the queueing of statements is gated on `Dirty`.
-      const lines = legacySplitAndTrim(
-        yield* fs.readFileString(
-          path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
-        ),
+      // previous hash — only the queueing of statements is gated on `Dirty`. Parsing
+      // includes the same `SUPABASE_SCANNER_BUFFER_SIZE` enforcement every other
+      // `parseFile` caller gets (`checkScannerBufferSize`'s own doc comment) — Go's
+      // `SeedFile.ExecBatchWithCache` runs through the identical `parseFile`, so an
+      // oversized seed statement must fail here too, not execute silently.
+      const content = yield* fs.readFileString(
+        path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
       );
+      yield* checkScannerBufferSize(content, (message) => new Error(message));
+      const lines = legacySplitAndTrim(content);
       const statements = seed.dirty ? [] : lines;
       yield* session.exec("BEGIN");
       const body = Effect.gen(function* () {
