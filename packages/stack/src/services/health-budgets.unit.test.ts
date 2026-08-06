@@ -125,7 +125,13 @@ describe("stack health budgets", () => {
     `);
   });
 
-  it("keeps dependency timeouts beyond the dependency startup budget", () => {
+  it("keeps dependency timeouts beyond each dependency startup path", () => {
+    expect(dependencyTimeoutSecondsForServices(["postgres"])).toBeGreaterThan(
+      stackServiceStartupBudgetSeconds.postgres,
+    );
+    expect(dependencyTimeoutSecondsForServices(["postgres", "storage"])).toBeGreaterThan(
+      stackServiceStartupBudgetSeconds.postgres + stackServiceStartupBudgetSeconds.storage,
+    );
     expect(dependencyTimeoutSecondsForServices(["postgres", "analytics"])).toBeGreaterThan(
       stackServiceStartupBudgetSeconds.postgres + stackServiceStartupBudgetSeconds.analytics,
     );

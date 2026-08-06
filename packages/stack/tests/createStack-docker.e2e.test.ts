@@ -6,10 +6,13 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { activationTimeoutSecondsForService } from "../src/ServiceActivation.ts";
 import { createStack, type StackHandle } from "../src/node.ts";
+import { dependencyTimeoutSecondsForServices } from "../src/services/health-budgets.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 180_000;
-const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS = 90_000;
+const STACK_DOCKER_E2E_SETUP_OVERHEAD_MS = 90_000;
+const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS =
+  dependencyTimeoutSecondsForServices(["postgres"]) * 1000 + STACK_DOCKER_E2E_SETUP_OVERHEAD_MS;
 const ANALYTICS_COLD_START_TEST_TIMEOUT_MS = activationTimeoutSecondsForService("analytics") * 1000;
 
 function hasDockerDaemon(): boolean {
