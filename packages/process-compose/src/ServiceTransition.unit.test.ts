@@ -95,13 +95,15 @@ describe("ServiceTransition", () => {
     });
 
     it("Pending + DependencyFailed → Failed with error", () => {
-      const state = make("api");
+      const state = make("api", { pid: 1234, exitCode: 1 });
       const next = applyEvent(state, {
         _tag: "DependencyFailed",
         error: "db exited with code 1",
       });
       expect(next).not.toBeNull();
       expect(next!.status).toBe("Failed");
+      expect(next!.pid).toBeNull();
+      expect(next!.exitCode).toBeNull();
       expect(next!.error).toBe("db exited with code 1");
     });
 
@@ -119,11 +121,13 @@ describe("ServiceTransition", () => {
     });
 
     it("Starting + SpawnFailed → Failed with error", () => {
-      const result = applyEvent(make("db", { status: "Starting" }), {
+      const result = applyEvent(make("db", { status: "Starting", pid: 1234, exitCode: 1 }), {
         _tag: "SpawnFailed",
         error: "spawn gate failed",
       });
       expect(result?.status).toBe("Failed");
+      expect(result?.pid).toBeNull();
+      expect(result?.exitCode).toBeNull();
       expect(result?.error).toBe("spawn gate failed");
     });
 

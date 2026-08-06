@@ -275,6 +275,9 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
       }
     };
 
+    // `RunCommand` uses the synchronous child-process API, so command actions execute serially
+    // while `RemovePath` retry delays may overlap. Each command has its own timeout; the aggregate
+    // cleanup duration can therefore approach the sum of all command timeouts.
     return Promise.all(
       (config.cleanup ?? []).map(async (action) => {
         try {

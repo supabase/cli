@@ -1,4 +1,4 @@
-import type { HealthCheckConfig } from "@supabase/process-compose";
+import { defaults, type HealthCheckConfig } from "@supabase/process-compose";
 import type { ServiceName } from "../ServiceName.ts";
 
 type HealthBudget = Required<
@@ -6,7 +6,8 @@ type HealthBudget = Required<
     HealthCheckConfig,
     "initialDelaySeconds" | "periodSeconds" | "startupFailureThreshold" | "failureThreshold"
   >
->;
+> &
+  Pick<HealthCheckConfig, "timeoutSeconds">;
 
 /** Cold-start tolerance and tighter post-start liveness thresholds. */
 export const stackHealthBudgets = {
@@ -96,8 +97,15 @@ export const stackHealthBudgets = {
   },
 } as const satisfies Record<string, HealthBudget>;
 
-export const healthStartupBudgetSeconds = (budget: HealthBudget): number =>
-  budget.initialDelaySeconds + budget.periodSeconds * budget.startupFailureThreshold;
+export const healthStartupBudgetSeconds = (budget: HealthBudget): number => {
+  const attempts = budget.startupFailureThreshold;
+  const probeTimeoutSeconds = budget.timeoutSeconds ?? defaults.healthCheck.timeoutSeconds;
+  return (
+    budget.initialDelaySeconds +
+    attempts * probeTimeoutSeconds +
+    (attempts - 1) * budget.periodSeconds
+  );
+};
 
 /** Worst-case initial health budget for each public service. */
 export const stackServiceStartupBudgetSeconds = {
@@ -121,5 +129,6 @@ export const stackServiceStartupBudgetSeconds = {
 
 const STARTUP_COORDINATION_MARGIN_SECONDS = 5;
 
-export const dependencyTimeoutSecondsForService = (service: ServiceName): number =>
-  stackServiceStartupBudgetSeconds[service] + STARTUP_COORDINATION_MARGIN_SECONDS;
+export const dependencyTimeoutSecondsForServices = (services: ReadonlyArray<ServiceName>): number =>
+  services.reduce((total, service) => total + stackServiceStartupBudgetSeconds[service], 0) +
+  STARTUP_COORDINATION_MARGIN_SECONDS;
