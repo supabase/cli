@@ -110,24 +110,55 @@ native container command in this codebase — never `supabase-go`.
 
 ## Environment Variables
 
-| Variable                                                       | Purpose                                                                                              | Required? |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_PROJECT_ID`                                          | overrides the local container id (`utils.DbId`)                                                      | no        |
-| `SUPABASE_DB_PORT`                                             | overrides `db.port` (the published host port)                                                        | no        |
-| `SUPABASE_DB_MAJOR_VERSION`                                    | overrides `db.major_version` (image selection, schema branch)                                        | no        |
-| `SUPABASE_DB_HEALTH_TIMEOUT`                                   | overrides `db.health_timeout`                                                                        | no        |
-| `SUPABASE_DB_SETTINGS_*`                                       | overrides individual `[db.settings]` fields                                                          | no        |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                       | overrides `experimental.orioledb_version` (image + env)                                              | no        |
-| `SUPABASE_EXPERIMENTAL_S3_{HOST,REGION,ACCESS_KEY,SECRET_KEY}` | OrioleDB S3 env overrides                                                                            | no        |
-| `SUPABASE_REALTIME_ENABLED`                                    | gates the fresh-volume realtime migrate job                                                          | no        |
-| `SUPABASE_REALTIME_IP_VERSION` / `_MAX_HEADER_LENGTH`          | realtime migrate job env overrides                                                                   | no        |
-| `SUPABASE_STORAGE_ENABLED`                                     | gates the fresh-volume storage migrate job                                                           | no        |
-| `SUPABASE_STORAGE_FILE_SIZE_LIMIT`                             | storage migrate job env override                                                                     | no        |
-| `SUPABASE_AUTH_ENABLED`                                        | gates the fresh-volume auth migrate job                                                              | no        |
-| `SUPABASE_AUTH_EXTERNAL_URL` / `SUPABASE_AUTH_SITE_URL`        | auth migrate job env overrides                                                                       | no        |
-| `SUPABASE_AUTH_JWT_EXPIRY`                                     | Postgres's `JWT_EXP` env / signing                                                                   | no        |
-| `SUPABASE_EXPERIMENTAL` (or `--experimental`)                  | fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` | no        |
+| Variable                                                                                                             | Purpose                                                                                                                                                                                                                                 | Required? |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_PROJECT_ID`                                                                                                | overrides the local container id (`utils.DbId`)                                                                                                                                                                                         | no        |
+| `SUPABASE_DB_PORT`                                                                                                   | overrides `db.port` (the published host port)                                                                                                                                                                                           | no        |
+| `SUPABASE_DB_MAJOR_VERSION`                                                                                          | overrides `db.major_version` (image selection, schema branch)                                                                                                                                                                           | no        |
+| `SUPABASE_DB_HEALTH_TIMEOUT`                                                                                         | overrides `db.health_timeout`                                                                                                                                                                                                           | no        |
+| `SUPABASE_DB_SETTINGS_*`                                                                                             | overrides individual `[db.settings]` fields                                                                                                                                                                                             | no        |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                                                             | overrides `experimental.orioledb_version` (image + env)                                                                                                                                                                                 | no        |
+| `SUPABASE_EXPERIMENTAL_S3_{HOST,REGION,ACCESS_KEY,SECRET_KEY}`                                                       | OrioleDB S3 env overrides                                                                                                                                                                                                               | no        |
+| `SUPABASE_REALTIME_ENABLED`                                                                                          | gates the fresh-volume realtime migrate job                                                                                                                                                                                             | no        |
+| `SUPABASE_REALTIME_IP_VERSION` / `_MAX_HEADER_LENGTH`                                                                | realtime migrate job env overrides                                                                                                                                                                                                      | no        |
+| `SUPABASE_STORAGE_ENABLED`                                                                                           | gates the fresh-volume storage migrate job                                                                                                                                                                                              | no        |
+| `SUPABASE_STORAGE_FILE_SIZE_LIMIT`                                                                                   | storage migrate job env override                                                                                                                                                                                                        | no        |
+| `SUPABASE_AUTH_ENABLED`                                                                                              | gates the fresh-volume auth migrate job                                                                                                                                                                                                 | no        |
+| `SUPABASE_AUTH_EXTERNAL_URL` / `SUPABASE_AUTH_SITE_URL`                                                              | auth migrate job env overrides                                                                                                                                                                                                          | no        |
+| `SUPABASE_AUTH_JWT_EXPIRY`                                                                                           | Postgres's `JWT_EXP` env / signing                                                                                                                                                                                                      | no        |
+| `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql`                                                                                                                                    | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                                     | enables the post-`MigrateAndSeed` migrations-catalog cache warmup when `[experimental.pgdelta].enabled` is unset                                                                                                                        | no        |
+| `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | Read (ambient shell OR a project `.env`/`.env.<env>`/`.env.local` file — matching Go's `godotenv.Load`, which installs these into the process environment before any Docker work) to pick the Docker daemon this whole command talks to | no        |
 
+`--network-id` (a global CLI flag, not an environment variable — `shared/legacy/global-flags.ts`)
+forces every created container/network onto that Docker network instead of the generated
+`supabase_network_<project>`.
+
+`--debug` tees each fresh-volume PG15+ one-shot migrate job's (realtime/storage/auth) own
+stderr to the parent process's stderr in real time, matching Go's `utils.GetDebugLogger()`
+(`os.Stderr` under `--debug`, else discarded) — outside `--debug` only the job's exit code is
+surfaced on failure.
+
+## Exit Codes
+
+| Code | Condition                                                                   |
+| ---- | --------------------------------------------------------------------------- |
+| `0`  | success — database started, or already running                              |
+| `0`  | `--from-backup` set and the health-check timed out (swallowed)              |
+| `1`  | malformed `supabase/config.toml`                                            |
+| `1`  | Docker daemon unreachable / inspect failure                                 |
+| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume) |
+| `1`  | a health-check timeout with `--from-backup` unset                           |
+| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)   |
+
+## Output
+
+### `--output-format text` (Go CLI compatible)
+
+- Already running → `Postgres database is already running.` on **stderr**, exit 0.
+- Starting → `Starting database...` / `Starting database from backup...`, then (fresh
+  volume, no `--from-backup`) `Initialising schema...` and `Seeding globals from
+roles.sql...`, all on **stderr**. No stdout output, no `Finished` line.
 - `api.auto_expose_new_tables = true` (or `SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=true`) → `WARN:
 api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or
 set it to false to adopt the new default of revoking Data API privileges on new entities in the

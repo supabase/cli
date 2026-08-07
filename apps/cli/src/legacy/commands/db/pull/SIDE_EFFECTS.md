@@ -36,14 +36,13 @@ Notes/Delegation section below).
 
 ## Files Written
 
-| Path                                                              | Format | When                                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`       | SQL    | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed)                                                                                                                                                                |
-| `<workdir>/supabase/database/**`                                  | SQL    | `--declarative`                                                                                                                                                                                                                           |
-| `<workdir>/supabase/schemas/**`, `<workdir>/supabase/cluster/**`  | SQL    | `--experimental` structured dump (delegated to Go; both dirs are `RemoveAll`'d then rewritten by `format.WriteStructuredSchemas`, not just written to)                                                                                    |
-| `~/.supabase/<workdir-hash>/linked-project.json`                  | JSON   | linked (post-run cache)                                                                                                                                                                                                                   |
-| `~/.supabase/telemetry.json`                                      | JSON   | every invocation (post-run)                                                                                                                                                                                                               |
-| `<workdir>/supabase/.temp/start-secrets/shadow-<random>/secret-0` | binary | PG >= 15 only: the shadow container's pgsodium root key, staged as a host bind-mount source. Randomized per invocation, reclaimed (`rm -rf`) once the shadow container is torn down — see `legacyRemoveShadowDatabase`'s own doc comment. |
+| Path                                                             | Format | When                                                                                                                                                   |
+| ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`      | SQL    | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed)                                                                             |
+| `<workdir>/supabase/database/**`                                 | SQL    | `--declarative`                                                                                                                                        |
+| `<workdir>/supabase/schemas/**`, `<workdir>/supabase/cluster/**` | SQL    | `--experimental` structured dump (delegated to Go; both dirs are `RemoveAll`'d then rewritten by `format.WriteStructuredSchemas`, not just written to) |
+| `~/.supabase/<workdir-hash>/linked-project.json`                 | JSON   | linked (post-run cache)                                                                                                                                |
+| `~/.supabase/telemetry.json`                                     | JSON   | every invocation (post-run)                                                                                                                            |
 
 ## Docker
 

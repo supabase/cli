@@ -192,23 +192,16 @@ export const legacyCreateShadowDatabase = (
       Effect.mapError((cause) => new LegacyShadowDbError({ message: cause.message })),
     );
     const spec = legacyBuildShadowPostgresContainerSpec(input);
-    // The shadow container has no name (Docker auto-generates one) — key its staged secret
-    // files (the pgsodium root key, PG15+ only) off a fallback identifier instead of
-    // `spec.containerName` (see `LegacyContainerOpts.secretDirId`'s own doc comment).
-    // Randomized (not a fixed `"shadow"` string): `legacyStageStartSecretFiles` `rm -rf`s
-    // its target directory FIRST on every call, so two concurrent `db diff`/`db pull` runs
-    // in the same workdir (two terminals, a CI matrix) sharing a fixed identifier could have
-    // one wipe the other's staged root key mid-flight, BEFORE either container's own
-    // `docker start` even runs (so a shared `shadowPort` — which would itself collide, since
-    // both runs read the same config.toml — can't be used as the differentiator either).
-    // Reclaimed once the shadow container itself is torn down, not eagerly right after
-    // `docker start` returns: Postgres's entrypoint actually reads the file at
-    // postmaster-start, seconds later — safe only if the bind mount's source inode is pinned
-    // by then, which is guaranteed on native Linux dockerd but NOT on Docker Desktop
-    // (macOS/Windows). {@link legacyRemoveShadowDatabase} `rm -rf`s this exact directory
-    // (keyed off `secretDirId`, returned below) once the container is gone, so a randomized
-    // per-call id doesn't leak a directory per invocation — see that function's own doc
-    // comment.
+    // The shadow container has no name (Docker auto-generates one), so it can't be found by
+    // `stop`'s project-label-filtered orphan sweep the way a named container can. Stamp a
+    // randomized fallback identifier (`LEGACY_CLI_SECRET_DIR_LABEL`, `container-lifecycle.ts`)
+    // onto it instead, so an orphaned shadow (this process killed before
+    // {@link legacyRemoveShadowDatabase} ever runs) can still be recognized and removed later.
+    // The pgsodium root key itself (PG15+ only) never touches host disk at all — it's
+    // delivered straight into the container via `docker cp`
+    // ({@link LegacyStartContainerSpec.secretFiles}, `container-lifecycle.ts`), same as every
+    // other container's secrets. Randomized rather than a fixed `"shadow"` string purely so
+    // two concurrent `db diff`/`db pull` runs in the same workdir don't stamp identical labels.
     const secretDirId = `shadow-${randomUUID()}`;
     const containerOpts: LegacyContainerOpts = {
       projectId: input.projectId,
@@ -226,18 +219,19 @@ export const legacyCreateShadowDatabase = (
 /** Input to {@link legacyRemoveShadowDatabase} — everything needed to tear down both halves of a shadow ({@link legacyCreateShadowDatabase}'s container AND its staged secret directory). */
 export interface LegacyRemoveShadowDatabaseInput {
   readonly containerId: string;
-  /** {@link LegacyShadowDatabaseHandle.secretDirId} — the NORMAL reclaim path for the shadow's staged secret directory (see {@link legacyCreateShadowDatabase}'s own doc comment): the shadow container has no name, so `legacyStageStartSecretFiles`'s self-healing `rm -rf` (keyed off the SAME directory being reused across calls) can never find it, and `legacyCleanupStartSecrets`'s own name-keyed fallback can't either. If this process is killed before this function ever runs, `legacyCleanupStartSecrets` can still recover the SAME directory later via the container's own `LEGACY_CLI_SECRET_DIR_LABEL` (stamped at creation time, read back off the orphan `stop` finds by project label) — see that label's doc comment (`legacy-docker-ids.ts`) for why that fallback exists (review: PRRT_kwDOErm0O86W8ZYt). */
+  /** {@link LegacyShadowDatabaseHandle.secretDirId} — see {@link legacyCreateShadowDatabase}'s own doc comment. Threaded through so {@link legacyCleanupShadowSecretDir} can reclaim a legacy `<workdir>/supabase/.temp/start-secrets/<secretDirId>/` directory left over from before secrets moved to `docker cp` delivery, if one somehow still exists. */
   readonly secretDirId: string;
   readonly workdir: string;
 }
 
 /**
- * Best-effort `rm -rf` of the shadow's OWN staged secret directory
- * (`<workdir>/supabase/.temp/start-secrets/<secretDirId>/`, PG15+ only — see
- * {@link legacyCreateShadowDatabase}'s own doc comment) — a no-op when nothing was ever
- * staged (PG<=14, or `secretDirId` empty). Never fails: a missing directory is already the
- * desired end state, and a real deletion error is not worth failing the caller's diff/pull
- * over.
+ * Best-effort `rm -rf` of a LEGACY `<workdir>/supabase/.temp/start-secrets/<secretDirId>/`
+ * directory — the shadow's pgsodium root key is delivered via `docker cp` now
+ * ({@link legacyCreateShadowDatabase}'s own doc comment), so this is always a no-op in
+ * current builds. Kept as a defensive cleanup in case such a directory was staged by an
+ * older binary and never reclaimed, rather than left to accumulate indefinitely. Never
+ * fails: a missing directory is already the desired end state, and a real deletion error
+ * is not worth failing the caller's diff/pull over.
  */
 const legacyCleanupShadowSecretDir = (
   secretDirId: string,

@@ -18,14 +18,13 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 
 ## Files Written
 
-| Path                                                              | Format | When                                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`       | SQL    | `--file <name>` and the diff is non-empty                                                                                                                                                                                                 |
-| `<path>` (from `--output` / `-o`)                                 | SQL    | explicit `--from/--to` mode with `--output`                                                                                                                                                                                               |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                         | JSON   | explicit `--from/--to migrations` catalog cache                                                                                                                                                                                           |
-| `~/.supabase/<workdir-hash>/linked-project.json`                  | JSON   | `--linked` (post-run cache)                                                                                                                                                                                                               |
-| `~/.supabase/telemetry.json`                                      | JSON   | every invocation (post-run)                                                                                                                                                                                                               |
-| `<workdir>/supabase/.temp/start-secrets/shadow-<random>/secret-0` | binary | PG >= 15 only: the shadow container's pgsodium root key, staged as a host bind-mount source. Randomized per invocation, reclaimed (`rm -rf`) once the shadow container is torn down — see `legacyRemoveShadowDatabase`'s own doc comment. |
+| Path                                                        | Format | When                                            |
+| ----------------------------------------------------------- | ------ | ----------------------------------------------- |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | `--file <name>` and the diff is non-empty       |
+| `<path>` (from `--output` / `-o`)                           | SQL    | explicit `--from/--to` mode with `--output`     |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                   | JSON   | explicit `--from/--to migrations` catalog cache |
+| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | `--linked` (post-run cache)                     |
+| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)                     |
 
 ## Docker
 
@@ -92,9 +91,9 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
 - The explicit `migrations` target resolves natively (CLI-1959): a bare
   migrations-content hash cache lookup (`<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`,
-  shared with `db push`'s post-apply cache write), and on a miss, the existing
-  `db __shadow --mode diff` seam call (unchanged — still Go, out of scope for
-  CLI-1959) plus a native pg-delta catalog export. No hidden Go
+  shared with `db push`'s post-apply cache write), and on a miss, a natively-provisioned
+  shadow database (CLI-1956 — `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`,
+  no longer the `db __shadow` seam) plus a native pg-delta catalog export. No hidden Go
   `db schema declarative __catalog` subprocess runs for this path any more.
 
 ### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
@@ -114,9 +113,9 @@ than a pending port because:
 The decision record is Linear issue CLI-1960 and the pull request that introduced
 this deprecation notice; re-open only if a TS/WASM binding for
 `stripe/pg-schema-diff` ships. It will become the CLI's sole remaining Go delegation
-once `--use-pgadmin`'s delegation, the `db __shadow` seam (the sibling `db
-__db-bootstrap` seam was already removed outright by CLI-1955), and the rest of
-the M9 milestone's in-flight issues are done — it is not there yet.
+once `--use-pgadmin`'s delegation and the rest of the M9 milestone's in-flight issues
+are done — it is not there yet (the sibling `db __db-bootstrap` seam was already
+removed outright by CLI-1955, and the `db __shadow` seam by CLI-1956).
 
 Given that, the flag is now deprecated rather than ported:
 

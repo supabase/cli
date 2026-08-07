@@ -20,9 +20,7 @@ byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestratio
 
 The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartSecrets`,
 `legacy/shared/legacy-start-secrets-cleanup.ts`) — Go never stages secrets on host disk in
-the first place, so it has nothing to clean up here. `start` stages plaintext Kong TLS/
-`kong.yml`, Postgres pgsodium root key, Supavisor pooler tenant-script content
-(`legacyStageStartSecretFiles`, `legacy/shared/db-bootstrap/container-lifecycle.ts`), and Edge Runtime's own
+the first place, so it has nothing to clean up here. Only Edge Runtime's own
 JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) still
 land on host disk this way, because that container is a `docker run` this port shells out

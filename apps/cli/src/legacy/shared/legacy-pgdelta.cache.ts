@@ -592,7 +592,7 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
  * `legacyCreateShadowDatabase` + `legacyPrepareShadowSource` +
  * `legacyRemoveShadowDatabase`, `commands/db/shared/legacy-shadow-source.ts`) —
  * NOT the retired `db __shadow` hidden CLI subcommand, which was only ever a
- * TS-facing IPC shim over these same Go functions. This is in fact TRUTER Go
+ * TS-facing IPC shim over these same Go functions. This is in fact TRUER Go
  * parity than the shim it replaces: Go's own two callers of this mechanics —
  * `resolveMigrationsCatalogRef` (`apps/cli-go/internal/db/diff/explicit.go:88-126`)
  * and `getMigrationsCatalogRef`'s `createShadow`/`createShadowContainer`

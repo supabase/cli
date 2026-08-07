@@ -470,12 +470,17 @@ export interface LegacyShadowPostgresContainerSpecInput {
  *  - **The pgsodium root key `secretFiles` entry is still applied on PG >= 15** — the
  *    shadow's entrypoint script is the SAME `legacyPostgresEntrypointScriptPg15`, which
  *    still heredocs it in Go (splice point unaffected by `args`), so this port still needs
- *    the bind-mounted host temp file. `legacyCreateContainer`'s caller must supply
- *    {@link LegacyContainerOpts.secretDirId} for the shadow case (empty `containerName`).
+ *    it delivered before `docker start` — via `docker cp` straight into the container
+ *    (`container-lifecycle.ts`), same as every other container's `secretFiles`, never a
+ *    host temp file.
  *  - **Labels ARE still applied** (merged in by `legacyCreateContainer`, same as every
  *    other container) so `supabase stop`'s label-filtered sweep catches an orphaned shadow
  *    too — Go's `DockerStart` sets `CliProjectLabel`/`composeProjectLabel` unconditionally,
- *    regardless of the `container.Config` literal passed in.
+ *    regardless of the `container.Config` literal passed in. `legacyCreateContainer`'s
+ *    caller must also supply {@link LegacyContainerOpts.secretDirId} for the shadow case
+ *    (empty `containerName`) — a randomized fallback identifier so this same sweep can
+ *    still recognize the orphan even without a stable name (see that field's own doc
+ *    comment).
  */
 export function legacyBuildShadowPostgresContainerSpec(
   input: LegacyShadowPostgresContainerSpecInput,
