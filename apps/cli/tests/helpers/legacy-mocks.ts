@@ -718,17 +718,37 @@ const LEGACY_SHADOW_HEALTHY_STATE =
   '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 
 /**
+ * A real (Docker-valid) "still starting" state — NOT `Effect.never` — so
+ * {@link legacyWaitForHealthyServices}'s retry loop genuinely retries on its real 1-second
+ * `Schedule.spaced` backoff instead of hanging on a single probe forever. Mirrors
+ * `start.integration.test.ts`'s own "never healthy" containers (same rationale: a fiber
+ * interrupted mid-retry must be observed actually suspended inside the retry loop, not merely
+ * past the initial `create` call).
+ */
+const LEGACY_SHADOW_STARTING_STATE =
+  '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
+
+/**
  * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues
  * (`legacyBuildLocalDbContainerInputs`'s image-cache check, `legacyCreateShadowDatabase`'s
  * network-create + container create/start, `legacyWaitForHealthyServices`'s container
  * inspect, and `legacyRemoveShadowDatabase`'s cleanup) — scoped-down port of
  * `start.integration.test.ts`'s own `mockContainerCliSpawner`, since both callers only ever
  * create one (shadow) container, never named.
+ *
+ * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead
+ * of `"healthy"` — for the interrupt-during-health-wait regression coverage (review:
+ * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
+ * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
+ * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
  */
-export function mockLegacyShadowContainerCliSpawner(): {
+export function mockLegacyShadowContainerCliSpawner(
+  opts: { readonly neverHealthy?: boolean } = {},
+): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly spawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
 } {
+  const neverHealthy = opts.neverHealthy ?? false;
   const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
   const encoder = new TextEncoder();
 
@@ -754,7 +774,7 @@ export function mockLegacyShadowContainerCliSpawner(): {
         if (args[0] === "create") {
           stdoutLines = [LEGACY_FAKE_SHADOW_CONTAINER_ID];
         } else if (args[0] === "container" && args[1] === "inspect") {
-          stdoutLines = [LEGACY_SHADOW_HEALTHY_STATE];
+          stdoutLines = [neverHealthy ? LEGACY_SHADOW_STARTING_STATE : LEGACY_SHADOW_HEALTHY_STATE];
         }
         // "image inspect", "network create", "start", "rm -f -v" all succeed with no output.
         const stdoutBytes = stdoutLines.map((line) => encoder.encode(`${line}\n`));

@@ -41,6 +41,7 @@ import {
   type LegacyLocalDbContainerInputs,
 } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import {
+  legacyCreateShadowDatabase,
   legacyPrepareRawShadow,
   legacyRemoveShadowDatabase,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
@@ -486,8 +487,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // adapter also returns (a bare shadow never runs `MigrateShadowDatabase`) — its own
           // input type (`LegacyShadowConnectionInput`) is structurally narrower, so the extra
           // fields are simply never read.
-          //
-          // `Effect.acquireUseRelease`, NOT a separate `yield* legacyPrepareRawShadow(...)`
+          const rawShadowInput = legacyShadowRunInputFromLocalContainerInputs(
+            declLocalInputs,
+            resolvedDeclShadowImage,
+            toml,
+            fs,
+            path,
+          );
+          // `Effect.acquireUseRelease`, NOT a separate `yield* legacyCreateShadowDatabase(...)`
           // followed by a later `.pipe(Effect.ensuring(...))` (see this file's migration-path
           // call site below, and `diff.handler.ts`'s identical call site, for the full
           // rationale): the latter shape leaves a gap between the shadow's successful creation
@@ -495,31 +502,31 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // would skip `legacyRemoveShadowDatabase` and leak the shadow container + its staged
           // secret directory. `acquireUseRelease` registers the release finalizer in the same
           // uninterruptible continuation the acquire resolves into, matching Go's `defer
-          // DockerRemove` immediately after successful preparation (review: PRRT_kwDOErm0O86XEuqJ).
+          // DockerRemove` immediately after successful creation (review: PRRT_kwDOErm0O86XEuqJ).
+          //
+          // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT the
+          // health-wait `legacyPrepareRawShadow` performs; that runs inside the `use` phase
+          // below instead, so a SIGINT can still interrupt it, matching Go's single cancellable
+          // `ctx` (see `shadow-database.ts`'s own doc comment on `legacyPrepareRawShadow` for
+          // the full rationale, review: PRRT_kwDOErm0O86XMrID).
           const exported = yield* Effect.acquireUseRelease(
-            legacyPrepareRawShadow(
-              spawner,
-              legacyShadowRunInputFromLocalContainerInputs(
-                declLocalInputs,
-                resolvedDeclShadowImage,
-                toml,
-                fs,
-                path,
-              ),
-            ),
-            (shadow) =>
-              withPoolerFallback(targetUrl, (targetRef) =>
-                legacyDeclarativeExportPgDelta(ctx, {
-                  sourceRef: shadow.sourceUrl,
-                  targetRef,
-                  schema: flags.schema,
-                  formatOptions,
-                }),
-              ),
-            (shadow) =>
+            legacyCreateShadowDatabase(spawner, rawShadowInput),
+            (handle) =>
+              Effect.gen(function* () {
+                const shadow = yield* legacyPrepareRawShadow(spawner, handle, rawShadowInput);
+                return yield* withPoolerFallback(targetUrl, (targetRef) =>
+                  legacyDeclarativeExportPgDelta(ctx, {
+                    sourceRef: shadow.sourceUrl,
+                    targetRef,
+                    schema: flags.schema,
+                    formatOptions,
+                  }),
+                );
+              }),
+            (handle) =>
               legacyRemoveShadowDatabase(spawner, {
-                containerId: shadow.container,
-                secretDirId: shadow.secretDirId,
+                containerId: handle.containerId,
+                secretDirId: handle.secretDirId,
                 workdir: cliConfig.workdir,
               }),
           );
@@ -753,8 +760,27 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a
             // local target with declarative schema files gets a second
             // `contrib_regression` shadow returned as the target override.
-            //
-            // `Effect.acquireUseRelease`, NOT a separate `yield* legacyPrepareShadowSource(...)`
+            const shadowInput = {
+              ...legacyShadowRunInputFromLocalContainerInputs(
+                pullLocalInputs,
+                resolvedPullShadowImage,
+                toml,
+                fs,
+                path,
+              ),
+              targetLocal: resolved.isLocal,
+              usePgDelta: usePgDeltaDiff,
+              // `toml.schemaPathPatterns`, NOT `pullLocalInputs.context.config.db.migrations.
+              // schema_paths`: the latter is the raw `@supabase/config` field, which never
+              // applies `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` (`@supabase/config` has no
+              // viper-`AutomaticEnv` equivalent) — `toml` above (`legacyReadDbToml`) already
+              // resolves that env override the same way Go's `utils.Config.Db.Migrations.
+              // SchemaPaths` does (review: PRRT_kwDOErm0O86XDr4S).
+              schemaPaths: toml.schemaPathPatterns,
+              pgDelta: toml.pgDelta,
+              ctx,
+            };
+            // `Effect.acquireUseRelease`, NOT a separate `yield* legacyCreateShadowDatabase(...)`
             // followed by a later `.pipe(Effect.ensuring(...))` (see `diff.handler.ts`'s
             // identical call site for the full rationale): the latter shape leaves a gap
             // between the shadow's successful creation and the `Effect.ensuring` finalizer
@@ -762,30 +788,19 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // `legacyRemoveShadowDatabase` and leak the shadow container + its staged secret
             // directory. `acquireUseRelease` registers the release finalizer in the same
             // uninterruptible continuation the acquire resolves into, matching Go's `defer
-            // DockerRemove` immediately after successful preparation (review: PRRT_kwDOErm0O86XDr4Y).
+            // DockerRemove` immediately after successful creation (review: PRRT_kwDOErm0O86XDr4Y).
+            //
+            // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT
+            // the health-wait/migrate/declarative-apply `legacyPrepareShadowSource` performs;
+            // those run inside the `use` phase below instead, so a SIGINT can still interrupt
+            // them, matching Go's single cancellable `ctx` (see `legacy-shadow-source.ts`'s own
+            // doc comment on `legacyPrepareShadowSource` for the full rationale, review:
+            // PRRT_kwDOErm0O86XMrID).
             return yield* Effect.acquireUseRelease(
-              legacyPrepareShadowSource(spawner, {
-                ...legacyShadowRunInputFromLocalContainerInputs(
-                  pullLocalInputs,
-                  resolvedPullShadowImage,
-                  toml,
-                  fs,
-                  path,
-                ),
-                targetLocal: resolved.isLocal,
-                usePgDelta: usePgDeltaDiff,
-                // `toml.schemaPathPatterns`, NOT `pullLocalInputs.context.config.db.migrations.
-                // schema_paths`: the latter is the raw `@supabase/config` field, which never
-                // applies `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` (`@supabase/config` has no
-                // viper-`AutomaticEnv` equivalent) — `toml` above (`legacyReadDbToml`) already
-                // resolves that env override the same way Go's `utils.Config.Db.Migrations.
-                // SchemaPaths` does (review: PRRT_kwDOErm0O86XDr4S).
-                schemaPaths: toml.schemaPathPatterns,
-                pgDelta: toml.pgDelta,
-                ctx,
-              }),
-              (shadow) =>
+              legacyCreateShadowDatabase(spawner, shadowInput),
+              (handle) =>
                 Effect.gen(function* () {
+                  const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
                   // Use the declarative target override when present (Go substitutes it
                   // for the diff target, `diff.go:196-197`); for remote pulls it's
                   // undefined, so this is this attempt's resolved target URL.
@@ -836,10 +851,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   });
                   return { sql, files: undefined, capture: undefined };
                 }),
-              (shadow) =>
+              (handle) =>
                 legacyRemoveShadowDatabase(spawner, {
-                  containerId: shadow.container,
-                  secretDirId: shadow.secretDirId,
+                  containerId: handle.containerId,
+                  secretDirId: handle.secretDirId,
                   workdir: cliConfig.workdir,
                 }),
             );

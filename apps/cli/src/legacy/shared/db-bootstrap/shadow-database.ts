@@ -353,35 +353,44 @@ export interface LegacyShadowConnectionInput extends LegacyCreateShadowDatabaseI
 export type LegacyPrepareRawShadowInput = LegacyShadowConnectionInput;
 
 /**
- * Port of Go's `PrepareRawShadow` (`apps/cli-go/internal/db/diff/shadow.go:93-116`): a bare
- * shadow (created + healthy, no platform baseline or migrations applied) — used inline
- * (`db pull --declarative`'s empty declarative-export source), not the `ok`-sentinel
- * error-path pattern `legacy-shadow-source.ts`'s `legacyPrepareShadowSource` uses, since there
- * is only ONE step after creation that can fail (the health wait) rather than several. Lives
- * here (not `legacy-shadow-source.ts`) because it has zero pg-delta/declarative dependency —
- * see this module's own header.
+ * Port of Go's `PrepareRawShadow` (`apps/cli-go/internal/db/diff/shadow.go:93-116`): health-wait
+ * against an already-{@link legacyCreateShadowDatabase}-created shadow (created + healthy, no
+ * platform baseline or migrations applied) — used inline (`db pull --declarative`'s empty
+ * declarative-export source), not the `ok`-sentinel error-path pattern
+ * `legacy-shadow-source.ts`'s `legacyPrepareShadowSource` uses, since there is only ONE step
+ * here that can fail (the health wait) rather than several. Lives here (not
+ * `legacy-shadow-source.ts`) because it has zero pg-delta/declarative dependency — see this
+ * module's own header.
+ *
+ * Deliberately does NOT call {@link legacyCreateShadowDatabase} itself — the caller does, as the
+ * `acquire` of an `Effect.acquireUseRelease` whose `use` phase is this function (see
+ * `diff.handler.ts`/`pull.handler.ts`'s call sites). Go's `PrepareRawShadow` threads a single
+ * cancellable `ctx` through both creation and the health wait, so a SIGINT can interrupt either;
+ * an earlier shape here instead passed the WHOLE create-then-health-wait effect as `acquire`,
+ * which Effect's `uninterruptibleMask` (`acquireUseRelease(acquire, use, release) =>
+ * uninterruptibleMask(restore => flatMap(acquire, a => onExitPrimitive(restore(use(a)), ...)))`)
+ * makes entirely uninterruptible — a SIGINT during the health wait (which can run for up to
+ * `healthTimeoutSeconds`) was silently swallowed until the wait finished or timed out on its
+ * own, unlike Go. Splitting `legacyCreateShadowDatabase` out as the (brief, Docker-API-bound)
+ * `acquire` and keeping this health-wait as part of the interruptible `use` restores that parity
+ * — a SIGINT here now lands immediately, same as Go's ctx cancellation, while
+ * `legacyRemoveShadowDatabase` still runs as the `release` finalizer regardless of how `use`
+ * exits (review: PRRT_kwDOErm0O86XMrID).
  */
 export const legacyPrepareRawShadow = (
   spawner: Spawner,
+  handle: LegacyShadowDatabaseHandle,
   input: LegacyPrepareRawShadowInput,
 ): Effect.Effect<
   LegacyShadowSourceResult,
-  LegacyShadowDbError | LegacyHealthCheckTimeoutError,
+  LegacyHealthCheckTimeoutError,
   Output | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient
 > =>
   Effect.gen(function* () {
-    const { containerId, secretDirId } = yield* legacyCreateShadowDatabase(spawner, input);
+    const { containerId, secretDirId } = handle;
     yield* legacyWaitForHealthyServices(spawner, [containerId], {
       timeoutSeconds: input.healthTimeoutSeconds,
-    }).pipe(
-      Effect.onError(() =>
-        legacyRemoveShadowDatabase(spawner, {
-          containerId,
-          secretDirId,
-          workdir: input.workdir,
-        }),
-      ),
-    );
+    });
     const connConfig: LegacyPgConnInput = {
       host: input.hostname,
       port: input.shadowPort,

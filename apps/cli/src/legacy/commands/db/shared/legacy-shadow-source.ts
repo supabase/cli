@@ -46,11 +46,10 @@ import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import type { LegacyLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import type { LegacyVaultSecret } from "../../../shared/legacy-vault.ts";
 import {
-  legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
-  legacyRemoveShadowDatabase,
   LegacyShadowDbError,
   type LegacyShadowConnectionInput,
+  type LegacyShadowDatabaseHandle,
   type LegacyShadowDbSetupInput,
   type LegacyShadowSourceResult,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
@@ -189,16 +188,34 @@ export type LegacyPrepareShadowSourceError =
 
 /**
  * Port of Go's `PrepareShadowSource` (`apps/cli-go/internal/db/diff/shadow.go:37-91`):
- * create -> health-wait -> `MigrateShadowDatabase` (platform baseline + local migrations +
- * the `contrib_regression` template database) -> build the diff-source config -> when
- * `targetLocal`, the declarative-schema override branch. On ANY failure after creation the
- * shadow container is removed (Go's `ok`-sentinel + `defer` pattern); `Effect.onError` mirrors
- * this exactly (fires on a typed failure OR an interrupt, matching Go's defer running
- * regardless of *how* the function returns early) rather than `Effect.tapError` (which never
- * sees a pure interrupt).
+ * health-wait against an already-`legacyCreateShadowDatabase`-created shadow ->
+ * `MigrateShadowDatabase` (platform baseline + local migrations + the `contrib_regression`
+ * template database) -> build the diff-source config -> when `targetLocal`, the
+ * declarative-schema override branch.
+ *
+ * Deliberately does NOT call `legacyCreateShadowDatabase` (`shadow-database.ts`) itself, and
+ * no longer wraps its own body in `Effect.onError` cleanup — the caller does both, structuring
+ * this function as the `use` phase of an `Effect.acquireUseRelease` whose `acquire` is
+ * `legacyCreateShadowDatabase` and whose `release` is `legacyRemoveShadowDatabase` (see
+ * `diff.handler.ts`/`pull.handler.ts`'s call sites). An earlier shape passed THIS WHOLE
+ * function (create -> health-wait -> migrate -> declarative-apply) as `acquire` instead —
+ * matching Go's `ok`-sentinel + `defer` pattern for the "remove on any failure after
+ * creation" case, but Effect's `acquireUseRelease` runs `acquire` inside an
+ * `uninterruptibleMask` with no `restore` (`uninterruptibleMask(restore =>
+ * flatMap(acquire, a => onExitPrimitive(restore(use(a)), ...)))`), so passing all of this
+ * function as `acquire` made the ENTIRE health-wait/migration-replay/declarative-apply
+ * sequence uninterruptible too — a SIGINT during any of it (each of which can run for
+ * seconds to minutes) was silently swallowed until the whole sequence finished on its own,
+ * unlike Go, which threads one cancellable `ctx` through every one of these calls. Moving
+ * creation out to the (brief, Docker-API-bound) `acquire` and keeping this sequence as the
+ * `use` phase restores that parity: a SIGINT here now interrupts immediately, same as Go's
+ * ctx cancellation, while `legacyRemoveShadowDatabase` still runs as the `release` finalizer
+ * regardless of how `use` exits — success, a typed failure, or an interrupt (review:
+ * PRRT_kwDOErm0O86XMrID).
  */
 export const legacyPrepareShadowSource = <E>(
   spawner: Spawner,
+  handle: LegacyShadowDatabaseHandle,
   input: LegacyPrepareShadowSourceInput<E>,
 ): Effect.Effect<
   LegacyShadowSourceResult,
@@ -218,97 +235,87 @@ export const legacyPrepareShadowSource = <E>(
   | CliArgs
 > =>
   Effect.gen(function* () {
-    const { containerId, secretDirId } = yield* legacyCreateShadowDatabase(spawner, input);
+    const { containerId, secretDirId } = handle;
 
-    return yield* Effect.gen(function* () {
-      yield* legacyWaitForHealthyServices(spawner, [containerId], {
-        timeoutSeconds: input.healthTimeoutSeconds,
-      });
+    yield* legacyWaitForHealthyServices(spawner, [containerId], {
+      timeoutSeconds: input.healthTimeoutSeconds,
+    });
 
-      const connConfig: LegacyPgConnInput = {
-        host: input.hostname,
-        port: input.shadowPort,
-        user: "postgres",
-        password: input.password,
-        database: "postgres",
-      };
-      yield* legacyMigrateShadowDatabase(spawner, {
-        fs: input.fs,
-        path: input.path,
-        workdir: input.workdir,
-        projectId: input.projectId,
-        container: containerId,
-        networkId: input.networkId,
-        connConfig,
-        setup: input.setup,
-      });
+    const connConfig: LegacyPgConnInput = {
+      host: input.hostname,
+      port: input.shadowPort,
+      user: "postgres",
+      password: input.password,
+      database: "postgres",
+    };
+    yield* legacyMigrateShadowDatabase(spawner, {
+      fs: input.fs,
+      path: input.path,
+      workdir: input.workdir,
+      projectId: input.projectId,
+      container: containerId,
+      networkId: input.networkId,
+      connConfig,
+      setup: input.setup,
+    });
 
-      const sourceUrl = legacyToPostgresURL(connConfig);
+    const sourceUrl = legacyToPostgresURL(connConfig);
 
-      let targetUrlOverride: string | undefined;
-      if (input.targetLocal) {
-        const declared = yield* legacyLoadDeclaredSchemas(
-          input.fs,
+    let targetUrlOverride: string | undefined;
+    if (input.targetLocal) {
+      const declared = yield* legacyLoadDeclaredSchemas(
+        input.fs,
+        input.path,
+        input.workdir,
+        input.schemaPaths,
+        input.pgDelta,
+      );
+      if (declared.length > 0) {
+        const overrideConn: LegacyPgConnInput = { ...connConfig, database: "contrib_regression" };
+        const useDeclarativePgDelta = legacyShouldApplyDeclarativeWithPgDelta(
           input.path,
-          input.workdir,
+          input.usePgDelta,
           input.schemaPaths,
           input.pgDelta,
         );
-        if (declared.length > 0) {
-          const overrideConn: LegacyPgConnInput = { ...connConfig, database: "contrib_regression" };
-          const useDeclarativePgDelta = legacyShouldApplyDeclarativeWithPgDelta(
-            input.path,
-            input.usePgDelta,
-            input.schemaPaths,
-            input.pgDelta,
+        let appliedViaPgDelta = false;
+        if (useDeclarativePgDelta) {
+          const declDirRel = legacyResolveDeclarativeDir(input.path, input.pgDelta);
+          const declDirAbs = legacyResolveUnderWorkdir(input.path, input.workdir, declDirRel);
+          // Go's `afero.DirExists` (`shadow.go:72`) — a non-directory path is treated as
+          // absent here too, same reasoning as `legacyLoadDeclaredSchemas` below.
+          const declDirExists = yield* input.fs.stat(declDirAbs).pipe(
+            Effect.map((info) => info.type === "Directory"),
+            Effect.orElseSucceed(() => false),
           );
-          let appliedViaPgDelta = false;
-          if (useDeclarativePgDelta) {
-            const declDirRel = legacyResolveDeclarativeDir(input.path, input.pgDelta);
-            const declDirAbs = legacyResolveUnderWorkdir(input.path, input.workdir, declDirRel);
-            // Go's `afero.DirExists` (`shadow.go:72`) — a non-directory path is treated as
-            // absent here too, same reasoning as `legacyLoadDeclaredSchemas` below.
-            const declDirExists = yield* input.fs.stat(declDirAbs).pipe(
-              Effect.map((info) => info.type === "Directory"),
-              Effect.orElseSucceed(() => false),
-            );
-            if (declDirExists) {
-              yield* legacyApplyDeclarativePgDelta(input.ctx, {
-                fs: input.fs,
-                declarativeDirAbs: declDirAbs,
-                target: legacyToPostgresURL(overrideConn),
-              });
-              appliedViaPgDelta = true;
-            }
+          if (declDirExists) {
+            yield* legacyApplyDeclarativePgDelta(input.ctx, {
+              fs: input.fs,
+              declarativeDirAbs: declDirAbs,
+              target: legacyToPostgresURL(overrideConn),
+            });
+            appliedViaPgDelta = true;
           }
-          if (!appliedViaPgDelta) {
-            yield* legacyMigrateBaseDatabase(
-              input.fs,
-              input.path,
-              input.workdir,
-              overrideConn,
-              declared,
-            );
-          }
-          targetUrlOverride = legacyToPostgresURL(overrideConn);
         }
+        if (!appliedViaPgDelta) {
+          yield* legacyMigrateBaseDatabase(
+            input.fs,
+            input.path,
+            input.workdir,
+            overrideConn,
+            declared,
+          );
+        }
+        targetUrlOverride = legacyToPostgresURL(overrideConn);
       }
+    }
 
-      return {
-        container: containerId,
-        secretDirId,
-        sourceUrl,
-        targetUrlOverride,
-      } satisfies LegacyShadowSourceResult;
-    }).pipe(
-      Effect.onError(() =>
-        legacyRemoveShadowDatabase(spawner, {
-          containerId,
-          secretDirId,
-          workdir: input.workdir,
-        }),
-      ),
-    );
+    return {
+      container: containerId,
+      secretDirId,
+      sourceUrl,
+      targetUrlOverride,
+    } satisfies LegacyShadowSourceResult;
   });
 
 /** Go's `pkg/config.hasGlobMeta` (`config.go:211-213`) — `*?[` only, NOT `io/fs.hasMeta`'s broader set (which also counts `\`). */

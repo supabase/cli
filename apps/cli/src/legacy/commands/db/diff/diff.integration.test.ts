@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Fiber, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -61,6 +61,11 @@ interface SetupOpts {
   readonly networkId?: string; // --network-id value forwarded to docker runs
   // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
   readonly failWriteOnCall?: number;
+  // When set, the shadow container never reports healthy — for the interrupt-during-
+  // health-wait regression coverage (review: PRRT_kwDOErm0O86XMrID). See
+  // `mockLegacyShadowContainerCliSpawner`'s own doc comment for why this is required
+  // (not `Effect.never`) to observe a genuinely suspended retry loop.
+  readonly neverHealthyShadow?: boolean;
   // `LegacyCliConfig.projectId` (Go's `SUPABASE_PROJECT_ID` env-only reader). Defaults to
   // `Option.some("test")`; pass `Option.none()` to exercise the config.toml/workdir-basename
   // fallback `legacyResolveLocalProjectId` provides for the pg-delta edge-runtime cache bind.
@@ -119,7 +124,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // Shadow provisioning is native (CLI-1956): a real docker-spawner fake backs
   // container create/start/health-inspect/cleanup, and a real (fake) Postgres
   // session backs the shadow's own platform-baseline/migration/declarative setup.
-  const shadowSpawner = mockLegacyShadowContainerCliSpawner();
+  const shadowSpawner = mockLegacyShadowContainerCliSpawner({
+    neverHealthy: opts.neverHealthyShadow ?? false,
+  });
   const shadowDbConnection = fakeShadowDbConnection();
 
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
@@ -1180,4 +1187,45 @@ describe("legacy db diff", () => {
       });
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.live(
+    "removes the shadow container on a SIGINT-style interruption during the health wait, without waiting for the health-check timeout",
+    () => {
+      // Regression test for the acquireUseRelease restructuring (review:
+      // PRRT_kwDOErm0O86XMrID): an earlier shape passed the ENTIRE
+      // `legacyPrepareShadowSource` (create -> health-wait -> migrate ->
+      // declarative-apply) as `acquireUseRelease`'s `acquire`, which Effect's
+      // `uninterruptibleMask` (no `restore` around `acquire`) made completely
+      // uninterruptible — a SIGINT landing during the health wait (which can run for
+      // up to 30 real seconds, `LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
+      // swallowed until the health check gave up on its own, unlike Go's single
+      // cancellable `ctx`. `acquire` is now ONLY `legacyCreateShadowDatabase`
+      // (container creation); the health wait runs inside the interruptible `use`
+      // phase instead, so a `Fiber.interrupt` here must land promptly.
+      const s = setup(tmp.current, { neverHealthyShadow: true });
+      return Effect.gen(function* () {
+        const fiber = yield* legacyDbDiff(flags()).pipe(
+          Effect.provide(s.layer),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        // Wait until the shadow's own health check has actually probed the
+        // never-healthy container at least once — proving the fiber is genuinely
+        // suspended inside `legacyWaitForHealthyServices`'s retry loop, not merely
+        // past the `create` call.
+        while (!s.shadowSpawned.some((c) => c.args[0] === "container" && c.args[1] === "inspect")) {
+          yield* Effect.sleep("5 millis");
+        }
+        // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
+        // including `legacyRemoveShadowDatabase`) has fully completed — if `acquire`
+        // still covered the health wait, this call would hang for up to 30 real
+        // seconds (or until this test's own timeout), instead of resolving as soon
+        // as the in-flight probe's own subprocess call returns.
+        yield* Fiber.interrupt(fiber);
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+        // The diff step (past the health wait) was never reached.
+        expect(s.edgeCalls).toHaveLength(0);
+      });
+    },
+  );
 });

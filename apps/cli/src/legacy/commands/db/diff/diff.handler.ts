@@ -22,7 +22,10 @@ import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
-import { legacyRemoveShadowDatabase } from "../../../shared/db-bootstrap/shadow-database.ts";
+import {
+  legacyCreateShadowDatabase,
+  legacyRemoveShadowDatabase,
+} from "../../../shared/db-bootstrap/shadow-database.ts";
 import {
   legacyResolveLocalProjectId,
   legacySanitizeProjectId,
@@ -487,7 +490,26 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
 
     yield* output.raw("Creating shadow database...\n", "stderr");
     const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
-    // `Effect.acquireUseRelease`, NOT a separate `yield* legacyPrepareShadowSource(...)`
+    const shadowInput = {
+      ...legacyShadowRunInputFromLocalContainerInputs(
+        localInputs,
+        resolvedShadowImage,
+        cfg,
+        fs,
+        path,
+      ),
+      targetLocal: resolved.isLocal,
+      usePgDelta: useDelta,
+      // `cfg.schemaPathPatterns`, NOT `localInputs.context.config.db.migrations.schema_paths`:
+      // the latter is the raw `@supabase/config` field, which never applies
+      // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` (`@supabase/config` has no viper-`AutomaticEnv`
+      // equivalent) — `cfg` above (`legacyReadDbToml`) already resolves that env override the
+      // same way Go's `utils.Config.Db.Migrations.SchemaPaths` does (review: PRRT_kwDOErm0O86XDr4S).
+      schemaPaths: cfg.schemaPathPatterns,
+      pgDelta: cfg.pgDelta,
+      ctx,
+    };
+    // `Effect.acquireUseRelease`, NOT a separate `yield* legacyCreateShadowDatabase(...)`
     // followed by a later `.pipe(Effect.ensuring(...))`: the latter shape leaves a real gap
     // between the shadow's successful creation and the `Effect.ensuring` finalizer actually
     // being attached — a fiber interrupt landing in that gap (between the two `yield*`
@@ -495,32 +517,22 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // container and its staged secret directory and leaving the shadow port occupied.
     // `acquireUseRelease` closes that: `acquire` runs inside an `uninterruptibleMask`, and the
     // release finalizer is registered in the SAME uninterruptible continuation `acquire`
-    // resolves into (verified against `effect`'s own `internal/effect.js`:
-    // `uninterruptibleMask(restore => flatMap(acquire, a => onExitPrimitive(restore(use(a)),
-    // exit => release(a, exit), true)))`) — matching Go's `defer DockerRemove` immediately
-    // after successful preparation, which has no equivalent gap (review: PRRT_kwDOErm0O86XDr4Y).
+    // resolves into, matching Go's `defer DockerRemove` immediately after successful creation
+    // (review: PRRT_kwDOErm0O86XDr4Y).
+    //
+    // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT the
+    // health-wait/migrate/declarative-apply `legacyPrepareShadowSource` performs. Those run
+    // inside the `use` phase below instead, where a SIGINT can still interrupt them (matching
+    // Go's single cancellable `ctx` threaded through the equivalent calls); passing all of
+    // `legacyPrepareShadowSource` as `acquire` made that whole sequence uninterruptible too,
+    // since `acquireUseRelease`'s `uninterruptibleMask` has no `restore` around `acquire` —
+    // see `legacy-shadow-source.ts`'s own doc comment on `legacyPrepareShadowSource` for the
+    // full rationale (review: PRRT_kwDOErm0O86XMrID).
     const diffResult = yield* Effect.acquireUseRelease(
-      legacyPrepareShadowSource(spawner, {
-        ...legacyShadowRunInputFromLocalContainerInputs(
-          localInputs,
-          resolvedShadowImage,
-          cfg,
-          fs,
-          path,
-        ),
-        targetLocal: resolved.isLocal,
-        usePgDelta: useDelta,
-        // `cfg.schemaPathPatterns`, NOT `localInputs.context.config.db.migrations.schema_paths`:
-        // the latter is the raw `@supabase/config` field, which never applies
-        // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` (`@supabase/config` has no viper-`AutomaticEnv`
-        // equivalent) — `cfg` above (`legacyReadDbToml`) already resolves that env override the
-        // same way Go's `utils.Config.Db.Migrations.SchemaPaths` does (review: PRRT_kwDOErm0O86XDr4S).
-        schemaPaths: cfg.schemaPathPatterns,
-        pgDelta: cfg.pgDelta,
-        ctx,
-      }),
-      (shadow) =>
+      legacyCreateShadowDatabase(spawner, shadowInput),
+      (handle) =>
         Effect.gen(function* () {
+          const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
           const target = shadow.targetUrlOverride ?? targetUrl;
           yield* output.raw(
             flags.schema.length > 0
@@ -550,10 +562,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           // single migration file (Go's `SaveDiff` single-file path).
           return { sql, files: undefined };
         }),
-      (shadow) =>
+      (handle) =>
         legacyRemoveShadowDatabase(spawner, {
-          containerId: shadow.container,
-          secretDirId: shadow.secretDirId,
+          containerId: handle.containerId,
+          secretDirId: handle.secretDirId,
           workdir: cliConfig.workdir,
         }),
     );
