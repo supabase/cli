@@ -209,7 +209,7 @@ function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArr
 
 /**
  * Wraps `base` to also intercept every `docker cp <hostPath> <containerId>:<containerPath>` call
- * `legacyStartContainer`'s `secretFiles` delivery issues (`legacyCopyStartSecretFileIntoContainer`,
+ * `legacyCreateContainer`'s `secretFiles` delivery issues (`legacyCopyStartSecretFileIntoContainer`,
  * `container-lifecycle.ts` — supabase/cli#6022): synchronously reads the host-side temp file's
  * content while it's still on disk (its own cleanup only runs once THIS spawn's effect resolves)
  * and records it against the destination `containerPath`, so a test can assert on delivered secret
@@ -284,7 +284,7 @@ function freshVolumeRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
 ): (args: ReadonlyArray<string>) => RouteResult {
   return (args) => {
-    // `legacyStartVolumeExists` now distinguishes a confirmed "not found" from
+    // `legacyVolumeExists` now distinguishes a confirmed "not found" from
     // any other inspect error (matching Go's `errdefs.IsNotFound` gate) — the
     // stderr text is what makes this simulate a genuinely fresh/non-existent
     // volume rather than an ambiguous inspect failure.
@@ -3135,7 +3135,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartNetworkCreateError");
+          expect(serialized).toContain("LegacyNetworkCreateError");
           expect(serialized).toContain("failed to create docker network");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -3160,7 +3160,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartContainerCreateError");
+          expect(serialized).toContain("LegacyContainerCreateError");
           expect(serialized).toContain("failed to create docker container");
         }
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
@@ -3186,7 +3186,7 @@ content_path = "./templates/custom_notice.html"
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartContainerStartError");
+            expect(serialized).toContain("LegacyContainerStartError");
             expect(serialized).toContain("port is already allocated");
             expect(serialized).toContain(
               "Try stopping the project or container already using 0.0.0.0:54322",

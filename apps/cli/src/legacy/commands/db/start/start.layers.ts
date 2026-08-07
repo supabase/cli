@@ -15,12 +15,12 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * `FileSystem`/`Path` are ambient from the root runtime (`shared/cli/run.ts`), matching
  * `supabase start`'s own layer composition (`start.command.ts`).
  *
- * No `LegacyDbBootstrapSeam` composition — `db start` no longer calls into the `db
- * __db-bootstrap` Go seam at all after CLI-1954: `legacyIsLocalDbRunning` (the
- * already-running check) and `legacyStartDatabase` (the container bring-up itself) are
- * both native TS, hoisted to `legacy/shared/db-bootstrap/`. `db reset --local` still
- * composes `legacyDbBootstrapSeamLayer` for its own container-recreate + storage-health
- * primitives (`reset.layers.ts`).
+ * No `LegacyDbBootstrapSeam` composition — that hidden `db __db-bootstrap` Go seam no
+ * longer exists at all (CLI-1954 removed its `start` dispatch, CLI-1955 removed the
+ * rest): `legacyIsLocalDbRunning` (the already-running check) and `legacyStartDatabase`
+ * (the container bring-up itself) are both native TS, hoisted to
+ * `legacy/shared/db-bootstrap/`. `db reset --local` is ALSO fully native now, via its
+ * own composition over the same primitives (`reset.layers.ts`).
  *
  * `legacyDockerRunLayer`/`legacyDbConnectionLayer`/`legacyHttpClientLayer` back the native
  * container bootstrap itself (`start.handler.ts`): the fresh-volume `SetupLocalDatabase`-

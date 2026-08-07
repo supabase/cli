@@ -75,13 +75,19 @@ const globalFlagsWithValues = new Set([
 // legacyRollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
 // process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
 // failure) — a raw, unhandled OS signal skips it entirely, exactly like the `start` case above.
-const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
-  // `db reset` (local path) drives the bootstrap seam, which holds SIGINT/SIGTERM/SIGHUP with
-  // no-op listeners while the Go child recreates the container; the global handler would
-  // otherwise race that and cut off the child's Docker cleanup / status propagation.
-  ["db", "reset"],
-  ["functions", "serve"],
-];
+//
+// `["db", "reset"]` was ALSO listed here once, for the same reason `db start` used to be:
+// its local path drove the hidden `db __db-bootstrap --mode recreate`/`--mode await-storage`
+// seam via a bespoke DIRECT `ChildProcess.make` spawn (not through `LegacyGoProxy`), which
+// held SIGINT/SIGTERM/SIGHUP itself while the Go child recreated the container — the global
+// handler's own `Fiber.interrupt` would otherwise race that child's Docker cleanup and lose
+// its real exit status. CLI-1955 removed that seam entirely: `db reset --local` is now fully
+// native TS (`legacy/shared/db-bootstrap/recreate-local-database.ts`), installing no signal
+// handling of its own. Its only remaining Go child is the niche `--experimental` remote
+// delegate, via the SAME `LegacyGoProxy.exec`/`execCapture` every other unlisted legacy
+// command already uses safely alongside this global handler — so `db reset` was removed from
+// this list too, matching `db start`'s own precedent exactly.
+const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["functions", "serve"]];
 
 /** Positional command-path tokens from argv, skipping global flags and their values. */
 export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<string> {

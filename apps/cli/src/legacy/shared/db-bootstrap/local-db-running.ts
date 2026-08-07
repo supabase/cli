@@ -42,11 +42,12 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
  * error rather than silently treating the database as stopped.
  *
  * Shared by `db start` (`commands/db/start/start.handler.ts`) and `db reset`
- * (`commands/db/reset/reset.handler.ts`) — hoisted out of the now-removed
- * `db __db-bootstrap` Go seam by CLI-1954, since this check was already a
- * native TS `docker container inspect`, not a Go subprocess call. `db reset`
- * still delegates its container-recreate + storage-health-gate primitives to
- * that seam (`LegacyDbBootstrapSeam`); only this probe moved.
+ * (`commands/db/reset/reset.handler.ts`) — hoisted out of the `db __db-bootstrap`
+ * Go seam by CLI-1954, since this check was already a native TS `docker container
+ * inspect`, not a Go subprocess call. CLI-1955 later removed the rest of that seam
+ * too (`db reset`'s container-recreate + storage-health-gate primitives are now
+ * native — `recreate-local-database.ts`/`await-storage-ready.ts`), so the seam
+ * itself no longer exists at all.
  *
  * `resolveDbToml` mirrors the seam's own best-effort read: the caller has
  * already run Go's `LoadConfig` validation before reaching this check, so here

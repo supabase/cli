@@ -1,8 +1,8 @@
 import { Data, Runtime } from "effect";
 
 /**
- * A spawned `supabase-go` child process — via `LegacyGoProxy.exec`/`execCapture`,
- * or the hidden `db __db-bootstrap` seam (`legacy-db-bootstrap.seam.layer.ts`) —
+ * A spawned `supabase-go` child process — via `LegacyGoProxy.exec`/`execCapture`, or
+ * (historically, before CLI-1955 removed it) the hidden `db __db-bootstrap` seam —
  * exited non-zero, or could not be spawned at all (binary not found).
  *
  * Carries the child's exact exit code through Effect's `Runtime.errorExitCode`

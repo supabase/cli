@@ -19,7 +19,7 @@ import {
 } from "../legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
-  LegacyStartDbSetupError,
+  LegacyDbSetupError,
   legacyStartInitCurrentBranch,
   legacyStartSetupLocalDatabase,
   type LegacyStartSetupLocalDatabaseInput,
@@ -200,6 +200,8 @@ function baseInput(
     },
     projectEnvValues: undefined,
     debug: false,
+    version: "",
+    seedFlags: { noSeed: false, sqlPaths: [] },
     ...overrides,
   };
 }
@@ -523,10 +525,8 @@ describe("legacyStartSetupLocalDatabase", () => {
       return run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyStartDbSetupError);
-          expect((error as LegacyStartDbSetupError).message).toBe(
-            "error running container: exit 1",
-          );
+          expect(error).toBeInstanceOf(LegacyDbSetupError);
+          expect((error as LegacyDbSetupError).message).toBe("error running container: exit 1");
           rmSync(workdir, { recursive: true, force: true });
         }),
       );
