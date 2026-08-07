@@ -201,7 +201,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "2.123.1",
+    defaultVersion: "2.123.5",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "realtime", tagPrefix: "v" } },
     activation: { startup: "eager", activates: [], owns: [] },
@@ -210,7 +210,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "1.68.1",
+    defaultVersion: "1.68.8",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "storage-api", tagPrefix: "v" } },
     activation: { startup: "lazy", activates: ["imgproxy"], owns: ["imgproxy"] },
@@ -237,7 +237,7 @@ export const SERVICE_CATALOG = {
   pgmeta: {
     name: "pgmeta",
     configKey: "pgmeta",
-    defaultVersion: "0.96.6",
+    defaultVersion: "0.96.8",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { ownership: "supabase", repository: "postgres-meta", tagPrefix: "v" },
@@ -257,7 +257,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "1.49.2",
+    defaultVersion: "1.50.0",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "logflare" } },
     activation: { startup: "lazy", activates: ["vector"], owns: ["vector"] },
