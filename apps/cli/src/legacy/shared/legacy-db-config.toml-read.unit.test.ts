@@ -2816,3 +2816,109 @@ describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)
     );
   });
 });
+
+describe("legacyReadDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.template/notification", () => {
+  const ref = "abcdefghijklmnopqrst";
+
+  it.effect("tracks auth.captcha.provider when a matched remote block supplies it", () => {
+    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `provider` is a plain string leaf, not one of
+    // `applyRemoteOverride`'s dynamically-keyed sections, so it must be tracked via
+    // `LEGACY_ENV_OVERRIDABLE_KEYS` like any other fixed-name field.
+    const dir = withConfig(
+      [
+        "[auth.captcha]",
+        'provider = "hcaptcha"',
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.auth.captcha]",
+        'provider = "turnstile"',
+        "",
+      ].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBe("prod");
+          expect(v.remoteOverrideKeys.has("auth.captcha.provider")).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("tracks a matched remote block's auth.email.template.<name> leaves dynamically", () => {
+    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `auth.email.template.<name>.*` is a
+    // genuinely arbitrarily-keyed map, same shape as `auth.external.<name>.*`, so it must be
+    // flattened dynamically instead of relying on a fixed `LEGACY_ENV_OVERRIDABLE_KEYS` entry.
+    const dir = withConfig(
+      [
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.auth.email.template.invite]",
+        'content_path = "remote-invite.html"',
+        "",
+      ].join("\n"),
+    );
+    // Template `content_path` resolves relative to the project root (`workdir`, i.e. `dir`).
+    writeFileSync(join(dir, "remote-invite.html"), "<html></html>");
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBe("prod");
+          expect(v.remoteOverrideKeys.has("auth.email.template.invite.content_path")).toBe(true);
+          expect(v.remoteOverrideKeys.has("auth.email.template.invite.subject")).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "tracks a matched remote block's auth.email.notification.<name> leaves dynamically",
+    () => {
+      // Regression (review: PRRT_kwDOErm0O86XLAYo) — `auth.email.notification.<name>.*`'s
+      // sibling case, including `enabled` (a direct `legacyEnvOverrideBool` throw site).
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.auth.email.notification.password_changed]",
+          "enabled = true",
+          'content_path = "remote-pw-changed.html"',
+          "",
+        ].join("\n"),
+      );
+      // Notification `content_path` resolves relative to the `supabase/` dir.
+      writeFileSync(join(dir, "supabase", "remote-pw-changed.html"), "<html></html>");
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.appliedRemote).toBe("prod");
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.enabled"),
+            ).toBe(true);
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.content_path"),
+            ).toBe(true);
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.subject"),
+            ).toBe(false);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+});

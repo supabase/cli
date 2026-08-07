@@ -713,8 +713,12 @@ export function legacyResolveAuthCaptcha(
    * `legacyEnvOverride` calls below THROW (directly, or via `legacyDecryptAuthSecret` for
    * `.secret`) on a malformed override even when a matched remote block already set them, which
    * would abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on
-   * an env value Go silently ignores. Defaults to empty for `start.handler.ts`'s callers, which
-   * never resolve a `[remotes.<ref>]` block for this config read.
+   * an env value Go silently ignores. `auth.captcha.provider` can't throw the same way
+   * (`legacyEnvOverride` is a plain string read), but `legacyValidateResolvedConfig`'s enum check
+   * downstream rejects anything other than `hcaptcha`/`turnstile` — same "non-throwing read,
+   * throwing downstream consumer" class as `studio.api_url` (review: PRRT_kwDOErm0O86XLAYn).
+   * Defaults to empty for `start.handler.ts`'s callers, which never resolve a `[remotes.<ref>]`
+   * block for this config read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyCaptchaInput | undefined {
@@ -731,8 +735,9 @@ export function legacyResolveAuthCaptcha(
                 projectEnvValues,
               )
             : (captcha.enabled ?? false),
-        provider:
-          captchaDoc !== undefined
+        provider: remoteOverrideKeys.has("auth.captcha.provider")
+          ? captcha.provider
+          : captchaDoc !== undefined
             ? legacyEnvOverride(
                 "SUPABASE_AUTH_CAPTCHA_PROVIDER",
                 captcha.provider,
@@ -1033,6 +1038,14 @@ export function legacyResolveAuthEmail(
   // `auth.enabled`/`api.enabled` — an ungated malformed override here aborts the WHOLE
   // `legacyResolveLocalConfigValues` call for the `db diff --linked`/`db pull` shadow-provisioning
   // path (CLI-1956), denying the shadow every field, not just this one (review: PRRT_kwDOErm0O86XHvYh).
+  // Per-entry `template.<name>.*`/`notification.<name>.*` leaves (dynamically keyed, tracked via
+  // `LEGACY_AUTH_EMAIL_TEMPLATE_FIELDS`/`LEGACY_AUTH_EMAIL_NOTIFICATION_FIELDS`, same shape as
+  // `auth.external.<name>.*`) need the identical gating: `content_path` is the field that can
+  // actually abort resolution (a stale/missing ambient `_CONTENT_PATH` env var wins over a
+  // matched remote's own valid path and makes the caller-side file read below throw);
+  // `subject`/`content`/notification's `enabled` can't throw the same way, but leaving them
+  // ungated is still a precedence bug, same reasoning as `auth.external.*`'s non-throwing fields
+  // (review: PRRT_kwDOErm0O86XLAYn, PRRT_kwDOErm0O86XLAYo).
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyResolvedAuthEmail {
   const emailDoc = asRecord(authDocument?.["email"]);
@@ -1042,13 +1055,16 @@ export function legacyResolveAuthEmail(
   const template: Record<string, LegacyResolvedAuthEmailTemplate> = {};
   for (const [name, tmpl] of Object.entries(email.template)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}`;
-    const envSubject = legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     const rawSubjectPresent = asRecord(templateDoc?.[name])?.["subject"] !== undefined;
+    const envSubject = remoteOverrideKeys.has(`auth.email.template.${name}.subject`)
+      ? undefined
+      : legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     template[name] = {
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
-      content_path:
-        legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
-        tmpl.content_path,
+      content_path: remoteOverrideKeys.has(`auth.email.template.${name}.content_path`)
+        ? tmpl.content_path
+        : (legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+          tmpl.content_path),
       // Go's `Content *string` is folded from `${envPrefix}_CONTENT` by the same generic
       // Viper/`AutomaticEnv` bind as every other field (`config.go:749`, before `Config.Validate`
       // at `config.go:882`) — so an env override makes `content` "present" here exactly like a raw
@@ -1056,30 +1072,39 @@ export function legacyResolveAuthEmail(
       // unless `content_path` is also set.
       content_present:
         asRecord(templateDoc?.[name])?.["content"] !== undefined ||
-        legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined,
+        (remoteOverrideKeys.has(`auth.email.template.${name}.content`)
+          ? false
+          : legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined),
     };
   }
 
   const notification: Record<string, LegacyResolvedAuthEmailNotification> = {};
   for (const [name, tmpl] of Object.entries(email.notification)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_NOTIFICATION_${name.toUpperCase()}`;
-    const envSubject = legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     const rawSubjectPresent = asRecord(notificationDoc?.[name])?.["subject"] !== undefined;
+    const envSubject = remoteOverrideKeys.has(`auth.email.notification.${name}.subject`)
+      ? undefined
+      : legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     notification[name] = {
-      enabled: legacyEnvOverrideBool(
-        `${envPrefix}_ENABLED`,
-        tmpl.enabled,
-        `auth.email.notification.${name}.enabled`,
-        projectEnvValues,
-      ),
+      enabled: remoteOverrideKeys.has(`auth.email.notification.${name}.enabled`)
+        ? tmpl.enabled
+        : legacyEnvOverrideBool(
+            `${envPrefix}_ENABLED`,
+            tmpl.enabled,
+            `auth.email.notification.${name}.enabled`,
+            projectEnvValues,
+          ),
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
-      content_path:
-        legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
-        tmpl.content_path,
+      content_path: remoteOverrideKeys.has(`auth.email.notification.${name}.content_path`)
+        ? tmpl.content_path
+        : (legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+          tmpl.content_path),
       // Same `_CONTENT` env-presence fold as the template loop above.
       content_present:
         asRecord(notificationDoc?.[name])?.["content"] !== undefined ||
-        legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined,
+        (remoteOverrideKeys.has(`auth.email.notification.${name}.content`)
+          ? false
+          : legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined),
     };
   }
 

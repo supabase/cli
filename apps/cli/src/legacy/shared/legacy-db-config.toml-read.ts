@@ -478,6 +478,15 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.mfa.web_authn.verify_enabled",
   "auth.mfa.max_enrolled_factors",
   "auth.captcha.enabled",
+  // `auth.captcha.provider` can't throw on its own (`legacyEnvOverride` is a plain string read),
+  // but `legacyValidateResolvedConfig`'s enum check (`legacy-config-validate.ts`, ported from
+  // `config.go:1099-1109`) rejects any value other than `hcaptcha`/`turnstile` — same
+  // "non-throwing read, throwing downstream consumer" class as `studio.api_url` below. A matched
+  // remote's own valid `provider` must beat a stale/unsupported ambient
+  // `SUPABASE_AUTH_CAPTCHA_PROVIDER`, or `legacyValidateResolvedConfig` aborts the whole
+  // synchronous `legacyResolveLocalConfigValues` call (and the shadow it feeds) on a value Go's
+  // `v.Set` (override tier, above `AutomaticEnv`) never lets win.
+  "auth.captcha.provider",
   // `auth.captcha.secret` is a `config.Secret` (`pkg/config/auth.go:292`), decrypted the same
   // way `auth.email.smtp.pass` below is — `legacyResolveAuthCaptcha`'s ungated `legacyEnvOverride`
   // call let a malformed ambient `SUPABASE_AUTH_CAPTCHA_SECRET` outrank a matched remote's own
@@ -570,6 +579,28 @@ const LEGACY_AUTH_EXTERNAL_PROVIDER_FIELDS = [
   "email_optional",
 ] as const;
 
+/**
+ * `auth.email.template.<name>`/`auth.email.notification.<name>` are the same shape of genuine,
+ * arbitrarily-keyed map as `auth.external.<name>` above — a fixed `LEGACY_ENV_OVERRIDABLE_KEYS`
+ * entry per template/notification name can't cover every name a `[remotes.<ref>]` block might
+ * set, so these are also tracked dynamically in {@link applyRemoteOverride}. `content_path` is
+ * the field that can actually abort resolution (a matched remote's own valid path losing to a
+ * stale/missing ambient `_CONTENT_PATH` env var makes {@link legacyResolveAuthEmail}'s caller-side
+ * file read throw — same "non-throwing read, throwing downstream consumer" class as
+ * `auth.captcha.provider` above); `subject`/`content` can't throw the same way, but leaving them
+ * ungated is still a precedence bug, same reasoning as `auth.external.*`'s `client_id`/`url`/
+ * `redirect_uri` above (review: PRRT_kwDOErm0O86XLAYn, PRRT_kwDOErm0O86XLAYo).
+ */
+const LEGACY_AUTH_EMAIL_TEMPLATE_FIELDS = ["subject", "content_path", "content"] as const;
+
+/** {@link LEGACY_AUTH_EMAIL_TEMPLATE_FIELDS}'s notification-section sibling — same fields, plus `enabled`. */
+const LEGACY_AUTH_EMAIL_NOTIFICATION_FIELDS = [
+  "enabled",
+  "subject",
+  "content_path",
+  "content",
+] as const;
+
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */
 function legacyBlockProvidesKey(block: RawDoc, key: string): boolean {
   let current: unknown = block;
@@ -616,6 +647,28 @@ function applyRemoteOverride(
         for (const providerName of Object.keys(externalBlock)) {
           for (const field of LEGACY_AUTH_EXTERNAL_PROVIDER_FIELDS) {
             const key = `auth.external.${providerName}.${field}`;
+            if (legacyBlockProvidesKey(block, key)) remoteOverrideKeys.add(key);
+          }
+        }
+      }
+      // `auth.email.template.<name>`/`auth.email.notification.<name>` are the same
+      // arbitrarily-keyed shape as `auth.external.<name>` above — see
+      // `LEGACY_AUTH_EMAIL_TEMPLATE_FIELDS`'s own doc comment.
+      const emailBlock = asRecord(block["auth"])?.["email"];
+      const emailTemplateBlock = asRecord(asRecord(emailBlock)?.["template"]);
+      if (emailTemplateBlock !== undefined) {
+        for (const templateName of Object.keys(emailTemplateBlock)) {
+          for (const field of LEGACY_AUTH_EMAIL_TEMPLATE_FIELDS) {
+            const key = `auth.email.template.${templateName}.${field}`;
+            if (legacyBlockProvidesKey(block, key)) remoteOverrideKeys.add(key);
+          }
+        }
+      }
+      const emailNotificationBlock = asRecord(asRecord(emailBlock)?.["notification"]);
+      if (emailNotificationBlock !== undefined) {
+        for (const notificationName of Object.keys(emailNotificationBlock)) {
+          for (const field of LEGACY_AUTH_EMAIL_NOTIFICATION_FIELDS) {
+            const key = `auth.email.notification.${notificationName}.${field}`;
             if (legacyBlockProvidesKey(block, key)) remoteOverrideKeys.add(key);
           }
         }

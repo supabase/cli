@@ -1347,6 +1347,35 @@ describe("legacyResolveLocalConfigValues", () => {
         ),
       ).toThrow("failed to parse config: missing private key");
     });
+
+    it("preserves a remote block's valid auth.captcha.provider over an unsupported ambient override", () => {
+      // Regression (review: PRRT_kwDOErm0O86XLAYn): `provider` can't throw on its own
+      // (`legacyEnvOverride` is a plain string read), but an ungated override here still let a
+      // stale/unsupported ambient `SUPABASE_AUTH_CAPTCHA_PROVIDER` outrank a matched remote's own
+      // valid provider — `legacyValidateResolvedConfig`'s enum check downstream then aborts the
+      // whole `legacyResolveLocalConfigValues` caller (and the shadow it feeds) on a value Go's
+      // `v.Set` (override tier, above `AutomaticEnv`) never lets win.
+      process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = "recaptcha";
+      const authDocument = { captcha: { enabled: true, provider: "hcaptcha" } };
+      const resolved = legacyResolveAuthCaptcha(
+        authDocument,
+        { enabled: true, provider: "hcaptcha", secret: "shh" },
+        undefined,
+        new Set(["auth.captcha.provider"]),
+      );
+      expect(resolved?.provider).toBe("hcaptcha");
+    });
+
+    it("still applies SUPABASE_AUTH_CAPTCHA_PROVIDER when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = "turnstile";
+      const authDocument = { captcha: { enabled: true, provider: "hcaptcha" } };
+      const resolved = legacyResolveAuthCaptcha(
+        authDocument,
+        { enabled: true, provider: "hcaptcha", secret: "shh" },
+        undefined,
+      );
+      expect(resolved?.provider).toBe("turnstile");
+    });
   });
 
   describe("legacyResolveAuthEmail", () => {
@@ -2703,6 +2732,101 @@ describe("legacyResolveLocalConfigValues", () => {
       });
       expect(() =>
         legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("preserves a remote block's valid template content_path over a missing-file ambient override", () => {
+      // Regression (review: PRRT_kwDOErm0O86XLAYn): `content_path` is the field that can
+      // actually abort resolution here — an ungated override let a stale/missing ambient
+      // `_CONTENT_PATH` outrank a matched remote's own valid path, and the caller-side file read
+      // (`readAuthEmailTemplateContent`) then threw, aborting the whole
+      // `legacyResolveLocalConfigValues` call (and the shadow it feeds) on a value Go's `v.Set`
+      // (override tier, above `AutomaticEnv`) never lets win.
+      writeFileSync(join(tempRoot.current, "invite.html"), "<html></html>");
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"] = "missing.html";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: { content_path: "invite.html" } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          tempRoot.current,
+          undefined,
+          undefined,
+          new Set(["auth.email.template.invite.content_path"]),
+        ),
+      ).not.toThrow();
+    });
+
+    it("still applies a template _CONTENT_PATH override to a missing file when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"] = "missing.html";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: { content_path: "invite.html" } } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.template.invite.content_path: ",
+      );
+    });
+
+    it("preserves a remote block's valid notification content_path over a missing-file ambient override", () => {
+      const supabaseDir = join(tempRoot.current, "supabase");
+      mkdirSync(supabaseDir, { recursive: true });
+      writeFileSync(join(supabaseDir, "pw-changed.html"), "<html></html>");
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT_PATH"] =
+        "missing.html";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: {
+            notification: {
+              password_changed: { enabled: true, content_path: "pw-changed.html" },
+            },
+          },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          tempRoot.current,
+          undefined,
+          undefined,
+          new Set(["auth.email.notification.password_changed.content_path"]),
+        ),
+      ).not.toThrow();
+    });
+
+    it("suppresses a malformed ambient notification _ENABLED when a remote block already set enabled", () => {
+      // `enabled` is a direct `legacyEnvOverrideBool` call, so a malformed ambient override
+      // throws on its own regardless of the exclusivity/file-read checks above — same bug class
+      // as `auth.email.enable_signup`/`.enable_confirmations` (review: PRRT_kwDOErm0O86XLAYo).
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_ENABLED"] = "not-a-bool";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { notification: { password_changed: { enabled: false } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          tempRoot.current,
+          undefined,
+          undefined,
+          new Set(["auth.email.notification.password_changed.enabled"]),
+        ),
       ).not.toThrow();
     });
   });
