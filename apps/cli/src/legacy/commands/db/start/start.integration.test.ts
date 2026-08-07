@@ -552,7 +552,7 @@ describe("legacy db start", () => {
       return Effect.gen(function* () {
         // The log dump (`legacyWaitForHealthyServices`'s own unconditional behavior on timeout,
         // teed straight to the real process stderr, not the mocked `Output` service) still runs —
-        // exercised by every other health-timeout test via the shared `../../../shared/containers/health-check.ts` suite;
+        // exercised by every other health-timeout test via the shared `../../../shared/db-bootstrap/health-check.ts` suite;
         // this test only asserts the command-level outcome that's specific to `--from-backup`.
         yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
         expect(rollbackWasAttempted(child.spawned)).toBe(false);

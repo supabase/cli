@@ -23,7 +23,7 @@ import { localDbContainerId } from "../legacy-docker-ids.ts";
 import { legacyToDockerPath } from "../legacy-docker-path.ts";
 import { encodeToml } from "../legacy-go-output.encoders.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
-import type { LegacyStartContainerSpec } from "../containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "./docker-create-args.ts";
 import { LEGACY_START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
 import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";

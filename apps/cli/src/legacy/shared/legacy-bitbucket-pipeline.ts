@@ -21,7 +21,7 @@ export const LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY = "BITBUCKET_CLONE_DIR";
  *
  * Hoisted here because it is needed by ≥2 call sites: `legacy-docker-run.layer.ts`
  * (`docker run`, e.g. `db dump`/`db test`) and `start`'s per-service container
- * creation (`legacy/shared/containers/container-lifecycle.ts`).
+ * creation (`legacy/shared/db-bootstrap/container-lifecycle.ts`).
  */
 export function legacyIsBitbucketPipeline(): boolean {
   const value = globalThis.process.env[LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY];

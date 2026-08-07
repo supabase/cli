@@ -37,9 +37,9 @@ import {
 import type { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
 import { legacyResolveUnderWorkdir, legacyGlobPattern } from "../../../shared/legacy-glob.ts";
 import type { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
-import type { LegacyImagePrepullError } from "../../../shared/containers/image-prepull.ts";
-import type { LegacyHealthCheckTimeoutError } from "../../../shared/containers/health-check.ts";
-import { legacyWaitForHealthyServices } from "../../../shared/containers/health-check.ts";
+import type { LegacyImagePrepullError } from "../../../shared/db-bootstrap/image-prepull.ts";
+import type { LegacyHealthCheckTimeoutError } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
 import { legacySeedGlobals } from "../../../shared/legacy-migration-apply.ts";
 import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";

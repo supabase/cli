@@ -4,7 +4,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 import type { LegacyContainerIdName } from "../legacy-docker-lifecycle.ts";
 import { legacyDockerRemoveAll } from "../legacy-docker-remove-all.ts";
 import { legacyCleanupStartSecrets } from "../legacy-start-secrets-cleanup.ts";
-import { LegacyHealthCheckTimeoutError } from "../containers/health-check.ts";
+import { LegacyHealthCheckTimeoutError } from "./health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -13,7 +13,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * start.go:227-231`): Go tests whether the failure unwraps as a joined
  * multi-error (`Unwrap() []error`) — the shape `WaitForHealthyService`
  * produces on timeout. This port's equivalent health-check-timeout failure is
- * {@link LegacyHealthCheckTimeoutError} (`../containers/health-check.ts`), so the
+ * {@link LegacyHealthCheckTimeoutError} (`./health-check.ts`), so the
  * classification collapses to an `instanceof` check against that one class —
  * the caller (`start.handler.ts`) uses this to decide whether
  * `--ignore-health-check` should downgrade a failure to a warning instead of
@@ -35,7 +35,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * matcher: the port has no outer classifier check. `start.handler.ts`
  * consults this function only inside its two health-wait failure branches,
  * and the pre-pull (`legacyEnsureImagesCached`) runs before bring-up, so a
- * `LegacyImagePrepullError` (`../containers/image-prepull.ts`) propagates straight out
+ * `LegacyImagePrepullError` (`./image-prepull.ts`) propagates straight out
  * and always fails the command with exit 1, with or without the flag.
  * Widening this match to accept `LegacyImagePrepullError` would be a dead
  * no-op — no pre-pull failure ever reaches a call site. The observable delta

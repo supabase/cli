@@ -3290,7 +3290,7 @@ content_path = "./templates/custom_notice.html"
   // Node event-loop turns to settle — under a virtualized `TestClock` those
   // never resolve, so the forked fiber never even reaches the health-check
   // phase. This exercises the real 30s `serviceTimeout` bulk health-check
-  // wait (`../../shared/containers/health-check.ts`'s default), hence the generous timeout.
+  // wait (`../../shared/db-bootstrap/health-check.ts`'s default), hence the generous timeout.
   it.live(
     "exits 0 on --ignore-health-check when a non-Postgres container never turns healthy, without rolling back",
     () => {

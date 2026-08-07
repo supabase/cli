@@ -117,9 +117,9 @@ import {
 import {
   legacyEnsureImagesCached,
   type LegacyImagePrepullError,
-} from "../containers/image-prepull.ts";
-import { legacyResolvePinnedImage } from "../containers/pinned-image.ts";
-import { LEGACY_COMPOSE_PROJECT_LABEL } from "../containers/container-lifecycle.ts";
+} from "./image-prepull.ts";
+import { legacyResolvePinnedImage } from "./pinned-image.ts";
+import { LEGACY_COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
 import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "./realtime-env.ts";
 import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
 import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";

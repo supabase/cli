@@ -134,13 +134,13 @@ import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
   legacyCreateContainer,
   type LegacyContainerOpts,
-} from "../../shared/containers/container-lifecycle.ts";
-import { legacyEnsureImagesCached } from "../../shared/containers/image-prepull.ts";
+} from "../../shared/db-bootstrap/container-lifecycle.ts";
+import { legacyEnsureImagesCached } from "../../shared/db-bootstrap/image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckPostgrestGateway,
   type LegacyHealthCheckTimeoutError,
-} from "../../shared/containers/health-check.ts";
+} from "../../shared/db-bootstrap/health-check.ts";
 import {
   legacyStartInternalDbPassword,
   LEGACY_START_INTERNAL_DB_NAME,
@@ -398,7 +398,7 @@ function buildKongEmailTemplateMounts(
 
 /**
  * What `--ignore-health-check` prints when it downgrades a health-check timeout
- * to a warning. That decision belongs to this caller, not `../../shared/containers/health-check.ts`
+ * to a warning. That decision belongs to this caller, not `../../shared/db-bootstrap/health-check.ts`
  * (which only implements the polling contract), and it writes straight to
  * stderr — bypassing the `Output.fail` renderer that would otherwise append the
  * error's `suggestion` for it.

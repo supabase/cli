@@ -17,7 +17,7 @@
  */
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
 /**
  * Go's `Env` literal (`start.go:1065-1075`) — entirely static, no

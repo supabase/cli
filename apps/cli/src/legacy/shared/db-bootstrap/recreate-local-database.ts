@@ -103,7 +103,7 @@ import {
   type LegacyContainerOpts,
   type LegacyNetworkCreateError,
   type LegacyVolumeRemoveError,
-} from "../containers/container-lifecycle.ts";
+} from "./container-lifecycle.ts";
 import {
   legacyRunFreshDbSetup,
   legacyResolveResetSeedConfig,
@@ -116,8 +116,8 @@ import {
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
-} from "../containers/health-check.ts";
-import type { LegacyImagePrepullError } from "../containers/image-prepull.ts";
+} from "./health-check.ts";
+import type { LegacyImagePrepullError } from "./image-prepull.ts";
 import { legacyStartInternalDbPassword } from "./internal-db-connection.ts";
 import {
   legacyBuildPostgresStartContainerSpec,

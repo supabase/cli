@@ -7,7 +7,7 @@ import {
 } from "@supabase/config";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
-import { legacyIsDockerClientEnvKey } from "./containers/docker-create-args.ts";
+import { legacyIsDockerClientEnvKey } from "./db-bootstrap/docker-create-args.ts";
 import { LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY } from "./legacy-bitbucket-pipeline.ts";
 import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";

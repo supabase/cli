@@ -60,7 +60,7 @@ import {
 } from "../../../shared/legacy-go-duration.ts";
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import type { LegacyResolvedAuthEmail } from "../../../shared/legacy-local-config-values.ts";
-import type { LegacyStartContainerSpec } from "../../../shared/containers/docker-create-args.ts";
+import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,

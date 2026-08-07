@@ -61,10 +61,10 @@ import {
   legacyCreateContainer,
   LEGACY_COMPOSE_PROJECT_LABEL,
   type LegacyContainerOpts,
-} from "../containers/container-lifecycle.ts";
-import type { LegacyImagePrepullError } from "../containers/image-prepull.ts";
-import type { LegacyHealthCheckTimeoutError } from "../containers/health-check.ts";
-import { legacyWaitForHealthyServices } from "../containers/health-check.ts";
+} from "./container-lifecycle.ts";
+import type { LegacyImagePrepullError } from "./image-prepull.ts";
+import type { LegacyHealthCheckTimeoutError } from "./health-check.ts";
+import { legacyWaitForHealthyServices } from "./health-check.ts";
 import { legacyListLocalMigrationPaths } from "../legacy-migration-history.ts";
 import { legacyToPostgresURL } from "../legacy-postgres-url.ts";
 import {

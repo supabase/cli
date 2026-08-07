@@ -69,18 +69,18 @@ import {
   type LegacyNetworkCreateError,
   type LegacyVolumeCreateError,
   type LegacyVolumeInspectError,
-} from "../containers/container-lifecycle.ts";
+} from "./container-lifecycle.ts";
 import {
   legacyRunFreshDbSetup,
   legacyStartInitCurrentBranch,
   type LegacyFreshDbSetupInput,
   type LegacyStartSetupLocalDatabaseError,
 } from "./db-setup.ts";
-import type { LegacyImagePrepullError } from "../containers/image-prepull.ts";
+import type { LegacyImagePrepullError } from "./image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
-} from "../containers/health-check.ts";
+} from "./health-check.ts";
 import {
   LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
   LEGACY_START_STARTING_DATABASE_MESSAGE,

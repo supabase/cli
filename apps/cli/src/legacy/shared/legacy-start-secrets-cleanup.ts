@@ -7,7 +7,7 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
 
 /**
  * Best-effort removal of `legacyStageStartSecretFiles`'s
- * (`legacy/shared/containers/container-lifecycle.ts`) per-container
+ * (`legacy/shared/db-bootstrap/container-lifecycle.ts`) per-container
  * staged-secret directories for every container in `containers` — plaintext
  * JWT/TLS/pgsodium/pooler secret material `start` stages on host disk (Kong,
  * Postgres, Supavisor) that otherwise survives indefinitely, since neither

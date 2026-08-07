@@ -164,7 +164,7 @@ export function legacyIsContainerNotFoundMessage(message: string): boolean {
  * failure mode (spawn failure, non-zero exit) — the shared shape behind every
  * "docker verb target" primitive that fails hard on any problem
  * (`legacyRemoveContainer`/`legacyRemoveVolume`/`legacyRestartContainer`; see
- * `containers/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
+ * `db-bootstrap/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
  * `verb` is the human-readable action embedded in the error message (e.g.
  * `"remove container"` → `"failed to remove container: <cause>"`).
  */
