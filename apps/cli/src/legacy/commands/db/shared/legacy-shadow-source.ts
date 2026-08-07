@@ -8,8 +8,10 @@
  *
  * Go's `PrepareShadowSource(ctx, schema []string, targetLocal, usePgDelta bool, fsys,
  * options...)` takes a `schema` parameter that is NEVER referenced anywhere in the function
- * body (verified by reading the whole function) — dead code in Go itself, making `db __shadow
- * --schema` a no-op. Deliberately NOT ported here: there is nothing to port.
+ * body (verified by reading the whole function) — dead code in Go itself, making the `--schema`
+ * flag the now-removed `db __shadow` hidden seam used to forward here a no-op even before
+ * CLI-1956 deleted that seam in favor of this native port. Deliberately NOT ported here: there
+ * is nothing to port.
  */
 
 import { Effect, Option, Result, type FileSystem, type Path } from "effect";
