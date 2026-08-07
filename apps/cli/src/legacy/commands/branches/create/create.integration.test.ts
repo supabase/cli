@@ -337,6 +337,42 @@ describe("legacy branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("creates a branch when the API serializes timestamps with numeric offsets", () => {
+    // Postgres timestamptz values reach the Management API as `+00:00`-offset
+    // RFC 3339 strings; both this form and `Z` must decode (CLI regression:
+    // strict Z-only contract patterns rejected successful 201 responses).
+    const { layer, out } = setup({
+      response: {
+        ...CREATED,
+        created_at: "2026-08-07T12:00:00+00:00",
+        updated_at: "2026-08-07T12:00:00+00:00",
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") });
+      expect(out.stdoutText).toContain("Created preview branch:");
+      expect(out.stdoutText).toContain("feat-x");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports a contract-violating 201 response as schema validation, not network", () => {
+    const { layer } = setup({
+      response: { ...CREATED, created_at: "yesterday" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyApiResponseValidationError");
+        expect(json).toContain("Supabase API response did not match the expected schema");
+        expect(json).not.toContain("LegacyBranchesCreateNetworkError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails with LegacyBranchesCreateNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {

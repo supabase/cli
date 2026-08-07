@@ -8,6 +8,7 @@ import type {
 import type { LegacyProfileLoadError } from "./legacy-profile-load.ts";
 import type { LegacyProjectRefReadError } from "./legacy-temp-paths.ts";
 import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
+import type { LegacyApiResponseValidationError } from "./legacy-http-errors.ts";
 import type {
   LegacyDbConfigConnectTempRoleError,
   LegacyDbConfigIpv6Error,
@@ -38,6 +39,9 @@ export type LegacyDbConfigError =
   | LegacyDbConfigListBansStatusError
   | LegacyDbConfigUnbanNetworkError
   | LegacyDbConfigUnbanStatusError
+  // Raised by `mapLegacyHttpError` when a Management API response decodes but
+  // fails the generated contract — shared across all API-backed paths.
+  | LegacyApiResponseValidationError
   | LegacyDbConfigIpv6Error
   | LegacyDbConfigConnectTempRoleError
   | LegacyDbConfigPoolerLoginError

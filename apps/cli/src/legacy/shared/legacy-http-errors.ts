@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect } from "effect";
+import { Data, Effect, Schema } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
@@ -47,6 +47,20 @@ function sanitizeErrorBody(input: string): string {
   return out;
 }
 
+/**
+ * The server responded successfully but the body failed validation against the
+ * generated contract (a `SchemaError` from response decoding). This is a
+ * contract-drift problem between the CLI and the Management API — not a
+ * network failure — so it gets its own shared tag instead of each family's
+ * `*NetworkError`. The full schema issue tree is embedded in the message to
+ * make the mismatch diagnosable.
+ */
+export class LegacyApiResponseValidationError extends Data.TaggedError(
+  "LegacyApiResponseValidationError",
+)<{
+  readonly message: string;
+}> {}
+
 export type NetworkErrorFactory<E> = new (args: { readonly message: string }) => E;
 
 export type StatusErrorFactory<E> = new (args: {
@@ -69,7 +83,7 @@ export function mapLegacyHttpError<N, S>(opts: {
   readonly statusError: StatusErrorFactory<S>;
   readonly networkMessage: (cause: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-}): (cause: SupabaseApiError) => Effect.Effect<never, N | S> {
+}): (cause: SupabaseApiError) => Effect.Effect<never, N | S | LegacyApiResponseValidationError> {
   return (cause) =>
     Effect.gen(function* () {
       if (HttpClientError.isHttpClientError(cause)) {
@@ -92,7 +106,15 @@ export function mapLegacyHttpError<N, S>(opts: {
           new opts.networkError({ message: opts.networkMessage(description) }),
         );
       }
-      // SchemaError or HttpBodyError — treat as transport-level network error.
+      if (Schema.isSchemaError(cause)) {
+        return yield* Effect.fail(
+          new LegacyApiResponseValidationError({
+            message: `Supabase API response did not match the expected schema: ${cause.message}`,
+          }),
+        );
+      }
+      // HttpBodyError — request serialization failed before anything was sent;
+      // keep the family's transport-level phrasing.
       return yield* Effect.fail(
         new opts.networkError({ message: opts.networkMessage(String(cause)) }),
       );

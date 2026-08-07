@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -365,6 +365,34 @@ describe("legacy link integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "reports a contract-violating api-keys response as schema validation, not network",
+    () => {
+      // A response-body decode failure (`SchemaError`) means the server answered
+      // but the payload drifted from the generated contract — it must not be
+      // reported as a network failure.
+      const schemaFailure = () => {
+        try {
+          Schema.decodeUnknownSync(Schema.String)(42);
+        } catch (error) {
+          return error;
+        }
+        throw new Error("expected decode to fail");
+      };
+      const { layer } = setup({ apiKeys: { fail: schemaFailure() } });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyLink(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LegacyApiResponseValidationError");
+          expect(json).toContain("Supabase API response did not match the expected schema");
+          expect(json).not.toContain("LegacyLinkApiKeysNetworkError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("fails with missing-key error when api-keys are empty", () => {
     const { layer } = setup({ apiKeys: { ok: [] } });

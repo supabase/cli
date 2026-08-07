@@ -215,6 +215,22 @@ function identifier(value: string): string {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
+// The Management API's OpenAPI contract emits a Z-only `date-time` pattern
+// (zod's `z.string().datetime()` regex, ending in `(?:Z))$`), but the API
+// serializes Postgres timestamptz values with numeric offsets (e.g.
+// `2026-08-07T12:00:00+00:00`), so strict generated clients reject successful
+// responses (`link`, `branches create`). RFC 3339 permits both `Z` and numeric
+// offsets. Until the upstream contract permits offsets, globally relax any
+// `date-time` pattern that rejects numeric offsets to this pattern — zod's
+// same strict calendar/time validation with `(?:Z)` widened to
+// `(?:Z|[+-]HH:MM)`.
+const RFC3339_DATE_TIME_PATTERN =
+  "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$";
+
+// Sample used to detect Z-only `date-time` patterns: any pattern that rejects
+// this valid RFC 3339 timestamp gets replaced by RFC3339_DATE_TIME_PATTERN.
+const RFC3339_NUMERIC_OFFSET_SAMPLE = "2026-08-07T12:00:00+00:00";
+
 // Keys that we want to strip from a schema node because they describe
 // documentation / example values rather than the value's shape. JSON Schema's
 // `default` is a primitive (or array/object) literal used for documentation —
@@ -288,6 +304,15 @@ export function sanitizeOpenApiSchema(
     sanitized.pattern === undefined
   ) {
     sanitized.pattern = UUID_PATTERN;
+  }
+
+  if (
+    sanitized.type === "string" &&
+    sanitized.format === "date-time" &&
+    typeof sanitized.pattern === "string" &&
+    !new RegExp(sanitized.pattern).test(RFC3339_NUMERIC_OFFSET_SAMPLE)
+  ) {
+    sanitized.pattern = RFC3339_DATE_TIME_PATTERN;
   }
 
   return sanitized;

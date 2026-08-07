@@ -1,5 +1,5 @@
 import type { ApiClient } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
@@ -18,7 +18,10 @@ import {
 } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
-import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import {
+  LegacyApiResponseValidationError,
+  sanitizeLegacyErrorBody,
+} from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
@@ -42,7 +45,9 @@ const classifyProjectError = (
   cause: unknown,
 ): Effect.Effect<
   Option.Option<LegacyLinkProject>,
-  LegacyLinkProjectStatusError | LegacyLinkProjectStatusNetworkError
+  | LegacyLinkProjectStatusError
+  | LegacyLinkProjectStatusNetworkError
+  | LegacyApiResponseValidationError
 > => {
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const status = cause.response.status;
@@ -63,6 +68,13 @@ const classifyProjectError = (
           }),
         ),
       ),
+    );
+  }
+  if (Schema.isSchemaError(cause)) {
+    return Effect.fail(
+      new LegacyApiResponseValidationError({
+        message: `Supabase API response did not match the expected schema: ${cause.message}`,
+      }),
     );
   }
   return Effect.fail(
