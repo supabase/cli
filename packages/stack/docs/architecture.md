@@ -37,8 +37,9 @@ can use the same lifecycle calls against an in-process stack or a detached daemo
 ## Configuration and roots
 
 `StackConfig` is an in-memory library input, not the project configuration-file schema. Its
-top-level fields choose runtime mode, startup mode, cache/runtime roots, API keys, JWT secret,
-functions options, and per-service configuration. `false` disables an optional service.
+top-level fields choose runtime mode, startup mode, cache/runtime roots, API keys, JWT secret, a
+resolved Edge Functions bundle, and per-service configuration. `false` disables an optional
+service.
 
 `StackConfigResolver.resolveConfig()`:
 
@@ -192,15 +193,22 @@ Cleanup targets do not belong to `StackInfo`; they are internal runtime metadata
 
 ## Functions runtime configuration and reload
 
-The current `functions.ts` Implementation discovers project configuration and function manifests,
-resolves paths and environment values, combines them with stack URLs/keys, and writes
-`functions-runtime-config.json` under the Edge Runtime workspace. The Edge Runtime factory mounts
-or references that file.
+Project discovery is outside the stack boundary. A caller supplies a serializable
+`ResolvedFunctionsBundle` containing absolute entrypoint, optional import-map, and static-file
+paths plus already-resolved shared and per-function environment values. The import-map path is
+explicitly nullable. Per-function environment values override shared values; stack-owned runtime
+URLs and credentials take final precedence when the worker is created.
 
-`reloadFunctions()` rewrites the file and updates/restarts the Edge Runtime definition.
-`reloadEdgeRuntime()` can change runtime settings and optionally functions settings. In detached
-mode, `/functions/reload` currently carries `envFile` and `noVerifyJwt` as query parameters, while
-`/edge-runtime/reload` accepts a validated JSON body.
+`LocalStack` keeps the current bundle in runtime-local memory. `reloadFunctions({ functions })`
+replaces it, while a reload without `functions` preserves the latest bundle. An Edge Runtime reload
+uses that same current bundle unless its body supplies a replacement. The stack combines the
+bundle with runtime URLs and credentials, atomically publishes `functions-runtime-config.json`
+with owner-only permissions under the Edge Runtime workspace, and removes it on disposal.
+
+Detached stacks deliberately exclude resolved bundles from daemon startup IPC, durable metadata,
+live state, logs, URLs, and rendered validation errors. Both `/functions/reload` and
+`/edge-runtime/reload` accept validated JSON bodies over the local Unix socket. This keeps resolved
+environment values confined to an explicit request body and the ephemeral runtime file.
 
 ## Port leases
 
@@ -243,8 +251,9 @@ These paths overlap by design and must remain idempotent.
 Detached mode adds:
 
 - `daemonLayer()`: forks a runtime-specific daemon entrypoint and returns a `RemoteStack` layer;
-- `daemon.ts`: receives the configuration over Node IPC, resolves ports, builds the foreground
-  daemon layer, claims live state, and waits for HTTP stop or a signal;
+- `daemon.ts`: receives configuration excluding the resolved Functions bundle over Node IPC,
+  resolves ports, builds the foreground daemon layer, claims live state, and waits for HTTP stop or
+  a signal;
 - `DaemonServer`: exposes the `Stack` Interface over HTTP/SSE on a Unix-domain socket;
 - `RemoteStack`: maps that transport back to the same Effect `Stack` Interface;
 - `StateManager`: atomically persists and discovers durable metadata and live state.

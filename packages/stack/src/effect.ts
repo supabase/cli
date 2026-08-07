@@ -97,14 +97,19 @@ export { StackBuilder } from "./StackBuilder.ts";
 export type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
 export { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 export type {
-  FunctionsConfig,
+  FunctionsReloadConfig,
   FunctionsRuntimeConfig,
-  ResolvedFunctionsConfig,
+  ResolvedFunction,
+  ResolvedFunctionsBundle,
 } from "./functions.ts";
 export {
+  clearFunctionsRuntimeConfig,
   configureFunctionsRuntime,
+  FunctionsReloadConfigSchema,
   functionsRuntimeConfigFileName,
   functionsRuntimeConfigPath,
+  ResolvedFunctionSchema,
+  ResolvedFunctionsBundleSchema,
   resolveFunctionsRuntimeConfig,
 } from "./functions.ts";
 

@@ -2,7 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
-import { toStackError } from "./errors.ts";
+import { StackBuildError, toStackError } from "./errors.ts";
+import { resolvedFunctionsBundleSchemaForProject } from "./functions.ts";
 import {
   defaultJwtSecret,
   defaultPublishableKey,
@@ -297,12 +298,17 @@ function resolveEdgeRuntimeConfig(
   };
 }
 
-function resolveFunctionsConfig(config: StackConfig) {
-  if (config.functions === false) return false;
-  return {
-    envFile: config.functions?.envFile,
-    noVerifyJwt: config.functions?.noVerifyJwt ?? false,
-  };
+async function resolveFunctionsConfig(config: StackConfig, projectDir: string) {
+  if (config.functions === undefined || config.functions === false) {
+    return false;
+  }
+  try {
+    return await Schema.decodeUnknownPromise(resolvedFunctionsBundleSchemaForProject(projectDir))(
+      config.functions,
+    );
+  } catch (cause) {
+    throw new StackBuildError({ detail: "Invalid Edge Functions bundle", cause });
+  }
 }
 
 function resolveStorageConfig(
@@ -433,6 +439,7 @@ export async function resolveConfig(
 ): Promise<ResolvedStackConfig> {
   const config = input ?? {};
   const projectDir = config.projectDir ?? process.cwd();
+  const functions = await resolveFunctionsConfig(config, projectDir);
   const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
@@ -514,7 +521,7 @@ export async function resolveConfig(
     dbPort: ports.dbPort,
     publishableKey: config.publishableKey ?? defaultPublishableKey,
     secretKey: config.secretKey ?? defaultSecretKey,
-    functions: resolveFunctionsConfig(config),
+    functions,
     autoManagedPaths: roots.autoManagedPaths,
     anonJwt,
     serviceRoleJwt,
@@ -554,18 +561,26 @@ export async function resolveConfig(
   };
 }
 
-export type DaemonConfigInput = StackConfig & {
+export type DaemonConfigInput = Omit<StackConfig, "functions"> & {
   readonly cwd: string;
   readonly name?: string;
   readonly projectDir?: string;
   readonly projectStateRoot?: string;
 };
 
+export function sanitizeDaemonConfigInput(
+  input: DaemonConfigInput & { readonly functions?: unknown },
+): DaemonConfigInput {
+  const { functions: _functions, ...config } = input;
+  return config;
+}
+
 export async function resolveDaemonConfig(
   input: DaemonConfigInput,
   opts: Pick<ResolveConfigOptions, "portAllocator"> = {},
 ): Promise<ResolvedDaemonConfig> {
-  const { cwd, name, projectDir, projectStateRoot, ...stackConfig } = input;
+  const { cwd, name, projectDir, projectStateRoot, ...stackConfig } =
+    sanitizeDaemonConfigInput(input);
   if (stackConfig.stackRoot !== undefined || stackConfig.runtimeRoot !== undefined) {
     throw new Error("Managed daemon stacks derive stackRoot and runtimeRoot automatically");
   }

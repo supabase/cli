@@ -6,7 +6,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { ApiProxy } from "./ApiProxy.ts";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
-import type { FunctionsConfig } from "./functions.ts";
+import type { FunctionsReloadConfig } from "./functions.ts";
 import { daemonLayer, foregroundLayer, type DaemonStartError } from "./layers.ts";
 import { LocalStackLifecycle } from "./LocalStack.ts";
 import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
@@ -62,7 +62,7 @@ export interface StackHandle extends AsyncDisposable {
   startService(name: string): Promise<void>;
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
-  reloadFunctions(opts?: FunctionsConfig): Promise<void>;
+  reloadFunctions(opts?: FunctionsReloadConfig): Promise<void>;
   reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Promise<void>;
   ready(opts?: ReadyOptions): Promise<void>;
   serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
@@ -81,7 +81,7 @@ export const projectDaemonLayer = (opts: {
   readonly projectStateRoot?: string;
   readonly name?: string;
   readonly daemonEntryPoint: string;
-  readonly stackConfig?: Omit<StackConfig, "cacheRoot" | "stackRoot" | "runtimeRoot">;
+  readonly stackConfig?: Omit<StackConfig, "cacheRoot" | "stackRoot" | "runtimeRoot" | "functions">;
 }): Effect.Effect<
   Layer.Layer<Stack>,
   DaemonStartError | InvalidStackStateError | StackAlreadyRunningError,

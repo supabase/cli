@@ -517,9 +517,6 @@ importers:
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.0.0-beta.103(effect@4.0.0-beta.103)(ioredis@5.11.1)
-      '@supabase/config':
-        specifier: workspace:*
-        version: link:../config
       '@supabase/process-compose':
         specifier: workspace:*
         version: link:../process-compose

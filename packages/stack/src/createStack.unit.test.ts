@@ -16,7 +16,11 @@ import type {
   ReadyOptions,
   StackConfig,
 } from "./StackConfig.ts";
-import { resolveConfig, resolveDaemonConfig } from "./StackConfigResolver.ts";
+import {
+  resolveConfig,
+  resolveDaemonConfig,
+  sanitizeDaemonConfigInput,
+} from "./StackConfigResolver.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const DEFAULT_PORTS: AllocatedPorts = {
@@ -190,6 +194,15 @@ describe("createStack types", () => {
         DEFAULT_MANAGED_STACK_NAME,
       ),
     );
+  });
+
+  it("strips function bundles from daemon configuration at runtime", () => {
+    const input = {
+      cwd: "/project",
+      functions: { environment: { SECRET: "must-not-cross-ipc" } },
+    };
+
+    expect(sanitizeDaemonConfigInput(input)).toEqual({ cwd: "/project" });
   });
 
   it("resolveDaemonConfig prefers legacy defaults for a first named stack", async () => {
