@@ -42,6 +42,7 @@ import {
   legacyParseBoolEnv,
   legacyResolveDeclarativeFromArgs,
   legacyResolvePullDiffEngine,
+  legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
 } from "../shared/legacy-diff-engine.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
@@ -63,14 +64,7 @@ import type { LegacyPgDeltaContext } from "../shared/legacy-pgdelta.ts";
 import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseEndpoint,
-  type LegacyPgDeltaExportManifest,
-  type LegacyPgDeltaSqlFile,
 } from "../shared/legacy-pgdelta-engine.service.ts";
-import {
-  LegacyLoadPgDeltaSqlFiles,
-  LegacyLoadPgDeltaSqlPaths,
-  LegacyReadPgDeltaExportManifest,
-} from "../shared/legacy-pgdelta-files.ts";
 import { legacyIsPgDeltaDebugEnabled } from "../shared/legacy-pgdelta.ts";
 import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
@@ -477,6 +471,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           return;
         }
 
+        if (
+          !delegatesExperimentalPull &&
+          toml.migrationSchemaPaths !== undefined &&
+          toml.migrationSchemaPaths.length > 0
+        ) {
+          yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
+        }
+
         // Go's `EXPERIMENTAL` structured-dump branch (`pull.go:49-61`) stays
         // delegated to Go. pg_dump itself is now native (used by the initial-migra
         // path below), but this branch also calls `format.WriteStructuredSchemas`
@@ -639,69 +641,26 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             : "Diffing schemas...\n",
           "stderr",
         );
-        let declarativeFiles: ReadonlyArray<LegacyPgDeltaSqlFile> | undefined;
-        let declarativeManifest: LegacyPgDeltaExportManifest | undefined;
-        if (usePgDeltaDiff && pgDeltaEngine.implementation === "next" && resolved.isLocal) {
-          if (toml.migrationSchemaPaths !== undefined && toml.migrationSchemaPaths.length > 0) {
-            declarativeFiles = yield* LegacyLoadPgDeltaSqlPaths(
-              fs,
-              path,
-              cliConfig.workdir,
-              toml.migrationSchemaPaths,
-            );
-          } else {
-            const declarativeDirSetting = legacyResolveDeclarativeDir(path, toml.pgDelta);
-            const declarativeDir = path.isAbsolute(declarativeDirSetting)
-              ? declarativeDirSetting
-              : path.join(cliConfig.workdir, declarativeDirSetting);
-            const hasDeclarativeDir = toml.pgDelta.enabled
-              ? yield* fs.exists(declarativeDir).pipe(Effect.orElseSucceed(() => false))
-              : false;
-            if (hasDeclarativeDir) {
-              const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDir);
-              if (loaded.length > 0) {
-                declarativeFiles = loaded;
-                declarativeManifest = yield* LegacyReadPgDeltaExportManifest(
-                  fs,
-                  path,
-                  declarativeDir,
-                );
-              }
-            } else {
-              const schemasDir = path.join(cliConfig.workdir, "supabase", "schemas");
-              if (yield* fs.exists(schemasDir).pipe(Effect.orElseSucceed(() => false))) {
-                const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, schemasDir);
-                if (loaded.length > 0) declarativeFiles = loaded;
-              }
-            }
-          }
-        }
-
         const diffOutcome = usePgDeltaDiff
           ? yield* withPoolerFallback(targetEndpoint, (target) =>
               pgDeltaEngine.diffDatabase({
                 context: ctx,
                 target,
-                targetLocal: resolved.isLocal,
                 schema: diffSchema,
                 formatOptions,
                 projectRef: connType === "linked" ? linkedRef : undefined,
                 debug: legacyIsPgDeltaDebugEnabled(),
-                ...(declarativeFiles !== undefined ? { declarativeFiles } : {}),
-                ...(declarativeManifest !== undefined ? { declarativeManifest } : {}),
               }),
             )
           : yield* Effect.gen(function* () {
               const shadow = yield* seam.provisionShadow({
                 mode: "diff",
-                targetLocal: resolved.isLocal,
-                usePgDelta: false,
                 schema: diffSchema,
                 projectRef: connType === "linked" ? linkedRef : undefined,
               });
               return yield* legacyDiffMigra(ctx, {
                 source: shadow.sourceUrl,
-                target: shadow.targetUrlOverride ?? targetUrl,
+                target: targetUrl,
                 schema: diffSchema,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
               }).pipe(
@@ -794,6 +753,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               name: file.name,
               suffix: file.suffix,
               sql: file.sql,
+              transactionMode: file.transactionMode,
             })),
           }).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),

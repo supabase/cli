@@ -46,6 +46,8 @@ const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
+const TRANSACTION_CONTROL_PATTERN =
+  /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
 /**
  * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
@@ -91,6 +93,10 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     CLUSTER_PATTERN.test(upper)
   );
 };
+
+/** Whether the statement owns a transaction boundary that must not be nested. */
+export const legacyHasTransactionControl = (sql: string): boolean =>
+  TRANSACTION_CONTROL_PATTERN.test(legacyTrimLeadingSqlComments(sql).toUpperCase());
 
 /** A buffered statement awaiting the next batch flush; `version` is the history insert. */
 type LegacyBatchItem =
@@ -193,6 +199,31 @@ const execMigrationBatch = <E>(
       msg.push(`At statement: ${index}`, marked);
       return new Error(`${errMessage(e)}\n${msg.join("\n")}`);
     };
+
+    // A file with authored transaction boundaries owns those semantics. Execute
+    // the statements exactly as written, clean up a failed authored transaction,
+    // and only send the history insert after every statement has succeeded.
+    if (statements.some(legacyHasTransactionControl)) {
+      const authored = Effect.gen(function* () {
+        for (const [index, statement] of statements.entries()) {
+          yield* session
+            .exec(statement)
+            .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
+        }
+        if (version.length > 0) {
+          yield* session
+            .query(INSERT_MIGRATION_VERSION, [version, name, statements])
+            .pipe(
+              Effect.mapError((cause) =>
+                atStatement(cause, statements.length, INSERT_MIGRATION_VERSION),
+              ),
+            );
+        }
+      });
+      return yield* authored.pipe(
+        Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
+      );
+    }
 
     // `executed` is the global statement index of the next statement to run, so the
     // error context stays accurate across flushed batches and standalone statements

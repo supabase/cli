@@ -77,7 +77,6 @@ interface SetupOpts {
   readonly pipedAnswers?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly experimental?: boolean;
-  readonly shadowTargetOverride?: string;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly resolvedRef?: string;
   // Fail the first edge-runtime run with this message (the second succeeds with
@@ -116,8 +115,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const provisionCalls: Array<{
     mode: string;
-    usePgDelta: boolean;
-    targetLocal: boolean;
     projectRef?: string;
   }> = [];
   const removedContainers: string[] = [];
@@ -126,12 +123,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
-    provisionShadow: ({ mode, usePgDelta, targetLocal, projectRef }) => {
-      provisionCalls.push({ mode, usePgDelta, targetLocal, projectRef });
+    provisionShadow: ({ mode, projectRef }) => {
+      provisionCalls.push({ mode, projectRef });
       return Effect.succeed({
         container: "shadow-1",
         sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
-        targetUrlOverride: opts.shadowTargetOverride,
       });
     },
     provisionNextShadow: () => Effect.die("provisionNextShadow not used"),
@@ -145,7 +141,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     operation: "diff" | "export";
     targetRef: string;
     projectRef?: string;
-    targetLocal?: boolean;
   }> = [];
   let engineDiffCount = 0;
   const pgDeltaEngine = Layer.succeed(
@@ -158,7 +153,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           operation: "diff",
           targetRef: input.target.ref,
           projectRef: input.projectRef,
-          targetLocal: input.targetLocal,
         });
         engineDiffCount += 1;
         if (opts.edgeFailFirstWith !== undefined && engineDiffCount === 1) {
@@ -203,11 +197,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             if (typeof sql !== "string" || typeof name !== "string") {
               throw new Error("invalid file");
             }
+            if (transactionMode !== "transactional" && transactionMode !== "none") {
+              throw new Error(`unknown transaction mode ${String(transactionMode)}`);
+            }
             return {
               sequence: index + 1,
               name,
               sql,
-              transactional: transactionMode !== "none",
+              transactionMode,
             };
           });
           return Effect.succeed({
@@ -630,8 +627,12 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("pulls with the default migra engine", () => {
+  it.effect("pulls with migra and warns that schema_paths cannot replace the target", () => {
     seedMigration(tmp.current, "20240101000000");
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      ["[db.migrations]", 'schema_paths = ["database/*.sql"]', ""].join("\n"),
+    );
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
@@ -639,8 +640,9 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
-      expect(s.provisionCalls[0]?.usePgDelta).toBe(false);
+      expect(s.provisionCalls[0]?.mode).toBe("diff");
       const err = streamText(s.out, "stderr");
+      expect(err).toContain("schema_paths no longer changes the target");
       // Go's `ConnectByConfig` prints the Connecting line to stderr before dialing
       // (`internal/utils/connect.go:348`), ahead of any other pull output.
       expect(err).toContain("Connecting to remote database...\n");
@@ -835,7 +837,7 @@ describe("legacy db pull", () => {
         expect(s.dumpCalls[0]?.env["EXTRA_SED"]).toBe("/^--/d");
         expect(s.dumpCalls[0]?.env["EXCLUDED_SCHEMAS"]).toContain("auth");
         // The diff ran against the shadow with the migra engine (no schema filter).
-        expect(s.provisionCalls[0]?.usePgDelta).toBe(false);
+        expect(s.provisionCalls[0]?.mode).toBe("diff");
         // The migration file holds the dump output followed by the appended diff.
         const dir = join(tmp.current, "supabase", "migrations");
         const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
@@ -1644,20 +1646,16 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("db pull --local provisions a local-target shadow and uses the target override", () => {
-    // Go derives the shadow targetLocal from utils.IsLocalDatabase and substitutes
-    // the declarative contrib_regression target override (diff.go:190,196-197);
-    // the native handler must pass targetLocal and honor shadow.targetUrlOverride.
+  it.effect("db pull --local diffs migrations against the selected local database", () => {
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       yes: true,
-      shadowTargetOverride: "postgres://postgres:postgres@127.0.0.1:54320/contrib_regression",
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ local: Option.some(true) }));
-      expect(s.provisionCalls[0]?.targetLocal).toBe(true);
+      expect(s.provisionCalls[0]).toEqual({ mode: "diff", projectRef: undefined });
       // A local target prints the local wording (Go's `IsLocalDatabase` branch in
       // `ConnectByConfigStream`, `internal/utils/connect.go:344-346`).
       expect(streamText(s.out, "stderr")).toContain("Connecting to local database...\n");

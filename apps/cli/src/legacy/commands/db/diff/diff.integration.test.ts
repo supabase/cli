@@ -47,7 +47,6 @@ interface SetupOpts {
   // Exact suffixes returned by the next renderer, parallel to `diffFiles`.
   readonly diffSuffixes?: ReadonlyArray<string | null>;
   readonly pgDeltaImplementation?: "legacy" | "next";
-  readonly targetOverride?: string;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   readonly networkId?: string; // --network-id value forwarded to docker runs
@@ -62,8 +61,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const provisionCalls: Array<{
     mode: string;
-    targetLocal: boolean;
-    usePgDelta: boolean;
     projectRef?: string;
   }> = [];
   const removedContainers: string[] = [];
@@ -72,12 +69,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
-    provisionShadow: ({ mode, targetLocal, usePgDelta, projectRef }) => {
-      provisionCalls.push({ mode, targetLocal, usePgDelta, projectRef });
+    provisionShadow: ({ mode, projectRef }) => {
+      provisionCalls.push({ mode, projectRef });
       return Effect.succeed({
         container: "shadow-1",
         sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
-        targetUrlOverride: opts.targetOverride,
       });
     },
     provisionNextShadow: () => Effect.die("provisionNextShadow not used"),
@@ -100,10 +96,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               ? { suffix: opts.diffSuffixes[index] }
               : {}),
             sql: file.sql,
-            transactional: true,
+            transactionMode: "transactional" as const,
           }))
         : sql.length > 0
-          ? [{ sequence: 1, name: "schema_changes", sql, transactional: true }]
+          ? [
+              {
+                sequence: 1,
+                name: "schema_changes",
+                sql,
+                transactionMode: "transactional" as const,
+              },
+            ]
           : [];
     return {
       changes: files.length > 0,
@@ -280,7 +283,7 @@ describe("legacy db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags());
-      expect(s.provisionCalls).toEqual([{ mode: "diff", targetLocal: true, usePgDelta: false }]);
+      expect(s.provisionCalls).toEqual([{ mode: "diff", projectRef: undefined }]);
       expect(stdout(s.out)).toBe("create table players ();\n\n");
       expect(stderr(s.out)).toContain("Creating shadow database...");
       expect(stderr(s.out)).toContain("Diffing schemas...");
@@ -297,7 +300,6 @@ describe("legacy db diff", () => {
       expect(s.provisionCalls).toEqual([]);
       expect(s.databaseDiffCalls).toHaveLength(1);
       expect(s.databaseDiffCalls[0]).toMatchObject({
-        targetLocal: true,
         schema: ["public"],
         target: {
           kind: "database",
@@ -319,7 +321,7 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("next local diff gives configured schema_paths precedence", () => {
+  it.effect("next local diff ignores schema_paths and declarative files", () => {
     mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -343,55 +345,10 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
-      expect(s.databaseDiffCalls[0]?.declarativeFiles).toEqual([
-        { name: "supabase/configured.sql", sql: "create table configured ();\n" },
-      ]);
-      expect(s.databaseDiffCalls[0]?.declarativeManifest).toBeUndefined();
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("next local diff loads the enabled declarative directory and manifest", () => {
-    const declarativeDir = join(tmp.current, "supabase", "database");
-    mkdirSync(declarativeDir, { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      ["[experimental.pgdelta]", "enabled = true", ""].join("\n"),
-    );
-    writeFileSync(join(declarativeDir, "public.sql"), "create table public.t ();\n");
-    writeFileSync(
-      join(declarativeDir, ".pgdelta-export.json"),
-      JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
-    );
-    const s = setup(tmp.current, {
-      pgDeltaImplementation: "next",
-      diffSql: "create table result ();\n",
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
-      expect(s.databaseDiffCalls[0]?.declarativeFiles).toEqual([
-        { name: "public.sql", sql: "create table public.t ();\n" },
-      ]);
-      expect(s.databaseDiffCalls[0]?.declarativeManifest).toEqual({
-        redactSecrets: true,
-        scope: "database",
-      });
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("next local diff falls back to supabase/schemas", () => {
-    const schemasDir = join(tmp.current, "supabase", "schemas");
-    mkdirSync(schemasDir, { recursive: true });
-    writeFileSync(join(schemasDir, "fallback.sql"), "create table fallback ();\n");
-    const s = setup(tmp.current, {
-      pgDeltaImplementation: "next",
-      diffSql: "create table result ();\n",
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
-      expect(s.databaseDiffCalls[0]?.declarativeFiles).toEqual([
-        { name: "fallback.sql", sql: "create table fallback ();\n" },
-      ]);
-      expect(s.databaseDiffCalls[0]?.declarativeManifest).toBeUndefined();
+      expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeFiles");
+      expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeManifest");
+      expect(stderr(s.out)).toContain("schema_paths no longer changes the target");
+      expect(stdout(s.out)).toBe("create table result ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -450,7 +407,6 @@ describe("legacy db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags());
-      expect(s.provisionCalls[0]?.usePgDelta).toBe(false);
       // The local default never passes a ref, so the shadow uses base config.
       expect(s.provisionCalls[0]?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(s.layer));
@@ -464,16 +420,13 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ linked: Option.some(true) }));
-      expect(s.provisionCalls[0]?.targetLocal).toBe(false);
+      expect(s.provisionCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
       expect(s.cache.cached).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("uses the seam's target override for the local declarative branch", () => {
-    const s = setup(tmp.current, {
-      targetOverride: "postgres://postgres:postgres@127.0.0.1:54320/contrib_regression",
-      diffSql: "create table o ();\n",
-    });
+  it.effect("uses the selected local database as the migra target", () => {
+    const s = setup(tmp.current, { diffSql: "create table o ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags());
       expect(stdout(s.out)).toBe("create table o ();\n\n");
@@ -609,16 +562,37 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("writes a timestamped migration when --file is set instead of printing", () => {
-    const s = setup(tmp.current, { diffSql: "create table f ();\n" });
+  it.effect("writes live-only SQL with --file even when declarative targets are configured", () => {
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db.migrations]",
+        'schema_paths = ["database/*.sql"]',
+        "",
+        "[experimental.pgdelta]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(tmp.current, "supabase", "database", "declarative.sql"),
+      "create table declarative_only ();\n",
+    );
+    const s = setup(tmp.current, {
+      pgDeltaImplementation: "next",
+      diffSql: "create table live_only ();\n",
+    });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ file: Option.some("my_diff") }));
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
       expect(stdout(s.out)).toBe("");
+      expect(stderr(s.out)).toContain("schema_paths no longer changes the target");
       expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
       const dir = join(tmp.current, "supabase", "migrations");
       const files = readdirSync(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
+      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("create table live_only ();\n");
     }).pipe(Effect.provide(s.layer));
   });
 

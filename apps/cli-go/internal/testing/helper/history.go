@@ -6,7 +6,9 @@ import (
 )
 
 func MockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {
-	conn.Query(migration.SET_LOCK_TIMEOUT).
+	conn.Query("BEGIN").
+		Reply("BEGIN").
+		Query(migration.SET_LOCK_TIMEOUT).
 		Query(migration.CREATE_VERSION_SCHEMA).
 		Reply("CREATE SCHEMA").
 		Query(migration.CREATE_VERSION_TABLE).
@@ -14,15 +16,21 @@ func MockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {
 		Query(migration.ADD_STATEMENTS_COLUMN).
 		Reply("ALTER TABLE").
 		Query(migration.ADD_NAME_COLUMN).
-		Reply("ALTER TABLE")
+		Reply("ALTER TABLE").
+		Query("COMMIT").
+		Reply("COMMIT")
 	return conn
 }
 
 func MockSeedHistory(conn *pgtest.MockConn) *pgtest.MockConn {
-	conn.Query(migration.SET_LOCK_TIMEOUT).
+	conn.Query("BEGIN").
+		Reply("BEGIN").
+		Query(migration.SET_LOCK_TIMEOUT).
 		Query(migration.CREATE_VERSION_SCHEMA).
 		Reply("CREATE SCHEMA").
 		Query(migration.CREATE_SEED_TABLE).
-		Reply("CREATE TABLE")
+		Reply("CREATE TABLE").
+		Query("COMMIT").
+		Reply("COMMIT")
 	return conn
 }

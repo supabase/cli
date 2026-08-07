@@ -110,10 +110,14 @@ func TestApplyMigrations(t *testing.T) {
 		mockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
+			Query("BEGIN").
+			Reply("BEGIN").
 			Query(testSchema).
 			Reply("CREATE SCHEMA").
 			Query(INSERT_MIGRATION_VERSION, "0", "schema", []string{testSchema}).
-			Reply("INSERT 0 1")
+			Reply("INSERT 0 1").
+			Query("COMMIT").
+			Reply("COMMIT")
 		// Run test
 		err := ApplyMigrations(context.Background(), pending, conn.MockClient(t), testMigrations)
 		// Check error
@@ -126,13 +130,17 @@ func TestApplyMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(SET_LOCK_TIMEOUT).
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query(SET_LOCK_TIMEOUT).
 			Query(CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
 			Query(CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
 			Query(ADD_STATEMENTS_COLUMN).
-			Query(ADD_NAME_COLUMN)
+			Query(ADD_NAME_COLUMN).
+			Query("ROLLBACK").
+			Reply("ROLLBACK")
 		// Run test
 		err := ApplyMigrations(context.Background(), pending, conn.MockClient(t), fsys)
 		// Check error
@@ -161,10 +169,14 @@ func TestApplyMigrations(t *testing.T) {
 		mockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
+			Query("BEGIN").
+			Reply("BEGIN").
 			Query(testSchema).
 			ReplyError(pgerrcode.UndefinedTable, `relation "supabase_migrations.schema_migrations" does not exist`).
 			Query(INSERT_MIGRATION_VERSION, "0", "schema", []string{testSchema}).
-			Reply("INSERT 0 1")
+			Reply("INSERT 0 1").
+			Query("ROLLBACK").
+			Reply("ROLLBACK")
 		// Run test
 		err := ApplyMigrations(context.Background(), pending, conn.MockClient(t), testMigrations)
 		// Check error
@@ -187,7 +199,9 @@ func TestApplyMigrations(t *testing.T) {
 }
 
 func mockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {
-	conn.Query(SET_LOCK_TIMEOUT).
+	conn.Query("BEGIN").
+		Reply("BEGIN").
+		Query(SET_LOCK_TIMEOUT).
 		Query(CREATE_VERSION_SCHEMA).
 		Reply("CREATE SCHEMA").
 		Query(CREATE_VERSION_TABLE).
@@ -195,6 +209,8 @@ func mockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {
 		Query(ADD_STATEMENTS_COLUMN).
 		Reply("ALTER TABLE").
 		Query(ADD_NAME_COLUMN).
-		Reply("ALTER TABLE")
+		Reply("ALTER TABLE").
+		Query("COMMIT").
+		Reply("COMMIT")
 	return conn
 }

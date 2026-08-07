@@ -49,6 +49,17 @@ func TestWritePgDeltaMigrations(t *testing.T) {
 		assert.Equal(t, "-- unit 1\n\ncreate table a ();\n", string(contents))
 	})
 
+	t.Run("rejects an unknown transaction mode before creating files", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		files := []PgDeltaPlanFile{{Order: 1, Name: "schema_changes", TransactionMode: "future", SQL: "SELECT 1;"}}
+		written, err := WritePgDeltaMigrations(files, base, "remote_schema", fsys)
+		require.ErrorContains(t, err, `unknown pg-delta transaction mode "future"`)
+		assert.Nil(t, written)
+		entries, readErr := afero.ReadDir(fsys, ".")
+		require.NoError(t, readErr)
+		assert.Empty(t, entries)
+	})
+
 	t.Run("writes one ordered file per unit with strictly increasing versions", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		files := []PgDeltaPlanFile{

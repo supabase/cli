@@ -109,9 +109,6 @@ const legacyGlobSeedFiles = Effect.fnUntraced(function* (
   } satisfies LegacyGlobResult;
 });
 
-/** Shared Go-compatible SQL glob expansion for migration/declarative consumers. */
-export const legacyResolveSqlGlobFiles = legacyGlobSeedFiles;
-
 const toSlash = (p: string): string => p.replaceAll("\\", "/");
 
 /** Splits a forward-slashed path into its directory prefix and final element. */

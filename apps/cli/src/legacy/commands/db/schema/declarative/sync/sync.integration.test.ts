@@ -947,14 +947,14 @@ describe("legacy db schema declarative sync integration", () => {
           name: "transactional",
           suffix: "_1",
           sql: "ALTER TABLE a ADD COLUMN b int;",
-          transactional: true,
+          transactionMode: "transactional",
         },
         {
           sequence: 2,
           name: "non_transactional",
           suffix: "_2",
           sql: "ALTER TYPE mood ADD VALUE 'fine';",
-          transactional: false,
+          transactionMode: "none",
         },
       ],
     });

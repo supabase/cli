@@ -1,10 +1,9 @@
-import { Data, Effect, type FileSystem, Option, type Path } from "effect";
+import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import type {
   LegacyPgDeltaExportManifest,
   LegacyPgDeltaSqlFile,
 } from "./legacy-pgdelta-engine.service.ts";
-import { legacyResolveSqlGlobFiles } from "../../../shared/legacy-seed-ops.ts";
 
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
 
@@ -131,38 +130,6 @@ export const LegacyLoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
         ),
       );
     files.push({ name: file.name, sql });
-  }
-  return files;
-});
-
-/** Loads `[db.migrations].schema_paths` in configured pattern/application order. */
-export const LegacyLoadPgDeltaSqlPaths = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  patterns: ReadonlyArray<string>,
-) {
-  const resolved = yield* legacyResolveSqlGlobFiles(fs, path, patterns, workdir);
-  if (resolved.files.length === 0) {
-    return yield* Effect.fail(
-      filesError(
-        Option.isSome(resolved.warning)
-          ? resolved.warning.value
-          : "no declarative schema files matched schema_paths",
-      ),
-    );
-  }
-  const files: Array<LegacyPgDeltaSqlFile> = [];
-  for (const file of resolved.files) {
-    const full = path.isAbsolute(file) ? file : path.join(workdir, file);
-    const sql = yield* fs
-      .readFileString(full)
-      .pipe(
-        Effect.mapError((error) =>
-          filesError(`failed to read declarative schema file: ${error.message}`),
-        ),
-      );
-    files.push({ name: file.split("\\").join("/"), sql });
   }
   return files;
 });

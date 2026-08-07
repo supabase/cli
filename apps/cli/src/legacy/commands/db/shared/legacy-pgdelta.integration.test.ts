@@ -176,6 +176,39 @@ describe("legacyDiffPgDelta", () => {
       Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
+
+  it.effect("rejects an unknown transaction mode", () => {
+    const edge = fakeEdgeRuntime({
+      stdout: JSON.stringify({
+        version: 1,
+        files: [
+          {
+            order: 1,
+            name: "schema_changes",
+            transactionMode: "non-transactional",
+            sql: "SELECT 1;",
+          },
+        ],
+      }),
+    });
+    return legacyDiffPgDelta(CTX, {
+      targetRef: "postgresql://t",
+      sourceRef: "",
+      schema: [],
+      formatOptions: "",
+    }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDiffParseError");
+          expect((failError(exit) as { message: string }).message).toContain(
+            'unknown pg-delta transaction mode "non-transactional"',
+          );
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+    );
+  });
 });
 
 describe("legacyDeclarativeExportPgDelta", () => {

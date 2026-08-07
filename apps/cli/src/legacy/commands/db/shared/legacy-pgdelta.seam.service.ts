@@ -20,11 +20,6 @@ export interface LegacyShadowSource {
   readonly container: string;
   /** The diff source Postgres URL (the provisioned shadow). */
   readonly sourceUrl: string;
-  /**
-   * Optional second live database. For legacy diff it replaces the target with
-   * `contrib_regression` after Go applies declarative schemas.
-   */
-  readonly targetUrlOverride: string | undefined;
 }
 
 /** The independently hosted databases used by the pg-delta next planner. */
@@ -101,14 +96,12 @@ interface LegacyDeclarativeSeamShape {
    * Provisions a live shadow database via the bundled Go binary's hidden
    * `db __shadow` command and returns it running (the container is NOT removed —
    * the caller must call `removeShadowContainer` when the diff completes). This
-   * is the diff "source" that both the migra and pg-delta engines run against in
-   * `db diff` / `db pull`, mirroring Go's `DiffDatabase` (`differ(shadow, target)`).
+   * is the migration-state source that both the migra and pg-delta engines run
+   * against in `db diff` / `db pull`.
    * Go's shadow-provisioning progress is teed to stderr.
    */
   readonly provisionShadow: (opts: {
     readonly mode: LegacyShadowMode;
-    readonly targetLocal: boolean;
-    readonly usePgDelta: boolean;
     readonly schema: ReadonlyArray<string>;
     /**
      * Resolved linked project ref, passed ONLY on the `--linked` path so the

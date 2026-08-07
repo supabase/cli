@@ -1,5 +1,5 @@
-import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect } from "effect";
+import { isSupabaseApiResponseSchemaError, type SupabaseApiError } from "@supabase/api/effect";
+import { Data, Effect } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
@@ -55,6 +55,12 @@ export type StatusErrorFactory<E> = new (args: {
   readonly message: string;
 }) => E;
 
+/** A 2xx Management API response that violates the generated response contract. */
+export class LegacyApiResponseSchemaError extends Data.TaggedError("LegacyApiResponseSchemaError")<{
+  readonly operationId: string;
+  readonly message: string;
+}> {}
+
 /**
  * Build an error mapper that classifies a `SupabaseApiError` into either a typed network
  * error or a typed unexpected-status error. Pulled out of individual command families so
@@ -69,9 +75,17 @@ export function mapLegacyHttpError<N, S>(opts: {
   readonly statusError: StatusErrorFactory<S>;
   readonly networkMessage: (cause: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-}): (cause: SupabaseApiError) => Effect.Effect<never, N | S> {
+}): (cause: SupabaseApiError) => Effect.Effect<never, N | S | LegacyApiResponseSchemaError> {
   return (cause) =>
     Effect.gen(function* () {
+      if (isSupabaseApiResponseSchemaError(cause)) {
+        return yield* Effect.fail(
+          new LegacyApiResponseSchemaError({
+            operationId: cause.operationId,
+            message: cause.message,
+          }),
+        );
+      }
       if (HttpClientError.isHttpClientError(cause)) {
         if (RESPONSE_ERROR_TAGS.has(cause.reason._tag) && cause.response !== undefined) {
           const status = cause.response.status;
@@ -92,7 +106,7 @@ export function mapLegacyHttpError<N, S>(opts: {
           new opts.networkError({ message: opts.networkMessage(description) }),
         );
       }
-      // SchemaError or HttpBodyError — treat as transport-level network error.
+      // Input SchemaError or HttpBodyError — retain their historical mapping.
       return yield* Effect.fail(
         new opts.networkError({ message: opts.networkMessage(String(cause)) }),
       );

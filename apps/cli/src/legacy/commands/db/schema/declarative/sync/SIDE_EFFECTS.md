@@ -93,6 +93,13 @@ are mutually exclusive.
 ## Notes
 
 - Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
+- The declarative directory is the complete, hand-authored desired state. An
+  object omitted from it is intended to be removed, including extensions. This
+  is deterministic regardless of whether the directory was generated, written
+  by hand, or has a `.pgdelta-export.json` manifest.
+- Projects upgrading from the legacy workflow should regenerate declarations or
+  add declarations for every extension they intend to retain before syncing.
+  Review the existing drop-statement warning before applying destructive changes.
 - `--file` sets the migration filename stem (default `declarative_sync`); `--name`
   overrides it. In a TTY without `--name`/`--yes`, the name is prompted.
 - When no declarative files exist, a TTY offers to generate them (from local) first.

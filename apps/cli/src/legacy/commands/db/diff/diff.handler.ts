@@ -6,10 +6,7 @@ import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
-import {
-  legacyReadDbToml,
-  legacyResolveDeclarativeDir,
-} from "../../../shared/legacy-db-config.toml-read.ts";
+import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
@@ -22,6 +19,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import {
   legacyParseBoolEnv,
   legacyResolveDiffEngine,
+  legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
 } from "../shared/legacy-diff-engine.ts";
 import {
@@ -33,14 +31,7 @@ import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseEndpoint,
   type LegacyPgDeltaEndpoint,
-  type LegacyPgDeltaExportManifest,
-  type LegacyPgDeltaSqlFile,
 } from "../shared/legacy-pgdelta-engine.service.ts";
-import {
-  LegacyLoadPgDeltaSqlFiles,
-  LegacyLoadPgDeltaSqlPaths,
-  LegacyReadPgDeltaExportManifest,
-} from "../shared/legacy-pgdelta-files.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import {
   legacyIsPgDeltaDebugEnabled,
@@ -411,6 +402,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       denoVersion: cfg.denoVersion,
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
+    if (cfg.migrationSchemaPaths !== undefined && cfg.migrationSchemaPaths.length > 0) {
+      yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
+    }
 
     // Engine resolution (Go's `db.go:110`): the pg-delta env/config/flag gate,
     // read from the (possibly remote-merged) config.
@@ -437,46 +431,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           // precedes the call because the high-level boundary intentionally exposes
           // no partially-provisioned resource to the handler.
           yield* output.raw(diffingMessage, "stderr");
-          let declarativeFiles: ReadonlyArray<LegacyPgDeltaSqlFile> | undefined;
-          let declarativeManifest: LegacyPgDeltaExportManifest | undefined;
-          if (pgDelta.implementation === "next" && resolved.isLocal) {
-            if (cfg.migrationSchemaPaths !== undefined && cfg.migrationSchemaPaths.length > 0) {
-              declarativeFiles = yield* LegacyLoadPgDeltaSqlPaths(
-                fs,
-                path,
-                cliConfig.workdir,
-                cfg.migrationSchemaPaths,
-              );
-            } else {
-              const declarativeDirSetting = legacyResolveDeclarativeDir(path, cfg.pgDelta);
-              const declarativeDir = path.isAbsolute(declarativeDirSetting)
-                ? declarativeDirSetting
-                : path.join(cliConfig.workdir, declarativeDirSetting);
-              const hasDeclarativeDir = cfg.pgDelta.enabled
-                ? yield* fs.exists(declarativeDir).pipe(Effect.orElseSucceed(() => false))
-                : false;
-              if (hasDeclarativeDir) {
-                const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDir);
-                if (loaded.length > 0) {
-                  declarativeFiles = loaded;
-                  declarativeManifest = yield* LegacyReadPgDeltaExportManifest(
-                    fs,
-                    path,
-                    declarativeDir,
-                  );
-                }
-              } else {
-                const schemasDir = path.join(cliConfig.workdir, "supabase", "schemas");
-                const hasSchemasDir = yield* fs
-                  .exists(schemasDir)
-                  .pipe(Effect.orElseSucceed(() => false));
-                if (hasSchemasDir) {
-                  const loaded = yield* LegacyLoadPgDeltaSqlFiles(fs, path, schemasDir);
-                  if (loaded.length > 0) declarativeFiles = loaded;
-                }
-              }
-            }
-          }
           const result = yield* pgDelta.diffDatabase({
             context: ctx,
             target: {
@@ -485,12 +439,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               connection: resolved.conn,
               connectOptions: { isLocal: resolved.isLocal, dnsResolver },
             },
-            targetLocal: resolved.isLocal,
             schema: flags.schema,
             formatOptions,
             ...(connType === "linked" && linkedRef !== undefined ? { projectRef: linkedRef } : {}),
-            ...(declarativeFiles !== undefined ? { declarativeFiles } : {}),
-            ...(declarativeManifest !== undefined ? { declarativeManifest } : {}),
             debug: legacyIsPgDeltaDebugEnabled(),
           });
           return { sql: result.sql, files: result.files };
@@ -498,8 +449,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       : yield* Effect.gen(function* () {
           const shadow = yield* seam.provisionShadow({
             mode: "diff",
-            targetLocal: resolved.isLocal,
-            usePgDelta: false,
             schema: flags.schema,
             ...(connType === "linked" && linkedRef !== undefined ? { projectRef: linkedRef } : {}),
           });
@@ -507,7 +456,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             yield* output.raw(diffingMessage, "stderr");
             const sql = yield* legacyDiffMigra(ctx, {
               source: shadow.sourceUrl,
-              target: shadow.targetUrlOverride ?? targetUrl,
+              target: targetUrl,
               schema: flags.schema,
               connectOptions: { isLocal: resolved.isLocal, dnsResolver },
             });
@@ -559,6 +508,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 ? file.suffix.replace(/^_/u, "")
                 : file.name,
             sql: file.sql,
+            transactionMode: file.transactionMode,
           })),
         }).pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
         for (const unit of writtenUnits) writtenFiles.push(unit.path);

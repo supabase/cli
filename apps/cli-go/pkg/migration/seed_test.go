@@ -127,11 +127,15 @@ func TestSeedData(t *testing.T) {
 }
 
 func mockSeedHistory(conn *pgtest.MockConn) *pgtest.MockConn {
-	conn.Query(SET_LOCK_TIMEOUT).
+	conn.Query("BEGIN").
+		Reply("BEGIN").
+		Query(SET_LOCK_TIMEOUT).
 		Query(CREATE_VERSION_SCHEMA).
 		Reply("CREATE SCHEMA").
 		Query(CREATE_SEED_TABLE).
-		Reply("CREATE TABLE")
+		Reply("CREATE TABLE").
+		Query("COMMIT").
+		Reply("COMMIT")
 	return conn
 }
 
@@ -145,8 +149,12 @@ func TestSeedGlobals(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(testGlobals).
-			Reply("CREATE ROLE")
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query(testGlobals).
+			Reply("CREATE ROLE").
+			Query("COMMIT").
+			Reply("COMMIT")
 		// Run test
 		err := SeedGlobals(context.Background(), pending, conn.MockClient(t), testMigrations)
 		// Check error
@@ -166,8 +174,12 @@ func TestSeedGlobals(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(testGlobals).
-			ReplyError(pgerrcode.InvalidCatalogName, `database "postgres" does not exist`)
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query(testGlobals).
+			ReplyError(pgerrcode.InvalidCatalogName, `database "postgres" does not exist`).
+			Query("ROLLBACK").
+			Reply("ROLLBACK")
 		// Run test
 		err := SeedGlobals(context.Background(), pending, conn.MockClient(t), testMigrations)
 		// Check error

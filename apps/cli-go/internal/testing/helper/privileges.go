@@ -9,11 +9,15 @@ import "github.com/supabase/cli/pkg/pgtest"
 // than imported from the start package to avoid an import cycle with that package's own
 // internal (package start) tests.
 func MockApiPrivilegesRevoke(conn *pgtest.MockConn) *pgtest.MockConn {
-	conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+	conn.Query("BEGIN").
+		Reply("BEGIN").
+		Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
 		Reply("ALTER DEFAULT PRIVILEGES").
 		Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
 		Reply("ALTER DEFAULT PRIVILEGES").
 		Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-		Reply("ALTER DEFAULT PRIVILEGES")
+		Reply("ALTER DEFAULT PRIVILEGES").
+		Query("COMMIT").
+		Reply("COMMIT")
 	return conn
 }

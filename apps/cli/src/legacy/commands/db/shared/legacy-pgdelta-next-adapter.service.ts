@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 import { Context, Data, type Effect } from "effect";
 
+import type { LegacyPgDeltaTransactionMode } from "./legacy-pgdelta-engine.service.ts";
+
 export type LegacyPgDeltaNextOperation =
   | "diff"
   | "declarativeExport"
@@ -28,7 +30,7 @@ export interface LegacyPgDeltaNextRenderedFile {
   readonly sequence: number;
   readonly suffix: string | null;
   readonly sql: string;
-  readonly transactional: boolean;
+  readonly transactionMode: LegacyPgDeltaTransactionMode;
   readonly actionCount: number;
 }
 

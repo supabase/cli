@@ -28,9 +28,29 @@ describe("generate", () => {
     expect(renderOpenApiSchema({ type: "string", format: "email", nullable: true })).toBe(
       'Schema.Union([Schema.String.annotate({ "format": "email" }), Schema.Null])',
     );
-    expect(renderOpenApiSchema({ type: "string", format: "date-time", nullable: true })).toBe(
-      'Schema.Union([Schema.String.annotate({ "format": "date-time" }), Schema.Null])',
+    expect(renderOpenApiSchema({ type: "string", format: "date-time", nullable: true })).toEqual(
+      expect.stringContaining('Schema.String.annotate({ "format": "date-time" }).check'),
     );
+  });
+
+  test("normalizes date-time schemas to strict RFC3339 timestamps with numeric offsets", () => {
+    const sanitized = sanitizeOpenApiSchema({
+      type: "string",
+      format: "date-time",
+      pattern: "Z-only-pattern-from-upstream",
+    });
+    expect(typeof sanitized.pattern).toBe("string");
+    if (typeof sanitized.pattern !== "string") {
+      throw new Error("Expected sanitized date-time pattern");
+    }
+    const dateTime = new RegExp(sanitized.pattern);
+
+    expect(dateTime.test("2026-08-07T10:11:12Z")).toBe(true);
+    expect(dateTime.test("2026-08-07T10:11:12+00:00")).toBe(true);
+    expect(dateTime.test("2026-08-07T12:41:12+02:30")).toBe(true);
+    expect(dateTime.test("2026-08-07 10:11:12Z")).toBe(false);
+    expect(dateTime.test("2026-08-07T10:11:12+25:00")).toBe(false);
+    expect(dateTime.test("not-a-timestamp")).toBe(false);
   });
 
   test("accepts booleans for string-encoded boolean query parameters", () => {

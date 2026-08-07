@@ -43,14 +43,30 @@ type DeclarativeOutput struct {
 	Files   []DeclarativeFile `json:"files"`
 }
 
+type PgDeltaTransactionMode string
+
+const (
+	PgDeltaTransactionModeTransactional PgDeltaTransactionMode = "transactional"
+	PgDeltaTransactionModeNone          PgDeltaTransactionMode = "none"
+)
+
+func (m PgDeltaTransactionMode) validate() error {
+	switch m {
+	case PgDeltaTransactionModeTransactional, PgDeltaTransactionModeNone:
+		return nil
+	default:
+		return errors.Errorf("unknown pg-delta transaction mode %q", m)
+	}
+}
+
 // PgDeltaPlanFile is one execution-aware migration unit rendered by pg-delta's
 // renderPlanFiles: a numbered SQL file whose header comments record the unit
 // number, transaction mode and boundary reason.
 type PgDeltaPlanFile struct {
-	Order           int    `json:"order"`
-	Name            string `json:"name"`
-	TransactionMode string `json:"transactionMode"`
-	SQL             string `json:"sql"`
+	Order           int                    `json:"order"`
+	Name            string                 `json:"name"`
+	TransactionMode PgDeltaTransactionMode `json:"transactionMode"`
+	SQL             string                 `json:"sql"`
 }
 
 // PgDeltaDiffOutput is the top-level diff envelope emitted by templates/pgdelta.ts.
@@ -181,6 +197,11 @@ func parsePgDeltaDiffOutput(stdout, stderr string) (PgDeltaDiffResult, error) {
 	var envelope PgDeltaDiffOutput
 	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
 		return PgDeltaDiffResult{}, errors.Errorf("failed to parse pg-delta diff output: %w:\n%s", err, stderr)
+	}
+	for _, file := range envelope.Files {
+		if err := file.TransactionMode.validate(); err != nil {
+			return PgDeltaDiffResult{}, err
+		}
 	}
 	result.Files = envelope.Files
 	return result, nil

@@ -47,7 +47,27 @@ export interface SupabaseApiClientOptions {
 export type SupabaseApiError =
   | HttpBody.HttpBodyError
   | HttpClientError.HttpClientError
-  | SchemaError;
+  | SchemaError
+  | SupabaseApiResponseSchemaError;
+
+/** A successful HTTP response whose JSON body violates the generated output schema. */
+export class SupabaseApiResponseSchemaError extends Error {
+  readonly _tag = "SupabaseApiResponseSchemaError";
+
+  constructor(
+    readonly operationId: OperationId,
+    override readonly cause: unknown,
+  ) {
+    super(`Response schema validation failed for ${operationId}: ${String(cause)}`);
+    this.name = "SupabaseApiResponseSchemaError";
+  }
+}
+
+export function isSupabaseApiResponseSchemaError(
+  cause: unknown,
+): cause is SupabaseApiResponseSchemaError {
+  return cause instanceof SupabaseApiResponseSchemaError;
+}
 
 export interface SupabaseApiClientShape {
   readonly execute: <Id extends OperationId>(
@@ -479,7 +499,13 @@ function decodeJsonResponse<Id extends OperationId>(
   definition: OperationDefinition<Id>,
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<OperationOutput<Id>, SupabaseApiError> {
-  return HttpClientResponse.schemaBodyJson(definition.outputSchema)(response);
+  return HttpClientResponse.schemaBodyJson(definition.outputSchema)(response).pipe(
+    Effect.mapError((cause) =>
+      Schema.isSchemaError(cause)
+        ? new SupabaseApiResponseSchemaError(definition.id, cause)
+        : cause,
+    ),
+  );
 }
 
 function decodeTextResponse<Id extends OperationId>(

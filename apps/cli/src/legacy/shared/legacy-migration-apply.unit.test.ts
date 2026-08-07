@@ -9,6 +9,7 @@ import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
+  legacyHasTransactionControl,
   legacyIsPipelineIncompatible,
   legacyMarkError,
   legacySeedGlobals,
@@ -192,6 +193,61 @@ describe("legacyApplyMigrationFile", () => {
         }),
       ),
     );
+  });
+
+  it.effect("preserves authored transaction boundaries and records history afterwards", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_authored.sql");
+    writeFileSync(file, "BEGIN;\nSET LOCAL check_function_bodies = off;\nCOMMIT;");
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          // One BEGIN/COMMIT belongs to history-table setup; the other pair is
+          // exactly the authored boundary, with no nested migration wrapper.
+          expect(execs.filter((sql) => sql === "BEGIN")).toHaveLength(2);
+          expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(2);
+          expect(execs).toContain("SET LOCAL check_function_bodies = off");
+          const history = calls.filter((call) => call.kind === "query");
+          expect(history).toHaveLength(1);
+          expect(history[0]?.params?.[0]).toBe("20240101120000");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not record history when an authored transaction fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_authored.sql");
+    writeFileSync(file, "BEGIN;\nCREATE TABLE broken (;\nCOMMIT;");
+    const { session, calls } = fakeSession({ failOn: "CREATE TABLE broken" });
+    return run(session, file).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(calls.some((call) => call.kind === "query")).toBe(false);
+          expect(calls.some((call) => call.kind === "exec" && call.sql === "ROLLBACK")).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyHasTransactionControl", () => {
+  it("recognizes authored boundaries after comments without matching routine bodies", () => {
+    expect(legacyHasTransactionControl("-- authored\nBEGIN")).toBe(true);
+    expect(legacyHasTransactionControl("START TRANSACTION ISOLATION LEVEL SERIALIZABLE")).toBe(
+      true,
+    );
+    expect(
+      legacyHasTransactionControl(
+        "CREATE FUNCTION f() RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql",
+      ),
+    ).toBe(false);
   });
 });
 

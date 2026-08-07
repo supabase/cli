@@ -6,6 +6,8 @@ Requires the local development stack to be running when diffing against the loca
 
 Runs [djrobstep/migra](https://github.com/djrobstep/migra) in a container to compare schema differences between the target database and a shadow database. The shadow database is created by applying migrations in local `supabase/migrations` directory in a separate container. Output is written to stdout by default. For convenience, you can also save the schema diff as a new migration file by passing in `-f` flag.
 
+Normal diff mode always compares that migrations shadow with the selected live database. Declarative files under `supabase/database/` and `[db.migrations].schema_paths` do not replace the target. Use `supabase db schema declarative sync` to compare the complete declarative desired state.
+
 By default, all schemas in the target database are diffed. Use the `--schema public,extensions` flag to restrict diffing to a subset of schemas.
 
 Projects created by a recent `supabase init` default to the pg-delta diff engine (`[experimental.pgdelta] enabled = true` in `config.toml`). Existing projects are unaffected and keep using migra unless they opt in. To fall back to the legacy migra engine, set `enabled = false` under `[experimental.pgdelta]`, or pass `--use-migra` for a single run.

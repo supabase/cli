@@ -12,6 +12,8 @@ If no entries exist in the migration history table, the default diff engine uses
 
 Pass `--diff-engine pg-delta` to keep the migration-file `db pull` workflow while using pg-delta for the shadow diff step. On initial pull, pg-delta replaces `pg_dump` and produces the full migration from the shadow diff alone. Pass `--declarative` to switch to the declarative pg-delta export workflow instead.
 
+Migration-style pull always compares the local migrations shadow with the selected live database. Declarative files and `[db.migrations].schema_paths` do not replace that target; use `db schema declarative sync` for declarative comparison.
+
 Pg-delta runs in-process by default and is bundled with pg-topo at CLI build time. Set `SUPABASE_USE_PG_DELTA_NEXT=false` to temporarily use the legacy edge-runtime implementation. `PGDELTA_NPM_REGISTRY`, `supabase/.temp/pgdelta-version`, and legacy catalogs directly under `supabase/.temp/pgdelta/` affect only that opt-out; the CLI never falls back automatically.
 
 pg-delta plans are execution-aware: when a plan crosses a transaction boundary — for example `ALTER TYPE ... ADD VALUE` followed by a statement that uses the new enum value, which cannot run in the same transaction — `db pull` writes one ordered migration file per plan unit instead of a single file (for example `<ts>_remote_schema_schema_changes.sql` and `<ts+1s>_remote_schema_after_enum_values.sql`), each recorded in the migration history. The common case (a single unit) still produces exactly one `<ts>_remote_schema.sql` file.

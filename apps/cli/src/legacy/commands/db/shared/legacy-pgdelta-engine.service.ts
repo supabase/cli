@@ -37,6 +37,8 @@ export interface LegacyPgDeltaExportManifest {
   readonly files?: ReadonlyArray<string>;
 }
 
+export type LegacyPgDeltaTransactionMode = "transactional" | "none";
+
 export interface LegacyPgDeltaRenderedFile {
   readonly sequence: number;
   /** Legacy semantic unit name. */
@@ -44,7 +46,7 @@ export interface LegacyPgDeltaRenderedFile {
   /** Next renderer's exact filename suffix (`null`, `_1`, `_2`, ...). */
   readonly suffix?: string | null;
   readonly sql: string;
-  readonly transactional: boolean;
+  readonly transactionMode: LegacyPgDeltaTransactionMode;
   readonly actionCount?: number;
 }
 
@@ -79,10 +81,6 @@ export interface LegacyPgDeltaExplicitDiffInput extends LegacyPgDeltaCommonInput
 
 export interface LegacyPgDeltaDatabaseDiffInput extends LegacyPgDeltaCommonInput {
   readonly target: LegacyPgDeltaDatabaseEndpoint;
-  readonly targetLocal: boolean;
-  /** Present when the local desired state is declarative SQL rather than the live DB. */
-  readonly declarativeFiles?: ReadonlyArray<LegacyPgDeltaSqlFile>;
-  readonly declarativeManifest?: LegacyPgDeltaExportManifest;
 }
 
 interface LegacyPgDeltaDeclarativeExportInput extends LegacyPgDeltaCommonInput {

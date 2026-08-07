@@ -394,7 +394,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
             );
           }),
         ),
-      provisionShadow: ({ mode, targetLocal, usePgDelta, schema, projectRef }) =>
+      provisionShadow: ({ mode, schema, projectRef }) =>
         Effect.scoped(
           Effect.gen(function* () {
             if (!("found" in resolved)) {
@@ -410,8 +410,6 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
               "__shadow",
               "--mode",
               mode,
-              ...(targetLocal ? ["--target-local"] : []),
-              ...(usePgDelta ? ["--use-pg-delta"] : []),
               ...(schema.length > 0 ? ["--schema", schema.join(",")] : []),
               ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
               // Linked path only: pass the resolved ref so the hidden `db __shadow`
@@ -461,9 +459,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
               bytes.set(chunk, offset);
               offset += chunk.length;
             }
-            // stdout is three newline-separated lines: container id, source URL,
-            // and an optional second-database URL. Legacy diff uses the third URL
-            // only when its local-target declarative branch redirects the target.
+            // stdout is two newline-separated lines: container id and source URL.
             // The URLs arrive WITHOUT a password — the Go seam prints them via
             // ToPostgresURLWithoutPassword so it never logs a credential to stdout
             // (CWE-312). The shadow uses the local Postgres password, so we re-inject
@@ -476,7 +472,6 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
             const lines = new TextDecoder().decode(bytes).split(/\r?\n/u);
             const container = (lines[0] ?? "").trim();
             const sourceUrl = (lines[1] ?? "").trim();
-            const targetOverride = (lines[2] ?? "").trim();
             if (container.length === 0 || sourceUrl.length === 0) {
               return yield* Effect.fail(failure());
             }
@@ -493,10 +488,6 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
             return {
               container,
               sourceUrl: legacyInjectPostgresPassword(sourceUrl, password),
-              targetUrlOverride:
-                targetOverride.length > 0
-                  ? legacyInjectPostgresPassword(targetOverride, password)
-                  : undefined,
             } satisfies LegacyShadowSource;
           }),
         ),

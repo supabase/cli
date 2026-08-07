@@ -68,4 +68,10 @@ func TestParsePgDeltaDiffOutput(t *testing.T) {
 		assert.ErrorContains(t, err, "failed to parse pg-delta diff output")
 		assert.ErrorContains(t, err, "boom on the edge runtime")
 	})
+
+	t.Run("rejects an unknown transaction mode", func(t *testing.T) {
+		stdout := `{"version":1,"files":[{"order":1,"name":"schema_changes","transactionMode":"non-transactional","sql":"SELECT 1;"}]}`
+		_, err := parsePgDeltaDiffOutput(stdout, "")
+		assert.ErrorContains(t, err, `unknown pg-delta transaction mode "non-transactional"`)
+	})
 }

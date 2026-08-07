@@ -27,13 +27,14 @@ type MigrationFile struct {
 }
 
 var (
-	migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
-	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
-	createIndexPattern = regexp.MustCompile(`^CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY(\s|\z)`)
-	reindexPattern     = regexp.MustCompile(`^REINDEX(\s|\().*\sCONCURRENTLY(\s|\z)`)
-	vacuumPattern      = regexp.MustCompile(`^VACUUM(\s|\(|\z)`)
-	alterSystemPattern = regexp.MustCompile(`^ALTER\s+SYSTEM(\s|\z)`)
-	clusterPattern     = regexp.MustCompile(`^CLUSTER(\s|\z)`)
+	migrateFilePattern        = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+	typeNamePattern           = regexp.MustCompile(`type "([^"]+)" does not exist`)
+	createIndexPattern        = regexp.MustCompile(`^CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY(\s|\z)`)
+	reindexPattern            = regexp.MustCompile(`^REINDEX(\s|\().*\sCONCURRENTLY(\s|\z)`)
+	vacuumPattern             = regexp.MustCompile(`^VACUUM(\s|\(|\z)`)
+	alterSystemPattern        = regexp.MustCompile(`^ALTER\s+SYSTEM(\s|\z)`)
+	clusterPattern            = regexp.MustCompile(`^CLUSTER(\s|\z)`)
+	transactionControlPattern = regexp.MustCompile(`^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|PREPARE\s+TRANSACTION)(\s|\z)`)
 )
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
@@ -84,6 +85,14 @@ func isPipelineIncompatible(sql string) bool {
 		vacuumPattern.MatchString(upper) ||
 		alterSystemPattern.MatchString(upper) ||
 		clusterPattern.MatchString(upper)
+}
+
+// hasTransactionControl reports whether a statement controls the transaction
+// boundary itself. Files containing these statements must be executed exactly as
+// authored: automatically adding BEGIN/COMMIT would nest or otherwise change the
+// user's transaction semantics.
+func hasTransactionControl(sql string) bool {
+	return transactionControlPattern.MatchString(strings.ToUpper(trimLeadingSQLComments(sql)))
 }
 
 func trimLeadingSQLComments(sql string) string {
@@ -142,12 +151,26 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		return errors.Errorf("%w\n%s", err, strings.Join(msg, "\n"))
 	}
 
-	flushBatch := func() error {
+	flushBatch := func(transactional, rollbackOnError bool) error {
 		if batchSize == 0 {
 			return nil
 		}
+		if transactional {
+			if _, err := conn.Exec(ctx, "BEGIN"); err != nil {
+				return errors.Errorf("failed to begin migration transaction: %w", err)
+			}
+		}
 		if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
+			if rollbackOnError {
+				_, _ = conn.Exec(ctx, "ROLLBACK")
+			}
 			return formatError(err, executed+len(result))
+		}
+		if transactional {
+			if _, err := conn.Exec(ctx, "COMMIT"); err != nil {
+				_, _ = conn.Exec(ctx, "ROLLBACK")
+				return errors.Errorf("failed to commit migration transaction: %w", err)
+			}
 		}
 		executed += batchSize
 		batch = &pgconn.Batch{}
@@ -155,9 +178,40 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		return nil
 	}
 
+	// An authored transaction boundary owns the file's transaction semantics. Do
+	// not add automatic boundaries around any part of such a file. The history
+	// insert remains last, after every authored SQL statement has succeeded.
+	authoredTransaction := false
+	for _, statement := range m.Statements {
+		if hasTransactionControl(statement) {
+			authoredTransaction = true
+			break
+		}
+	}
+	if authoredTransaction {
+		for _, line := range m.Statements {
+			batch.ExecParams(line, nil, nil, nil, nil)
+			batchSize++
+		}
+		if err := flushBatch(false, true); err != nil {
+			return err
+		}
+		// Queue history only after the authored transaction stream has completed
+		// successfully. In particular, never pipeline it after an authored COMMIT:
+		// a preceding failure can turn that COMMIT into ROLLBACK while a later
+		// history insert would otherwise execute in a fresh implicit transaction.
+		if len(m.Version) > 0 {
+			if err := m.insertVersionSQL(conn, batch); err != nil {
+				return err
+			}
+			batchSize++
+		}
+		return flushBatch(false, true)
+	}
+
 	for _, line := range m.Statements {
 		if isPipelineIncompatible(line) {
-			if err := flushBatch(); err != nil {
+			if err := flushBatch(true, true); err != nil {
 				return err
 			}
 			if _, err := conn.PgConn().Exec(ctx, line).ReadAll(); err != nil {
@@ -178,7 +232,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		batchSize++
 	}
 
-	return flushBatch()
+	return flushBatch(true, true)
 }
 
 func markError(stat string, pos int) string {

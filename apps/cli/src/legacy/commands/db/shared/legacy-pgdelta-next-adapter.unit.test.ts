@@ -302,14 +302,14 @@ describe("LegacyPgDeltaNextAdapter", () => {
             sequence: 1,
             suffix: "_1",
             sql: "begin source-facts;\n",
-            transactional: true,
+            transactionMode: "transactional",
             actionCount: 2,
           },
           {
             sequence: 2,
             suffix: "_2",
             sql: "alter desired-facts;\n",
-            transactional: false,
+            transactionMode: "none",
             actionCount: 1,
           },
         ]);

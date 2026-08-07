@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -8,7 +8,7 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import * as Schema from "effect/Schema";
 
 import { operationDefinitions } from "../generated/contracts.ts";
-import { makeSupabaseApiClient } from "./client.ts";
+import { makeSupabaseApiClient, SupabaseApiResponseSchemaError } from "./client.ts";
 
 const textDecoder = new TextDecoder();
 
@@ -155,6 +155,78 @@ const config = {
 } as const;
 
 describe("makeSupabaseApiClient", () => {
+  test.each(["2026-08-07T10:11:12Z", "2026-08-07T10:11:12+00:00", "2026-08-07T12:41:12+02:30"])(
+    "accepts RFC3339 response timestamp %s",
+    async (createdAt) => {
+      const result = await Effect.runPromise(
+        makeSupabaseApiClient(config).pipe(
+          Effect.flatMap((client) =>
+            client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
+              db_pass: "hunter2",
+              name: "project-name",
+              organization_slug: "my-org",
+            }),
+          ),
+          Effect.provide(
+            httpClientLayer((request) =>
+              Effect.succeed(
+                jsonResponse(request, 200, {
+                  id: "project-id",
+                  ref: "abcdefghijklmnopqrst",
+                  organization_id: "org-id",
+                  organization_slug: "my-org",
+                  name: "project-name",
+                  region: "us-east-1",
+                  created_at: createdAt,
+                  status: "ACTIVE_HEALTHY",
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(result.created_at).toBe(createdAt);
+    },
+  );
+
+  test("wraps output schema failures separately from input and transport errors", async () => {
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
+            db_pass: "hunter2",
+            name: "project-name",
+            organization_slug: "my-org",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                id: "project-id",
+                ref: "abcdefghijklmnopqrst",
+                created_at: "malformed",
+              }),
+            ),
+          ),
+        ),
+        Effect.exit,
+      ),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = exit.cause.reasons[0];
+      expect(failure !== undefined && Cause.isFailReason(failure)).toBe(true);
+      if (failure !== undefined && Cause.isFailReason(failure)) {
+        expect(failure.error).toBeInstanceOf(SupabaseApiResponseSchemaError);
+        if (failure.error instanceof SupabaseApiResponseSchemaError) {
+          expect(failure.error.operationId).toBe("v1CreateAProject");
+        }
+      }
+    }
+  });
   test("retries transport errors for POST requests", async () => {
     let attempts = 0;
 

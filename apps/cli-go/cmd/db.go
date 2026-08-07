@@ -276,16 +276,14 @@ var (
 		},
 	}
 
-	shadowMode        string
-	shadowTargetLocal bool
-	shadowUsePgDelta  bool
-	shadowSchema      []string
-	shadowProjectRef  string
+	shadowMode       string
+	shadowSchema     []string
+	shadowProjectRef string
 
 	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
 	// commands to provision throwaway shadow databases, then leave them running
 	// so the TS caller can run the differ itself and remove the containers
-	// afterwards. Legacy modes print three newline-separated lines. pgdelta-next
+	// afterwards. Legacy modes print two newline-separated lines. pgdelta-next
 	// emits a JSON object describing its two isolated clusters, then retains
 	// cleanup ownership until the caller acknowledges receipt. URLs are emitted
 	// WITHOUT the password
@@ -334,7 +332,7 @@ var (
 			case "declarative":
 				src, err = diff.PrepareRawShadow(cmd.Context())
 			case "diff", "":
-				src, err = diff.PrepareShadowSource(cmd.Context(), shadowSchema, shadowTargetLocal, shadowUsePgDelta, fsys)
+				src, err = diff.PrepareShadowSource(cmd.Context(), fsys)
 			default:
 				return fmt.Errorf("unknown shadow mode: %s", shadowMode)
 			}
@@ -343,11 +341,6 @@ var (
 			}
 			fmt.Println(src.Container)
 			fmt.Println(utils.ToPostgresURLWithoutPassword(src.Source))
-			if src.TargetOverride != nil {
-				fmt.Println(utils.ToPostgresURLWithoutPassword(*src.TargetOverride))
-			} else {
-				fmt.Println("")
-			}
 			return nil
 		},
 	}
@@ -762,8 +755,6 @@ func init() {
 	// Build hidden shadow-provisioning seam command
 	shadowFlags := dbShadowCmd.Flags()
 	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations), declarative (bare shadow), or pgdelta-next (migrated + empty scratch).")
-	shadowFlags.BoolVar(&shadowTargetLocal, "target-local", false, "Whether the diff target is the local database (enables the declarative-schema branch).")
-	shadowFlags.BoolVar(&shadowUsePgDelta, "use-pg-delta", false, "Whether pg-delta is the active diff engine (selects the declarative-apply path).")
 	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
 	dbCmd.AddCommand(dbShadowCmd)

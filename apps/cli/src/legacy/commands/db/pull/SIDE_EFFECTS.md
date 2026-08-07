@@ -3,6 +3,8 @@
 Native Effect port. Pulls the remote schema into either a new timestamped
 migration (diffing a throwaway shadow against the remote, native pg-delta or
 migra) or declarative files (`--declarative`, native pg-delta export). The
+migration-style path always compares migrations with the selected live database;
+declarative files and `[db.migrations].schema_paths` cannot replace its target.
 initial-migra pull (no local migrations) seeds the migration file with a native
 `pg_dump` of the remote schema (a Docker `pg_dump` container, with IPv4
 transaction-pooler fallback) and then appends the migra diff. `--experimental`'s
@@ -119,6 +121,9 @@ written to <dir>`. Plus the `--use-pg-delta` deprecation line, the
 `--experimental` structured-dump deprecation line, and the history-update
 prompt. On success the PostRun line `Finished supabase db pull.` is printed to
 stdout.
+
+A configured `[db.migrations].schema_paths` prints a transition warning on the
+migration path directing users to `supabase db schema declarative sync`.
 
 ### `--output-format json` / `stream-json`
 

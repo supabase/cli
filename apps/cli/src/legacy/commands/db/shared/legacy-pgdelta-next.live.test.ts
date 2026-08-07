@@ -558,6 +558,9 @@ describeDockerLive("pg-delta next declarative extension baseline (live)", () => 
       findExtensionDeclaration(schemasDir, "pg_net");
       const pgcryptoFile = findExtensionDeclaration(schemasDir, "pgcrypto");
       findExtensionDeclaration(schemasDir, "uuid-ossp");
+      // The directory itself is the complete desired-state contract. A missing
+      // manifest must not preserve an extension omitted from the SQL files.
+      await rm(path.join(schemasDir, ".pgdelta-export.json"));
 
       const containersBeforeEmpty = projectContainerIds(config);
       const migrationsBeforeEmpty = migrationFiles(projectDir);

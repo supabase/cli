@@ -62,7 +62,7 @@ function normalizeNextDiff(
       readonly sequence: number;
       readonly suffix: string | null;
       readonly sql: string;
-      readonly transactional: boolean;
+      readonly transactionMode: "transactional" | "none";
       readonly actionCount: number;
     }>;
     readonly debug?: {
@@ -81,7 +81,7 @@ function normalizeNextDiff(
       name: `segment_${file.sequence}`,
       suffix: file.suffix,
       sql: file.sql,
-      transactional: file.transactional,
+      transactionMode: file.transactionMode,
       actionCount: file.actionCount,
     })),
     ...(result.debug !== undefined
@@ -238,45 +238,13 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
             });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
-            const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
-            if (migrations === undefined || declarative === undefined) {
+            if (migrations === undefined) {
               return yield* Effect.fail(
                 new LegacyPgDeltaEngineError({
                   message: "failed to parse pg-delta next shadow database URL",
                   cause: "invalid password-free shadow output",
                 }),
               );
-            }
-            if (input.declarativeFiles !== undefined) {
-              const [migrationsPool, declarativePool] = yield* Effect.all(
-                [
-                  legacyAcquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }),
-                  legacyAcquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }),
-                ],
-                { concurrency: 2 },
-              );
-              const result = yield* adapter.planDeclarativeSchema({
-                targetPool: migrationsPool,
-                shadowPool: declarativePool,
-                files: input.declarativeFiles,
-                allowDrops: true,
-                debug: input.debug,
-                reorder: true,
-                ...legacyPgDeltaNextIsolatedShadowPlanOptions,
-                schema: input.schema,
-                ...(input.declarativeManifest !== undefined
-                  ? { manifest: input.declarativeManifest }
-                  : {}),
-              });
-              const debugDirectory =
-                result.debug !== undefined
-                  ? yield* saveDebugArtifacts(input.context.cwd, "declarativePlan", {
-                      ...result.debug,
-                      diagnostics: result.diagnostics,
-                    })
-                  : undefined;
-              yield* rejectBlockingDiagnostic("declarativePlan", result.diagnostics);
-              return normalizeNextDiff(result, debugDirectory);
             }
             const migrationsPool = yield* legacyAcquirePgPool(migrations, {
               isLocal: true,

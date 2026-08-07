@@ -7,6 +7,7 @@ import type {
 } from "../config/legacy-project-ref.errors.ts";
 import type { LegacyProjectRefReadError } from "./legacy-temp-paths.ts";
 import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
+import type { LegacyApiResponseSchemaError } from "./legacy-http-errors.ts";
 import type {
   LegacyDbConfigConnectTempRoleError,
   LegacyDbConfigIpv6Error,
@@ -41,6 +42,7 @@ export type LegacyDbConfigError =
   | LegacyDbConfigConnectTempRoleError
   | LegacyDbConfigPoolerLoginError
   | LegacyDbConnectError
+  | LegacyApiResponseSchemaError
   // The `--linked` path resolves the access token lazily via
   // `LegacyPlatformApiFactory.make` (only when minting a temp login role), so the
   // auth-required / invalid-token / api-config errors surface from the resolver

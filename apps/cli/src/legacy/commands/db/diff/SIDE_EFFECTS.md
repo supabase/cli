@@ -28,16 +28,15 @@ bundled Go binary.
 
 ## Files Read
 
-| Path                                               | Format     | When                                                              |
-| -------------------------------------------------- | ---------- | ----------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                   | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version) |
-| `<workdir>/supabase/migrations/*.sql`              | SQL        | shadow provisioning (applied to the shadow source)                |
-| `<workdir>/supabase/database/**` (declarative dir) | SQL        | local target when declarative schemas exist                       |
-| `~/.supabase/access-token`                         | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`           |
-| `<workdir>/supabase/.temp/project-ref`             | plain text | `--linked` ref resolution                                         |
-| `<workdir>/supabase/.temp/pgdelta-version`         | plain text | always read for compatibility; affects legacy opt-out only        |
-| `<workdir>/supabase/.temp/edge-runtime-version`    | plain text | legacy opt-out only: edge-runtime image tag                       |
-| `<workdir>/supabase/.temp/pgdelta/*.json`          | JSON       | legacy opt-out only: explicit `--from/--to migrations` catalog    |
+| Path                                            | Format     | When                                                              |
+| ----------------------------------------------- | ---------- | ----------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version) |
+| `<workdir>/supabase/migrations/*.sql`           | SQL        | shadow provisioning (applied to the shadow source)                |
+| `~/.supabase/access-token`                      | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`           |
+| `<workdir>/supabase/.temp/project-ref`          | plain text | `--linked` ref resolution                                         |
+| `<workdir>/supabase/.temp/pgdelta-version`      | plain text | always read for compatibility; affects legacy opt-out only        |
+| `<workdir>/supabase/.temp/edge-runtime-version` | plain text | legacy opt-out only: edge-runtime image tag                       |
+| `<workdir>/supabase/.temp/pgdelta/*.json`       | JSON       | legacy opt-out only: explicit `--from/--to migrations` catalog    |
 
 ## Files Written
 
@@ -91,8 +90,9 @@ bundled Go binary.
 
 Progress to stderr (`Creating shadow database...`, `Diffing schemas[: <list>]`,
 `Finished supabase db diff on branch <branch>.`, drop-statement warning, and the
-`--file` write warning). The SQL diff prints to stdout when neither `--file` nor
-explicit `--output` is set.
+`--file` write warning). A configured `[db.migrations].schema_paths` also prints a
+transition warning because it no longer changes the diff target. The SQL diff
+prints to stdout when neither `--file` nor explicit `--output` is set.
 
 ### `--output-format json` / `stream-json`
 
@@ -108,6 +108,9 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   binary (their side effects are Go's); the Go child's telemetry is disabled so the
   single `cli_command_executed` event comes from this TS command.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
+- Normal mode always compares the migrations shadow with the selected live
+  database. Declarative files and `schema_paths` never replace that target; use
+  `supabase db schema declarative sync` for declarative comparison.
 
 ### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
 

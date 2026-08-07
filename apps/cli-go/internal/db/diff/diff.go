@@ -4,11 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,12 +20,13 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
-	configpkg "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
 
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
+
+const schemaPathsTransitionWarning = "WARNING: [db.migrations].schema_paths no longer changes the target of db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files."
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	result, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
@@ -47,75 +45,6 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 	}
 	return nil
-}
-
-func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
-	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return schemas.SQLFiles(
-			afero.NewIOFS(fsys),
-			configpkg.WithSkipEmptyGlobs(),
-			configpkg.WithErrorOnAllSkippedGlobs(),
-		)
-	}
-	// When pg-delta is enabled, declarative path is the source of truth (config or default).
-	if utils.IsPgDeltaEnabled() {
-		declDir := utils.GetDeclarativeDir()
-		if exists, err := afero.DirExists(fsys, declDir); err == nil && exists {
-			var declared []string
-			if err := afero.Walk(fsys, declDir, func(path string, info fs.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-				if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
-					declared = append(declared, path)
-				}
-				return nil
-			}); err != nil {
-				return nil, errors.Errorf("failed to walk declarative dir: %w", err)
-			}
-			sort.Strings(declared)
-			return declared, nil
-		}
-	}
-	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
-		return nil, errors.Errorf("failed to check schemas: %w", err)
-	} else if !exists {
-		return nil, nil
-	}
-	var declared []string
-	if err := afero.Walk(fsys, utils.SchemasDir, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
-			declared = append(declared, path)
-		}
-		return nil
-	}); err != nil {
-		return nil, errors.Errorf("failed to walk dir: %w", err)
-	}
-	// Keep file application order deterministic so diff output stays stable across
-	// filesystems and operating systems. This is only if no schema paths in config are set.
-	sort.Strings(declared)
-	return declared, nil
-}
-
-func shouldApplyDeclarativeWithPgDelta(usePgDelta bool) bool {
-	if !usePgDelta {
-		return false
-	}
-	schemas := utils.Config.Db.Migrations.SchemaPaths
-	if len(schemas) == 0 {
-		return true
-	}
-	if len(schemas) != 1 {
-		return false
-	}
-	return cleanSchemaPath(schemas[0]) == cleanSchemaPath(utils.GetDeclarativeDir())
-}
-
-func cleanSchemaPath(path string) string {
-	return filepath.ToSlash(filepath.Clean(path))
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
@@ -250,16 +179,16 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 }
 
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {
+	if len(utils.Config.Db.Migrations.SchemaPaths) > 0 {
+		fmt.Fprintln(w, schemaPathsTransitionWarning)
+	}
 	fmt.Fprintln(w, "Creating shadow database...")
-	shadowSource, err := PrepareShadowSource(ctx, schema, utils.IsLocalDatabase(config), usePgDelta, fsys, options...)
+	shadowSource, err := PrepareShadowSource(ctx, fsys, options...)
 	if err != nil {
 		return DatabaseDiff{}, err
 	}
 	defer utils.DockerRemove(shadowSource.Container)
 	shadowConfig := shadowSource.Source
-	if shadowSource.TargetOverride != nil {
-		config = *shadowSource.TargetOverride
-	}
 	// Load all user defined schemas
 	if len(schema) > 0 {
 		fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))

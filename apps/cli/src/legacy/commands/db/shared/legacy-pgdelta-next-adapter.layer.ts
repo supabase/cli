@@ -270,7 +270,7 @@ function legacyNormalizePgDeltaNextRenderedFiles(
     sequence: index + 1,
     suffix: file.suffix,
     sql: file.contents,
-    transactional: file.transactional,
+    transactionMode: file.transactional ? "transactional" : "none",
     actionCount: file.actionCount,
   }));
 }

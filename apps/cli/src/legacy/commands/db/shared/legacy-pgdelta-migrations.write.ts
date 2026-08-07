@@ -5,6 +5,7 @@ import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
+import type { LegacyPgDeltaTransactionMode } from "./legacy-pgdelta-engine.service.ts";
 
 /** A migration file written by a diff/pull, paired with its history version. */
 export interface LegacyWrittenMigration {
@@ -62,11 +63,21 @@ export const legacyWritePgDeltaMigrations = (
       readonly name: string;
       readonly suffix?: string | null;
       readonly sql: string;
+      readonly transactionMode: LegacyPgDeltaTransactionMode;
     }>;
   },
 ): Effect.Effect<Array<LegacyWrittenMigration>, LegacyPgDeltaMigrationWriteError> =>
   Effect.gen(function* () {
     const { workdir, name, files } = opts;
+    for (const file of files) {
+      if (file.transactionMode !== "transactional" && file.transactionMode !== "none") {
+        return yield* Effect.fail(
+          new LegacyPgDeltaMigrationWriteError({
+            message: `unknown pg-delta transaction mode ${JSON.stringify(file.transactionMode)}`,
+          }),
+        );
+      }
+    }
     const single = files.length === 1;
     const buildSet = (baseMillis: number): Array<LegacyWrittenMigration> =>
       files.map((file, i) => {

@@ -8,6 +8,7 @@ import {
   LegacyPgDeltaEngineError,
   type LegacyPgDeltaDiffResult,
   type LegacyPgDeltaEndpoint,
+  type LegacyPgDeltaTransactionMode,
 } from "./legacy-pgdelta-engine.service.ts";
 import {
   legacyDeclarativeExportPgDelta,
@@ -26,7 +27,7 @@ function normalizeDiff(
     readonly files: ReadonlyArray<{
       readonly order: number;
       readonly name: string;
-      readonly transactionMode: string;
+      readonly transactionMode: LegacyPgDeltaTransactionMode;
       readonly sql: string;
     }>;
   },
@@ -39,7 +40,7 @@ function normalizeDiff(
       sequence: file.order,
       name: file.name,
       sql: file.sql,
-      transactional: file.transactionMode !== "non-transactional",
+      transactionMode: file.transactionMode,
     })),
     ...(debug ? { debug: { stderr: result.stderr } } : {}),
   };
@@ -98,8 +99,6 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         Effect.gen(function* () {
           const shadow = yield* seam.provisionShadow({
             mode: "diff",
-            targetLocal: input.targetLocal,
-            usePgDelta: true,
             schema: input.schema,
             ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
           });
@@ -114,7 +113,7 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
           return yield* provideRuntime(
             legacyDiffPgDelta(input.context, {
               sourceRef: shadow.sourceUrl,
-              targetRef: shadow.targetUrlOverride ?? input.target.ref,
+              targetRef: input.target.ref,
               schema: input.schema,
               formatOptions: input.formatOptions,
             }),

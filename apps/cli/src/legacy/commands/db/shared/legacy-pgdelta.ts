@@ -21,6 +21,7 @@ import {
   LegacyDeclarativeParseOutputError,
   LegacyPgDeltaDiffParseError,
 } from "./legacy-pgdelta.errors.ts";
+import type { LegacyPgDeltaTransactionMode } from "./legacy-pgdelta-engine.service.ts";
 
 const PG_DELTA_NPM_REGISTRY_ENV = "PGDELTA_NPM_REGISTRY";
 
@@ -47,14 +48,18 @@ export interface LegacyDeclarativeOutput {
 interface LegacyPgDeltaPlanFile {
   readonly order: number;
   readonly name: string;
-  readonly transactionMode: string;
+  readonly transactionMode: LegacyPgDeltaTransactionMode;
   readonly sql: string;
 }
 
 /** The pg-delta diff envelope. Mirrors Go's `PgDeltaDiffOutput`. */
 interface LegacyPgDeltaDiffOutput {
   readonly version: number;
-  readonly files: ReadonlyArray<LegacyPgDeltaPlanFile>;
+  readonly files: ReadonlyArray<
+    Omit<LegacyPgDeltaPlanFile, "transactionMode"> & {
+      readonly transactionMode: string;
+    }
+  >;
 }
 
 /**
@@ -230,7 +235,19 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
         }:\n${result.stderr}`,
       }),
   });
-  const files = envelope.files ?? [];
+  const rawFiles = envelope.files ?? [];
+  const files: Array<LegacyPgDeltaPlanFile> = [];
+  for (const file of rawFiles) {
+    const transactionMode = file.transactionMode;
+    if (transactionMode !== "transactional" && transactionMode !== "none") {
+      return yield* Effect.fail(
+        new LegacyPgDeltaDiffParseError({
+          message: `unknown pg-delta transaction mode ${JSON.stringify(transactionMode)}`,
+        }),
+      );
+    }
+    files.push({ ...file, transactionMode });
+  }
   // Flatten to one blob for callers that need it; unit header comments keep the
   // transaction boundaries visible (mirrors Go's `joinPgDeltaFiles`).
   const sql = files.map((file) => file.sql).join("\n\n");

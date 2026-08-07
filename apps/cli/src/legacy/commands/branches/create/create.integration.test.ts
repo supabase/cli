@@ -72,7 +72,7 @@ const tempRoot = useLegacyTempWorkdir("supabase-branches-create-int-");
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
-  readonly response?: CreatedBranch;
+  readonly response?: unknown;
   readonly status?: number;
   readonly network?: "fail";
   readonly gated?: boolean;
@@ -325,6 +325,37 @@ describe("legacy branches create integration", () => {
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ name: "feat-x" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("accepts branch timestamps with an RFC3339 numeric offset", () => {
+    const { layer, out } = setup({
+      response: {
+        ...CREATED,
+        created_at: "2026-05-27T03:32:03+02:30",
+        updated_at: "2026-05-27T03:32:04+02:30",
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") });
+      expect(out.stdoutText).toContain("2026-05-27");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("surfaces malformed successful responses as schema errors, not network errors", () => {
+    const { layer } = setup({
+      response: { ...CREATED, created_at: "not-a-timestamp" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyApiResponseSchemaError");
+        expect(json).not.toContain("LegacyBranchesCreateNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
