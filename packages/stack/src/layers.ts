@@ -12,7 +12,7 @@ import { DaemonMessageSchema } from "./DaemonProtocol.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
-import { localStackLayer } from "./LocalStack.ts";
+import { LocalStackLifecycle, localStackLayer } from "./LocalStack.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import {
@@ -45,7 +45,7 @@ export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack | ApiProxy> => {
+): Layer.Layer<Stack | ApiProxy | LocalStackLifecycle> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -102,7 +102,7 @@ export const foregroundDaemonLayer = (
   config: ResolvedDaemonConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack | StateManager | ApiProxy> => {
+): Layer.Layer<Stack | StateManager | ApiProxy | LocalStackLifecycle> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),

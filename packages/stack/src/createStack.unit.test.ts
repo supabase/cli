@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { candidateCleanupTargets } from "./cleanup.ts";
+import { dockerContainerName } from "./CleanupTargets.ts";
 import { runForegroundOperation, type StackHandle } from "./createStack.ts";
 import { StackReadinessError } from "./errors.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
@@ -79,10 +81,29 @@ describe("foreground operation lifecycle", () => {
     );
 
     await expect(
-      runForegroundOperation(operation, async () => {
-        disposeCount += 1;
-      }),
+      runForegroundOperation(
+        operation,
+        async () => true,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
     ).rejects.toMatchObject({ code: "STACK_READINESS_TIMEOUT" });
+    expect(disposeCount).toBe(1);
+  });
+
+  it("disposes the foreground runtime after another terminal start failure", async () => {
+    let disposeCount = 0;
+
+    await expect(
+      runForegroundOperation(
+        Promise.reject(new Error("service startup failed")),
+        async () => true,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
+    ).rejects.toMatchObject({ code: "UNKNOWN" });
     expect(disposeCount).toBe(1);
   });
 
@@ -90,9 +111,13 @@ describe("foreground operation lifecycle", () => {
     let disposeCount = 0;
 
     await expect(
-      runForegroundOperation(Promise.reject(new Error("failed")), async () => {
-        disposeCount += 1;
-      }),
+      runForegroundOperation(
+        Promise.reject(new Error("failed")),
+        async () => false,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
     ).rejects.toMatchObject({ code: "UNKNOWN" });
     expect(disposeCount).toBe(0);
   });
@@ -278,6 +303,32 @@ describe("resolveConfig edge runtime defaults", () => {
   });
 });
 
+describe("candidateCleanupTargets", () => {
+  it("derives fallback Docker identities from enabled catalog services", async () => {
+    const config = await resolveConfig({
+      mode: "docker",
+      auth: false,
+      edgeRuntime: false,
+      realtime: false,
+      storage: false,
+      imgproxy: false,
+      mailpit: false,
+      pgmeta: false,
+      studio: false,
+      analytics: false,
+      vector: false,
+      pooler: false,
+    });
+
+    expect(candidateCleanupTargets(config)).toEqual({
+      dockerContainerNames: [
+        dockerContainerName("postgres", config.apiPort),
+        dockerContainerName("postgrest", config.apiPort),
+      ],
+    });
+  });
+});
+
 describe("resolveConfig startup mode", () => {
   it("keeps eager startup as the package default", async () => {
     const config = await resolveConfig();
@@ -294,10 +345,12 @@ describe("resolveConfig readiness policy", () => {
   it("uses a finite package default", async () => {
     const config = await resolveConfig();
     expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 180_000 });
+    expect(config.readinessSource).toBe("default");
   });
 
   it("preserves an explicit infinite policy", async () => {
     const config = await resolveConfig({ readiness: { mode: "infinite" } });
     expect(config.readiness).toEqual({ mode: "infinite" });
+    expect(config.readinessSource).toBe("configured");
   });
 });

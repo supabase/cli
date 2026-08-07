@@ -23,6 +23,7 @@ import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts"
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
+  activationReadinessPolicy,
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
@@ -58,11 +59,19 @@ type LifecyclePhase =
 
 type StackService = typeof Stack.Service;
 
+/** Private signal used by the Promise adapter to close its enclosing managed runtime. */
+export class LocalStackLifecycle extends Context.Service<
+  LocalStackLifecycle,
+  {
+    readonly awaitDisposed: Effect.Effect<void>;
+    readonly isDisposed: Effect.Effect<boolean>;
+  }
+>()("stack/LocalStackLifecycle") {}
+
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
   readonly graph: ResolvedGraph;
   readonly serviceProjection: StackServiceProjectionCatalog;
-  readonly cleanupTargets: CleanupTargets;
 }
 
 const initialPublicStates = (config: ResolvedStackConfig): ReadonlyArray<StackServiceState> =>
@@ -147,7 +156,7 @@ export const localStackLayer = (
   config: ResolvedStackConfig,
   portLease: PortLease,
 ): Layer.Layer<
-  Stack | StackServiceActivator,
+  Stack | StackServiceActivator | LocalStackLifecycle,
   StackBuildError,
   | StackBuilder
   | StackPreparation
@@ -170,6 +179,7 @@ export const localStackLayer = (
       const enabledServices = enabledServicesForConfig(config);
       const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
       const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
+      const disposedSignal = yield* Deferred.make<void>();
       const lifecycleLock = Semaphore.makeUnsafe(1);
       const projectionLock = Semaphore.makeUnsafe(1);
 
@@ -223,6 +233,7 @@ export const localStackLayer = (
       let prepareDeferred: Deferred.Deferred<PreparedStackArtifacts, StackBuildError> | undefined;
       let runtimeState: RuntimeState | undefined;
       let runtimeDeferred: Deferred.Deferred<RuntimeState, StackBuildError> | undefined;
+      let exactCleanupTargets: CleanupTargets | undefined;
 
       const ensurePrepared = Effect.suspend(() => {
         if (preparedArtifacts !== undefined) {
@@ -337,6 +348,7 @@ export const localStackLayer = (
             config,
             prepared,
           );
+          exactCleanupTargets = cleanupTargets;
 
           yield* metadataPersistence.persistCleanupTargets(cleanupTargets).pipe(
             Effect.mapError(
@@ -366,7 +378,6 @@ export const localStackLayer = (
             orchestrator,
             graph,
             serviceProjection,
-            cleanupTargets,
           } satisfies RuntimeState;
         }).pipe(
           Effect.tap((value) =>
@@ -596,14 +607,17 @@ export const localStackLayer = (
             yield* cleanupLocalStackResources({
               stop: () =>
                 runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
-              cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
+              cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
               config,
             }).pipe(
               Effect.ensuring(portLease.releaseAll),
               Effect.ensuring(Ref.set(phaseRef, "disposed")),
             );
           }).pipe(withLifecycleLock);
-        }).pipe(Effect.uninterruptible);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(disposedSignal, undefined).pipe(Effect.asVoid)),
+          Effect.uninterruptible,
+        );
 
       const withReadinessPolicy = <A, E, R>(
         effect: Effect.Effect<A, E, R>,
@@ -639,7 +653,6 @@ export const localStackLayer = (
             disposeOnce().pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
-
       yield* Effect.addFinalizer(disposeOnce);
 
       const activateService = (name: ServiceName) =>
@@ -654,7 +667,13 @@ export const localStackLayer = (
             return;
           }
           if (existing !== undefined) {
-            yield* waitForTargets(existing).pipe((effect) => withReadinessPolicy(effect, name));
+            yield* waitForTargets(existing).pipe((effect) =>
+              withReadinessPolicy(
+                effect,
+                name,
+                activationReadinessPolicy(service, config.readiness, config.readinessSource),
+              ),
+            );
             return;
           }
           const started = yield* Effect.gen(function* () {
@@ -663,17 +682,25 @@ export const localStackLayer = (
             if (concurrentlyStarted !== undefined) return concurrentlyStarted;
             return yield* beginStartTargets(service, new Set());
           }).pipe(withLifecycleLock);
-          yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+          yield* waitForTargets(started).pipe((effect) =>
+            withReadinessPolicy(
+              effect,
+              name,
+              activationReadinessPolicy(service, config.readiness, config.readinessSource),
+            ),
+          );
         }).pipe(cleanupOnReadinessFailure);
 
       const stack = {
         getInfo: () => Effect.succeed(info),
-        start: () =>
-          Effect.gen(function* () {
+        start: () => {
+          let serviceStartupBegan = false;
+          return Effect.gen(function* () {
             yield* requireMutable("start");
             yield* Ref.set(phaseRef, "starting");
             const runtime = yield* ensureRuntime;
             yield* configureFunctions(config);
+            serviceStartupBegan = true;
 
             if (config.startupMode === "lazy") {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
@@ -718,8 +745,9 @@ export const localStackLayer = (
           }).pipe(
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
             withLifecycleLock,
-            cleanupOnReadinessFailure,
-          ),
+            Effect.onError(() => (serviceStartupBegan ? disposeOnce() : Effect.void)),
+          );
+        },
         stop: () =>
           Effect.gen(function* () {
             if (disposed) {
@@ -889,6 +917,10 @@ export const localStackLayer = (
 
       return Context.make(Stack, stack).pipe(
         Context.add(StackServiceActivator, { activate: activateService }),
+        Context.add(LocalStackLifecycle, {
+          awaitDisposed: Deferred.await(disposedSignal),
+          isDisposed: Effect.sync(() => disposed),
+        }),
       );
     }),
   );

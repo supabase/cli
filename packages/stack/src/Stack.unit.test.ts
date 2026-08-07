@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
+import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
+import { StackBuildError } from "./errors.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
@@ -46,6 +48,7 @@ const defaultConfig: ResolvedStackConfig = {
   mode: "native",
   startupMode: "eager",
   readiness: DEFAULT_STACK_READINESS_POLICY,
+  readinessSource: "default",
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
   apiPort: 54321,
@@ -343,6 +346,7 @@ describe("Stack", () => {
       postgrest: false,
       auth: false,
       readiness: { mode: "finite", timeoutMs: 250 },
+      readinessSource: "configured",
     } satisfies ResolvedStackConfig;
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
     const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
@@ -436,6 +440,109 @@ describe("Stack", () => {
       const startedContainers = spawner.spawned.filter((record) => record.args[0] === "run");
       expect(startedContainers).toEqual([]);
     }).pipe(Effect.provide(providedLayer));
+  });
+
+  it.live("can retry start after a build failure before services start", () => {
+    let buildAttempts = 0;
+    const graph = Effect.runSync(
+      buildGraph([{ name: "postgres", command: "true", restart: "no" }]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.suspend(() => {
+          buildAttempts += 1;
+          return buildAttempts === 1
+            ? Effect.fail(new StackBuildError({ detail: "transient build failure" }))
+            : Effect.succeed({
+                graph,
+                cleanupTargets: { dockerContainerNames: [] },
+                serviceProjection: new Map<string, { readonly visibility: "public" }>([
+                  ["postgres", { visibility: "public" }],
+                ]),
+              });
+        }),
+    });
+    const resolver = mockBinaryResolver();
+    const spawner = mockChildProcessSpawner();
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+
+      expect(Exit.isFailure(yield* stack.start().pipe(Effect.exit))).toBe(true);
+      yield* stack.start();
+
+      expect(buildAttempts).toBe(2);
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("a partial startup failure disposes resources from services already started", () => {
+    let cleaned = false;
+    const spawner = mockChildProcessSpawner({
+      beforeSpawn: (record) =>
+        record.command === "fail" ? Effect.die("simulated spawn failure") : Effect.void,
+    });
+    const graph = Effect.runSync(
+      buildGraph([
+        {
+          name: "postgres",
+          command: process.execPath,
+          restart: "no",
+          cleanup: Effect.sync(() => {
+            cleaned = true;
+          }),
+        },
+        {
+          name: "postgrest",
+          command: "fail",
+          dependencies: [{ service: "postgres", condition: "started" }],
+          restart: "no",
+        },
+      ]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.succeed({
+          graph,
+          cleanupTargets: { dockerContainerNames: [] },
+          serviceProjection: new Map([
+            ["postgres", { visibility: "public" }],
+            ["postgrest", { visibility: "public" }],
+          ]),
+        }),
+    });
+    const resolver = mockBinaryResolver();
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const layer = localStackLayer(
+      {
+        ...defaultConfig,
+        readiness: { mode: "finite", timeoutMs: 1_000 },
+        readinessSource: "configured",
+      },
+      noopPortLease(defaultConfig.ports),
+    ).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const exit = yield* stack.start().pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(cleaned).toBe(true);
+      expect(spawner.killed).toContain("SIGTERM");
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
   it.live("lazy startup starts direct services without starting HTTP backends", () => {
@@ -677,6 +784,7 @@ describe("Stack", () => {
         ...defaultConfig,
         startupMode: "lazy",
         readiness: { mode: "finite", timeoutMs: 500 },
+        readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),
@@ -735,6 +843,7 @@ describe("Stack", () => {
         ...defaultConfig,
         startupMode: "lazy",
         readiness: { mode: "infinite" },
+        readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),

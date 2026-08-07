@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
-import { dockerRunService, hostHttpHealthCheck } from "./service-utils.ts";
+import { dockerNetworkArgs } from "../Platform.ts";
+import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerMailpitOptions {
@@ -8,7 +9,8 @@ interface DockerMailpitOptions {
   readonly webPort: number;
   readonly smtpPort: number;
   readonly pop3Port: number;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
 const mailpitHealthCheck = (port: number): ServiceDef["healthCheck"] =>
@@ -19,9 +21,10 @@ const mailpitHealthCheck = (port: number): ServiceDef["healthCheck"] =>
 export const makeMailpitServiceDocker = (opts: DockerMailpitOptions): ServiceDef =>
   dockerRunService({
     name: "mailpit",
-    containerName: `supabase-mailpit-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.webPort, opts.smtpPort, opts.pop3Port]),
+    dependencies: opts.dependencies,
     env: {
       MP_UI_BIND_ADDR: `0.0.0.0:${opts.webPort}`,
       MP_SMTP_BIND_ADDR: `0.0.0.0:${opts.smtpPort}`,

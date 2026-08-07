@@ -214,6 +214,10 @@ start, restart, activation, and reload operations; a call-specific option overri
 deadline fails with `STACK_READINESS_TIMEOUT` and disposes the local runtime, so the handle cannot
 be used to relaunch processes afterward.
 
+When no readiness policy is configured, request-triggered lazy activation expands the three-minute
+default to cover the target service's complete transitive startup budget. An explicitly configured
+finite or infinite stack policy remains authoritative.
+
 ### Status
 
 ```typescript

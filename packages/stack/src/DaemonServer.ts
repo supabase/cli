@@ -19,6 +19,7 @@ export class DaemonServer extends Context.Service<
   DaemonServer,
   {
     readonly address: HttpServer.Address;
+    readonly beginShutdown: Effect.Effect<void>;
     readonly awaitShutdown: Effect.Effect<void>;
   }
 >()("stack/DaemonServer") {
@@ -366,6 +367,7 @@ export class DaemonServer extends Context.Service<
 
         return {
           address: server.address,
+          beginShutdown,
           awaitShutdown: Deferred.await(shutdownDeferred),
         };
       }),

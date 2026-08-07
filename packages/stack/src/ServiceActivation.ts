@@ -5,6 +5,7 @@ import { StackBuildError, StackNotRunningError, StackReadinessError } from "./er
 import { stackServiceStartupBudgetSeconds } from "./services/health-budgets.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
+import type { ReadinessPolicy } from "./StackConfig.ts";
 
 export const eagerServices = (enabled: ReadonlyArray<ServiceName>): ReadonlyArray<ServiceName> =>
   enabled.filter((service) => serviceMetadata(service).activation.startup === "eager");
@@ -45,6 +46,19 @@ export const activationTimeoutSecondsForService = (service: ServiceName): number
     startupBudget + ACTIVATION_COORDINATION_MARGIN_SECONDS,
   );
 };
+
+/**
+ * The package default expands for services whose transitive startup budget is
+ * longer than three minutes. An explicit stack policy remains authoritative.
+ */
+export const activationReadinessPolicy = (
+  service: ServiceName,
+  stackPolicy: ReadinessPolicy,
+  source: "default" | "configured",
+): ReadinessPolicy =>
+  source === "default"
+    ? { mode: "finite", timeoutMs: activationTimeoutSecondsForService(service) * 1000 }
+    : stackPolicy;
 
 /** Services exclusively owned by a public service for stop/restart operations. */
 export const lifecycleTargetsForService = (

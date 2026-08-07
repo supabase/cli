@@ -1,16 +1,11 @@
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
 import { Effect, Layer, Context } from "effect";
-import type { CleanupTargets } from "./CleanupTargets.ts";
+import { dockerContainerName, type CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
 import { generateJwks } from "./JwtGenerator.ts";
-import {
-  detectPlatform,
-  dockerHostAddress,
-  dockerNetworkArgs,
-  dockerPortMapArgs,
-} from "./Platform.ts";
-import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
+import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
   makeEdgeRuntimeServiceDocker,
@@ -19,7 +14,7 @@ import {
 import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
 import { makeMailpitServiceDocker } from "./services/mailpit.ts";
 import { makePgmetaServiceDocker } from "./services/pgmeta.ts";
-import { makePoolerServiceDocker, poolerContainerPorts } from "./services/pooler.ts";
+import { makePoolerServiceDocker } from "./services/pooler.ts";
 import { makePostgresInitService } from "./services/postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./services/postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./services/postgrest.ts";
@@ -89,8 +84,6 @@ const publicServiceProjection = (
 
   return serviceProjection;
 };
-
-const dockerContainerName = (service: string, apiPort: number) => `supabase-${service}-${apiPort}`;
 
 const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
   config.autoManagedPaths.some(
@@ -271,16 +264,18 @@ export class StackBuilder extends Context.Service<
                   port: config.dbPort,
                   dockerAccessible: needsDockerAccess,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                  dependencies: [],
                 })
               : makePostgresServiceDocker({
                   image: postgresResolution.image,
                   dataDir: config.postgres.dataDir,
                   port: config.dbPort,
-                  networkArgs: dockerNetworkArgs(platform.os, [config.dbPort]),
+                  platformOs: platform.os,
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
                   apiPort: config.apiPort,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                  dependencies: [],
                 })),
             enabled: true,
           },
@@ -292,6 +287,7 @@ export class StackBuilder extends Context.Service<
               postgresDir: postgresResolution.path,
               dbPort: config.dbPort,
               autoExposeNewTables: config.postgres.autoExposeNewTables,
+              dependencies: [{ service: "postgres", condition: "healthy" }],
             }),
             dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
@@ -309,6 +305,7 @@ export class StackBuilder extends Context.Service<
                   extraSearchPath: config.postgrest.extraSearchPath,
                   maxRows: config.postgrest.maxRows,
                   jwtSecret: config.jwtSecret,
+                  dependencies: postgresDeps,
                 })
               : makePostgrestServiceDocker({
                   image: postgrestResolution.image,
@@ -320,17 +317,10 @@ export class StackBuilder extends Context.Service<
                   extraSearchPath: config.postgrest.extraSearchPath,
                   maxRows: config.postgrest.maxRows,
                   jwtSecret: config.jwtSecret,
-                  networkArgs: dockerNetworkArgs(platform.os, [
-                    config.postgrest.port,
-                    config.postgrest.adminPort,
-                  ]),
+                  platformOs: platform.os,
                   apiPort: config.apiPort,
+                  dependencies: postgresDeps,
                 })),
-            ...(hasPostgresInit
-              ? {}
-              : {
-                  dependencies: [{ service: "postgres", condition: "healthy" as const }],
-                }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
@@ -366,7 +356,7 @@ export class StackBuilder extends Context.Service<
                   smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
-                  networkArgs: dockerNetworkArgs(platform.os, [config.auth.port]),
+                  platformOs: platform.os,
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,
                 })),
@@ -396,7 +386,7 @@ export class StackBuilder extends Context.Service<
                   inspectorPort: config.edgeRuntime.inspectorPort,
                   policy: config.edgeRuntime.policy,
                   env: config.edgeRuntime.env,
-                  networkArgs: dockerNetworkArgs(platform.os, [config.edgeRuntime.port]),
+                  platformOs: platform.os,
                   dependencies: postgresDeps,
                 })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -413,11 +403,8 @@ export class StackBuilder extends Context.Service<
               webPort: config.mailpit.port,
               smtpPort: config.mailpit.smtpPort,
               pop3Port: config.mailpit.pop3Port,
-              networkArgs: dockerNetworkArgs(platform.os, [
-                config.mailpit.port,
-                config.mailpit.smtpPort,
-                config.mailpit.pop3Port,
-              ]),
+              platformOs: platform.os,
+              dependencies: [],
             }),
             enabled: true,
           });
@@ -438,7 +425,7 @@ export class StackBuilder extends Context.Service<
               encryptionKey: config.realtime.encryptionKey,
               secretKeyBase: config.realtime.secretKeyBase,
               maxHeaderLength: config.realtime.maxHeaderLength,
-              networkArgs: dockerNetworkArgs(platform.os, [config.realtime.port]),
+              platformOs: platform.os,
               dependencies: postgresDeps,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -465,7 +452,7 @@ export class StackBuilder extends Context.Service<
               imgproxyUrl:
                 config.imgproxy !== false ? `http://${serviceHost}:${config.imgproxy.port}` : "",
               s3ProtocolEnabled: config.storage.s3ProtocolEnabled,
-              networkArgs: dockerNetworkArgs(platform.os, [config.storage.port]),
+              platformOs: platform.os,
               dependencies: postgresDeps,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
             }),
@@ -483,7 +470,7 @@ export class StackBuilder extends Context.Service<
               port: config.imgproxy.port,
               apiPort: config.apiPort,
               dataDir: storageConfig === false ? "" : storageConfig.dataDir,
-              networkArgs: dockerNetworkArgs(platform.os, [config.imgproxy.port]),
+              platformOs: platform.os,
               dependencies: [{ service: "storage", condition: "healthy" }],
             }),
             dependencyTimeoutSeconds: storageDependencyTimeoutSeconds,
@@ -500,7 +487,7 @@ export class StackBuilder extends Context.Service<
               port: config.pgmeta.port,
               dbHost: serviceHost,
               dbPort: config.dbPort,
-              networkArgs: dockerNetworkArgs(platform.os, [config.pgmeta.port]),
+              platformOs: platform.os,
               dependencies: postgresDeps,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -510,25 +497,16 @@ export class StackBuilder extends Context.Service<
 
         if (config.analytics !== false) {
           const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
-          const analyticsRuntimeNetwork = analyticsDockerRuntimeNetwork(
-            platform.os,
-            config.analytics.port,
-            serviceHost,
-          );
           defs.push({
             ...makeAnalyticsServiceDocker({
               image: analyticsImage,
               apiPort: config.apiPort,
               hostPort: config.analytics.port,
-              listenPort: analyticsRuntimeNetwork.listenPort,
-              nodeHost: analyticsRuntimeNetwork.nodeHost,
+              platformOs: platform.os,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,
               backend: config.analytics.backend,
-              networkArgs: dockerPortMapArgs(platform.os, [
-                { host: config.analytics.port, container: 4000 },
-              ]),
               dependencies: postgresDeps,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -546,7 +524,7 @@ export class StackBuilder extends Context.Service<
               serviceHost,
               analyticsPort: analyticsConfig === false ? 0 : analyticsConfig.port,
               analyticsApiKey: analyticsConfig === false ? "api-key" : analyticsConfig.apiKey,
-              networkArgs: dockerNetworkArgs(platform.os, []),
+              platformOs: platform.os,
               dependencies: [{ service: "analytics", condition: "healthy" }],
             }),
             dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
@@ -561,6 +539,8 @@ export class StackBuilder extends Context.Service<
               image: poolerImage,
               apiPort: config.apiPort,
               hostAdminPort: config.pooler.apiPort,
+              hostPort: config.pooler.port,
+              platformOs: platform.os,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               poolMode: config.pooler.mode,
@@ -570,19 +550,6 @@ export class StackBuilder extends Context.Service<
               tenantId: config.pooler.tenantId,
               encryptionKey: config.pooler.encryptionKey,
               secretKeyBase: config.pooler.secretKeyBase,
-              networkArgs: dockerPortMapArgs(platform.os, [
-                {
-                  host: config.pooler.apiPort,
-                  container: poolerContainerPorts.admin,
-                },
-                {
-                  host: config.pooler.port,
-                  container:
-                    config.pooler.mode === "session"
-                      ? poolerContainerPorts.session
-                      : poolerContainerPorts.transaction,
-                },
-              ]),
               dependencies: postgresDeps,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -611,7 +578,7 @@ export class StackBuilder extends Context.Service<
               analyticsUrl:
                 config.analytics !== false ? `http://${serviceHost}:${config.analytics.port}` : "",
               analyticsApiKey: config.analytics !== false ? config.analytics.apiKey : "api-key",
-              networkArgs: dockerNetworkArgs(platform.os, [config.studio.port]),
+              platformOs: platform.os,
               dependencies:
                 config.analytics === false
                   ? [{ service: "pgmeta", condition: "healthy" }]
@@ -625,9 +592,9 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        const dockerContainerNames = defs
-          .filter((def) => def.command === "docker")
-          .map((def) => dockerContainerName(def.name, config.apiPort));
+        const dockerContainerNames = SERVICE_NAMES.filter((service) =>
+          defs.some((def) => def.name === service && def.command === "docker"),
+        ).map((service) => dockerContainerName(service, config.apiPort));
 
         const graph = yield* buildGraph(defs).pipe(
           Effect.mapError(
