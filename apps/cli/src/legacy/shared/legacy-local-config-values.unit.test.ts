@@ -1673,6 +1673,83 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("legacyResolveAuthExternalProviders — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+    // Regression (review: PRRT_kwDOErm0O86XKYiF): this resolver had no `remoteOverrideKeys`
+    // parameter at all, so a matched `[remotes.<ref>]` block's own valid `auth.external.<name>.*`
+    // value could always lose to a conflicting/malformed ambient `SUPABASE_AUTH_EXTERNAL_<NAME>_*`
+    // override — `secret`/`enabled`/`skip_nonce_check`/`email_optional` can additionally THROW on
+    // a malformed override, aborting the whole `legacyResolveLocalConfigValues` caller (and the
+    // shadow it feeds).
+    it("prefers a remote-set auth.external.<name>.secret over a malformed SUPABASE_AUTH_EXTERNAL_<NAME>_SECRET", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: true, secret: "remote-secret" } },
+      };
+      const projectEnvValues = { SUPABASE_AUTH_EXTERNAL_MY_CUSTOM_SECRET: "encrypted:garbage" };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        projectEnvValues,
+        new Set(["auth.external.my_custom.secret"]),
+      );
+      expect(resolved["my_custom"]?.secret).toBe("remote-secret");
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_EXTERNAL_<NAME>_SECRET when no remote block matched", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: true, secret: "remote-secret" } },
+      };
+      const projectEnvValues = { SUPABASE_AUTH_EXTERNAL_MY_CUSTOM_SECRET: "encrypted:garbage" };
+      expect(() =>
+        legacyResolveAuthExternalProviders(
+          authDocument,
+          baseConfig().auth.external,
+          projectEnvValues,
+        ),
+      ).toThrow("failed to parse config: missing private key");
+    });
+
+    it("prefers a remote-set auth.external.<name>.enabled over a malformed SUPABASE_AUTH_EXTERNAL_<NAME>_ENABLED", () => {
+      const authDocument = { external: { my_custom: { enabled: true } } };
+      const projectEnvValues = { SUPABASE_AUTH_EXTERNAL_MY_CUSTOM_ENABLED: "not-a-bool" };
+      expect(() =>
+        legacyResolveAuthExternalProviders(
+          authDocument,
+          baseConfig().auth.external,
+          projectEnvValues,
+          new Set(["auth.external.my_custom.enabled"]),
+        ),
+      ).not.toThrow();
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_EXTERNAL_<NAME>_ENABLED when no remote block matched", () => {
+      const authDocument = { external: { my_custom: { enabled: true } } };
+      const projectEnvValues = { SUPABASE_AUTH_EXTERNAL_MY_CUSTOM_ENABLED: "not-a-bool" };
+      expect(() =>
+        legacyResolveAuthExternalProviders(
+          authDocument,
+          baseConfig().auth.external,
+          projectEnvValues,
+        ),
+      ).toThrow('cannot parse "not-a-bool" as a bool');
+    });
+
+    it("prefers a remote-set auth.external.<name>.client_id over a conflicting SUPABASE_AUTH_EXTERNAL_<NAME>_CLIENT_ID", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: true, client_id: "remote-client-id" } },
+      };
+      const projectEnvValues = {
+        SUPABASE_AUTH_EXTERNAL_MY_CUSTOM_CLIENT_ID: "env-should-not-win",
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        projectEnvValues,
+        new Set(["auth.external.my_custom.client_id"]),
+      );
+      expect(resolved["my_custom"]?.clientId).toBe("remote-client-id");
+    });
+  });
+
   describe("legacyRawUnmodeledBool", () => {
     it("returns false for an absent value, matching Go's zero-value bool default", () => {
       expect(legacyRawUnmodeledBool(undefined, "auth.passkey.enabled")).toBe(false);
@@ -2883,6 +2960,136 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("legacyResolveAuthSms — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+    // Regression (review: PRRT_kwDOErm0O86XFmjZ) — a prior review rejected this exact gap as
+    // "unreachable from the db diff --linked/db pull shadow path," having only grepped direct
+    // `legacyResolveAuthSms(` call sites in `start.handler.ts`/`db/start/start.handler.ts` and
+    // missed that `legacyResolveLocalConfigValues` (this function's own shadow-consuming caller,
+    // via `legacyBuildLocalDbContainerInputs`) calls it too, through its own
+    // `validateAuthSmsProviders` wrapper, whenever `authEnabled`. `enable_signup`/
+    // `enable_confirmations`/each provider's `enabled` THROW via `legacyEnvOverrideBool`, and each
+    // provider's Secret-typed field THROWS via `legacyDecryptAuthSecret` — either can abort the
+    // whole `legacyResolveLocalConfigValues` call (and the shadow it feeds) on a malformed ambient
+    // override even when a matched remote block already set that field.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+      delete process.env["SUPABASE_AUTH_SMS_VONAGE_ENABLED"];
+      delete process.env["SUPABASE_AUTH_SMS_VONAGE_API_SECRET"];
+    });
+
+    it("suppresses a malformed SUPABASE_AUTH_SMS_ENABLE_SIGNUP when a remote block already set auth.sms.enable_signup", () => {
+      process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "not-a-bool";
+      const configured = {
+        ...baseConfig().auth.sms,
+        enable_signup: true,
+        vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
+      };
+      expect(() =>
+        legacyResolveAuthSms(undefined, configured, undefined, new Set(["auth.sms.enable_signup"])),
+      ).not.toThrow();
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_SMS_ENABLE_SIGNUP when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "not-a-bool";
+      const configured = {
+        ...baseConfig().auth.sms,
+        enable_signup: true,
+        vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
+      };
+      expect(() => legacyResolveAuthSms(undefined, configured, undefined)).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
+    });
+
+    it("suppresses a malformed SUPABASE_AUTH_SMS_VONAGE_ENABLED when a remote block already set auth.sms.vonage.enabled", () => {
+      process.env["SUPABASE_AUTH_SMS_VONAGE_ENABLED"] = "not-a-bool";
+      const configured = {
+        ...baseConfig().auth.sms,
+        vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
+      };
+      expect(() =>
+        legacyResolveAuthSms(
+          undefined,
+          configured,
+          undefined,
+          new Set(["auth.sms.vonage.enabled"]),
+        ),
+      ).not.toThrow();
+    });
+
+    it("prefers a remote-set auth.sms.vonage.api_secret over a malformed SUPABASE_AUTH_SMS_VONAGE_API_SECRET", () => {
+      process.env["SUPABASE_AUTH_SMS_VONAGE_API_SECRET"] = "encrypted:garbage";
+      const configured = {
+        ...baseConfig().auth.sms,
+        vonage: { ...baseConfig().auth.sms.vonage, enabled: true, api_secret: "remote-secret" },
+      };
+      const resolved = legacyResolveAuthSms(
+        undefined,
+        configured,
+        undefined,
+        new Set(["auth.sms.vonage.enabled", "auth.sms.vonage.api_secret"]),
+      );
+      expect(resolved.vonage.api_secret).toBe("remote-secret");
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_SMS_VONAGE_API_SECRET when no remote block matched", () => {
+      // `vonage` isn't `twilio` (the one provider Go's default template always registers), so the
+      // env override is only consulted at all when the raw `[auth.sms.vonage]` table is present —
+      // same presence gate `providerPresent` already applies for the remote-set case above.
+      process.env["SUPABASE_AUTH_SMS_VONAGE_API_SECRET"] = "encrypted:garbage";
+      const authDocument = { sms: { vonage: {} } };
+      const configured = {
+        ...baseConfig().auth.sms,
+        vonage: { ...baseConfig().auth.sms.vonage, enabled: true, api_secret: "remote-secret" },
+      };
+      expect(() => legacyResolveAuthSms(authDocument, configured, undefined)).toThrow(
+        "failed to parse config: missing private key",
+      );
+    });
+
+    it("still aborts legacyResolveLocalConfigValues on a malformed SUPABASE_AUTH_SMS_ENABLE_SIGNUP reached via validateAuthSmsProviders, unless remoteOverrideKeys suppresses it", () => {
+      // End-to-end proof that the gap is reachable from the exact function this PR's shadow
+      // provisioning calls (`legacyBuildLocalDbContainerInputs` -> `legacyResolveLocalConfigValues`
+      // -> `validateAuthSmsProviders` -> `legacyResolveAuthSms`), not just the standalone resolver.
+      // Built by spreading an already-decoded `baseConfig()` (not re-decoding through
+      // `ProjectConfigSchema` via `baseConfig({...})`'s shallow-merge overrides) so `vonage`'s
+      // other schema-required fields (`from`, etc.) keep their valid decoded defaults.
+      process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "not-a-bool";
+      const base = baseConfig();
+      const config: ProjectConfig = {
+        ...base,
+        auth: {
+          ...base.auth,
+          enabled: true,
+          sms: {
+            ...base.auth.sms,
+            enable_signup: true,
+            vonage: {
+              ...base.auth.sms.vonage,
+              enabled: true,
+              from: "12345",
+              api_key: "key",
+              api_secret: "secret",
+            },
+          },
+        },
+      };
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          WORKDIR,
+          undefined,
+          undefined,
+          new Set(["auth.sms.enable_signup"]),
+        ),
+      ).not.toThrow();
+    });
+  });
+
   describe("api.tls (cert/key validation)", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-api-tls-test-");
 
@@ -3016,6 +3223,10 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
       "SUPABASE_AUTH_JWT_EXPIRY",
       "SUPABASE_AUTH_ANON_KEY",
       "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      "SUPABASE_STUDIO_API_URL",
+      "SUPABASE_STUDIO_OPENAI_API_KEY",
+      "SUPABASE_AUTH_PUBLISHABLE_KEY",
+      "SUPABASE_AUTH_SECRET_KEY",
       "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
       "SUPABASE_AUTH_SIGNING_KEYS_PATH",
       "SUPABASE_AUTH_ENABLED",
@@ -3290,6 +3501,88 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
     );
     expect(values.anonKey).toBe("remote-anon-key");
     expect(values.serviceRoleKey).toBe("remote-service-role-key");
+  });
+
+  it("suppresses a malformed SUPABASE_STUDIO_API_URL when a remote block already set studio.api_url", () => {
+    // Regression (review: PRRT_kwDOErm0O86XKYiF's sibling gap): `studio.api_url` feeds
+    // `legacyValidateResolvedConfig`'s `legacyGoUrlParse` check, which throws on a malformed URL
+    // even though the read itself (`legacyEnvOverride`) never does — same "non-throwing read,
+    // throwing downstream consumer" bug class as `legacyResolveAuthHooks`'s `uri`/`secrets`.
+    process.env["SUPABASE_STUDIO_API_URL"] = "http://[::1";
+    const config = baseConfig({ studio: { api_url: "http://remote.test" } });
+    expect(() =>
+      legacyResolveLocalConfigValues(
+        config,
+        "127.0.0.1",
+        WORKDIR,
+        undefined,
+        undefined,
+        new Set(["studio.api_url"]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("prefers a remote-set studio.openai_api_key over a conflicting SUPABASE_STUDIO_OPENAI_API_KEY", () => {
+    // Regression: `studio.openai_api_key` is a `config.Secret` (`pkg/config/config.go:264`),
+    // decrypted the same way `anon_key`/`service_role_key` above are — an ungated
+    // `legacyEnvOverride` here could let a malformed ambient override outrank a matched remote's
+    // own valid value and throw during decryption.
+    process.env["SUPABASE_STUDIO_OPENAI_API_KEY"] = "encrypted:not-a-real-ciphertext";
+    const config = baseConfig({ studio: { openai_api_key: "remote-openai-key" } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["studio.openai_api_key"]),
+    );
+    expect(values.openaiApiKey).toBe("remote-openai-key");
+  });
+
+  it("still rejects a malformed SUPABASE_STUDIO_OPENAI_API_KEY when no remote block matched", () => {
+    process.env["SUPABASE_STUDIO_OPENAI_API_KEY"] = "encrypted:not-a-real-ciphertext";
+    const config = baseConfig({ studio: { openai_api_key: "remote-openai-key" } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      "failed to parse config: missing private key",
+    );
+  });
+
+  it("prefers remote-set auth.publishable_key/auth.secret_key over conflicting env overrides", () => {
+    // Regression: `auth.publishable_key`/`auth.secret_key` (`pkg/config/auth.go:181-182`) are
+    // `config.Secret`-typed exactly like `anon_key`/`service_role_key` above, but were missed
+    // when that sibling pair was gated.
+    process.env["SUPABASE_AUTH_PUBLISHABLE_KEY"] = "encrypted:not-a-real-ciphertext";
+    process.env["SUPABASE_AUTH_SECRET_KEY"] = "encrypted:not-a-real-ciphertext";
+    const config = baseConfig({
+      auth: { publishable_key: "remote-publishable-key", secret_key: "remote-secret-key" },
+    });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["auth.publishable_key", "auth.secret_key"]),
+    );
+    expect(values.publishableKey).toBe("remote-publishable-key");
+    expect(values.secretKey).toBe("remote-secret-key");
+  });
+
+  it("still rejects a malformed SUPABASE_AUTH_PUBLISHABLE_KEY when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_PUBLISHABLE_KEY"] = "encrypted:not-a-real-ciphertext";
+    const config = baseConfig({ auth: { publishable_key: "remote-publishable-key" } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      "failed to parse config: missing private key",
+    );
+  });
+
+  it("still rejects a malformed SUPABASE_AUTH_SECRET_KEY when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_SECRET_KEY"] = "encrypted:not-a-real-ciphertext";
+    const config = baseConfig({ auth: { secret_key: "remote-secret-key" } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      "failed to parse config: missing private key",
+    );
   });
 
   it("suppresses a malformed SUPABASE_DB_SETTINGS_MAX_CONNECTIONS when the remote block set db.settings.max_connections", () => {

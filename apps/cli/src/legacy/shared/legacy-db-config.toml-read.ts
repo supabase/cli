@@ -510,7 +510,65 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.email.otp_length",
   "auth.email.otp_expiry",
   "experimental.webhooks.enabled",
+  // `auth.sms.*` (`legacyResolveAuthSms`) has the identical "throws before a value the caller
+  // needs is resolved" bug class as every other group above: `enable_signup`/`enable_confirmations`
+  // and each provider's `enabled` run an UNGATED `legacyEnvOverrideBool`, and each provider's
+  // Secret-typed field (`auth_token`/`access_key`/`api_key`/`api_secret`, `pkg/config/auth.go:
+  // 339,345,351,358`) runs an UNGATED `legacyDecryptAuthSecret` — either can throw on a malformed
+  // ambient `SUPABASE_AUTH_SMS_*` override even when a matched remote block already set that field
+  // at viper's OVERRIDE tier, aborting the whole `legacyResolveLocalConfigValues` call (and the
+  // shadow it feeds via `legacyBuildLocalDbContainerInputs`) — reachable via `validateAuthSmsProviders`,
+  // called unconditionally whenever `authEnabled` (review: PRRT_kwDOErm0O86XFmjZ — the prior
+  // "unreachable from the shadow path" rejection missed this call site).
+  "auth.sms.enable_signup",
+  "auth.sms.enable_confirmations",
+  "auth.sms.twilio.enabled",
+  "auth.sms.twilio.auth_token",
+  "auth.sms.twilio_verify.enabled",
+  "auth.sms.twilio_verify.auth_token",
+  "auth.sms.messagebird.enabled",
+  "auth.sms.messagebird.access_key",
+  "auth.sms.textlocal.enabled",
+  "auth.sms.textlocal.api_key",
+  "auth.sms.vonage.enabled",
+  "auth.sms.vonage.api_secret",
+  // `auth.publishable_key`/`auth.secret_key` (`pkg/config/auth.go:181-182`) and
+  // `studio.openai_api_key` (`pkg/config/config.go:264`) are `config.Secret`-typed exactly like
+  // `auth.email.smtp.pass`/`auth.captcha.secret` above, decrypted via the same throw-capable
+  // `legacyDecryptAuthSecret` — but were never added to this allowlist when `anon_key`/
+  // `service_role_key` (their sibling API-key pair, right next to them in
+  // `legacyResolveLocalConfigValues`'s return block) were gated. Same bug class: an ungated
+  // malformed ambient override can throw during decryption even when a matched remote block
+  // already set the field, aborting the whole call.
+  "auth.publishable_key",
+  "auth.secret_key",
+  "studio.openai_api_key",
+  // `studio.api_url` is validated with `legacyGoUrlParse` inside `legacyValidateResolvedConfig`
+  // (gated on `studio.enabled`, matching `studio.port` above) — a plain, non-throwing
+  // `legacyEnvOverride` read here can still flip that downstream validate() outcome, same
+  // "non-throwing read, throwing downstream consumer" class as the third_party required fields
+  // above.
+  "studio.api_url",
 ];
+
+/**
+ * `auth.external.<name>` is a genuine map keyed by arbitrary provider name — not just the ~19
+ * known ids `@supabase/config`'s schema recognizes, but any custom/unmodeled name a user's
+ * `[auth.external.<name>]` table declares (`legacyResolveAuthExternalProviders`'s own doc
+ * comment). A fixed `LEGACY_ENV_OVERRIDABLE_KEYS` entry per provider can't cover every possible
+ * name a `[remotes.<ref>]` block might set, so these per-provider leaves are tracked dynamically
+ * in {@link applyRemoteOverride} instead (flattening whichever provider names the matched block
+ * actually supplies) rather than enumerated here.
+ */
+const LEGACY_AUTH_EXTERNAL_PROVIDER_FIELDS = [
+  "enabled",
+  "client_id",
+  "secret",
+  "url",
+  "redirect_uri",
+  "skip_nonce_check",
+  "email_optional",
+] as const;
 
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */
 function legacyBlockProvidesKey(block: RawDoc, key: string): boolean {
@@ -547,6 +605,20 @@ function applyRemoteOverride(
       const remoteOverrideKeys = new Set<string>();
       for (const key of LEGACY_ENV_OVERRIDABLE_KEYS) {
         if (legacyBlockProvidesKey(block, key)) remoteOverrideKeys.add(key);
+      }
+      // `auth.external.<name>` is a genuine map (arbitrary/custom provider names — see
+      // `LEGACY_AUTH_EXTERNAL_PROVIDER_FIELDS`'s own doc comment), so flatten whichever provider
+      // names/fields THIS matched block actually supplies instead of relying on a fixed list —
+      // same per-leaf override-tier semantics as `LEGACY_ENV_OVERRIDABLE_KEYS` above, just
+      // computed dynamically for this one dynamically-keyed section.
+      const externalBlock = asRecord(asRecord(block["auth"])?.["external"]);
+      if (externalBlock !== undefined) {
+        for (const providerName of Object.keys(externalBlock)) {
+          for (const field of LEGACY_AUTH_EXTERNAL_PROVIDER_FIELDS) {
+            const key = `auth.external.${providerName}.${field}`;
+            if (legacyBlockProvidesKey(block, key)) remoteOverrideKeys.add(key);
+          }
+        }
       }
       // `db.seed.enabled` is ALWAYS override-tier for a matched block: either the block set
       // it, or Go's `mergeRemoteConfig` forces it `false` when omitted (`config.go:638-640`)

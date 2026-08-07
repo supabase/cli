@@ -2212,8 +2212,25 @@ export function legacyResolveAuthSms(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   sms: ProjectConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  /**
+   * Same remote-over-env precedence as every other gated resolver in this file. Reachable from
+   * the `db diff --linked`/`db pull` shadow path via `validateAuthSmsProviders`, called
+   * unconditionally from `legacyResolveLocalConfigValues` whenever `authEnabled` — a prior review
+   * (PRRT_kwDOErm0O86XFmjZ) rejected this gap as "unreachable," having only grepped direct
+   * `legacyResolveAuthSms(` call sites in `start.handler.ts`/`db/start/start.handler.ts` and
+   * missed this file's own `validateAuthSmsProviders` wrapper. `enable_signup`/
+   * `enable_confirmations`/each provider's `enabled` THROW via `legacyEnvOverrideBool`, and each
+   * provider's Secret-typed field (`auth_token`/`access_key`/`api_key`/`api_secret`,
+   * `pkg/config/auth.go:339,345,351,358`) THROWS via `legacyDecryptAuthSecret` — either can abort
+   * this whole call (and the shadow it feeds) on a malformed ambient `SUPABASE_AUTH_SMS_*`
+   * override even when a matched remote block already set that field at viper's OVERRIDE tier.
+   * Defaults to empty for `start.handler.ts`/`db/start/start.handler.ts`'s callers, which never
+   * resolve a `[remotes.<ref>]` block for this config read.
+   */
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ProjectConfig["auth"]["sms"] {
   const smsDoc = asRecord(authDocument?.["sms"]);
+  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
 
   function providerPresent(providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number]): boolean {
     // `twilio` is always considered present — see this function's doc comment.
@@ -2225,6 +2242,7 @@ export function legacyResolveAuthSms(
     providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
     configured: boolean,
   ): boolean {
+    if (remoteWins(`auth.sms.${providerName}.enabled`)) return configured;
     if (!providerPresent(providerName)) return configured;
     return legacyEnvOverrideBool(
       `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}_ENABLED`,
@@ -2247,6 +2265,17 @@ export function legacyResolveAuthSms(
     );
   }
 
+  /** Resolves a provider's Secret-typed field, gated the same way `auth.email.smtp.pass` is. */
+  function resolveSecretField(
+    providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
+    field: string,
+    configured: string | undefined,
+  ): string | undefined {
+    return remoteWins(`auth.sms.${providerName}.${field}`)
+      ? legacyDecryptAuthSecret(configured, projectEnvValues)
+      : legacyDecryptAuthSecret(resolveField(providerName, field, configured), projectEnvValues);
+  }
+
   const twilioEnabled = resolveEnabled("twilio", sms.twilio.enabled);
   const twilioVerifyEnabled = resolveEnabled("twilio_verify", sms.twilio_verify.enabled);
   const messagebirdEnabled = resolveEnabled("messagebird", sms.messagebird.enabled);
@@ -2254,12 +2283,14 @@ export function legacyResolveAuthSms(
   const vonageEnabled = resolveEnabled("vonage", sms.vonage.enabled);
   const anyProviderEnabled =
     twilioEnabled || twilioVerifyEnabled || messagebirdEnabled || textlocalEnabled || vonageEnabled;
-  const enableSignupConfigured = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
-    sms.enable_signup,
-    "auth.sms.enable_signup",
-    projectEnvValues,
-  );
+  const enableSignupConfigured = remoteWins("auth.sms.enable_signup")
+    ? sms.enable_signup
+    : legacyEnvOverrideBool(
+        "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
+        sms.enable_signup,
+        "auth.sms.enable_signup",
+        projectEnvValues,
+      );
 
   return {
     ...sms,
@@ -2268,12 +2299,14 @@ export function legacyResolveAuthSms(
     // `EnableSignup = false` before `buildGotrueEnv` ever reads it, so phone signup is never
     // enabled with no provider configured to actually deliver an OTP.
     enable_signup: anyProviderEnabled ? enableSignupConfigured : false,
-    enable_confirmations: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS",
-      sms.enable_confirmations,
-      "auth.sms.enable_confirmations",
-      projectEnvValues,
-    ),
+    enable_confirmations: remoteWins("auth.sms.enable_confirmations")
+      ? sms.enable_confirmations
+      : legacyEnvOverrideBool(
+          "SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS",
+          sms.enable_confirmations,
+          "auth.sms.enable_confirmations",
+          projectEnvValues,
+        ),
     template:
       legacyEnvOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues) ??
       sms.template,
@@ -2285,10 +2318,7 @@ export function legacyResolveAuthSms(
       account_sid: resolveField("twilio", "account_sid", sms.twilio.account_sid) ?? "",
       message_service_sid:
         resolveField("twilio", "message_service_sid", sms.twilio.message_service_sid) ?? "",
-      auth_token: legacyDecryptAuthSecret(
-        resolveField("twilio", "auth_token", sms.twilio.auth_token),
-        projectEnvValues,
-      ),
+      auth_token: resolveSecretField("twilio", "auth_token", sms.twilio.auth_token),
     },
     twilio_verify: {
       enabled: twilioVerifyEnabled,
@@ -2298,35 +2328,23 @@ export function legacyResolveAuthSms(
         "message_service_sid",
         sms.twilio_verify.message_service_sid,
       ),
-      auth_token: legacyDecryptAuthSecret(
-        resolveField("twilio_verify", "auth_token", sms.twilio_verify.auth_token),
-        projectEnvValues,
-      ),
+      auth_token: resolveSecretField("twilio_verify", "auth_token", sms.twilio_verify.auth_token),
     },
     messagebird: {
       enabled: messagebirdEnabled,
       originator: resolveField("messagebird", "originator", sms.messagebird.originator),
-      access_key: legacyDecryptAuthSecret(
-        resolveField("messagebird", "access_key", sms.messagebird.access_key),
-        projectEnvValues,
-      ),
+      access_key: resolveSecretField("messagebird", "access_key", sms.messagebird.access_key),
     },
     textlocal: {
       enabled: textlocalEnabled,
       sender: resolveField("textlocal", "sender", sms.textlocal.sender),
-      api_key: legacyDecryptAuthSecret(
-        resolveField("textlocal", "api_key", sms.textlocal.api_key),
-        projectEnvValues,
-      ),
+      api_key: resolveSecretField("textlocal", "api_key", sms.textlocal.api_key),
     },
     vonage: {
       enabled: vonageEnabled,
       from: resolveField("vonage", "from", sms.vonage.from),
       api_key: resolveField("vonage", "api_key", sms.vonage.api_key),
-      api_secret: legacyDecryptAuthSecret(
-        resolveField("vonage", "api_secret", sms.vonage.api_secret),
-        projectEnvValues,
-      ),
+      api_secret: resolveSecretField("vonage", "api_secret", sms.vonage.api_secret),
     },
   };
 }
@@ -2342,8 +2360,9 @@ function validateAuthSmsProviders(
   authDocument: Record<string, unknown> | undefined,
   sms: ProjectConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): void {
-  const resolved = legacyResolveAuthSms(authDocument, sms, projectEnvValues);
+  const resolved = legacyResolveAuthSms(authDocument, sms, projectEnvValues, remoteOverrideKeys);
 
   function requireField(provider: string, field: string, value: string | undefined): void {
     if (value === undefined || value.length === 0) {
@@ -2496,6 +2515,23 @@ export function legacyResolveAuthExternalProviders(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   external: ProjectConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  /**
+   * Same remote-over-env precedence as every other gated resolver in this file —
+   * `auth.external.<name>.*` leaves are tracked dynamically in `applyRemoteOverride`
+   * (`legacy-db-config.toml-read.ts`), not via a fixed `LEGACY_ENV_OVERRIDABLE_KEYS` entry,
+   * since provider names are an arbitrary/custom-keyed map (see this function's own doc comment
+   * above). `enabled`/`skip_nonce_check`/`email_optional` THROW via `legacyEnvOverrideBool` and
+   * `secret` THROWS via `legacyDecryptAuthSecret` (`Secret`-typed, `pkg/config/auth.go:364`) on a
+   * malformed override even when a matched remote block already set that field, which would abort
+   * the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on a value Go's
+   * `v.Set` (override tier) silently ignores; `client_id`/`url`/`redirect_uri` can't throw the
+   * same way, but leaving them ungated is still a precedence bug — a remote's valid value must
+   * beat a stale `SUPABASE_AUTH_EXTERNAL_<NAME>_*` env var, same reasoning as
+   * `legacyResolveAuthHooks`'s `uri`/`secrets` (review: PRRT_kwDOErm0O86XKYiF). Defaults to empty
+   * for `start.handler.ts`/`db/start/start.handler.ts`'s callers, which never resolve a
+   * `[remotes.<ref>]` block for this config read.
+   */
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): Record<string, LegacyResolvedAuthExternalProvider> {
   const externalDoc = asRecord(authDocument?.["external"]);
 
@@ -2547,36 +2583,48 @@ export function legacyResolveAuthExternalProviders(
       );
 
     result[name] = {
-      enabled: legacyEnvOverrideBool(
-        `${envPrefix}_ENABLED`,
-        configuredEnabled,
-        `auth.external.${name}.enabled`,
-        projectEnvValues,
-      ),
+      enabled: remoteOverrideKeys.has(`auth.external.${name}.enabled`)
+        ? configuredEnabled
+        : legacyEnvOverrideBool(
+            `${envPrefix}_ENABLED`,
+            configuredEnabled,
+            `auth.external.${name}.enabled`,
+            projectEnvValues,
+          ),
       clientId:
-        legacyEnvOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues) ?? "",
-      secret: legacyDecryptAuthSecret(
-        legacyEnvOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
-        projectEnvValues,
-      ),
-      url: legacyEnvOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues) ?? "",
-      redirectUri: legacyEnvOverride(
-        `${envPrefix}_REDIRECT_URI`,
-        configuredRedirectUri,
-        projectEnvValues,
-      ),
-      skipNonceCheck: legacyEnvOverrideBool(
-        `${envPrefix}_SKIP_NONCE_CHECK`,
-        configuredSkipNonceCheck,
-        `auth.external.${name}.skip_nonce_check`,
-        projectEnvValues,
-      ),
-      emailOptional: legacyEnvOverrideBool(
-        `${envPrefix}_EMAIL_OPTIONAL`,
-        configuredEmailOptional,
-        `auth.external.${name}.email_optional`,
-        projectEnvValues,
-      ),
+        (remoteOverrideKeys.has(`auth.external.${name}.client_id`)
+          ? configuredClientId
+          : legacyEnvOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues)) ??
+        "",
+      secret: remoteOverrideKeys.has(`auth.external.${name}.secret`)
+        ? legacyDecryptAuthSecret(configuredSecret, projectEnvValues)
+        : legacyDecryptAuthSecret(
+            legacyEnvOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
+            projectEnvValues,
+          ),
+      url:
+        (remoteOverrideKeys.has(`auth.external.${name}.url`)
+          ? configuredUrl
+          : legacyEnvOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues)) ?? "",
+      redirectUri: remoteOverrideKeys.has(`auth.external.${name}.redirect_uri`)
+        ? configuredRedirectUri
+        : legacyEnvOverride(`${envPrefix}_REDIRECT_URI`, configuredRedirectUri, projectEnvValues),
+      skipNonceCheck: remoteOverrideKeys.has(`auth.external.${name}.skip_nonce_check`)
+        ? configuredSkipNonceCheck
+        : legacyEnvOverrideBool(
+            `${envPrefix}_SKIP_NONCE_CHECK`,
+            configuredSkipNonceCheck,
+            `auth.external.${name}.skip_nonce_check`,
+            projectEnvValues,
+          ),
+      emailOptional: remoteOverrideKeys.has(`auth.external.${name}.email_optional`)
+        ? configuredEmailOptional
+        : legacyEnvOverrideBool(
+            `${envPrefix}_EMAIL_OPTIONAL`,
+            configuredEmailOptional,
+            `auth.external.${name}.email_optional`,
+            projectEnvValues,
+          ),
     };
   }
   return result;
@@ -2613,11 +2661,17 @@ function validateAuthExternalProviders(
   authDocument: Record<string, unknown> | undefined,
   external: ProjectConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): void {
   // Derived from `legacyResolveAuthExternalProviders`'s unfiltered result so this validation
   // path and `start.handler.ts`'s GoTrue env builder can't drift — same precedent as
   // `legacyResolveAuthHooks`'s validation caller above.
-  const resolved = legacyResolveAuthExternalProviders(authDocument, external, projectEnvValues);
+  const resolved = legacyResolveAuthExternalProviders(
+    authDocument,
+    external,
+    projectEnvValues,
+    remoteOverrideKeys,
+  );
   for (const [name, provider] of Object.entries(resolved)) {
     if (!provider.enabled) continue;
     if (provider.clientId.length === 0) {
@@ -2736,9 +2790,20 @@ export function legacyResolveLocalConfigValues(
    * is irrelevant. All of those fields are now gated the same way as `api.enabled` above and
    * tracked in `LEGACY_ENV_OVERRIDABLE_KEYS` (review: PRRT_kwDOErm0O86W6R-G). Only the fields
    * whose own resolution genuinely CANNOT throw AND whose value has no Go-observable consumer
-   * stay ungated below: `studioApiUrl`, `jwtIssuer`, `additionalRedirectUrls`, the auth hooks'
+   * stay ungated below: `jwtIssuer`, `additionalRedirectUrls`, the auth hooks'
    * `uri`/`secrets`, the mfa phone factor's `template`/`max_frequency`, the webauthn `rp_id`/
-   * `rp_origins`, and the GCP analytics fields. This function's OWN validation-only `thirdParty`
+   * `rp_origins`, the sms `template`/`max_frequency`, and the GCP analytics fields.
+   * `studioApiUrl` is now gated too (below) — a "non-throwing read, throwing downstream
+   * consumer" case like the third_party required fields just below: `legacyGoUrlParse` inside
+   * `legacyValidateResolvedConfig` throws on a malformed URL even though `legacyEnvOverride`
+   * itself never does (review: PRRT_kwDOErm0O86XKYiF's sibling gap). `studio.openai_api_key`/
+   * `auth.publishable_key`/`auth.secret_key` are `config.Secret`-typed exactly like `anon_key`/
+   * `service_role_key` below and are now gated the same way, having been missed when that pair
+   * was fixed. `auth.sms.*` (`legacyResolveAuthSms`, reached via `validateAuthSmsProviders`
+   * below) and `auth.external.*` (`legacyResolveAuthExternalProviders`, reached via
+   * `validateAuthExternalProviders` below) are threaded through and gated in their own resolvers
+   * now too — see those functions' own doc comments (review: PRRT_kwDOErm0O86XFmjZ,
+   * PRRT_kwDOErm0O86XKYiF). This function's OWN validation-only `thirdParty`
    * block's non-`enabled` leaves (`requiredField`/`cognitoUserPoolRegion`) are gated too, despite
    * `legacyEnvOverride` itself never throwing: each provider's per-field `validate()`
    * (`config.go:1560-1629` — domain/tenant/user_pool_id/issuer_url emptiness, plus Clerk's domain
@@ -2977,9 +3042,16 @@ export function legacyResolveLocalConfigValues(
   // (defaulted) field, so `legacyEnvOverride` can only return `undefined` here if
   // that default itself were somehow undefined — the `??` fallback just
   // satisfies that generic signature.
-  const studioApiUrl =
-    legacyEnvOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
-    config.studio.api_url;
+  // `legacyEnvOverride` itself never throws, but `studio.api_url` feeds
+  // `legacyValidateResolvedConfig`'s `legacyGoUrlParse` check below, which DOES throw on a
+  // malformed URL — same "non-throwing read, throwing downstream consumer" bug class already
+  // fixed for `legacyResolveAuthHooks`'s `uri`/`secrets` (review: PRRT_kwDOErm0O86XGTq5). An
+  // ungated read here can flip that validate() outcome even though nothing in this read itself
+  // throws, so `studio.api_url` is gated the same way as `studio.enabled`/`studio.port` above.
+  const studioApiUrl = remoteWins("studio.api_url")
+    ? config.studio.api_url
+    : (legacyEnvOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+      config.studio.api_url);
   // Go's `Config.Validate` rejects `local_smtp.port === 0`/
   // `SUPABASE_LOCAL_SMTP_PORT=0` ONLY when `local_smtp.enabled` — Go's struct
   // field is still named `Inbucket` for the `[local_smtp]` TOML section
@@ -3642,18 +3714,30 @@ export function legacyResolveLocalConfigValues(
   // D-only per `legacy-config-validate.ts`'s module header ("auth.external ... stays 100% inline
   // in D") — this is L's port of D's identical inline block.
   if (authEnabled) {
-    validateAuthSmsProviders(authDocument, config.auth.sms, projectEnvValues);
-    validateAuthExternalProviders(authDocument, config.auth.external, projectEnvValues);
+    validateAuthSmsProviders(authDocument, config.auth.sms, projectEnvValues, remoteOverrideKeys);
+    validateAuthExternalProviders(
+      authDocument,
+      config.auth.external,
+      projectEnvValues,
+      remoteOverrideKeys,
+    );
   }
 
-  const openaiApiKey = legacyDecryptAuthSecret(
-    legacyEnvOverride(
-      "SUPABASE_STUDIO_OPENAI_API_KEY",
-      config.studio.openai_api_key,
-      projectEnvValues,
-    ),
-    projectEnvValues,
-  );
+  // `studio.openai_api_key` is a `config.Secret` (`pkg/config/config.go:264`), decrypted the same
+  // way `auth.email.smtp.pass`/`auth.captcha.secret` are — same remote-over-env precedence: an
+  // ungated `legacyEnvOverride` here could let a malformed ambient `SUPABASE_STUDIO_OPENAI_API_KEY`
+  // outrank a matched remote's own valid value and throw during decryption, aborting the whole
+  // call (and the shadow it feeds) on a value Go's `v.Set` (override tier) silently ignores.
+  const openaiApiKey = remoteWins("studio.openai_api_key")
+    ? legacyDecryptAuthSecret(config.studio.openai_api_key, projectEnvValues)
+    : legacyDecryptAuthSecret(
+        legacyEnvOverride(
+          "SUPABASE_STUDIO_OPENAI_API_KEY",
+          config.studio.openai_api_key,
+          projectEnvValues,
+        ),
+        projectEnvValues,
+      );
 
   return {
     apiUrl: apiExternalUrl,
@@ -3680,22 +3764,31 @@ export function legacyResolveLocalConfigValues(
     studioUrl: `http://${hostname}:${studioPort}`,
     mailpitUrl: `http://${hostname}:${mailpitPort}`,
     dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${dbPort}/postgres`,
+    // `auth.publishable_key`/`auth.secret_key` (`pkg/config/auth.go:181-182`) are
+    // `config.Secret`-typed exactly like `anon_key`/`service_role_key` below — same
+    // remote-over-env precedence: an ungated `legacyEnvOverride` here could let a malformed
+    // ambient `SUPABASE_AUTH_PUBLISHABLE_KEY`/`SUPABASE_AUTH_SECRET_KEY` outrank a matched
+    // remote's own valid value and throw during decryption, aborting the whole call.
     publishableKey: resolveOpaqueKey(
-      legacyDecryptAuthSecret(
-        legacyEnvOverride(
-          "SUPABASE_AUTH_PUBLISHABLE_KEY",
-          config.auth.publishable_key,
-          projectEnvValues,
-        ),
-        projectEnvValues,
-      ),
+      remoteWins("auth.publishable_key")
+        ? legacyDecryptAuthSecret(config.auth.publishable_key, projectEnvValues)
+        : legacyDecryptAuthSecret(
+            legacyEnvOverride(
+              "SUPABASE_AUTH_PUBLISHABLE_KEY",
+              config.auth.publishable_key,
+              projectEnvValues,
+            ),
+            projectEnvValues,
+          ),
       defaultPublishableKey,
     ),
     secretKey: resolveOpaqueKey(
-      legacyDecryptAuthSecret(
-        legacyEnvOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
-        projectEnvValues,
-      ),
+      remoteWins("auth.secret_key")
+        ? legacyDecryptAuthSecret(config.auth.secret_key, projectEnvValues)
+        : legacyDecryptAuthSecret(
+            legacyEnvOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
+            projectEnvValues,
+          ),
       defaultSecretKey,
     ),
     jwtSecret,
