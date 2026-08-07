@@ -57,6 +57,10 @@ reload, and explicit readiness waits. A finite deadline fails with `StackReadine
 the same scoped cleanup used by disposal. Promise and remote Adapters pass `ReadyOptions` through
 to that Implementation instead of layering a second timeout rule around it.
 
+Request-triggered lazy activation expands the package-default deadline when a service's transitive
+startup budget is longer than three minutes. Explicit finite and infinite stack policies are never
+expanded.
+
 The current zero-config stack enables PostgreSQL, PostgREST, Auth, and Edge Runtime. Realtime,
 Storage, imgproxy, Mailpit, Postgres Meta, Studio, Analytics, Vector, and Supavisor are enabled only
 when their corresponding configuration object is present. In `native` mode, Edge Runtime is also

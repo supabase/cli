@@ -29,6 +29,7 @@ import {
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
+  activationReadinessPolicy,
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
@@ -677,7 +678,13 @@ export const localStackLayer = (
             return;
           }
           if (existing !== undefined) {
-            yield* waitForTargets(existing).pipe((effect) => withReadinessPolicy(effect, name));
+            yield* waitForTargets(existing).pipe((effect) =>
+              withReadinessPolicy(
+                effect,
+                name,
+                activationReadinessPolicy(service, config.readiness, config.readinessSource),
+              ),
+            );
             return;
           }
           const started = yield* Effect.gen(function* () {
@@ -686,7 +693,13 @@ export const localStackLayer = (
             if (concurrentlyStarted !== undefined) return concurrentlyStarted;
             return yield* beginStartTargets(service, new Set());
           }).pipe(withLifecycleLock);
-          yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+          yield* waitForTargets(started).pipe((effect) =>
+            withReadinessPolicy(
+              effect,
+              name,
+              activationReadinessPolicy(service, config.readiness, config.readinessSource),
+            ),
+          );
         }).pipe(cleanupOnReadinessFailure);
 
       const stack = {
