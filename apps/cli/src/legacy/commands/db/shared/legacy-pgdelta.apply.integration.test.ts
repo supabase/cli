@@ -171,6 +171,55 @@ describe("legacyApplyDeclarativePgDelta", () => {
   });
 
   it.effect(
+    "fails with a parse error INCLUDING the raw stdout when SUPABASE_DEBUG is set only in the project .env",
+    () => {
+      // Go's `Config.Load` -> `loadNestedEnv` `os.Setenv`s the project `supabase/.env` into the
+      // process before `pgdelta.ApplyDeclarative` ever reads `viper.GetBool("DEBUG")`
+      // (review: PRRT_kwDOErm0O86XL_oz) — so a `SUPABASE_DEBUG` set only in `supabase/.env`,
+      // never in the shell or via `--debug`, still surfaces the raw stdout. Delete any shell
+      // `SUPABASE_DEBUG` first: shell *presence* (even `false`) would otherwise suppress the
+      // project value entirely, per `legacyViperEnvBoolWithProjectFallback`'s own semantics.
+      const previous = process.env["SUPABASE_DEBUG"];
+      delete process.env["SUPABASE_DEBUG"];
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({ stdout: "not json{" });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(
+          { ...CTX, projectEnv: { SUPABASE_DEBUG: "true" } },
+          {
+            fs,
+            declarativeDirAbs: dir,
+            target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+          },
+        ).pipe(Effect.exit);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        const message = (failError(exit) as { message: string }).message;
+        expect(message).toContain("failed to parse pg-delta apply output");
+        expect(message).toContain("stdout: not json{");
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DEBUG"];
+            else process.env["SUPABASE_DEBUG"] = previous;
+          }),
+        ),
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "fails with a normal status-failure summary (not a parse error) when stdout is a top-level JSON null",
     () => {
       // Go's `json.Unmarshal([]byte("null"), &result)` into the zero-valued (non-pointer)

@@ -12,7 +12,7 @@
 
 import { Data, Effect, type FileSystem } from "effect";
 
-import { legacyResolveDebug } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveDebugWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import {
@@ -838,8 +838,15 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
   // Go's `pgdelta.ApplyDeclarative` reads `viper.GetBool("DEBUG")` (`apply.go:332,342`), which
   // falls back to `SUPABASE_DEBUG` via `AutomaticEnv` when `--debug` itself is unset —
   // `legacyResolveDebug` (not the bare `LegacyDebugFlag`) reproduces that (review:
-  // PRRT_kwDOErm0O86XDr4V).
-  const debug = yield* legacyResolveDebug;
+  // PRRT_kwDOErm0O86XDr4V). By the time either `db diff`/`db pull` reaches here,
+  // `ParseDatabaseConfig` has already run `Config.Load` -> `loadNestedEnv`, which really
+  // `os.Setenv`s the merged project `supabase/.env` into the process (`godotenv.Load`,
+  // `godotenv@v1.5.1/godotenv.go:184-200`) — unlike this port's own `legacyLoadProjectEnv`,
+  // which is deliberately pure — so a `SUPABASE_DEBUG` set only in `supabase/.env` is visible
+  // to Go's `viper.GetBool("DEBUG")` here. `legacyResolveDebugWithProjectEnv` reproduces that
+  // with `ctx.projectEnv` (`legacyReadDbToml`'s merged map, threaded by both `db diff` and
+  // `db pull`, review: PRRT_kwDOErm0O86XL_oz).
+  const debug = yield* legacyResolveDebugWithProjectEnv(ctx.projectEnv);
 
   yield* output.raw("Applying declarative schemas via pg-delta...\n", "stderr");
 

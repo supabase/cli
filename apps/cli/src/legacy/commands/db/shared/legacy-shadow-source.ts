@@ -210,9 +210,11 @@ export const legacyPrepareShadowSource = <E>(
   | LegacyDbConnection
   | LegacyEdgeRuntimeScript
   | GlobalFlag.Setting.Identifier<"debug">
-  // `legacyApplyDeclarativePgDelta`'s own `legacyResolveDebug` (viper `AutomaticEnv`
-  // `SUPABASE_DEBUG` fallback, review: PRRT_kwDOErm0O86XDr4V) needs `CliArgs` to detect an
-  // explicit `--debug=false`, same as `legacyResolveYes`/`legacyResolveExperimental`.
+  // `legacyApplyDeclarativePgDelta`'s own `legacyResolveDebugWithProjectEnv` (viper
+  // `AutomaticEnv` `SUPABASE_DEBUG` fallback, plus the project `.env` Go's `loadNestedEnv`
+  // has already `os.Setenv`'d into the process by this point, review: PRRT_kwDOErm0O86XDr4V,
+  // PRRT_kwDOErm0O86XL_oz) needs `CliArgs` to detect an explicit `--debug=false`, same as
+  // `legacyResolveYes`/`legacyResolveExperimental`.
   | CliArgs
 > =>
   Effect.gen(function* () {

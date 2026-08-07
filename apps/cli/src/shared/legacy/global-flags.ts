@@ -296,3 +296,33 @@ export const legacyResolveDebug = Effect.gen(function* () {
   }
   return flag || legacyViperEnvBool("SUPABASE_DEBUG");
 });
+
+/**
+ * `--debug` resolved with the project `.env` consulted too, for NEW debug-gated behavior that
+ * runs downstream of a command that has already loaded the nested project env (e.g.
+ * `legacyApplyDeclarativePgDelta`, reached by `db diff`/`db pull` after `ParseDatabaseConfig`).
+ * Go's `Config.Load` -> `loadNestedEnv` calls `godotenv.Load`, which `os.Setenv`s every project
+ * `.env` key not already present in the shell env (`godotenv@v1.5.1/godotenv.go:184-200`) — a
+ * REAL process-wide mutation that persists for the rest of that Go process, so a later
+ * `viper.GetBool("DEBUG")` (e.g. `pgdelta.ApplyDeclarative`, `apply.go:332,342`) sees a
+ * `SUPABASE_DEBUG` set only in `supabase/.env`. This port's own `legacyLoadProjectEnv` is
+ * deliberately pure (no `process.env` side effect, see its doc comment), so callers that need
+ * that same env-file value for a `viper.GetBool`-shaped read must pass the loaded map through
+ * explicitly instead — same shape as {@link legacyResolveYesWithProjectEnv}/
+ * {@link legacyResolveExperimentalWithProjectEnv} above (review: PRRT_kwDOErm0O86XL_oz).
+ * Shell *presence* — any value, including `false`, empty, or garbage — suppresses the file
+ * value entirely; an explicit `--debug` — including `--debug=false` — wins over both, matching
+ * viper's bound-pflag precedence. `projectEnv` is the loaded map from `legacyLoadProjectEnv`
+ * (or `legacyReadDbToml`'s re-export of it). Existing bare {@link LegacyDebugFlag}/
+ * {@link legacyResolveDebug} call sites are unaffected — this is additive, for call sites that
+ * opt in.
+ */
+export const legacyResolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =>
+  Effect.gen(function* () {
+    const flag = yield* LegacyDebugFlag;
+    const cliArgs = yield* CliArgs;
+    if (legacyDebugFlagExplicitlyFalse(cliArgs.args)) {
+      return false;
+    }
+    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
+  });
