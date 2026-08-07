@@ -480,6 +480,16 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.captcha.enabled",
   "auth.email.smtp.enabled",
   "auth.email.smtp.port",
+  // `auth.email.smtp.pass` is a `config.Secret` (`pkg/config/auth.go:260`), decrypted uniformly
+  // by Go's `DecryptSecretHookFunc` decode hook regardless of which viper tier supplied the
+  // raw value — so when a matched remote block sets it, Go's `v.Set` (override tier) wins over
+  // `AutomaticEnv` and the decode hook decrypts the REMOTE's value; an ambient malformed
+  // `SUPABASE_AUTH_EMAIL_SMTP_PASS` never reaches decryption at all. `legacyResolveAuthEmailSmtp`
+  // previously ran `legacyEnvOverride` unconditionally before decrypting, so that same malformed
+  // env value could win over a matched remote's valid `pass` and throw, aborting the whole
+  // synchronous `legacyResolveLocalConfigValues` call — same bug class as `.enabled`/`.port`
+  // above, just for this Secret-typed leaf (review: PRRT_kwDOErm0O86XJYol).
+  "auth.email.smtp.pass",
   // Not read by THIS reader's own resolved fields — tracked so `legacyResolveAuthEmail`
   // (`legacy-local-config-values.ts`) also gates its own throw-capable
   // `legacyEnvOverrideBool`/`legacyEnvOverrideUint` calls for these `auth.email.*` scalars,

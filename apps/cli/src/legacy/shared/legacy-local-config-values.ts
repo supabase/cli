@@ -599,9 +599,10 @@ export function legacyResolveAuthEmailSmtp(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
-   * parameter — `auth.email.smtp.enabled`/`.port` are in `LEGACY_ENV_OVERRIDABLE_KEYS`
+   * parameter — `auth.email.smtp.enabled`/`.port`/`.pass` are in `LEGACY_ENV_OVERRIDABLE_KEYS`
    * (`legacy-db-config.toml-read.ts`) because their ungated `legacyEnvOverrideBool`/
-   * `legacyEnvOverridePort` calls below THROW on a malformed override even when a matched remote
+   * `legacyEnvOverridePort`/`legacyEnvOverride` calls below THROW (directly, or via
+   * `legacyDecryptAuthSecret` for `.pass`) on a malformed override even when a matched remote
    * block already set them, which would abort the whole caller (`legacyResolveLocalConfigValues`,
    * and the shadow it feeds) on an env value Go silently ignores. Defaults to empty for
    * `start.handler.ts`'s callers, which never resolve a `[remotes.<ref>]` block for this read.
@@ -646,16 +647,24 @@ export function legacyResolveAuthEmailSmtp(
     // Go's `Auth.Email.Smtp.Pass` is a `config.Secret` (`pkg/config/auth.go:260`),
     // decrypted by `DecryptSecretHookFunc` at decode time for both the TOML
     // value and any env override — same treatment as `jwt_secret`/the API
-    // keys below, via the same `legacyDecryptAuthSecret` helper.
-    pass:
-      legacyDecryptAuthSecret(
-        legacyEnvOverride(
-          "SUPABASE_AUTH_EMAIL_SMTP_PASS",
+    // keys below, via the same `legacyDecryptAuthSecret` helper. Same remote-over-env
+    // precedence as `.enabled`/`.port` above — `auth.email.smtp.pass` is now in
+    // `LEGACY_ENV_OVERRIDABLE_KEYS` because an ungated `legacyEnvOverride` call here let a
+    // malformed ambient `SUPABASE_AUTH_EMAIL_SMTP_PASS` outrank a matched remote's own valid
+    // `pass` and throw during decryption, aborting the whole caller (review: PRRT_kwDOErm0O86XJYol).
+    pass: remoteOverrideKeys.has("auth.email.smtp.pass")
+      ? (legacyDecryptAuthSecret(
           typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
           projectEnvValues,
-        ) ?? "",
-        projectEnvValues,
-      ) ?? "",
+        ) ?? "")
+      : (legacyDecryptAuthSecret(
+          legacyEnvOverride(
+            "SUPABASE_AUTH_EMAIL_SMTP_PASS",
+            typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
+            projectEnvValues,
+          ) ?? "",
+          projectEnvValues,
+        ) ?? ""),
     adminEmail:
       legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",

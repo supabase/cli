@@ -1496,6 +1496,7 @@ describe("legacyResolveLocalConfigValues", () => {
   describe("legacyResolveAuthEmailSmtp — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
     afterEach(() => {
       delete process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"];
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_PASS"];
     });
 
     it("suppresses a malformed SUPABASE_AUTH_EMAIL_SMTP_ENABLED when a remote block already set auth.email.smtp.enabled", () => {
@@ -1512,6 +1513,28 @@ describe("legacyResolveLocalConfigValues", () => {
       const authDocument = { email: { smtp: { enabled: true } } };
       expect(() => legacyResolveAuthEmailSmtp(authDocument, undefined)).toThrow(
         'cannot parse "not-a-bool" as a bool',
+      );
+    });
+
+    it("suppresses a malformed SUPABASE_AUTH_EMAIL_SMTP_PASS when a remote block already set auth.email.smtp.pass", () => {
+      // Regression (review: PRRT_kwDOErm0O86XJYol) — same bug class as `.enabled`/`.port`
+      // above, just for this Secret-typed leaf: an ungated env override reached
+      // `legacyDecryptAuthSecret` and threw before the remote's own valid `pass` was used.
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_PASS"] = "encrypted:not-a-real-ciphertext";
+      const authDocument = { email: { smtp: { enabled: true, pass: "remote-pass" } } };
+      const resolved = legacyResolveAuthEmailSmtp(
+        authDocument,
+        undefined,
+        new Set(["auth.email.smtp.pass"]),
+      );
+      expect(resolved?.pass).toBe("remote-pass");
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_EMAIL_SMTP_PASS when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_PASS"] = "encrypted:not-a-real-ciphertext";
+      const authDocument = { email: { smtp: { enabled: true, pass: "remote-pass" } } };
+      expect(() => legacyResolveAuthEmailSmtp(authDocument, undefined)).toThrow(
+        "failed to parse config: missing private key",
       );
     });
   });
