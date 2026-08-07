@@ -320,6 +320,17 @@ func init() {
 		viper.AutomaticEnv()
 	})
 
+	// Shell tab-completion is fully native in the TS shim now (CLI-1965); the
+	// TS entrypoint intercepts completion/__complete/__completeNoDesc before
+	// ever delegating to this binary, so cobra's own completion command is
+	// unreachable dead weight here. This only removes the visible
+	// `completion <shell>` command — cobra's ExecuteC() unconditionally
+	// (re-)registers the hidden __complete/__completeNoDesc responder on
+	// every run with no opt-out (command.go's initCompleteCmd), so that
+	// protocol handler stays present but, same as above, unreachable through
+	// the shipped CLI.
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+
 	flags := rootCmd.PersistentFlags()
 	flags.Bool("yes", false, "answer yes to all prompts")
 	flags.Bool("debug", false, "output debug logs to stderr")
