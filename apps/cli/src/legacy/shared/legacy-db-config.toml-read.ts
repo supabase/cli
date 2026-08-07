@@ -478,6 +478,14 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.mfa.web_authn.verify_enabled",
   "auth.mfa.max_enrolled_factors",
   "auth.captcha.enabled",
+  // `auth.captcha.secret` is a `config.Secret` (`pkg/config/auth.go:292`), decrypted the same
+  // way `auth.email.smtp.pass` below is — `legacyResolveAuthCaptcha`'s ungated `legacyEnvOverride`
+  // call let a malformed ambient `SUPABASE_AUTH_CAPTCHA_SECRET` outrank a matched remote's own
+  // valid `secret` and throw during decryption, aborting the whole synchronous
+  // `legacyResolveLocalConfigValues` call (and the shadow it feeds) on a value Go's `v.Set`
+  // (override tier, above `AutomaticEnv`) silently ignores — same bug class as `.pass` below
+  // (review: PRRT_kwDOErm0O86XJ4HR).
+  "auth.captcha.secret",
   "auth.email.smtp.enabled",
   "auth.email.smtp.port",
   // `auth.email.smtp.pass` is a `config.Secret` (`pkg/config/auth.go:260`), decrypted uniformly

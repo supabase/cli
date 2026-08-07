@@ -708,12 +708,13 @@ export function legacyResolveAuthCaptcha(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
-   * parameter — `auth.captcha.enabled` is in `LEGACY_ENV_OVERRIDABLE_KEYS`
-   * (`legacy-db-config.toml-read.ts`) because the ungated `legacyEnvOverrideBool` call below
-   * THROWS on a malformed override even when a matched remote block already set it, which would
-   * abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on an env
-   * value Go silently ignores. Defaults to empty for `start.handler.ts`'s callers, which never
-   * resolve a `[remotes.<ref>]` block for this config read.
+   * parameter — `auth.captcha.enabled`/`.secret` are in `LEGACY_ENV_OVERRIDABLE_KEYS`
+   * (`legacy-db-config.toml-read.ts`) because their ungated `legacyEnvOverrideBool`/
+   * `legacyEnvOverride` calls below THROW (directly, or via `legacyDecryptAuthSecret` for
+   * `.secret`) on a malformed override even when a matched remote block already set them, which
+   * would abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on
+   * an env value Go silently ignores. Defaults to empty for `start.handler.ts`'s callers, which
+   * never resolve a `[remotes.<ref>]` block for this config read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyCaptchaInput | undefined {
@@ -738,10 +739,19 @@ export function legacyResolveAuthCaptcha(
                 projectEnvValues,
               )
             : captcha.provider,
+        // Go's `Auth.Captcha.Secret` is a `config.Secret` (`pkg/config/auth.go:292`), decrypted
+        // by `DecryptSecretHookFunc` at decode time — same treatment as `auth.email.smtp.pass`
+        // above. Same remote-over-env precedence as `.enabled` above — `auth.captcha.secret` is
+        // in `LEGACY_ENV_OVERRIDABLE_KEYS` because an ungated `legacyEnvOverride` call here let a
+        // malformed ambient `SUPABASE_AUTH_CAPTCHA_SECRET` outrank a matched remote's own valid
+        // `secret` and throw during decryption, aborting the whole caller
+        // (review: PRRT_kwDOErm0O86XJ4HR).
         secret: legacyDecryptAuthSecret(
-          captchaDoc !== undefined
-            ? legacyEnvOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
-            : captcha.secret,
+          remoteOverrideKeys.has("auth.captcha.secret")
+            ? captcha.secret
+            : captchaDoc !== undefined
+              ? legacyEnvOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
+              : captcha.secret,
           projectEnvValues,
         ),
       }

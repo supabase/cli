@@ -1317,6 +1317,36 @@ describe("legacyResolveLocalConfigValues", () => {
         ),
       ).toThrow('cannot parse "not-a-bool" as a bool');
     });
+
+    it("suppresses a malformed SUPABASE_AUTH_CAPTCHA_SECRET when a remote block already set auth.captcha.secret", () => {
+      // Regression (review: PRRT_kwDOErm0O86XJ4HR) — same bug class as `auth.email.smtp.pass`
+      // (review: PRRT_kwDOErm0O86XJYol): this function's own ungated `legacyEnvOverride` call fed
+      // a malformed ambient override straight into `legacyDecryptAuthSecret`, which throws on an
+      // undecryptable `encrypted:...` value — aborting the whole `legacyResolveLocalConfigValues`
+      // caller (and the shadow it feeds) on an env value Go's `v.Set` (override tier, above
+      // `AutomaticEnv`) never lets reach decryption once a remote block already set the secret.
+      process.env["SUPABASE_AUTH_CAPTCHA_SECRET"] = "encrypted:not-a-real-ciphertext";
+      const authDocument = { captcha: { enabled: true } };
+      const resolved = legacyResolveAuthCaptcha(
+        authDocument,
+        { enabled: true, provider: "hcaptcha", secret: "remote-secret" },
+        undefined,
+        new Set(["auth.captcha.secret"]),
+      );
+      expect(resolved?.secret).toBe("remote-secret");
+    });
+
+    it("still rejects a malformed SUPABASE_AUTH_CAPTCHA_SECRET when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_SECRET"] = "encrypted:not-a-real-ciphertext";
+      const authDocument = { captcha: { enabled: true } };
+      expect(() =>
+        legacyResolveAuthCaptcha(
+          authDocument,
+          { enabled: true, provider: "hcaptcha", secret: "remote-secret" },
+          undefined,
+        ),
+      ).toThrow("failed to parse config: missing private key");
+    });
   });
 
   describe("legacyResolveAuthEmail", () => {
