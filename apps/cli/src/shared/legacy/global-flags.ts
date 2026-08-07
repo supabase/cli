@@ -250,14 +250,30 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
   });
 
 /**
- * True when the raw argv contains an explicit `--debug=<false>` (pflag's `ParseBool` false
- * set). Mirrors {@link legacyYesFlagExplicitlyFalse}/{@link legacyExperimentalFlagExplicitlyFalse}:
- * `--debug` is bound to viper the same way (`apps/cli-go/cmd/root.go:318-334`).
+ * True when the LAST `--debug`/`--debug=<value>` occurrence in argv resolves to a pflag `false`
+ * (`PFLAG_FALSE_VALUES`, matching `ParseBool`'s false set). pflag's `Value.Set` runs for every
+ * occurrence in argv order, so the last one wins: `--debug=false --debug=true` (or a trailing
+ * bare `--debug`) is `true` to Go/pflag, not `false` — the Effect parser itself resolves repeats
+ * first-wins instead (binary-verified precedent for this exact pflag-vs-Effect divergence:
+ * `apps/cli/src/legacy/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
+ * viper the same way as `--yes`/`--experimental` (`apps/cli-go/cmd/root.go:318-334`).
+ * {@link legacyYesFlagExplicitlyFalse}/{@link legacyExperimentalFlagExplicitlyFalse} above have
+ * the identical `Array.some` "any occurrence is false" gap (review: PRRT_kwDOErm0O86XKYiG) —
+ * left as-is here as a pre-existing, cross-cutting fix spanning those two flags too, not folded
+ * into this port (same scoping precedent as this file's own {@link legacyResolveDebug} doc
+ * comment for existing `LegacyDebugFlag` call sites).
  */
-const legacyDebugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
-  args.some(
-    (arg) => arg.startsWith("--debug=") && PFLAG_FALSE_VALUES.has(arg.slice("--debug=".length)),
-  );
+const legacyDebugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
+  let lastExplicitlyFalse = false;
+  for (const arg of args) {
+    if (arg === "--debug") {
+      lastExplicitlyFalse = false;
+    } else if (arg.startsWith("--debug=")) {
+      lastExplicitlyFalse = PFLAG_FALSE_VALUES.has(arg.slice("--debug=".length));
+    }
+  }
+  return lastExplicitlyFalse;
+};
 
 /**
  * `--debug` resolved with Go's viper `AutomaticEnv` fallback: EVERY Go debug read goes
