@@ -456,8 +456,16 @@ function legacyGlobDeclaredSchemaPaths(
       // by both this and `legacyGlobPattern`) reproduce Go's semantics directly — no gap in
       // that shared module needs fixing first.
       const rawResolved = legacyResolveSeedSqlPath(path, rawPattern);
-      const pattern = path.sep === "/" ? rawResolved : rawResolved.replaceAll("\\", "/");
-      if (legacyPathMatch(pattern, "").badPattern) {
+      // Go's `Glob.files` (`config.go:145`) only ever ToSlashes the pattern for the internal
+      // `fs.Glob` CALL itself — `hasGlobMeta`, the `skipped` slice, and both "no files matched
+      // pattern" error sites all keep using the loop's own `pattern` variable, which is NEVER
+      // ToSlash'd (`config.go:143-154`). So on Windows, an absolute entry like
+      // `C:\schemas\*.sql` must glob-match as `C:/schemas/*.sql` but still ERROR/report as
+      // `C:\schemas\*.sql` — `matchPattern` (slashed) feeds `legacyPathMatch`/`legacyGlobPattern`
+      // below; `rawResolved` (untouched) feeds every diagnostic (`skipped`/`problems`) so stderr
+      // stays byte-compatible with Go's un-ToSlash'd `pattern`.
+      const matchPattern = path.sep === "/" ? rawResolved : rawResolved.replaceAll("\\", "/");
+      if (legacyPathMatch(matchPattern, "").badPattern) {
         problems.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
         continue;
       }
@@ -477,21 +485,22 @@ function legacyGlobDeclaredSchemaPaths(
       // Go's `sort.Strings(matches)` (`config.go:154`) — byte order, not JS's default UTF-16
       // code-unit order; see `legacyCompareUtf8Bytes`'s own doc comment.
       const matches =
-        pattern.length === 0
+        matchPattern.length === 0
           ? []
-          : [...(yield* legacyGlobPattern(fs, path, workdir, pattern))].sort(
+          : [...(yield* legacyGlobPattern(fs, path, workdir, matchPattern))].sort(
               legacyCompareUtf8Bytes,
             );
       if (matches.length === 0) {
-        if (legacyHasConfigGlobMeta(pattern)) {
-          skipped.push(pattern);
+        if (legacyHasConfigGlobMeta(rawResolved)) {
+          skipped.push(rawResolved);
           continue;
         }
         // Go always resolves `SchemaPaths` (`config.go:976-979`) before this error can fire
         // (resolution happens at config-load time, ahead of any glob), so the error must show
         // the RESOLVED, `supabase/`-prefixed pattern, matching the all-skipped-globs branch
-        // below — not the raw, caller-supplied one.
-        problems.push(`no files matched pattern: ${pattern}`);
+        // below — not the raw, caller-supplied one. Still `rawResolved`, not `matchPattern`:
+        // see this loop's own doc comment above on why Go's error text is never ToSlash'd.
+        problems.push(`no files matched pattern: ${rawResolved}`);
         continue;
       }
       for (const match of matches) {
