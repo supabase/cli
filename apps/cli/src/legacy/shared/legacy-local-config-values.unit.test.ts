@@ -945,6 +945,28 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig();
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
+
+    it("suppresses a malformed SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS when a remote block already set experimental.pgdelta.format_options (review: PRRT_kwDOErm0O86XLe6o)", () => {
+      // Same `experimental.webhooks.enabled` bug class, just for the OTHER Viper-bound
+      // `[experimental]` leaf this resolver derives: `experimental.pgdelta.format_options` is
+      // ALSO in `LEGACY_ENV_OVERRIDABLE_KEYS`, so a matched `[remotes.<ref>]` block's own valid
+      // value must win over a malformed ambient env override, matching Go's `mergeRemoteConfig`
+      // (`v.Set` above `AutomaticEnv`).
+      process.env["SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS"] = "{not valid json";
+      const config = baseConfig({
+        experimental: { pgdelta: { format_options: '{"keywordCase":"upper"}' } },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          WORKDIR,
+          undefined,
+          undefined,
+          new Set(["experimental.pgdelta.format_options"]),
+        ),
+      ).not.toThrow();
+    });
   });
 
   describe("SUPABASE_API_TLS_ENABLED env override", () => {

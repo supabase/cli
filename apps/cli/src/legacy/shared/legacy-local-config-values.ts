@@ -3672,12 +3672,21 @@ export function legacyResolveLocalConfigValues(
         "experimental.webhooks.enabled",
         projectEnvValues,
       );
-  const pgdeltaFormatOptions =
-    legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS",
-      config.experimental.pgdelta?.format_options,
-      projectEnvValues,
-    ) ?? "";
+  // `experimental.pgdelta.format_options` is ALSO in `LEGACY_ENV_OVERRIDABLE_KEYS`
+  // (`legacy-db-config.toml-read.ts`), which already gates its OWN `format_options` read the
+  // same way (`remoteOverrideKeys.has("experimental.pgdelta.format_options")`) — this resolver's
+  // copy just never got the matching gate: an ungated `legacyEnvOverride` here let ambient
+  // `SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS` beat a matched remote's own `format_options`,
+  // the opposite of Go's `mergeRemoteConfig`, which installs the remote leaf with `v.Set` ABOVE
+  // `AutomaticEnv` (`config.go:635-640`) — same remote-over-env precedence as `webhooksEnabled`
+  // immediately above.
+  const pgdeltaFormatOptions = remoteWins("experimental.pgdelta.format_options")
+    ? (config.experimental.pgdelta?.format_options ?? "")
+    : (legacyEnvOverride(
+        "SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS",
+        config.experimental.pgdelta?.format_options,
+        projectEnvValues,
+      ) ?? "");
 
   // Every PURE Config.Validate check this module/legacy-config-validate.ts jointly own is
   // deferred to this single call, positioned here (where the last of those checks ran until
