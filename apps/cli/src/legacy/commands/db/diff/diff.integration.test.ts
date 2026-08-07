@@ -394,6 +394,36 @@ describe("legacy db diff", () => {
     },
   );
 
+  it.effect(
+    "a linked [remotes.<ref>]'s own project_id outranks a conflicting SUPABASE_PROJECT_ID for the pg-delta Deno-cache volume (review: PRRT_kwDOErm0O86XI1w8)",
+    () => {
+      // `legacyReadDbToml` already gates `cfg.projectId` behind `remoteOverrideKeys` so it
+      // reflects the matched remote's OWN `project_id` (review: PRRT_kwDOErm0O86XHGDL) — but
+      // `legacyResolveLocalProjectId` tries `cliConfig.projectId` (raw, ungated env) FIRST, so
+      // an ambient `SUPABASE_PROJECT_ID` that differs from the matched remote must be
+      // suppressed here too, or it silently wins back over the already-gated `cfg.projectId`.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        ["[remotes.staging]", 'project_id = "abcdefghijklmnopqrst"', ""].join("\n"),
+      );
+      const s = setup(tmp.current, {
+        isLocal: false,
+        linkedRef: "abcdefghijklmnopqrst",
+        diffSql: "create table remote ();\n",
+        // Simulates an ambient `SUPABASE_PROJECT_ID` scoped to an unrelated (e.g. local)
+        // project — must NOT win over the matched remote's own `project_id`.
+        projectId: Option.some("unrelated-env-project"),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ linked: Option.some(true), usePgDelta: Option.some(true) }));
+        expect(s.edgeCalls[0]?.binds).toContain(
+          "supabase_edge_runtime_abcdefghijklmnopqrst:/root/.cache/deno:rw",
+        );
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
     // Go's own shadow test coverage hardcodes PG14 (`diff_test.go`); the PG15+ short-id
     // DNS resolution path was verified separately (empirical Docker probe, see the

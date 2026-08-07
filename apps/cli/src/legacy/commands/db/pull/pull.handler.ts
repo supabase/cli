@@ -327,9 +327,20 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       // `supabase_edge_runtime_` Deno-cache volume — see `legacy-pgdelta.seam.layer.ts`'s
       // `ensureLocalDatabaseStarted` for the same resolution already established for this
       // command family (review: PRRT_kwDOErm0O86XAlIw).
+      //
+      // `toml.appliedRemote !== undefined` suppresses that env argument entirely: `toml.projectId`
+      // already reflects the matched `[remotes.<ref>]` block's own `project_id` at viper's
+      // override tier (`legacyReadDbToml`'s `remoteOverrideKeys.has("project_id")` gate, review:
+      // PRRT_kwDOErm0O86XHGDL) — but `legacyResolveLocalProjectId` tries its FIRST argument
+      // before its second, so passing the raw, ungated `cliConfig.projectId` here re-introduced
+      // exactly the bug that fix closed for `toml.projectId` itself: an unrelated ambient
+      // `SUPABASE_PROJECT_ID` would still win over the matched remote's own id, mounting the
+      // wrong Deno-cache volume for a linked pg-delta pull. Mirrors the same suppression
+      // `legacy-local-project-context.ts`'s own `legacyLoadLocalProjectContext` already applies,
+      // and `diff.handler.ts`'s identical fix (review: PRRT_kwDOErm0O86XI1w8).
       projectId: legacySanitizeProjectId(
         legacyResolveLocalProjectId(
-          Option.getOrUndefined(cliConfig.projectId),
+          toml.appliedRemote !== undefined ? undefined : Option.getOrUndefined(cliConfig.projectId),
           Option.getOrUndefined(toml.projectId),
           cliConfig.workdir,
         ),

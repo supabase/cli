@@ -712,6 +712,36 @@ describe("legacy db pull", () => {
   );
 
   it.effect(
+    "a linked [remotes.<ref>]'s own project_id outranks a conflicting SUPABASE_PROJECT_ID for the pg-delta Deno-cache volume (review: PRRT_kwDOErm0O86XI1w8)",
+    () => {
+      // `legacyReadDbToml` already gates `toml.projectId` behind `remoteOverrideKeys` so it
+      // reflects the matched remote's OWN `project_id` (review: PRRT_kwDOErm0O86XHGDL) — but
+      // `legacyResolveLocalProjectId` tries `cliConfig.projectId` (raw, ungated env) FIRST, so
+      // an ambient `SUPABASE_PROJECT_ID` that differs from the matched remote must be
+      // suppressed here too, or it silently wins back over the already-gated `toml.projectId`
+      // (mirrors `diff.integration.test.ts`'s identically-named test).
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        ["[remotes.staging]", 'project_id = "abcdefghijklmnopqrst"', ""].join("\n"),
+      );
+      const s = setup(tmp.current, {
+        edgeStdout: EXPORT_JSON,
+        resolvedRef: "abcdefghijklmnopqrst",
+        // Simulates an ambient `SUPABASE_PROJECT_ID` scoped to an unrelated (e.g. local)
+        // project — must NOT win over the matched remote's own `project_id`.
+        projectId: Option.some("unrelated-env-project"),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ declarative: Option.some(true), linked: Option.some(true) }));
+        expect(s.edgeCalls[0]?.binds).toContain(
+          "supabase_edge_runtime_abcdefghijklmnopqrst:/root/.cache/deno:rw",
+        );
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
     "--declarative --use-pg-delta=false stays in migration mode (Go last-occurrence-wins)",
     () => {
       // Go binds both flags to one variable, so the last occurrence wins: this

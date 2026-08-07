@@ -437,9 +437,20 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // `supabase_edge_runtime_` Deno-cache volume — see `legacy-pgdelta.seam.layer.ts`'s
       // `ensureLocalDatabaseStarted` for the same resolution already established for this
       // command family (review: PRRT_kwDOErm0O86XAlIw).
+      //
+      // `cfg.appliedRemote !== undefined` suppresses that env argument entirely: `cfg.projectId`
+      // already reflects the matched `[remotes.<ref>]` block's own `project_id` at viper's
+      // override tier (`legacyReadDbToml`'s `remoteOverrideKeys.has("project_id")` gate, review:
+      // PRRT_kwDOErm0O86XHGDL) — but `legacyResolveLocalProjectId` tries its FIRST argument
+      // before its second, so passing the raw, ungated `cliConfig.projectId` here re-introduced
+      // exactly the bug that fix closed for `cfg.projectId` itself: an unrelated ambient
+      // `SUPABASE_PROJECT_ID` would still win over the matched remote's own id, mounting the
+      // wrong Deno-cache volume for a linked pg-delta diff. Mirrors the same suppression
+      // `legacy-local-project-context.ts`'s own `legacyLoadLocalProjectContext` already applies
+      // (review: PRRT_kwDOErm0O86XI1w8).
       projectId: legacySanitizeProjectId(
         legacyResolveLocalProjectId(
-          Option.getOrUndefined(cliConfig.projectId),
+          cfg.appliedRemote !== undefined ? undefined : Option.getOrUndefined(cliConfig.projectId),
           Option.getOrUndefined(cfg.projectId),
           cliConfig.workdir,
         ),
