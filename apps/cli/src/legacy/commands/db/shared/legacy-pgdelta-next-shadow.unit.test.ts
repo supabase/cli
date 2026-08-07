@@ -1,64 +1,33 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Layer } from "effect";
+import { Effect, Layer } from "effect";
 
-import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { legacyPgDeltaNextShadowLayer } from "./legacy-pgdelta-next-shadow.layer.ts";
 import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
+import { legacyParseNextShadowProtocol } from "./legacy-pgdelta.seam.layer.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
 
-class PrimaryFailure extends Data.TaggedError("PrimaryFailure")<{
-  readonly message: string;
-}> {}
-
-function setup(
-  opts: {
-    readonly sourceUrl?: string;
-    readonly scratchUrl?: string;
-    readonly cleanupDefect?: boolean;
-  } = {},
-) {
+function setup() {
   const state = {
     provisionCalls: [] as object[],
-    removedContainers: [] as string[],
     legacyMethodCalls: [] as string[],
   };
   const seamLayer = Layer.succeed(
     LegacyDeclarativeSeam,
     LegacyDeclarativeSeam.of({
-      exportCatalog: () =>
-        Effect.sync(() => {
-          state.legacyMethodCalls.push("exportCatalog");
-          return "catalog.json";
-        }),
-      execInherit: () =>
-        Effect.sync(() => {
-          state.legacyMethodCalls.push("execInherit");
-          return 0;
-        }),
-      ensureLocalDatabaseStarted: () =>
-        Effect.sync(() => {
-          state.legacyMethodCalls.push("ensureLocalDatabaseStarted");
-        }),
-      ensureLocalPostgresImageCurrent: () =>
-        Effect.sync(() => {
-          state.legacyMethodCalls.push("ensureLocalPostgresImageCurrent");
-        }),
-      provisionShadow: (input) =>
+      exportCatalog: () => Effect.die("exportCatalog not used"),
+      execInherit: () => Effect.die("execInherit not used"),
+      ensureLocalDatabaseStarted: () => Effect.die("ensureLocalDatabaseStarted not used"),
+      ensureLocalPostgresImageCurrent: () => Effect.die("ensureLocalPostgresImageCurrent not used"),
+      provisionShadow: () => Effect.die("provisionShadow not used"),
+      provisionNextShadow: (input) =>
         Effect.sync(() => {
           state.provisionCalls.push(input);
           return {
-            container: "next-shadow-container",
-            sourceUrl: opts.sourceUrl ?? "postgresql://postgres@localhost:55432/postgres",
-            targetUrlOverride: opts.scratchUrl,
+            migrationsUrl: "postgresql://postgres:secret@localhost:55432/postgres",
+            declarativeUrl: "postgresql://postgres:secret@localhost:55433/postgres",
           };
         }),
-      removeShadowContainer: (container) =>
-        Effect.gen(function* () {
-          state.removedContainers.push(container);
-          if (opts.cleanupDefect === true) {
-            return yield* Effect.die("cleanup failed");
-          }
-        }),
+      removeShadowContainer: () => Effect.die("removeShadowContainer not used"),
     }),
   );
 
@@ -69,86 +38,69 @@ function setup(
 }
 
 describe("LegacyPgDeltaNextShadow", () => {
-  it.effect("provisions the exact next mode and exposes the migrated and scratch URLs", () => {
-    const { layer, state } = setup({
-      scratchUrl: "postgresql://postgres@localhost:55432/pgdelta_declarative",
+  it("validates the dual-shadow JSON protocol structurally", () => {
+    expect(
+      legacyParseNextShadowProtocol(
+        JSON.stringify({
+          migrations: {
+            containerId: "migrations-container",
+            url: "postgresql://postgres@localhost:55432/postgres",
+          },
+          declarative: {
+            containerId: "declarative-container",
+            url: "postgresql://postgres@localhost:55433/postgres",
+          },
+        }),
+      ),
+    ).toEqual({
+      migrations: {
+        containerId: "migrations-container",
+        url: "postgresql://postgres@localhost:55432/postgres",
+      },
+      declarative: {
+        containerId: "declarative-container",
+        url: "postgresql://postgres@localhost:55433/postgres",
+      },
     });
+
+    expect(() => legacyParseNextShadowProtocol("not json")).toThrow();
+    expect(() => legacyParseNextShadowProtocol('{"migrations":{}}')).toThrow();
+    expect(() =>
+      legacyParseNextShadowProtocol(
+        JSON.stringify({
+          migrations: { containerId: "same", url: "postgresql://localhost/postgres" },
+          declarative: { containerId: "same", url: "postgresql://localhost/postgres" },
+        }),
+      ),
+    ).toThrow("next-shadow containers must be distinct");
+  });
+
+  it.effect("delegates to the isolated next-shadow seam and exposes both postgres URLs", () => {
+    const { layer, state } = setup();
 
     return Effect.gen(function* () {
       const databases = yield* Effect.scoped(
         Effect.gen(function* () {
           const shadow = yield* LegacyPgDeltaNextShadow;
-          const acquired = yield* shadow.provision({
+          return yield* shadow.provision({
             schema: ["public", "extensions"],
             projectRef: "linked-project",
           });
-          expect(state.removedContainers).toEqual([]);
-          return acquired;
         }),
       );
 
       expect(databases).toEqual({
-        migrationsUrl: "postgresql://postgres@localhost:55432/postgres",
-        scratchUrl: "postgresql://postgres@localhost:55432/pgdelta_declarative",
+        migrationsUrl: "postgresql://postgres:secret@localhost:55432/postgres",
+        declarativeUrl: "postgresql://postgres:secret@localhost:55433/postgres",
       });
-      expect(Object.keys(databases)).toEqual(["migrationsUrl", "scratchUrl"]);
+      expect(Object.keys(databases)).toEqual(["migrationsUrl", "declarativeUrl"]);
       expect(state.provisionCalls).toEqual([
         {
-          mode: "pgdelta-next",
-          targetLocal: false,
-          usePgDelta: false,
           schema: ["public", "extensions"],
           projectRef: "linked-project",
         },
       ]);
-      expect(state.removedContainers).toEqual(["next-shadow-container"]);
       expect(state.legacyMethodCalls).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("cleans up when the caller fails and never lets cleanup mask that failure", () => {
-    const { layer, state } = setup({
-      scratchUrl: "postgresql://postgres@localhost:55432/pgdelta_declarative",
-      cleanupDefect: true,
-    });
-    const primary = new PrimaryFailure({ message: "caller failed" });
-
-    return Effect.gen(function* () {
-      const error = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const shadow = yield* LegacyPgDeltaNextShadow;
-          yield* shadow.provision({ schema: [] });
-          return yield* Effect.fail(primary);
-        }),
-      ).pipe(Effect.flip);
-
-      expect(error).toEqual(primary);
-      expect(state.removedContainers).toEqual(["next-shadow-container"]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("cleans up and fails when the declarative scratch URL is missing", () => {
-    const { layer, state } = setup();
-
-    return Effect.gen(function* () {
-      const error = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const shadow = yield* LegacyPgDeltaNextShadow;
-          return yield* shadow.provision({ schema: ["public"] });
-        }),
-      ).pipe(Effect.flip);
-
-      expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
-      expect(error.message).toContain("missing declarative scratch URL");
-      expect(state.removedContainers).toEqual(["next-shadow-container"]);
-      expect(state.provisionCalls).toEqual([
-        {
-          mode: "pgdelta-next",
-          targetLocal: false,
-          usePgDelta: false,
-          schema: ["public"],
-        },
-      ]);
     }).pipe(Effect.provide(layer));
   });
 });

@@ -26,6 +26,12 @@ import {
   legacyPgDeltaNextBlockingDiagnosticMessage,
 } from "./legacy-pgdelta-next-diagnostics.ts";
 
+/** Shared by both declarative planner entrypoints over the full isolated baseline. */
+export const legacyPgDeltaNextIsolatedShadowPlanOptions = {
+  isolatedShadow: true,
+  seedAssumedSchemas: false,
+} as const;
+
 function legacyPgDeltaNextConnectSuggestion(cause: unknown): string | undefined {
   if (cause instanceof LegacyDbConnectError) return cause.suggestion;
   if (typeof cause !== "object" || cause === null) return undefined;
@@ -165,7 +171,9 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       diffExplicit: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            let shadow: { readonly migrationsUrl: string; readonly scratchUrl: string } | undefined;
+            let shadow:
+              | { readonly migrationsUrl: string; readonly declarativeUrl: string }
+              | undefined;
             const migrationsEndpoint =
               input.source.kind === "migrations"
                 ? input.source
@@ -230,8 +238,8 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
             });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
-            const scratch = parseLegacyConnectionString(shadow.scratchUrl);
-            if (migrations === undefined || scratch === undefined) {
+            const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
+            if (migrations === undefined || declarative === undefined) {
               return yield* Effect.fail(
                 new LegacyPgDeltaEngineError({
                   message: "failed to parse pg-delta next shadow database URL",
@@ -239,23 +247,22 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                 }),
               );
             }
-            const migrationsPool = yield* legacyAcquirePgPool(migrations, {
-              isLocal: true,
-              dnsResolver: "native",
-            });
             if (input.declarativeFiles !== undefined) {
-              const scratchPool = yield* legacyAcquirePgPool(scratch, {
-                isLocal: true,
-                dnsResolver: "native",
-              });
+              const [migrationsPool, declarativePool] = yield* Effect.all(
+                [
+                  legacyAcquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }),
+                  legacyAcquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }),
+                ],
+                { concurrency: 2 },
+              );
               const result = yield* adapter.planDeclarativeSchema({
                 targetPool: migrationsPool,
-                shadowPool: scratchPool,
+                shadowPool: declarativePool,
                 files: input.declarativeFiles,
                 allowDrops: true,
                 debug: input.debug,
                 reorder: true,
-                seedAssumedSchemas: true,
+                ...legacyPgDeltaNextIsolatedShadowPlanOptions,
                 schema: input.schema,
                 ...(input.declarativeManifest !== undefined
                   ? { manifest: input.declarativeManifest }
@@ -271,6 +278,10 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               yield* rejectBlockingDiagnostic("declarativePlan", result.diagnostics);
               return normalizeNextDiff(result, debugDirectory);
             }
+            const migrationsPool = yield* legacyAcquirePgPool(migrations, {
+              isLocal: true,
+              dnsResolver: "native",
+            });
             const desiredPool = yield* acquireDatabase(input.target);
             const result = yield* adapter.diff({
               sourcePool: migrationsPool,
@@ -321,8 +332,8 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
           Effect.gen(function* () {
             const shadow = yield* shadowService.provision({ schema: input.schema });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
-            const scratch = parseLegacyConnectionString(shadow.scratchUrl);
-            if (migrations === undefined || scratch === undefined) {
+            const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
+            if (migrations === undefined || declarative === undefined) {
               return yield* Effect.fail(
                 new LegacyPgDeltaEngineError({
                   message: "failed to parse pg-delta next shadow database URL",
@@ -330,21 +341,21 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                 }),
               );
             }
-            const [migrationsPool, scratchPool] = yield* Effect.all(
+            const [migrationsPool, declarativePool] = yield* Effect.all(
               [
                 legacyAcquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }),
-                legacyAcquirePgPool(scratch, { isLocal: true, dnsResolver: "native" }),
+                legacyAcquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }),
               ],
               { concurrency: 2 },
             );
             const result = yield* adapter.planDeclarativeSchema({
               targetPool: migrationsPool,
-              shadowPool: scratchPool,
+              shadowPool: declarativePool,
               files: input.files,
               allowDrops: true,
               debug: input.debug,
               reorder: true,
-              seedAssumedSchemas: true,
+              ...legacyPgDeltaNextIsolatedShadowPlanOptions,
               schema: input.schema,
               ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
             });

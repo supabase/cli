@@ -1,4 +1,4 @@
-import { Context, type Effect } from "effect";
+import { Context, type Effect, type Scope } from "effect";
 
 import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 
@@ -11,12 +11,8 @@ export type LegacyCatalogMode = "baseline" | "migrations" | "declarative";
  *    `db pull` diff source), plus the local-target declarative branch.
  *  - `declarative`: a bare shadow with no baseline/migrations (the `db pull
  *    --declarative` empty export source).
- *  - `pgdelta-next`: platform baseline + local migrations in `postgres`, plus
- *    an empty same-cluster `pgdelta_declarative` scratch database. Declarative
- *    SQL is deliberately not applied by Go in this mode; the TypeScript next
- *    engine loads it later through `planSchemaFiles`.
  */
-type LegacyShadowMode = "diff" | "declarative" | "pgdelta-next";
+type LegacyShadowMode = "diff" | "declarative";
 
 /** A live shadow database left running for the caller to diff against and remove. */
 export interface LegacyShadowSource {
@@ -26,11 +22,17 @@ export interface LegacyShadowSource {
   readonly sourceUrl: string;
   /**
    * Optional second live database. For legacy diff it replaces the target with
-   * `contrib_regression` after Go applies declarative schemas. For
-   * `pgdelta-next` it is the empty declarative scratch database; TypeScript
-   * loads the declarative files later through `planSchemaFiles`.
+   * `contrib_regression` after Go applies declarative schemas.
    */
   readonly targetUrlOverride: string | undefined;
+}
+
+/** The independently hosted databases used by the pg-delta next planner. */
+export interface LegacyNextShadowSource {
+  /** Platform baseline with local configuration and migrations applied. */
+  readonly migrationsUrl: string;
+  /** Platform baseline with local configuration, ready for declarative SQL. */
+  readonly declarativeUrl: string;
 }
 
 interface LegacyDeclarativeSeamShape {
@@ -116,6 +118,16 @@ interface LegacyDeclarativeSeamShape {
      */
     readonly projectRef?: string;
   }) => Effect.Effect<LegacyShadowSource, LegacyDeclarativeShadowDbError>;
+  /**
+   * Provisions the two isolated pg-delta next shadows through the Go seam's
+   * JSON/ack ownership protocol. Both containers are owned by the current
+   * Effect scope before the child is acknowledged, and are independently
+   * removed when that scope closes.
+   */
+  readonly provisionNextShadow: (opts: {
+    readonly schema: ReadonlyArray<string>;
+    readonly projectRef?: string;
+  }) => Effect.Effect<LegacyNextShadowSource, LegacyDeclarativeShadowDbError, Scope.Scope>;
   /**
    * Removes a shadow database container left running by `provisionShadow`
    * (`docker rm -f <id>`). Best-effort: a failure to remove is swallowed so it

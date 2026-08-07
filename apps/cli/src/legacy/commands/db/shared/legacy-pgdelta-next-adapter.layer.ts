@@ -1,7 +1,12 @@
 import { Effect, Layer } from "effect";
 import type { Pool } from "pg";
 import { serializeSnapshot, encodeId } from "@supabase/pg-delta/core";
-import { buildSchemaExport, planSchemaFiles, renderPlanFiles } from "@supabase/pg-delta/frontends";
+import {
+  buildSchemaExport,
+  planSchemaFiles,
+  renderPlanFiles,
+  ShadowLoadError,
+} from "@supabase/pg-delta/frontends";
 import {
   type IntegrationProfile,
   resolveProfile,
@@ -121,6 +126,8 @@ export interface LegacyPgDeltaNextLibraries<FactBase, PlanOptions extends object
 
 function legacyPgDeltaNextMessage(operation: LegacyPgDeltaNextOperation, cause: unknown): string {
   const detail = cause instanceof Error ? cause.message : String(cause);
+  const diagnostics =
+    cause instanceof ShadowLoadError ? cause.details.map((diagnostic) => diagnostic.message) : [];
   const label =
     operation === "declarativeExport"
       ? "Declarative schema export"
@@ -129,7 +136,8 @@ function legacyPgDeltaNextMessage(operation: LegacyPgDeltaNextOperation, cause: 
         : operation === "snapshotCapture"
           ? "Snapshot capture"
           : "Database diff";
-  return `${label} failed: ${detail}`;
+  const renderedDiagnostics = diagnostics.map((diagnostic) => `  - ${diagnostic}`).join("\n");
+  return `${label} failed: ${detail}${renderedDiagnostics === "" ? "" : `\n${renderedDiagnostics}`}`;
 }
 
 function legacyTryPgDeltaNext<Success>(

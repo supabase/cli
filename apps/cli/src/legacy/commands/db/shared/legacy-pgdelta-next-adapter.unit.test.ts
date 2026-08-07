@@ -1,4 +1,5 @@
 import { it } from "@effect/vitest";
+import { ShadowLoadError } from "@supabase/pg-delta/frontends";
 import { Effect } from "effect";
 import { Pool } from "pg";
 import { describe, expect } from "vitest";
@@ -515,6 +516,62 @@ describe("LegacyPgDeltaNextAdapter", () => {
       expect(error.message).toBe("Database diff failed: connection refused for desired database");
       expect(error.cause).toBe(cause);
       yield* Effect.promise(() => Promise.all([sourcePool.end(), desiredPool.end()]));
+    }).pipe(Effect.provide(failingLayer));
+  });
+
+  it.effect("preserves shadow-load diagnostics in the actionable error", () => {
+    const targetPool = new Pool();
+    const shadowPool = new Pool();
+    const cause = new ShadowLoadError("2 files cannot apply", [
+      {
+        code: "stuck_statement",
+        severity: "error",
+        message: 'extensions/pg_cron.sql: extension "pg_cron" already exists',
+      },
+      {
+        code: "stuck_statement",
+        severity: "error",
+        message: 'extensions/pg_net.sql: extension "pg_net" already exists',
+      },
+    ]);
+    const failingLayer = legacyPgDeltaNextAdapterLayerFromLibraries({
+      resolveProfile: async () => {
+        throw new Error("unused");
+      },
+      plan: () => ({ source: "unused", desired: "unused" }),
+      renderPlanFiles: () => ({ changes: false, files: [] }),
+      buildSchemaExport: async () => ({
+        files: [],
+        diagnostics: [],
+        manifest: { redactSecrets: true, scope: "database" },
+      }),
+      planSchemaFiles: async () => {
+        throw cause;
+      },
+      serializeSnapshot: () => "unused",
+      serializePlan: () => "unused",
+      encodeSubject: (subject: string) => subject,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* LegacyPgDeltaNextAdapter;
+      const error = yield* adapter
+        .planDeclarativeSchema({
+          targetPool,
+          shadowPool,
+          files: [],
+          allowDrops: false,
+          debug: false,
+          isolatedShadow: true,
+          seedAssumedSchemas: false,
+        })
+        .pipe(Effect.flip);
+      expect(error).toBeInstanceOf(LegacyPgDeltaNextError);
+      expect(error.message).toBe(
+        'Declarative schema planning failed: 2 files cannot apply\n  - extensions/pg_cron.sql: extension "pg_cron" already exists\n  - extensions/pg_net.sql: extension "pg_net" already exists',
+      );
+      expect(error.cause).toBe(cause);
+      yield* Effect.promise(() => Promise.all([targetPool.end(), shadowPool.end()]));
     }).pipe(Effect.provide(failingLayer));
   });
 });

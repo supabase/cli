@@ -71,20 +71,6 @@ CREATE SCHEMA IF NOT EXISTS graphql_public;
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
--- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
-
-
---
--- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION pg_net IS 'Async HTTP';
-
-
---
 -- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
 --
 

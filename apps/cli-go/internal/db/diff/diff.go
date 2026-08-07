@@ -192,6 +192,47 @@ func SetupShadowDatabase(ctx context.Context, container string, fsys afero.Fs, o
 	return setupShadowConn(ctx, conn, container, fsys)
 }
 
+var pgDeltaNextDeclarativeExtensionDrops = []struct {
+	name string
+	sql  string
+}{
+	{name: "pgcrypto", sql: "DROP EXTENSION IF EXISTS pgcrypto"},
+	{name: "uuid-ossp", sql: `DROP EXTENSION IF EXISTS "uuid-ossp"`},
+}
+
+// SetupPgDeltaNextDeclarativeShadowDatabase provisions cluster B with the
+// platform baseline but without activating user-managed extensions. Those
+// extensions must come exclusively from declarative SQL so deleting their files
+// can produce DROP EXTENSION plans.
+func SetupPgDeltaNextDeclarativeShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	if utils.Config.Db.MajorVersion != 17 {
+		return errors.Errorf(
+			"pg-delta declarative shadow baseline requires Postgres 17 (got major %d, image %q)",
+			utils.Config.Db.MajorVersion,
+			utils.Config.Db.Image,
+		)
+	}
+	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys, start.WithoutUserExtensionActivation()); err != nil {
+		return err
+	}
+	for _, extension := range pgDeltaNextDeclarativeExtensionDrops {
+		if _, err := conn.Exec(ctx, extension.sql); err != nil {
+			return errors.Errorf(
+				"failed to remove user-managed extension %q from pg-delta declarative shadow baseline (image %q): %w",
+				extension.name,
+				utils.Config.Db.Image,
+				err,
+			)
+		}
+	}
+	return nil
+}
+
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {

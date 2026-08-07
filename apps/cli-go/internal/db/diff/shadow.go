@@ -2,11 +2,12 @@ package diff
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
-	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/pgdelta"
@@ -30,87 +31,135 @@ type ShadowSource struct {
 	TargetOverride *pgconn.Config
 }
 
-// PgDeltaNextShadow is a provisioned shadow container exposing both database
-// states needed by the native pg-delta engine. Migrated contains the platform
-// baseline plus local migrations. Scratch is an empty sibling database owned
-// by pg-delta's declarative planner while it loads the desired schema files.
-type PgDeltaNextShadow struct {
-	// Container is left running for the caller, which MUST remove it after use.
+// PgDeltaNextShadowDatabase is one isolated database state used by pg-delta.
+// Container is left running for the caller, which MUST remove it after use.
+type PgDeltaNextShadowDatabase struct {
 	Container string
-	Migrated  pgconn.Config
-	Scratch   pgconn.Config
+	Config    pgconn.Config
+}
+
+// PgDeltaNextShadow contains the two isolated clusters used by the native
+// pg-delta engine. Migrations has the platform baseline plus local migrations;
+// Declarative has the same platform baseline and local configuration, ready for
+// pg-delta to load declarative SQL into postgres.
+type PgDeltaNextShadow struct {
+	Migrations  PgDeltaNextShadowDatabase
+	Declarative PgDeltaNextShadowDatabase
 }
 
 type pgDeltaNextShadowDependencies struct {
-	create        func(context.Context, uint16) (string, error)
-	wait          func(context.Context, time.Duration, ...string) error
-	migrate       func(context.Context, string, afero.Fs, ...func(*pgx.ConnConfig)) error
-	createScratch func(context.Context, ...func(*pgx.ConnConfig)) error
-	remove        func(string)
+	freePort func() (int, error)
+	create   func(context.Context, uint16) (string, error)
+	wait     func(context.Context, time.Duration, ...string) error
+	migrate  func(context.Context, string, afero.Fs, ...func(*pgx.ConnConfig)) error
+	setup    func(context.Context, string, afero.Fs, ...func(*pgx.ConnConfig)) error
+	remove   func(string)
 }
 
-const createPgDeltaNextScratch = "CREATE DATABASE pgdelta_declarative TEMPLATE template0"
-
-// createPgDeltaNextScratchDatabase creates the empty same-cluster database that
-// planSchemaFiles owns. Using template0 guarantees it does not inherit the
-// platform baseline or local migrations from postgres.
-func createPgDeltaNextScratchDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if _, err := conn.Exec(ctx, createPgDeltaNextScratch); err != nil {
-		return errors.Wrap(err, "failed to create pg-delta declarative scratch database")
-	}
-	return nil
-}
-
-// PreparePgDeltaNextShadow provisions the migrated target and an empty live
-// sibling database used by the native pg-delta declarative planner. It never
-// loads or applies the legacy declarative schemas. On failure, the container is
-// removed best-effort without replacing the provisioning error.
+// PreparePgDeltaNextShadow provisions isolated migrated and declarative
+// clusters. On failure, every container created so far is removed best-effort
+// without replacing the provisioning error.
 func PreparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadow, error) {
 	return preparePgDeltaNextShadow(ctx, fsys, pgDeltaNextShadowDependencies{
-		create:        CreateShadowDatabase,
-		wait:          start.WaitForHealthyService,
-		migrate:       MigrateShadowDatabase,
-		createScratch: createPgDeltaNextScratchDatabase,
-		remove:        utils.DockerRemove,
+		freePort: utils.GetFreeHostPort,
+		create:   CreateShadowDatabase,
+		wait:     start.WaitForHealthyService,
+		migrate:  MigrateShadowDatabase,
+		setup:    SetupPgDeltaNextDeclarativeShadowDatabase,
+		remove:   utils.DockerRemove,
 	}, options...)
 }
 
 func preparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, dependencies pgDeltaNextShadowDependencies, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadow, error) {
-	shadow, err := dependencies.create(ctx, utils.Config.Db.ShadowPort)
-	if err != nil {
-		return PgDeltaNextShadow{}, err
-	}
+	var containers []string
 	ok := false
 	defer func() {
 		if !ok {
-			dependencies.remove(shadow)
+			for _, container := range containers {
+				dependencies.remove(container)
+			}
 		}
 	}()
-	if err := dependencies.wait(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
+
+	migrationsPort, err := allocatePgDeltaNextPort(dependencies.freePort, 0)
+	if err != nil {
 		return PgDeltaNextShadow{}, err
 	}
-	if err := dependencies.migrate(ctx, shadow, fsys, options...); err != nil {
+	migrationsContainer, err := dependencies.create(ctx, migrationsPort)
+	if migrationsContainer != "" {
+		containers = append(containers, migrationsContainer)
+	}
+	if err != nil {
 		return PgDeltaNextShadow{}, err
 	}
-	if err := dependencies.createScratch(ctx, options...); err != nil {
+	if err := dependencies.wait(ctx, utils.Config.Db.HealthTimeout, migrationsContainer); err != nil {
 		return PgDeltaNextShadow{}, err
 	}
-	migrated := pgconn.Config{
+	if err := dependencies.migrate(ctx, migrationsContainer, fsys, append(options, withShadowPort(migrationsPort))...); err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+
+	declarativePort, err := allocatePgDeltaNextPort(dependencies.freePort, migrationsPort)
+	if err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+	declarativeContainer, err := dependencies.create(ctx, declarativePort)
+	if declarativeContainer != "" {
+		containers = append(containers, declarativeContainer)
+	}
+	if err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+	if err := dependencies.wait(ctx, utils.Config.Db.HealthTimeout, declarativeContainer); err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+	if err := dependencies.setup(ctx, declarativeContainer, fsys, append(options, withShadowPort(declarativePort))...); err != nil {
+		return PgDeltaNextShadow{}, err
+	}
+
+	ok = true
+	return PgDeltaNextShadow{
+		Migrations: PgDeltaNextShadowDatabase{
+			Container: migrationsContainer,
+			Config:    pgDeltaNextShadowConfig(migrationsPort),
+		},
+		Declarative: PgDeltaNextShadowDatabase{
+			Container: declarativeContainer,
+			Config:    pgDeltaNextShadowConfig(declarativePort),
+		},
+	}, nil
+}
+
+func allocatePgDeltaNextPort(freePort func() (int, error), excluded uint16) (uint16, error) {
+	for range 10 {
+		port, err := freePort()
+		if err != nil {
+			return 0, err
+		}
+		if port <= 0 || port > math.MaxUint16 {
+			return 0, fmt.Errorf("allocated host port %d is outside the valid range", port)
+		}
+		if uint16(port) != excluded {
+			return uint16(port), nil
+		}
+	}
+	return 0, fmt.Errorf("failed to allocate a host port distinct from %d", excluded)
+}
+
+func withShadowPort(port uint16) func(*pgx.ConnConfig) {
+	return func(config *pgx.ConnConfig) {
+		config.Port = port
+	}
+}
+
+func pgDeltaNextShadowConfig(port uint16) pgconn.Config {
+	return pgconn.Config{
 		Host:     utils.Config.Hostname,
-		Port:     utils.Config.Db.ShadowPort,
+		Port:     port,
 		User:     "postgres",
 		Password: utils.Config.Db.Password,
 		Database: "postgres",
 	}
-	scratch := migrated
-	scratch.Database = "pgdelta_declarative"
-	ok = true
-	return PgDeltaNextShadow{Container: shadow, Migrated: migrated, Scratch: scratch}, nil
 }
 
 // PrepareShadowSource provisions the shadow database that DiffDatabase diffs

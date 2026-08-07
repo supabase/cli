@@ -6,15 +6,14 @@ import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts"
 export interface LegacyPgDeltaNextShadowDatabases {
   /** Platform baseline with the project's local migrations applied. */
   readonly migrationsUrl: string;
-  /** Empty same-cluster database owned by `planSchemaFiles` while loading desired SQL. */
-  readonly scratchUrl: string;
+  /** Independent platform baseline owned by `planSchemaFiles` while loading desired SQL. */
+  readonly declarativeUrl: string;
 }
 
 interface LegacyPgDeltaNextShadowShape {
   /**
-   * Provisions the next-engine shadow container and owns it for the current
-   * Effect scope. The container is removed when that scope closes, including
-   * when URL validation or the caller fails.
+   * Provisions both next-engine shadow containers and owns them for the current
+   * Effect scope. Both containers are removed when that scope closes.
    */
   readonly provision: (opts: {
     readonly schema: ReadonlyArray<string>;

@@ -134,6 +134,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         targetUrlOverride: opts.shadowTargetOverride,
       });
     },
+    provisionNextShadow: () => Effect.die("provisionNextShadow not used"),
     removeShadowContainer: (container) =>
       Effect.sync(() => {
         removedContainers.push(container);

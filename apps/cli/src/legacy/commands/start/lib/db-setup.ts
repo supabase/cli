@@ -31,14 +31,18 @@
  *        `STORAGE_S3_REGION`, no JWKS) — built locally, not reused.
  *      - `initAuthJob` (`start.go:319-332`) — ditto, a minimal env distinct from
  *        `gotrue.service.ts`'s full container builder.
- * 2. **`ApplyApiPrivileges`** (`start.go:414-435`) — tri-state on
+ * 2. **`ApplyDatabaseWebhooks`** — installs `pg_net` only when
+ *    `experimental.webhooks.enabled` is true. The platform webhook helpers/event
+ *    trigger are always present, so user migrations can still create or drop the
+ *    extension explicitly.
+ * 3. **`ApplyApiPrivileges`** (`start.go:414-435`) — tri-state on
  *    `api.auto_expose_new_tables`: `true` is a no-op (keep the bundled initial-schema
  *    grants); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}
  *    (Go's inline `RevokeDefaultDataApiPrivilegesSql` constant, `start.go:405-412`)
  *    via a temp file, same as the schema SQL above.
- * 3. **Vault upsert** (`start.go:390-393`) — `legacyUpsertVaultSecrets`, run BEFORE
+ * 4. **Vault upsert** (`start.go:390-393`) — `legacyUpsertVaultSecrets`, run BEFORE
  *    the custom-roles seed "so roles.sql can reference them" (Go's own comment).
- * 4. **Custom-roles seed** (`start.go:394-398` + `pkg/migration/seed.go:84-97`) —
+ * 5. **Custom-roles seed** (`start.go:394-398` + `pkg/migration/seed.go:84-97`) —
  *    prints "Seeding globals from roles.sql..." UNCONDITIONALLY, BEFORE checking
  *    whether `supabase/roles.sql` even exists (Go's `SeedGlobals` prints first,
  *    then attempts the read), then execs the file via `legacyExecSqlFile` only when
@@ -46,7 +50,7 @@
  *    os.ErrNotExist)` check, reproduced here as an existence check ahead of the read
  *    rather than a caught not-found error — see the call site's own comment for why);
  *    any other read/exec error propagates.
- * 5. **`apply.MigrateAndSeed`** (`start.go:368`, via the already-ported
+ * 6. **`apply.MigrateAndSeed`** (`start.go:368`, via the already-ported
  *    `legacyMigrateAndSeed`) with `version: ""` — every pending migration, matching
  *    `SetupLocalDatabase`'s own call in the `start` context.
  *
@@ -116,6 +120,9 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `;
+
+const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
+  "create extension if not exists pg_net schema extensions;";
 
 /**
  * A SQL exec (schema/globals/API-privileges) or one-shot service-migration Docker
@@ -517,6 +524,22 @@ const legacyStartApplyApiPrivileges = Effect.fnUntraced(function* (
   );
 });
 
+/** Installs pg_net only for the explicit Database Webhooks feature opt-in. */
+const legacyStartApplyDatabaseWebhooks = Effect.fnUntraced(function* (
+  input: LegacyStartSetupLocalDatabaseInput,
+  tmpDir: string,
+) {
+  if (input.config.experimental.webhooks?.enabled !== true) return;
+  yield* legacyExecSqlConstant(
+    input.session,
+    input.fs,
+    input.path,
+    tmpDir,
+    "enable-database-webhooks.sql",
+    LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
+  );
+});
+
 /**
  * Port of Go's `initCurrentBranch` (`start.go:233-241`): writes
  * `supabase/.branches/_current_branch` = `"main"` (Go's `CurrBranchPath`,
@@ -580,7 +603,7 @@ export const legacyStartSetupLocalDatabase = (
 
     const toml = yield* legacyCheckDbToml(fs, path, workdir);
 
-    // SetupDatabase: initSchema -> ApplyApiPrivileges (start.go:383-389).
+    // SetupDatabase: initSchema -> ApplyDatabaseWebhooks -> ApplyApiPrivileges.
     yield* Effect.scoped(
       Effect.gen(function* () {
         const tmpDir = yield* fs
@@ -594,6 +617,7 @@ export const legacyStartSetupLocalDatabase = (
             ),
           );
         yield* legacyStartInitSchema(input, tmpDir);
+        yield* legacyStartApplyDatabaseWebhooks(input, tmpDir);
         yield* legacyStartApplyApiPrivileges(input, tmpDir, toml.baseline.apiAutoExposeNewTables);
       }),
     );

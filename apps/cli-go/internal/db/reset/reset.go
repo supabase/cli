@@ -182,6 +182,9 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 	if err := start.InitSchema14(ctx, conn); err != nil {
 		return err
 	}
+	if err := start.ApplyDatabaseWebhooks(ctx, conn); err != nil {
+		return err
+	}
 	return start.ApplyApiPrivileges(ctx, conn)
 }
 

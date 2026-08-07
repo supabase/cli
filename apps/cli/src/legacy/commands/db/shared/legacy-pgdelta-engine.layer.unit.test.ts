@@ -52,6 +52,7 @@ const unusedLegacyRuntime = Layer.mergeAll(
     ensureLocalDatabaseStarted: () => Effect.die("local start not needed"),
     ensureLocalPostgresImageCurrent: () => Effect.die("image check not needed"),
     provisionShadow: () => Effect.die("shadow not needed"),
+    provisionNextShadow: () => Effect.die("next shadow not needed"),
     removeShadowContainer: () => Effect.die("cleanup not needed"),
   }),
   Layer.succeed(LegacyPgDeltaNextAdapter, {

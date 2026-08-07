@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	stdfs "testing/fstest"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -401,6 +402,85 @@ func TestSetupShadowDatabase(t *testing.T) {
 		err := SetupShadowDatabase(context.Background(), "test-shadow-db", afero.NewMemMapFs(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
+	})
+}
+
+func TestSetupPgDeltaNextDeclarativeShadowDatabase(t *testing.T) {
+	originalConfig := utils.Config
+	t.Cleanup(func() { utils.Config = originalConfig })
+
+	newPg17Config := func(t *testing.T) {
+		t.Helper()
+		cfg := pkgconfig.NewConfig()
+		require.NoError(t, cfg.Load("config.toml", stdfs.MapFS{
+			"config.toml": &stdfs.MapFile{Data: []byte("[experimental.webhooks]\nenabled = true\n")},
+		}))
+		cfg.Db.MajorVersion = 17
+		cfg.Db.Image = "public.ecr.aws/supabase/postgres:17.6.1.104"
+		cfg.Db.ShadowPort = 54320
+		cfg.Realtime.Enabled = false
+		cfg.Storage.Enabled = false
+		cfg.Auth.Enabled = false
+		utils.Config = cfg
+	}
+
+	t.Run("provisions PG17 without activating user-managed extensions", func(t *testing.T) {
+		newPg17Config(t)
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		helper.MockApiPrivilegesRevoke(conn).
+			Query("DROP EXTENSION IF EXISTS pgcrypto").
+			Reply("DROP EXTENSION").
+			Query(`DROP EXTENSION IF EXISTS "uuid-ossp"`).
+			Reply("DROP EXTENSION")
+
+		err := SetupPgDeltaNextDeclarativeShadowDatabase(
+			context.Background(),
+			"declarative-container",
+			afero.NewMemMapFs(),
+			conn.Intercept,
+		)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("identifies an extension whose non-cascade drop fails", func(t *testing.T) {
+		newPg17Config(t)
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		helper.MockApiPrivilegesRevoke(conn).
+			Query("DROP EXTENSION IF EXISTS pgcrypto").
+			ReplyError(pgerrcode.DependentObjectsStillExist, `cannot drop extension pgcrypto because other objects depend on it`)
+
+		err := SetupPgDeltaNextDeclarativeShadowDatabase(
+			context.Background(),
+			"declarative-container",
+			afero.NewMemMapFs(),
+			conn.Intercept,
+		)
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, `user-managed extension "pgcrypto"`)
+		assert.ErrorContains(t, err, `public.ecr.aws/supabase/postgres:17.6.1.104`)
+		assert.ErrorContains(t, err, "SQLSTATE 2BP01")
+	})
+
+	t.Run("rejects unaudited Postgres majors", func(t *testing.T) {
+		cfg := pkgconfig.NewConfig()
+		cfg.Db.MajorVersion = 14
+		cfg.Db.Image = "public.ecr.aws/supabase/postgres:14.1.0"
+		utils.Config = cfg
+
+		err := SetupPgDeltaNextDeclarativeShadowDatabase(
+			context.Background(),
+			"declarative-container",
+			afero.NewMemMapFs(),
+		)
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "requires Postgres 17")
+		assert.ErrorContains(t, err, "major 14")
+		assert.ErrorContains(t, err, "public.ecr.aws/supabase/postgres:14.1.0")
 	})
 }
 

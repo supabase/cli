@@ -61,8 +61,10 @@ func WithExtraEnv(entries ...string) EdgeRuntimeOption {
 	}
 }
 
-// getFreeHostPort asks the OS for an unused TCP port on the host.
-func getFreeHostPort() (int, error) {
+// GetFreeHostPort asks the OS for an unused TCP port on the host. The listener
+// is closed before the port is returned, so callers that need more than one
+// port should bind each one before requesting the next.
+func GetFreeHostPort() (int, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, errors.Errorf("failed to allocate free port: %w", err)
@@ -80,7 +82,7 @@ func getFreeHostPort() (int, error) {
 func EdgeRuntimeStartCmd() []string {
 	cmd := []string{"edge-runtime", "start", "--main-service=."}
 	// Skip the flag on the rare allocation failure to preserve prior behavior.
-	if port, err := getFreeHostPort(); err == nil {
+	if port, err := GetFreeHostPort(); err == nil {
 		cmd = append(cmd, fmt.Sprintf("--port=%d", port))
 	}
 	return cmd

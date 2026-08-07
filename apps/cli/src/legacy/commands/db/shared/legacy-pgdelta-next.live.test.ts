@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -84,6 +85,43 @@ function localDatabaseUrl(config: string): string {
   const dbSection = config.match(/\[db\][\s\S]*?\nport\s*=\s*(\d+)/u);
   expect(dbSection?.[1], "db.port missing from generated config.toml").toBeDefined();
   return `postgresql://postgres:postgres@127.0.0.1:${dbSection?.[1]}/postgres?sslmode=disable`;
+}
+
+function projectContainerIds(config: string): ReadonlyArray<string> {
+  const projectId = config.match(/^project_id\s*=\s*"([^"]+)"/mu)?.[1];
+  expect(projectId, "project_id missing from generated config.toml").toBeDefined();
+  if (projectId === undefined) throw new Error("project_id missing from generated config.toml");
+  const output = execFileSync(
+    "docker",
+    ["ps", "-aq", "--filter", `label=com.supabase.cli.project=${projectId}`],
+    { encoding: "utf8" },
+  );
+  return output.split(/\r?\n/u).filter(Boolean).sort();
+}
+
+function findSqlContaining(root: string, needle: string): string {
+  const match = readdirSync(root, { recursive: true })
+    .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".sql"))
+    .map((entry) => path.join(root, entry))
+    .find((file) => readFileSync(file, "utf8").includes(needle));
+  expect(match, `no SQL file under ${root} contains ${needle}`).toBeDefined();
+  if (match === undefined) throw new Error(`no SQL file under ${root} contains ${needle}`);
+  return match;
+}
+
+function findExtensionDeclaration(root: string, extension: string): string {
+  const escaped = extension.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const declaration = new RegExp(
+    `\\bCREATE\\s+EXTENSION(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+(?:"${escaped}"|${escaped})(?=\\s|;)`,
+    "iu",
+  );
+  const match = readdirSync(root, { recursive: true })
+    .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".sql"))
+    .map((entry) => path.join(root, entry))
+    .find((file) => declaration.test(readFileSync(file, "utf8")));
+  expect(match, `no SQL file under ${root} declares extension ${extension}`).toBeDefined();
+  if (match === undefined) throw new Error(`no SQL file under ${root} declares ${extension}`);
+  return match;
 }
 
 describeDockerLive("pg-delta next local convergence (live)", () => {
@@ -443,6 +481,315 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
         context.skip("legacy edge-runtime image is concretely unavailable on this Docker host");
       }
       expect(legacy.exitCode, commandFailure(legacy)).toBe(0);
+    },
+  );
+});
+
+describeDockerLive("pg-delta next declarative extension baseline (live)", () => {
+  let projectDir = "";
+  let config = "";
+
+  beforeAll(async () => {
+    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-extensions-live-"));
+
+    const init = await runSupabaseLive(["init"], {
+      cwd: projectDir,
+      exitTimeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    expect(init.exitCode, commandFailure(init)).toBe(0);
+
+    const configPath = path.join(projectDir, "supabase", "config.toml");
+    const generatedConfig = readFileSync(configPath, "utf8");
+    expect(generatedConfig).toContain("major_version = 17");
+    expect(generatedConfig).not.toContain("[experimental.webhooks]");
+    config = `${generatedConfig
+      .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
+      .replace(
+        '# declarative_schema_path = "./database"',
+        'declarative_schema_path = "./schemas"',
+      )}\n[experimental.webhooks]\nenabled = true\n`;
+    writeFileSync(configPath, config);
+
+    const start = await runSupabaseLive(
+      [
+        "start",
+        "--exclude",
+        "studio",
+        "--exclude",
+        "logflare",
+        "--exclude",
+        "vector",
+        "--exclude",
+        "gotrue",
+        "--exclude",
+        "realtime",
+        "--exclude",
+        "storage-api",
+      ],
+      { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
+    );
+    expect(start.exitCode, commandFailure(start)).toBe(0);
+  }, COMMAND_TIMEOUT_MS);
+
+  afterAll(async () => {
+    if (projectDir.length === 0) return;
+    await runSupabaseLive(["stop", "--no-backup"], {
+      cwd: projectDir,
+      exitTimeoutMs: COMMAND_TIMEOUT_MS,
+    }).catch(() => undefined);
+    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
+  }, COMMAND_TIMEOUT_MS);
+
+  test(
+    "loads exported user-managed extensions and plans their removal by file deletion",
+    { timeout: SCENARIO_TIMEOUT_MS },
+    async () => {
+      const generated = await runSupabaseLive(
+        ["db", "schema", "declarative", "generate", "--local", "--overwrite"],
+        {
+          cwd: projectDir,
+          env: NEXT_ENV,
+          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      expect(generated.exitCode, commandFailure(generated)).toBe(0);
+
+      const schemasDir = path.join(projectDir, "supabase", "schemas");
+      findExtensionDeclaration(schemasDir, "pg_net");
+      const pgcryptoFile = findExtensionDeclaration(schemasDir, "pgcrypto");
+      findExtensionDeclaration(schemasDir, "uuid-ossp");
+
+      const containersBeforeEmpty = projectContainerIds(config);
+      const migrationsBeforeEmpty = migrationFiles(projectDir);
+      const empty = await runSupabaseLive(["db", "schema", "declarative", "sync", "--no-apply"], {
+        cwd: projectDir,
+        env: NEXT_ENV,
+        exitTimeoutMs: COMMAND_TIMEOUT_MS,
+      });
+      expect(empty.exitCode, commandFailure(empty)).toBe(0);
+      expect(empty.stderr).toContain("No schema changes found");
+      expect(migrationFiles(projectDir)).toEqual(migrationsBeforeEmpty);
+      expect(projectContainerIds(config)).toEqual(containersBeforeEmpty);
+
+      const pgcryptoSql = readFileSync(pgcryptoFile, "utf8");
+      const migrationsBeforeRemoval = new Set(migrationFiles(projectDir));
+      await rm(pgcryptoFile);
+      try {
+        const containersBeforeRemoval = projectContainerIds(config);
+        const removal = await runSupabaseLive(
+          ["db", "schema", "declarative", "sync", "--no-apply", "--name", "drop_pgcrypto"],
+          {
+            cwd: projectDir,
+            env: NEXT_ENV,
+            exitTimeoutMs: COMMAND_TIMEOUT_MS,
+          },
+        );
+        expect(removal.exitCode, commandFailure(removal)).toBe(0);
+        expect(projectContainerIds(config)).toEqual(containersBeforeRemoval);
+
+        const removalMigrations = migrationFiles(projectDir).filter(
+          (file) => !migrationsBeforeRemoval.has(file),
+        );
+        expect(removalMigrations.length).toBeGreaterThan(0);
+        const removalSql = removalMigrations
+          .map((file) =>
+            readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
+          )
+          .join("\n");
+        expect(removalSql).toMatch(/DROP\s+EXTENSION(?:\s+IF\s+EXISTS)?\s+"?pgcrypto"?/iu);
+      } finally {
+        writeFileSync(pgcryptoFile, pgcryptoSql);
+        await Promise.all(
+          migrationFiles(projectDir)
+            .filter((file) => !migrationsBeforeRemoval.has(file))
+            .map((file) => rm(path.join(projectDir, "supabase", "migrations", file))),
+        );
+      }
+    },
+  );
+});
+
+describeDockerLive("pg-delta next isolated cron shadows (live)", () => {
+  const jobName = "pgdelta_cli_inactive";
+  const initialSchedule = "0 0 * * *";
+  const changedSchedule = "15 3 * * *";
+  let projectDir = "";
+  let config = "";
+
+  beforeAll(async () => {
+    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-cron-live-"));
+
+    const init = await runSupabaseLive(["init"], {
+      cwd: projectDir,
+      exitTimeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    expect(init.exitCode, commandFailure(init)).toBe(0);
+
+    const configPath = path.join(projectDir, "supabase", "config.toml");
+    config = readFileSync(configPath, "utf8")
+      .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
+      .replace('# declarative_schema_path = "./database"', 'declarative_schema_path = "./schemas"');
+    writeFileSync(configPath, config);
+
+    const migrationsDir = path.join(projectDir, "supabase", "migrations");
+    mkdirSync(migrationsDir, { recursive: true });
+    writeFileSync(
+      path.join(migrationsDir, "20260806000000_cron_inactive.sql"),
+      `create extension if not exists pg_cron;
+
+create table public.pgdelta_cron_execution_sentinel (
+  executed_at timestamptz not null default now()
+);
+
+select cron.schedule(
+  '${jobName}',
+  '${initialSchedule}',
+  'insert into public.pgdelta_cron_execution_sentinel default values'
+);
+
+select cron.alter_job(
+  (select jobid from cron.job where jobname = '${jobName}'),
+  active := false
+);
+`,
+    );
+
+    const start = await runSupabaseLive(
+      [
+        "start",
+        "--exclude",
+        "studio",
+        "--exclude",
+        "logflare",
+        "--exclude",
+        "vector",
+        "--exclude",
+        "gotrue",
+        "--exclude",
+        "realtime",
+        "--exclude",
+        "storage-api",
+      ],
+      { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
+    );
+    expect(start.exitCode, commandFailure(start)).toBe(0);
+  }, COMMAND_TIMEOUT_MS);
+
+  afterAll(async () => {
+    if (projectDir.length === 0) return;
+    await runSupabaseLive(["stop", "--no-backup"], {
+      cwd: projectDir,
+      exitTimeoutMs: COMMAND_TIMEOUT_MS,
+    }).catch(() => undefined);
+    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
+  }, COMMAND_TIMEOUT_MS);
+
+  test(
+    "keeps an inactive named job converged and replaces only its changed schedule",
+    { timeout: SCENARIO_TIMEOUT_MS },
+    async () => {
+      const generated = await runSupabaseLive(
+        ["db", "schema", "declarative", "generate", "--local", "--overwrite"],
+        {
+          cwd: projectDir,
+          env: NEXT_ENV,
+          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      expect(generated.exitCode, commandFailure(generated)).toBe(0);
+
+      const schemasDir = path.join(projectDir, "supabase", "schemas");
+      const cronFile = findSqlContaining(schemasDir, `cron.schedule_in_database('${jobName}'`);
+      const containersBeforeEmpty = projectContainerIds(config);
+      const empty = await runSupabaseLive(["db", "schema", "declarative", "sync", "--no-apply"], {
+        cwd: projectDir,
+        env: NEXT_ENV,
+        exitTimeoutMs: COMMAND_TIMEOUT_MS,
+      });
+      expect(empty.exitCode, commandFailure(empty)).toBe(0);
+      expect(empty.stderr).toContain("No schema changes found");
+      expect(projectContainerIds(config)).toEqual(containersBeforeEmpty);
+
+      const emptyBundle = requireDebugBundle(projectDir, "declarativePlan");
+      expect(assertJsonFile(path.join(emptyBundle, "plan.json"))).toMatchObject({
+        deltas: [],
+        actions: [],
+        source: { fingerprint: expect.any(String) },
+        target: { fingerprint: expect.any(String) },
+      });
+
+      const exportedCron = readFileSync(cronFile, "utf8");
+      expect(exportedCron).toContain(`'${initialSchedule}'`);
+      writeFileSync(cronFile, exportedCron.replace(`'${initialSchedule}'`, `'${changedSchedule}'`));
+
+      const migrationsBeforeApply = new Set(migrationFiles(projectDir));
+      const containersBeforeApply = projectContainerIds(config);
+      const applied = await runSupabaseLive(
+        ["db", "schema", "declarative", "sync", "--apply", "--name", "cron_schedule"],
+        {
+          cwd: projectDir,
+          env: NEXT_ENV,
+          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      expect(applied.exitCode, commandFailure(applied)).toBe(0);
+      expect(applied.stderr).toContain("Migration applied successfully");
+      expect(projectContainerIds(config)).toEqual(containersBeforeApply);
+
+      const scheduleMigrations = migrationFiles(projectDir).filter(
+        (file) => !migrationsBeforeApply.has(file),
+      );
+      expect(scheduleMigrations.length).toBeGreaterThan(0);
+      const scheduleSql = scheduleMigrations
+        .map((file) => readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"))
+        .join("\n");
+      expect(scheduleSql.match(/cron\.unschedule/gu)).toHaveLength(1);
+      expect(scheduleSql.match(/cron\.schedule_in_database/gu)).toHaveLength(1);
+      expect(scheduleSql).toContain(`'${changedSchedule}'`);
+      expect(scheduleSql).not.toMatch(
+        /\b(?:create|alter|drop)\s+(?:table|schema|function|view|extension|role)\b/iu,
+      );
+
+      const job = await runSupabaseLive(
+        [
+          "db",
+          "query",
+          "--local",
+          "-o",
+          "json",
+          `select schedule, active from cron.job where jobname = '${jobName}'`,
+        ],
+        { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
+      );
+      expect(job.exitCode, commandFailure(job)).toBe(0);
+      expect(JSON.parse(job.stdout)).toEqual([{ schedule: changedSchedule, active: false }]);
+
+      const executions = await runSupabaseLive(
+        [
+          "db",
+          "query",
+          "--local",
+          "-o",
+          "json",
+          "select count(*)::int as executions from public.pgdelta_cron_execution_sentinel",
+        ],
+        { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
+      );
+      expect(executions.exitCode, commandFailure(executions)).toBe(0);
+      expect(JSON.parse(executions.stdout)).toEqual([{ executions: 0 }]);
+
+      const containersBeforeFinal = projectContainerIds(config);
+      const finalSync = await runSupabaseLive(
+        ["db", "schema", "declarative", "sync", "--no-apply"],
+        {
+          cwd: projectDir,
+          env: NEXT_ENV,
+          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      expect(finalSync.exitCode, commandFailure(finalSync)).toBe(0);
+      expect(finalSync.stderr).toContain("No schema changes found");
+      expect(projectContainerIds(config)).toEqual(containersBeforeFinal);
     },
   );
 });

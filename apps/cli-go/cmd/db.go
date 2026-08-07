@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,6 +33,78 @@ import (
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 )
+
+type pgDeltaNextShadowEndpoint struct {
+	ContainerID string `json:"containerId"`
+	URL         string `json:"url"`
+}
+
+type pgDeltaNextShadowHandoff struct {
+	Migrations  pgDeltaNextShadowEndpoint `json:"migrations"`
+	Declarative pgDeltaNextShadowEndpoint `json:"declarative"`
+}
+
+// handoffPgDeltaNextShadow transfers cleanup ownership only after the caller
+// has received and acknowledged the complete JSON description. Until then Go
+// removes both containers on every exit path, including cancellation and I/O
+// failure.
+func handoffPgDeltaNextShadow(ctx context.Context, shadow diff.PgDeltaNextShadow, in io.Reader, out io.Writer, remove func(string)) error {
+	transferred := false
+	defer func() {
+		if transferred {
+			return
+		}
+		remove(shadow.Migrations.Container)
+		remove(shadow.Declarative.Container)
+	}()
+
+	payload := pgDeltaNextShadowHandoff{
+		Migrations: pgDeltaNextShadowEndpoint{
+			ContainerID: shadow.Migrations.Container,
+			URL:         utils.ToPostgresURLWithoutPassword(shadow.Migrations.Config),
+		},
+		Declarative: pgDeltaNextShadowEndpoint{
+			ContainerID: shadow.Declarative.Container,
+			URL:         utils.ToPostgresURLWithoutPassword(shadow.Declarative.Config),
+		},
+	}
+	if err := json.NewEncoder(out).Encode(payload); err != nil {
+		return fmt.Errorf("failed to encode pg-delta shadow handoff: %w", err)
+	}
+	if flusher, ok := out.(interface{ Flush() error }); ok {
+		if err := flusher.Flush(); err != nil {
+			return fmt.Errorf("failed to flush pg-delta shadow handoff: %w", err)
+		}
+	}
+
+	type readResult struct {
+		line string
+		err  error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		line, err := bufio.NewReader(in).ReadString('\n')
+		result <- readResult{line: line, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case read := <-result:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if read.err != nil {
+			return fmt.Errorf("failed to read pg-delta shadow handoff acknowledgment: %w", read.err)
+		}
+		if read.line != "ack\n" {
+			return fmt.Errorf("unexpected pg-delta shadow handoff acknowledgment %q", read.line)
+		}
+	}
+
+	transferred = true
+	return nil
+}
 
 var (
 	dbCmd = &cobra.Command{
@@ -208,13 +283,12 @@ var (
 	shadowProjectRef  string
 
 	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
-	// commands to provision the throwaway shadow database that the diff "source"
-	// runs against, then leave it running so the TS caller can run the differ
-	// (migra or pg-delta) itself and remove the container afterwards. It prints
-	// three newline-separated lines to stdout: the container id, the source
-	// Postgres URL, and an optional target-override URL (empty unless the
-	// local-target declarative branch redirects the diff target to a second
-	// shadow database). The URLs are emitted WITHOUT the password
+	// commands to provision throwaway shadow databases, then leave them running
+	// so the TS caller can run the differ itself and remove the containers
+	// afterwards. Legacy modes print three newline-separated lines. pgdelta-next
+	// emits a JSON object describing its two isolated clusters, then retains
+	// cleanup ownership until the caller acknowledges receipt. URLs are emitted
+	// WITHOUT the password
 	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
 	// (CWE-312); the TS caller re-injects the local Postgres password it already
 	// resolves from config.toml, which is the same value the shadow uses. Shadow
@@ -252,10 +326,7 @@ var (
 				if err != nil {
 					return err
 				}
-				fmt.Println(nextShadow.Container)
-				fmt.Println(utils.ToPostgresURLWithoutPassword(nextShadow.Migrated))
-				fmt.Println(utils.ToPostgresURLWithoutPassword(nextShadow.Scratch))
-				return nil
+				return handoffPgDeltaNextShadow(cmd.Context(), nextShadow, os.Stdin, os.Stdout, utils.DockerRemove)
 			}
 			var src diff.ShadowSource
 			var err error

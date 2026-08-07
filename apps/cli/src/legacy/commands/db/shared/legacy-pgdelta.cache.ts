@@ -31,6 +31,8 @@ export interface LegacySetupInputs {
   readonly authEnabled: boolean;
   readonly storageEnabled: boolean;
   readonly realtimeEnabled: boolean;
+  /** Effective `experimental.webhooks.enabled` (absent → false). */
+  readonly webhooksEnabled: boolean;
   /** Effective `api.auto_expose_new_tables` (unset and false both → false). */
   readonly autoExpose: boolean;
   /** `[db.vault]` secret names (sorted before hashing). */
@@ -90,6 +92,7 @@ export function legacySetupInputsToken(inputs: LegacySetupInputs): string {
   payload += `auth=${boolToken(inputs.authEnabled)} storage=${boolToken(
     inputs.storageEnabled,
   )} realtime=${boolToken(inputs.realtimeEnabled)}\n`;
+  payload += `database_webhooks=${boolToken(inputs.webhooksEnabled)}\n`;
   payload += `auto_expose_new_tables=${boolToken(inputs.autoExpose)}\n`;
   for (const name of [...inputs.vaultNames].sort()) payload += `vault=${name}\n`;
   payload += inputs.rolesSql;

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -466,6 +467,27 @@ func TestBaselineCatalogKeyVariesWithServiceToggles(t *testing.T) {
 	off, err := baselineCatalogKey(fsys)
 	require.NoError(t, err)
 	assert.NotEqual(t, on, off, "toggling a service must change the baseline cache key")
+}
+
+func TestBaselineCatalogKeyVariesWithDatabaseWebhooks(t *testing.T) {
+	originalConfig := utils.Config
+	t.Cleanup(func() { utils.Config = originalConfig })
+	fSys := afero.NewMemMapFs()
+
+	disabled := config.NewConfig()
+	utils.Config = disabled
+	disabledKey, err := baselineCatalogKey(fSys)
+	require.NoError(t, err)
+
+	enabled := config.NewConfig()
+	require.NoError(t, enabled.Load("config.toml", fstest.MapFS{
+		"config.toml": &fstest.MapFile{Data: []byte("[experimental.webhooks]\nenabled = true\n")},
+	}))
+	utils.Config = enabled
+	enabledKey, err := baselineCatalogKey(fSys)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, disabledKey, enabledKey, "Database Webhooks must change the baseline cache key")
 }
 
 func TestDeclarativeCatalogCacheKeyVariesWithSetupInputs(t *testing.T) {

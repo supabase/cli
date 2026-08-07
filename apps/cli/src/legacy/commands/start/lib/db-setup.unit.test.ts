@@ -43,6 +43,7 @@ const SCHEMA_13_FINGERPRINT =
 const SCHEMA_14_FINGERPRINT_SUFFIX = "CREATE SCHEMA IF NOT EXISTS graphql";
 const REVOKE_PRIVILEGES_FINGERPRINT =
   "revoke execute on functions from anon, authenticated, service_role";
+const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 
 function fakeSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
@@ -427,6 +428,42 @@ describe("legacyStartSetupLocalDatabase", () => {
         );
       },
     );
+  });
+
+  describe("Database Webhooks", () => {
+    it.effect("does not install pg_net merely because Edge Runtime is enabled", () => {
+      const workdir = makeWorkdir();
+      const { session, calls } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const config = decodeConfig({ edge_runtime: { enabled: true } });
+      return run(baseInput(workdir, session, { majorVersion: 14, config }), out, docker).pipe(
+        Effect.map(() => {
+          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+          expect(execSql.some((sql) => sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(false);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
+
+    it.effect("installs pg_net when Database Webhooks is enabled without Edge Runtime", () => {
+      const workdir = makeWorkdir();
+      writeConfigToml(workdir, "[experimental.webhooks]\nenabled = true\n");
+      const { session, calls } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const config = decodeConfig({
+        edge_runtime: { enabled: false },
+        experimental: { webhooks: { enabled: true } },
+      });
+      return run(baseInput(workdir, session, { majorVersion: 14, config }), out, docker).pipe(
+        Effect.map(() => {
+          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+          expect(execSql.filter((sql) => sql.includes(PG_NET_CREATE_FINGERPRINT))).toHaveLength(1);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
   });
 
   describe("vault upsert + custom-roles seed", () => {

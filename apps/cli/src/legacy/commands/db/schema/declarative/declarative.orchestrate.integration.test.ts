@@ -36,6 +36,7 @@ function mockSeam(paths: Record<LegacyCatalogMode, string>) {
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
     provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
+    provisionNextShadow: () => Effect.die("provisionNextShadow not used in declarative tests"),
     removeShadowContainer: () => Effect.void,
   });
   return { layer, calls };

@@ -34,6 +34,7 @@ const BASE: LegacySetupInputs = {
   authEnabled: true,
   storageEnabled: true,
   realtimeEnabled: true,
+  webhooksEnabled: false,
   autoExpose: false,
   vaultNames: [],
   rolesSql: "",
@@ -66,7 +67,7 @@ describe("legacyBaselineVersionToken", () => {
 describe("legacySetupInputsToken", () => {
   it("byte-matches the Go hash input sequence", () => {
     const expected = sha12(
-      "17.6.1.135\nauth=true storage=true realtime=true\nauto_expose_new_tables=false\n",
+      "17.6.1.135\nauth=true storage=true realtime=true\ndatabase_webhooks=false\nauto_expose_new_tables=false\n",
     );
     expect(legacySetupInputsToken(BASE)).toBe(expected);
   });
@@ -78,7 +79,7 @@ describe("legacySetupInputsToken", () => {
       rolesSql: "create role app;",
     });
     const expected = sha12(
-      "17.6.1.135\nauth=true storage=true realtime=true\nauto_expose_new_tables=false\n" +
+      "17.6.1.135\nauth=true storage=true realtime=true\ndatabase_webhooks=false\nauto_expose_new_tables=false\n" +
         "vault=a_secret\nvault=b_secret\ncreate role app;",
     );
     expect(token).toBe(expected);
@@ -87,6 +88,7 @@ describe("legacySetupInputsToken", () => {
   it("self-invalidates when any baseline input changes", () => {
     const baseToken = legacySetupInputsToken(BASE);
     expect(legacySetupInputsToken({ ...BASE, authEnabled: false })).not.toBe(baseToken);
+    expect(legacySetupInputsToken({ ...BASE, webhooksEnabled: true })).not.toBe(baseToken);
     expect(legacySetupInputsToken({ ...BASE, autoExpose: true })).not.toBe(baseToken);
     expect(legacySetupInputsToken({ ...BASE, vaultNames: ["x"] })).not.toBe(baseToken);
     expect(legacySetupInputsToken({ ...BASE, rolesSql: "x" })).not.toBe(baseToken);
