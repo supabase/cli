@@ -49,6 +49,7 @@ const baseConfig: ResolvedStackConfig = {
   mode: "auto",
   startupMode: "eager",
   readiness: DEFAULT_STACK_READINESS_POLICY,
+  readinessSource: "default",
   jwtSecret: testJwtSecret,
   ports: basePorts,
   apiPort: 3000,

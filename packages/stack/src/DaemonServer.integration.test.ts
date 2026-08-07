@@ -364,12 +364,27 @@ describe("DaemonServer", () => {
     });
     expect(serviceReady.status).toBe(200);
 
-    const malformed = await fetch(`${url}/ready`, {
+    const malformedStackReady = await fetch(`${url}/ready`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode: "finite", timeoutMs: 0 }),
     });
-    expect(malformed.status).not.toBe(200);
+    expect(malformedStackReady.status).toBe(400);
+    expect(await malformedStackReady.json()).toEqual({
+      code: "STACK_BUILD_ERROR",
+      error: "Invalid readiness options",
+    });
+
+    const malformedServiceReady = await fetch(`${url}/services/postgres/ready`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "finite", timeoutMs: 0 }),
+    });
+    expect(malformedServiceReady.status).toBe(400);
+    expect(await malformedServiceReady.json()).toEqual({
+      code: "STACK_BUILD_ERROR",
+      error: "Invalid readiness options",
+    });
   });
 
   test("POST /edge-runtime/reload returns 200", async () => {

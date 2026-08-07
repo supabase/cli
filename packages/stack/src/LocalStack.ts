@@ -29,6 +29,7 @@ import {
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
+  activationReadinessPolicy,
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
@@ -187,6 +188,7 @@ export const localStackLayer = (
       const functionsBundleRef = yield* Ref.make<ResolvedFunctionsBundle | undefined>(
         config.functions === false ? undefined : config.functions,
       );
+      const edgeRuntimeConfigRef = yield* Ref.make(config.edgeRuntime);
       const disposedSignal = yield* Deferred.make<void>();
       const lifecycleLock = Semaphore.makeUnsafe(1);
       const projectionLock = Semaphore.makeUnsafe(1);
@@ -455,18 +457,19 @@ export const localStackLayer = (
         opts: EdgeRuntimeReloadConfig,
       ): Effect.Effect<ResolvedStackConfig, ServiceNotFoundError> =>
         Effect.gen(function* () {
-          if (config.edgeRuntime === false || opts.edgeRuntime.enabled === false) {
+          const currentEdgeRuntime = yield* Ref.get(edgeRuntimeConfigRef);
+          if (currentEdgeRuntime === false || opts.edgeRuntime.enabled === false) {
             return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
           }
 
           return {
             ...config,
             edgeRuntime: {
-              ...config.edgeRuntime,
-              enabled: opts.edgeRuntime.enabled ?? config.edgeRuntime.enabled,
-              inspectorPort: opts.edgeRuntime.inspectorPort ?? config.edgeRuntime.inspectorPort,
-              policy: opts.edgeRuntime.policy ?? config.edgeRuntime.policy,
-              env: opts.edgeRuntime.env ?? config.edgeRuntime.env,
+              ...currentEdgeRuntime,
+              enabled: opts.edgeRuntime.enabled ?? currentEdgeRuntime.enabled,
+              inspectorPort: opts.edgeRuntime.inspectorPort ?? currentEdgeRuntime.inspectorPort,
+              policy: opts.edgeRuntime.policy ?? currentEdgeRuntime.policy,
+              env: opts.edgeRuntime.env ?? currentEdgeRuntime.env,
             },
           };
         });
@@ -675,7 +678,13 @@ export const localStackLayer = (
             return;
           }
           if (existing !== undefined) {
-            yield* waitForTargets(existing).pipe((effect) => withReadinessPolicy(effect, name));
+            yield* waitForTargets(existing).pipe((effect) =>
+              withReadinessPolicy(
+                effect,
+                name,
+                activationReadinessPolicy(service, config.readiness, config.readinessSource),
+              ),
+            );
             return;
           }
           const started = yield* Effect.gen(function* () {
@@ -684,7 +693,13 @@ export const localStackLayer = (
             if (concurrentlyStarted !== undefined) return concurrentlyStarted;
             return yield* beginStartTargets(service, new Set());
           }).pipe(withLifecycleLock);
-          yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+          yield* waitForTargets(started).pipe((effect) =>
+            withReadinessPolicy(
+              effect,
+              name,
+              activationReadinessPolicy(service, config.readiness, config.readinessSource),
+            ),
+          );
         }).pipe(cleanupOnReadinessFailure);
 
       const stack = {
@@ -852,6 +867,7 @@ export const localStackLayer = (
                       }),
                   ),
                 );
+              yield* Ref.set(edgeRuntimeConfigRef, nextConfig.edgeRuntime);
               const state = yield* runtime.orchestrator.getState("edge-runtime");
               if (state.desired !== "running") {
                 return yield* beginStartTargets("edge-runtime", new Set(["edge-runtime"]));

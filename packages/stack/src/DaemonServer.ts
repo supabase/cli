@@ -58,6 +58,8 @@ export class DaemonServer extends Context.Service<
             { code: "STACK_BUILD_ERROR", error: "Invalid Edge Functions reload payload" },
             400,
           );
+        const invalidReadinessOptionsResponse = () =>
+          errorResponse({ code: "STACK_BUILD_ERROR", error: "Invalid readiness options" }, 400);
         const readinessTimeoutResponse = (target: string, timeoutMs: number, detail: string) =>
           errorResponse(
             {
@@ -158,6 +160,10 @@ export class DaemonServer extends Context.Service<
               yield* stack.waitAllReady(opts);
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
+              Effect.catchTags({
+                SchemaError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+                HttpServerError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+              }),
               Effect.catchTag("ServiceReadyError", (e) =>
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
@@ -263,6 +269,10 @@ export class DaemonServer extends Context.Service<
               yield* stack.waitReady(routeParams.name!, opts);
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
+              Effect.catchTags({
+                SchemaError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+                HttpServerError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+              }),
               Effect.catchTag("ServiceNotFoundError", (e) =>
                 Effect.succeed(notFoundResponse(e.name)),
               ),

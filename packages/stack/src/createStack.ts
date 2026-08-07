@@ -2,6 +2,7 @@ import type { LogEntry } from "@supabase/process-compose";
 import { Context, Effect, FileSystem, type Layer, ManagedRuntime, Path, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { ApiProxy } from "./ApiProxy.ts";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
 import type { FunctionsReloadConfig } from "./functions.ts";
@@ -110,6 +111,7 @@ export async function createStack(
     try {
       const services = await runtime.context();
       const localStack = Context.get(services, Stack);
+      const apiProxy = Context.get(services, ApiProxy);
       const lifecycle = Context.get(services, LocalStackLifecycle);
       const info = await runtime.runPromise(localStack.getInfo());
 
@@ -125,10 +127,11 @@ export async function createStack(
           gracefulDispose,
         );
 
-      // LocalStack owns terminality. When it disposes, close the enclosing
-      // runtime as well so the public API port cannot outlive the stack.
+      // The HTTP module has no response-flushed hook. Give the proxy's final
+      // 503 response a brief opportunity to leave the socket before closing
+      // the runtime after terminal lazy activation.
       void runtime
-        .runPromise(lifecycle.awaitDisposed)
+        .runPromise(apiProxy.awaitTerminalFailure.pipe(Effect.andThen(Effect.sleep("25 millis"))))
         .then(gracefulDispose)
         .catch(() => {});
 

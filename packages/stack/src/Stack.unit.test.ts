@@ -53,6 +53,7 @@ const defaultConfig: ResolvedStackConfig = {
   mode: "native",
   startupMode: "eager",
   readiness: DEFAULT_STACK_READINESS_POLICY,
+  readinessSource: "default",
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
   apiPort: 54321,
@@ -175,7 +176,7 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves the current functions bundle across repeated runtime reloads", () => {
+  it.live("preserves current Functions and Edge Runtime settings across partial reloads", () => {
     const runtimeRoot = mkdtempSync(join(tmpdir(), "supabase-functions-reload-"));
     const initialBundle = functionsBundle(runtimeRoot, "initial-secret");
     const replacementBundle = functionsBundle(runtimeRoot, "replacement-secret");
@@ -194,12 +195,16 @@ describe("Stack", () => {
         },
       ]),
     );
+    const builtConfigs: ResolvedStackConfig[] = [];
     const builderLayer = Layer.succeed(StackBuilder, {
-      build: () =>
-        Effect.succeed({
-          graph,
-          cleanupTargets: { dockerContainerNames: [] },
-          serviceProjection: new Map([["edge-runtime", { visibility: "public" as const }]]),
+      build: (candidate) =>
+        Effect.sync(() => {
+          builtConfigs.push(candidate);
+          return {
+            graph,
+            cleanupTargets: { dockerContainerNames: [] },
+            serviceProjection: new Map([["edge-runtime", { visibility: "public" as const }]]),
+          };
         }),
     });
     const resolver = mockBinaryResolver();
@@ -225,6 +230,12 @@ describe("Stack", () => {
 
       yield* stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } });
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+
+      yield* stack.reloadEdgeRuntime({ edgeRuntime: { env: { NEXT: "next-value" } } });
+      expect(builtConfigs.at(-1)?.edgeRuntime).toMatchObject({
+        policy: "oneshot",
+        env: { NEXT: "next-value" },
+      });
 
       yield* stack.reloadFunctions();
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
@@ -458,6 +469,7 @@ describe("Stack", () => {
       postgrest: false,
       auth: false,
       readiness: { mode: "finite", timeoutMs: 250 },
+      readinessSource: "configured",
     } satisfies ResolvedStackConfig;
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
     const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
@@ -635,6 +647,7 @@ describe("Stack", () => {
       {
         ...defaultConfig,
         readiness: { mode: "finite", timeoutMs: 1_000 },
+        readinessSource: "configured",
       },
       noopPortLease(defaultConfig.ports),
     ).pipe(
@@ -894,6 +907,7 @@ describe("Stack", () => {
         ...defaultConfig,
         startupMode: "lazy",
         readiness: { mode: "finite", timeoutMs: 1_000 },
+        readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),
@@ -952,6 +966,7 @@ describe("Stack", () => {
         ...defaultConfig,
         startupMode: "lazy",
         readiness: { mode: "infinite" },
+        readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
         ...noopPortLease(config.ports),
