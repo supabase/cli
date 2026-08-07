@@ -244,6 +244,16 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     if (connType === "linked") {
       const projectRefResolver = yield* LegacyProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(Option.none());
+      // Cache the ref the moment it's known, not after `toml`/`localInputs` below (both
+      // fallible) resolve — Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the
+      // GLOBAL `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
+      // unconditionally after `rootCmd.ExecuteC()` regardless of whether the command itself
+      // errored (`cmd/root.go:169-175` never checks `err` before calling it) — so Go caches a
+      // resolved ref even when a LATER step (config validation, connection, the pull itself)
+      // fails. Setting `linkedRefForCache` here, right after the ref resolves, reproduces that
+      // instead of only doing so after `toml`/`localInputs`/`resolver.resolve()` all succeed
+      // (`diff.handler.ts`'s identical fix).
+      linkedRefForCache = linkedRef;
     }
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {

@@ -345,6 +345,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return edgeRunCount;
     },
     edgeCalls,
+    cache,
   };
 }
 
@@ -1547,6 +1548,35 @@ describe("legacy db pull", () => {
       );
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "caches the linked ref even when the merged config fails to load afterward (review: PRRT_kwDOErm0O86XLe6s)",
+    () => {
+      // Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the GLOBAL
+      // `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
+      // unconditionally after `rootCmd.ExecuteC()` regardless of whether the command itself
+      // errored — so a ref resolved via `LoadProjectRef` gets cached even when a LATER step
+      // (here, `legacyReadDbToml`'s own config-load) fails. `db.migrations.enabled = "notabool"`
+      // fails `legacyReadDbToml`'s own bool parse AFTER the ref is already known, exercising
+      // exactly that gap (`diff.integration.test.ts`'s identical fix/test).
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        ["[db.migrations]", 'enabled = "notabool"', ""].join("\n"),
+      );
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        yes: true,
+        resolvedRef: "abcdefghijklmnopqrst",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbPull(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(s.cache.cached).toBe(true);
+        expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect(
     "a linked [remotes.<ref>] db.major_version override reaches the shadow's OWN container spec, not just toml",

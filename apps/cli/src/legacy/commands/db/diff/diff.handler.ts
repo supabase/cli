@@ -372,6 +372,15 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (connType === "linked") {
       const projectRefResolver = yield* LegacyProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(Option.none());
+      // Cache the ref the moment it's known, not after `cfg`/`localInputs` below (both
+      // fallible) resolve — Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the
+      // GLOBAL `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
+      // unconditionally after `rootCmd.ExecuteC()` regardless of whether the command itself
+      // errored (`cmd/root.go:169-175` never checks `err` before calling it) — so Go caches a
+      // resolved ref even when a LATER step (config validation, connection, the diff itself)
+      // fails. Setting `linkedRefForCache` here, right after the ref resolves, reproduces that
+      // instead of only doing so after `cfg`/`localInputs`/`resolver.resolve()` all succeed.
+      linkedRefForCache = linkedRef;
     }
     const cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
     if (cfg.appliedRemote !== undefined) {
