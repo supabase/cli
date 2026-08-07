@@ -26,7 +26,11 @@ import { legacyPgDeltaNextShadowLayer } from "../../../shared/legacy-pgdelta-nex
  * shadow-database seam, plus the db-config resolver for `--linked` / `--db-url`.
  * The bundled implementation runs in-process by default; edge-runtime is retained
  * only for the explicit legacy opt-out. Per the "provide doesn't share to siblings" rule,
- * `LegacyCliConfig` is provided to every layer that needs it.
+ * `LegacyCliConfig` is provided to every layer that needs it. `legacyDockerRunLayer`
+ * is ALSO exposed directly (not just provided to `edgeRuntime`): the smart-target
+ * local-reset prompt now calls `legacyResetLocalDatabase` in-process (CLI-2062),
+ * whose PG15+ recreate reuses the same one-shot migrate jobs `db start`/`db reset`
+ * back with this same layer (see those commands' own `*.layers.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
@@ -59,6 +63,7 @@ const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
 export const legacyDbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
+  legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,

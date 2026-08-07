@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  activationReadinessPolicy,
+  activationTimeoutSecondsForService,
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
-  SERVICE_ACTIVATION_POLICY,
 } from "./ServiceActivation.ts";
-import { SERVICE_NAMES } from "./versions.ts";
+import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 
 describe("service activation", () => {
   it("defines an access policy for every stack service", () => {
-    expect(Object.keys(SERVICE_ACTIVATION_POLICY).sort()).toEqual([...SERVICE_NAMES].sort());
+    expect(Object.keys(SERVICE_CATALOG).sort()).toEqual([...SERVICE_NAMES].sort());
   });
 
   it("starts direct endpoints eagerly", () => {
@@ -42,6 +43,24 @@ describe("service activation", () => {
     expect(activationTargetsForService(enabled, "storage")).toEqual(["storage"]);
     expect(activationTargetsForService(enabled, "analytics")).toEqual(["analytics"]);
     expect(activationTargetsForService(enabled, "studio")).toEqual(["analytics", "studio"]);
+  });
+
+  it("derives request activation timeouts from the transitive companion closure", () => {
+    expect(activationTimeoutSecondsForService("auth")).toBe(180);
+    expect(activationTimeoutSecondsForService("analytics")).toBe(554);
+    expect(activationTimeoutSecondsForService("studio")).toBe(825);
+  });
+
+  it("expands only the package-default activation deadline", () => {
+    expect(
+      activationReadinessPolicy("analytics", { mode: "finite", timeoutMs: 180_000 }, "default"),
+    ).toEqual({ mode: "finite", timeoutMs: 554_000 });
+    expect(
+      activationReadinessPolicy("analytics", { mode: "finite", timeoutMs: 10_000 }, "configured"),
+    ).toEqual({ mode: "finite", timeoutMs: 10_000 });
+    expect(activationReadinessPolicy("analytics", { mode: "infinite" }, "configured")).toEqual({
+      mode: "infinite",
+    });
   });
 
   it("does not assign shared public dependencies to their consumers", () => {

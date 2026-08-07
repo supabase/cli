@@ -21,7 +21,7 @@ import {
   legacyResolveDiffEngine,
   legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
-} from "../shared/legacy-diff-engine.ts";
+} from "../../../shared/legacy-diff-engine.ts";
 import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
@@ -36,7 +36,7 @@ import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migration
 import {
   legacyIsPgDeltaDebugEnabled,
   type LegacyPgDeltaContext,
-} from "../shared/legacy-pgdelta.ts";
+} from "../../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyClassifyExplicitRef, legacyUnknownTargetMessage } from "./diff.explicit.ts";
@@ -402,7 +402,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       denoVersion: cfg.denoVersion,
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
-    if (cfg.migrationSchemaPaths !== undefined && cfg.migrationSchemaPaths.length > 0) {
+    if (cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
       yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
     }
 

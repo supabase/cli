@@ -4,7 +4,6 @@ import {
   MissingDependencyError,
   ServiceNotFoundError,
   SpawnError,
-  ShutdownTimeoutError,
 } from "./errors.ts";
 
 describe("errors", () => {
@@ -33,11 +32,5 @@ describe("errors", () => {
     expect(err._tag).toBe("SpawnError");
     expect(err.service).toBe("postgres");
     expect(err.cause).toBe(cause);
-  });
-
-  it("ShutdownTimeoutError has correct tag and data", () => {
-    const err = new ShutdownTimeoutError({ service: "postgres" });
-    expect(err._tag).toBe("ShutdownTimeoutError");
-    expect(err.service).toBe("postgres");
   });
 });

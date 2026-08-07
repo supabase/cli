@@ -1,8 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
 import bootstrapSource from "./edge-runtime-main.ts" with { type: "text" };
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface EdgeRuntimeOptions {
   readonly runtimeRoot: string;
@@ -21,7 +23,7 @@ interface NativeEdgeRuntimeOptions extends EdgeRuntimeOptions {
 interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions {
   readonly image: string;
   readonly apiPort: number;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
 }
 
 const bootstrapFileName = "index.ts";
@@ -61,9 +63,7 @@ const edgeRuntimeArgs = (
 
 const edgeRuntimeHealthCheck = (port: number): ServiceDef["healthCheck"] =>
   hostHttpHealthCheck(port, "/_internal/health", {
-    initialDelaySeconds: 1,
-    periodSeconds: 0.5,
-    failureThreshold: 30,
+    ...stackHealthBudgets.edgeRuntime,
   });
 
 export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): ServiceDef => {
@@ -86,9 +86,9 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
 
   return dockerRunService({
     name: "edge-runtime",
-    containerName: `supabase-edge-runtime-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [
       `${bootstrapDir}:${bootstrapMountDir}:ro`,
       ...(opts.projectDir === undefined ? [] : [`${opts.projectDir}:${opts.projectDir}:ro`]),
@@ -99,7 +99,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
       FUNCTIONS_RUNTIME_CONFIG_PATH: `${bootstrapMountDir}/functions-runtime-config.json`,
     },
     cmd: [...edgeRuntimeArgs(opts, bootstrapMountDir)],
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: edgeRuntimeHealthCheck(opts.port),
   });
 };

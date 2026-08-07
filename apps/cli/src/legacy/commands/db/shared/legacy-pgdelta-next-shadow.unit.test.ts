@@ -15,7 +15,6 @@ function setup() {
     LegacyDeclarativeSeam,
     LegacyDeclarativeSeam.of({
       exportCatalog: () => Effect.die("exportCatalog not used"),
-      execInherit: () => Effect.die("execInherit not used"),
       ensureLocalDatabaseStarted: () => Effect.die("ensureLocalDatabaseStarted not used"),
       ensureLocalPostgresImageCurrent: () => Effect.die("ensureLocalPostgresImageCurrent not used"),
       provisionShadow: () => Effect.die("provisionShadow not used"),

@@ -3,6 +3,7 @@ import * as BunServices from "@effect/platform-bun/BunServices";
 import { it } from "@effect/vitest";
 import { afterEach, describe, expect } from "vitest";
 
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
@@ -48,7 +49,6 @@ const unusedLegacyRuntime = Layer.mergeAll(
   }),
   Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: () => Effect.die("catalog not needed"),
-    execInherit: () => Effect.die("exec not needed"),
     ensureLocalDatabaseStarted: () => Effect.die("local start not needed"),
     ensureLocalPostgresImageCurrent: () => Effect.die("image check not needed"),
     provisionShadow: () => Effect.die("shadow not needed"),
@@ -64,6 +64,7 @@ const unusedLegacyRuntime = Layer.mergeAll(
   Layer.succeed(LegacyPgDeltaNextShadow, {
     provision: () => Effect.die("next shadow not needed"),
   }),
+  mockOutput().layer,
 );
 
 describe("legacyPgDeltaEngineSelectorLayer", () => {

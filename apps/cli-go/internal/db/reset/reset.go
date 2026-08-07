@@ -93,38 +93,6 @@ func toLogMessage(version string) string {
 	return "..."
 }
 
-// RecreateLocalDatabase is the container-lifecycle half of a local `db reset`,
-// exposed for the native-TypeScript `db reset --local` seam (cmd db __db-bootstrap).
-// It performs the PG14/PG15 branch — recreate the db container/volume, init schema,
-// migrate + seed, and restart the satellite containers — WITHOUT the leading
-// "Resetting local database…" line, which the TS caller prints itself. Mirrors
-// resetDatabase (above) minus that message.
-func RecreateLocalDatabase(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if utils.Config.Db.MajorVersion <= 14 {
-		return resetDatabase14(ctx, version, fsys, options...)
-	}
-	return resetDatabase15(ctx, version, fsys, options...)
-}
-
-// AwaitStorageReady mirrors the storage-health gate that local `db reset` runs
-// before seeding buckets (Run, above): if the storage container exists but is not
-// healthy, wait up to 30s for it. It reports whether the storage container exists
-// so the native-TypeScript caller knows whether to run the (already-ported) bucket
-// seeding. Any inspect error is treated as "storage not running" → false, matching
-// Go's `err == nil` gate, which silently skips buckets on any inspect failure.
-func AwaitStorageReady(ctx context.Context) (bool, error) {
-	resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId)
-	if err != nil {
-		return false, nil
-	}
-	if resp.State.Health == nil || resp.State.Health.Status != types.Healthy {
-		if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
-			return false, err
-		}
-	}
-	return true, nil
-}
-
 func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if err := recreateDatabase(ctx, options...); err != nil {
 		return err
@@ -298,7 +266,10 @@ func reloadKong(ctx context.Context) error {
 		return nil
 	}
 	var out bytes.Buffer
-	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload"}, &out, &out); err != nil {
+	// Reload re-renders nginx.conf from Kong's default template, so it needs the
+	// template bring-up wrote (start.go:589-592) handed back — otherwise it drops
+	// that template's email_templates server. https://github.com/supabase/cli/issues/6059
+	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"}, &out, &out); err != nil {
 		if msg := strings.TrimSpace(out.String()); len(msg) > 0 {
 			return suggestKongRecovery(errors.Errorf("failed to reload kong: %w:\n%s", err, msg))
 		}

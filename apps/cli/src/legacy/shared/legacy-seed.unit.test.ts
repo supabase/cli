@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -78,4 +78,36 @@ describe("legacyApplySeedFiles seed glob", () => {
       ),
     );
   });
+
+  it.effect(
+    "expands a matched directory to its sorted, regular .sql files (Go's Glob.SQLFiles)",
+    () => {
+      // Go's `GetPendingSeeds` calls `locals.SQLFiles(fsys)` — the SAME `Glob.SQLFiles` method
+      // `db.migrations.schema_paths` resolves through — which expands a directory match to its
+      // recursively-walked, sorted `.sql` files rather than treating the directory itself as a
+      // seed file.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
+      mkdirSync(join(dir, "seeds"));
+      writeFileSync(join(dir, "seeds", "b.sql"), "insert into t values (2);");
+      writeFileSync(join(dir, "seeds", "a.sql"), "insert into t values (1);");
+      writeFileSync(join(dir, "seeds", "README.md"), "not a seed file");
+      const { session, queries } = fakeSession();
+      const out = mockOutput();
+      return run(session, dir, ["seeds"], out).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const upserts = queries.filter((q) =>
+              q.sql.includes("INSERT INTO supabase_migrations.seed_files"),
+            );
+            expect(upserts.map((q) => q.params?.[0])).toEqual(["seeds/a.sql", "seeds/b.sql"]);
+            expect(out.rawChunks.map((c) => c.text)).toEqual([
+              "Seeding data from seeds/a.sql...\n",
+              "Seeding data from seeds/b.sql...\n",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

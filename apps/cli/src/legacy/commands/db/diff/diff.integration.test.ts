@@ -66,7 +66,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const removedContainers: string[] = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: () => Effect.succeed("supabase/.temp/pgdelta/migrations.json"),
-    execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
     provisionShadow: ({ mode, projectRef }) => {
@@ -851,27 +850,24 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "explicit --from linked --to migrations exports the catalog with the linked ref",
-    () => {
-      // Go resolves linked first (LoadConfig merges [remotes.<ref>]), so the later
-      // migrations catalog is built from the remote-merged config (explicit.go).
-      const s = setup(tmp.current, {
-        isLocal: false,
-        linkedRef: "abcdefghijklmnopqrst",
-        diffSql: "create table m ();\n",
+  it.effect("explicit --from linked --to migrations passes the linked ref to the strategy", () => {
+    // Go resolves linked first (LoadConfig merges [remotes.<ref>]), so the later
+    // migrations catalog is built from the remote-merged config (explicit.go).
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "create table m ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
+      expect(s.explicitDiffCalls[0]?.desired).toEqual({
+        kind: "migrations",
+        projectRef: "abcdefghijklmnopqrst",
       });
-      return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
-        expect(s.explicitDiffCalls[0]?.desired).toEqual({
-          kind: "migrations",
-          projectRef: "abcdefghijklmnopqrst",
-        });
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
+    }).pipe(Effect.provide(s.layer));
+  });
 
-  it.effect("explicit --from migrations --to linked exports the catalog with base config", () => {
+  it.effect("explicit --from migrations --to linked passes base config to the strategy", () => {
     // Migrations is resolved BEFORE linked here, so Go's LoadConfig(ref) hasn't run
     // yet — the catalog must use base config (no ref forwarded), matching order.
     const s = setup(tmp.current, {

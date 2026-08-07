@@ -6,14 +6,13 @@ import { FileSystem, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
-import type { DaemonConfigInput, PlatformFactory } from "./createStack.ts";
+import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
 import { DaemonMessageSchema } from "./DaemonProtocol.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { RemoteStack } from "./RemoteStack.ts";
-import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
-import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
+import { LocalStackLifecycle, localStackLayer } from "./LocalStack.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import {
@@ -23,7 +22,9 @@ import {
   StateManager,
   singleStackStateManagerPaths,
 } from "./StateManager.ts";
-import { StackBuilder, type ResolvedStackConfig } from "./StackBuilder.ts";
+import { StackBuilder } from "./StackBuilder.ts";
+import type { ResolvedDaemonConfig, ResolvedStackConfig } from "./StackConfig.ts";
+import { sanitizeDaemonConfigInput, type DaemonConfigInput } from "./StackConfigResolver.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
 import {
@@ -44,7 +45,7 @@ export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack> => {
+): Layer.Layer<Stack | ApiProxy | LocalStackLifecycle> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -54,17 +55,10 @@ export const foregroundLayer = (
     Layer.provide(FetchHttpClient.layer),
   );
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(binaryResolverLayer));
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
+  const stackLayer = localStackLayer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(StackMetadataPersistence.noop),
-  );
-  const stackLayer = Stack.layer(config);
-  const serviceActivatorLayer = Layer.effect(
-    StackServiceActivator,
-    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
-      activate: coordinator.activateService,
-    })),
   );
 
   const proxyConfig: ProxyConfig = {
@@ -86,14 +80,10 @@ export const foregroundLayer = (
   };
   const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
     Layer.provide(FetchHttpClient.layer),
-    Layer.provide(serviceActivatorLayer),
+    Layer.provide(stackLayer),
   );
 
-  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(
-    Layer.provide(coordinatorLayer),
-    Layer.provide(platform),
-    Layer.orDie,
-  );
+  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(Layer.provide(platform), Layer.orDie);
 };
 
 // ---------------------------------------------------------------------------
@@ -108,16 +98,11 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 // Daemon-backed mode
 // ---------------------------------------------------------------------------
 
-export interface DaemonConfig extends ResolvedStackConfig {
-  readonly name: string;
-  readonly projectDir: string;
-}
-
 export const foregroundDaemonLayer = (
-  config: DaemonConfig,
+  config: ResolvedDaemonConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack | StateManager> => {
+): Layer.Layer<Stack | StateManager | ApiProxy | LocalStackLifecycle> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -143,16 +128,6 @@ export const foregroundDaemonLayer = (
     anonJwt: config.anonJwt,
     serviceRoleJwt: config.serviceRoleJwt,
   };
-  const serviceActivatorLayer = Layer.effect(
-    StackServiceActivator,
-    Effect.map(StackLifecycleCoordinator, (coordinator) => ({
-      activate: coordinator.activateService,
-    })),
-  );
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(serviceActivatorLayer),
-  );
   const stateManagerLayer = StateManager.make(
     singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
   );
@@ -160,15 +135,17 @@ export const foregroundDaemonLayer = (
   const metadataPersistenceLayer = StackMetadataPersistence.fromStateManager(config.name).pipe(
     Layer.provide(stateManagerLayer),
   );
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config, portLease).pipe(
+  const stackLayer = localStackLayer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(metadataPersistenceLayer),
   );
-  const stackLayer = Stack.layer(config);
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(stackLayer),
+  );
 
   return Layer.mergeAll(stackLayer, apiProxyLayer, stateManagerLayer).pipe(
-    Layer.provide(coordinatorLayer),
     Layer.provide(platform),
     Layer.orDie,
   );
@@ -192,21 +169,22 @@ export const daemonLayer = (
   FileSystem.FileSystem | Path.Path | UnixHttpClient
 > =>
   Effect.gen(function* () {
-    if (input.stackRoot !== undefined || input.runtimeRoot !== undefined) {
+    const daemonInput = sanitizeDaemonConfigInput(input);
+    if (daemonInput.stackRoot !== undefined || daemonInput.runtimeRoot !== undefined) {
       return yield* new DaemonStartError({
         message: "Managed daemon stacks derive stackRoot and runtimeRoot automatically",
       });
     }
-    const projectDir = input.projectDir ?? input.cwd;
-    const name = input.name ?? DEFAULT_MANAGED_STACK_NAME;
-    const cacheRoot = input.cacheRoot ?? defaultCacheRoot();
+    const projectDir = daemonInput.projectDir ?? daemonInput.cwd;
+    const name = daemonInput.name ?? DEFAULT_MANAGED_STACK_NAME;
+    const cacheRoot = daemonInput.cacheRoot ?? defaultCacheRoot();
     const stackRoot =
-      input.projectStateRoot !== undefined
-        ? join(input.projectStateRoot, "stacks", name)
+      daemonInput.projectStateRoot !== undefined
+        ? join(daemonInput.projectStateRoot, "stacks", name)
         : defaultManagedStackRoot(cacheRoot, projectDir, name);
     const runtimeRoot = defaultManagedRuntimeRoot(stackRoot);
     const config: DaemonConfigInput = {
-      ...input,
+      ...daemonInput,
       cacheRoot,
       projectDir,
       name,

@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
+import { dockerContainerName } from "../CleanupTargets.ts";
+import { dockerNetworkArgs } from "../Platform.ts";
 import {
   dockerExecHealthCheck,
   dockerRunService,
   type ServiceDependency,
 } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerVectorOptions {
   readonly image: string;
@@ -11,7 +14,7 @@ interface DockerVectorOptions {
   readonly serviceHost: string;
   readonly analyticsPort: number;
   readonly analyticsApiKey: string;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -39,7 +42,7 @@ sinks:
 `;
 
 export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
-  const containerName = `supabase-vector-${opts.apiPort}`;
+  const containerName = dockerContainerName("vector", opts.apiPort);
   const dockerSocket = process.env.DOCKER_HOST?.startsWith("unix://")
     ? process.env.DOCKER_HOST.slice("unix://".length)
     : "/var/run/docker.sock";
@@ -47,9 +50,9 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
 
   return dockerRunService({
     name: "vector",
-    containerName,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, []),
     volumes,
     env: {
       DOCKER_HOST: "unix:///var/run/docker.sock",
@@ -61,15 +64,13 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
 ${VECTOR_CONFIG(opts.serviceHost, opts.analyticsPort, opts.analyticsApiKey)}EOF
 `,
     ],
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: dockerExecHealthCheck(
       containerName,
       "sh",
       ["-ec", "wget -q -O /dev/null http://127.0.0.1:9001/health"],
       {
-        initialDelaySeconds: 1,
-        periodSeconds: 1,
-        failureThreshold: 30,
+        ...stackHealthBudgets.vector,
       },
     ),
   });

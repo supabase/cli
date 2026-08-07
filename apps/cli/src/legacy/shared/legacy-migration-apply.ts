@@ -14,9 +14,14 @@ import { legacySplitAndTrim } from "./legacy-sql-split.ts";
  * Applying a migration file failed (Go's `ApplyMigrations` / `ExecBatch` error).
  * Used by `migration up` and `migration down`'s migrate-and-seed step. The
  * declarative sync handler maps its own error type instead.
+ *
+ * `suggestion` carries Go's `utils.CmdSuggestion` when a caller sets one — currently
+ * only `legacyApplySchemaFiles`'s "See schema file: <fp>" (`apply.go:57`); every other
+ * caller leaves it unset, matching Go leaving `CmdSuggestion` empty on those paths.
  */
 export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigrationApplyError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {}
 
 // Byte order mark (U+FEFF) — stripped from the head of a statement like Go does.

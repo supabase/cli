@@ -11,16 +11,18 @@ The package exposes two levels of Interface:
 
 - `@supabase/stack` selects `bun.ts` or `node.ts` through export conditions and exposes the
   Promise-oriented `createStack()` / `StackHandle` Interface plus prefetch helpers.
-- `@supabase/stack/effect` exposes Effect Interfaces and layer factories used by the CLI and
-  advanced callers.
+- `@supabase/stack/effect` selects a runtime Adapter through the same export conditions and exposes
+  Effect Interfaces plus platform-bound layer factories used by the CLI and advanced callers.
+- `@supabase/stack/testing` exposes only the service tags needed to replace daemon transport in
+  consumer tests. Runtime implementation tags do not leak through the root or Effect barrels.
 
-The root runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
-socket HTTP implementations. `createStack.ts` remains platform-agnostic and receives a
-`PlatformFactory`.
+Internal runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
+socket HTTP implementations. `createStack.ts` and the layer factories remain platform-agnostic;
+the conditional root and Effect entries bind them to their selected runtime.
 
 ```mermaid
 flowchart LR
-    Input["StackConfig"] --> Resolve["resolveConfig"]
+    Input["StackConfig"] --> Resolve["StackConfigResolver"]
     Resolve --> Layer["foregroundLayer"]
     Layer --> Prepare["StackPreparation"]
     Prepare --> Builder["StackBuilder"]
@@ -37,16 +39,29 @@ can use the same lifecycle calls against an in-process stack or a detached daemo
 ## Configuration and roots
 
 `StackConfig` is an in-memory library input, not the project configuration-file schema. Its
-top-level fields choose runtime mode, startup mode, cache/runtime roots, API keys, JWT secret,
-functions options, and per-service configuration. `false` disables an optional service.
+top-level fields choose runtime mode, startup mode, cache/runtime roots, API keys, JWT secret, a
+resolved Edge Functions bundle, and per-service configuration. `false` disables an optional
+service.
 
-`resolveConfig()`:
+`StackConfigResolver.resolveConfig()`:
 
 1. chooses cache, durable stack, runtime, and project roots;
 2. allocates every required port through one port allocator;
 3. creates development JWTs and opaque publishable/secret keys;
 4. applies per-service defaults and current `DEFAULT_VERSIONS`;
 5. records auto-managed paths for scoped cleanup.
+
+Readiness policy is part of the resolved configuration. The package default is a finite three-minute
+deadline; callers can choose a different finite deadline or explicit infinite waiting. Per-call
+`ReadyOptions` take precedence over the stack policy, while `inherit` delegates to the stack
+policy. The local Implementation applies this resolver to startup, service activation, restart,
+reload, and explicit readiness waits. A finite deadline fails with `StackReadinessError` and runs
+the same scoped cleanup used by disposal. Promise and remote Adapters pass `ReadyOptions` through
+to that Implementation instead of layering a second timeout rule around it.
+
+Request-triggered lazy activation expands the package-default deadline when a service's transitive
+startup budget is longer than three minutes. Explicit finite and infinite stack policies are never
+expanded.
 
 The current zero-config stack enables PostgreSQL, PostgREST, Auth, and Edge Runtime. Realtime,
 Storage, imgproxy, Mailpit, Postgres Meta, Studio, Analytics, Vector, and Supavisor are enabled only
@@ -65,7 +80,8 @@ disabled by omission because the automatic artifact policy currently classifies 
 
 Preparation is separate from topology construction:
 
-- `ServiceArtifacts.ts` records native release providers and Docker image candidates.
+- `ServiceCatalog.ts` is the exhaustive source for service identity, default version, runtime
+  support, artifact providers, activation policy, and allocated port fields.
 - `BinaryResolver` detects the platform, downloads and verifies archives, restores executable
   permissions, and publishes complete cache entries atomically.
 - `StackPreparation` resolves all enabled public services, emits download/pull progress, and
@@ -76,13 +92,17 @@ Native cache identity includes service, provider, version, and asset name. `.com
 last, so an incomplete download is never treated as reusable. Supabase-owned Docker images are
 tried through ECR, Docker Hub, then GHCR; upstream images use their canonical repository.
 
-`prefetch()` uses the same `StackPreparation` Interface without constructing a lifecycle runtime.
+`ServiceResolution` belongs to this preparation domain. `prefetch()` uses the same
+`StackPreparation` Interface and its binary-to-Docker fallback without constructing a lifecycle
+runtime.
 
 ## Service coverage and topology
 
 `StackBuilder.build(config, prepared)` is the explicit owner of cross-service topology. Individual
 factories under `src/services/` own executable arguments, environment, mounts, health checks, and
-per-process cleanup. The builder owns which definitions exist and how they depend on one another.
+per-process cleanup. Docker factories also own their host-network and port-mapping arguments. The
+builder owns which definitions exist and how they depend on one another, including the choice
+between `postgres-init (completed)` and `postgres (healthy)` for every database consumer.
 
 | Public service | Automatic runtime support               | Principal dependency or role                                                                                       |
 | -------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -110,7 +130,7 @@ Vector without Analytics, and Studio without Postgres Meta.
 
 ## Lifecycle ownership
 
-The current local Implementation is `StackLifecycleCoordinator`. It owns one scoped lifecycle:
+The local Implementation is `LocalStack`. Its scoped layer owns one lifecycle:
 
 - preparation and its single-flight deferred;
 - graph construction and the process-compose runtime;
@@ -120,23 +140,26 @@ The current local Implementation is `StackLifecycleCoordinator`. It owns one sco
 - exact cleanup targets and metadata persistence;
 - disposal of processes, Docker resources, ports, and auto-managed paths.
 
-`Stack.ts` currently provides a thin public Effect Interface over that coordinator. `ApiProxy`
-uses the narrower `StackServiceActivator` Interface so an incoming request can activate a lazy
-backend without gaining unrelated lifecycle operations.
+`Stack.ts` contains only the public Effect Interface and transport schemas. `LocalStack` constructs
+the state once and publishes both `Stack` and the narrower `StackServiceActivator` Interface from
+the same scoped layer. `ApiProxy` therefore activates a lazy backend without gaining unrelated
+lifecycle operations or requiring a second pass-through lifecycle tag.
 
-Before the orchestrator exists, the coordinator publishes synthetic `Pending` and `Downloading`
+Before the orchestrator exists, `LocalStack` publishes synthetic `Pending` and `Downloading`
 states. After construction, it subscribes to raw process-compose state and publishes only public
 projected states. `StackServiceState` adds `Downloading`, `Initializing`, and `Dormant` to the raw
 process statuses.
 
 `start()` prepares artifacts, creates the runtime once, starts the appropriate services, and waits
 for their generic process-compose readiness. `stop()` preserves explicit per-service stop intent;
-`dispose()` additionally closes the scoped runtime and executes cleanup. Current generic readiness
-has no built-in deadline.
+`dispose()` additionally closes the scoped runtime and executes cleanup. Stack readiness policy is
+enforced around generic process-compose waits, which remain intentionally policy-free and
+unbounded. Structural `Equal.equals` comparison suppresses duplicate projected state emissions.
 
 ## Eager and lazy activation
 
-`ServiceActivation.ts` is the declarative startup and companion-ownership policy:
+`ServiceActivation.ts` evaluates the startup and companion-ownership metadata in
+`ServiceCatalog.ts`:
 
 - eager: PostgreSQL, Realtime, Mailpit, Studio, and Pooler;
 - lazy: PostgREST, Auth, Edge Runtime, Storage, imgproxy, Postgres Meta, Analytics, and Vector;
@@ -172,15 +195,22 @@ Cleanup targets do not belong to `StackInfo`; they are internal runtime metadata
 
 ## Functions runtime configuration and reload
 
-The current `functions.ts` Implementation discovers project configuration and function manifests,
-resolves paths and environment values, combines them with stack URLs/keys, and writes
-`functions-runtime-config.json` under the Edge Runtime workspace. The Edge Runtime factory mounts
-or references that file.
+Project discovery is outside the stack boundary. A caller supplies a serializable
+`ResolvedFunctionsBundle` containing absolute entrypoint, optional import-map, and static-file
+paths plus already-resolved shared and per-function environment values. The import-map path is
+explicitly nullable. Per-function environment values override shared values; stack-owned runtime
+URLs and credentials take final precedence when the worker is created.
 
-`reloadFunctions()` rewrites the file and updates/restarts the Edge Runtime definition.
-`reloadEdgeRuntime()` can change runtime settings and optionally functions settings. In detached
-mode, `/functions/reload` currently carries `envFile` and `noVerifyJwt` as query parameters, while
-`/edge-runtime/reload` accepts a validated JSON body.
+`LocalStack` keeps the current bundle in runtime-local memory. `reloadFunctions({ functions })`
+replaces it, while a reload without `functions` preserves the latest bundle. An Edge Runtime reload
+uses that same current bundle unless its body supplies a replacement. The stack combines the
+bundle with runtime URLs and credentials, atomically publishes `functions-runtime-config.json`
+with owner-only permissions under the Edge Runtime workspace, and removes it on disposal.
+
+Detached stacks deliberately exclude resolved bundles from daemon startup IPC, durable metadata,
+live state, logs, URLs, and rendered validation errors. Both `/functions/reload` and
+`/edge-runtime/reload` accept validated JSON bodies over the local Unix socket. This keeps resolved
+environment values confined to an explicit request body and the ephemeral runtime file.
 
 ## Port leases
 
@@ -199,8 +229,10 @@ binding. Supervised Docker services have a wider window because the supervisor s
 
 Every Docker definition has ordinary in-process cleanup and supervisor-owned orphan cleanup.
 `StackBuilder` also returns exact Docker container names for the definitions it constructed. The
-coordinator persists these targets for managed daemons and uses them as a force-removal safety net
-after graceful stop. Auto-created PostgreSQL, Storage, and runtime paths are also removed.
+local Implementation captures these targets before persistence or orchestrator setup, persists
+them for managed daemons, and uses them as a force-removal safety net after graceful stop. Launch,
+exact cleanup, and candidate cleanup all derive container identity through the same naming
+function. Auto-created PostgreSQL, Storage, and runtime paths are also removed.
 
 Cleanup is intentionally defensive:
 
@@ -209,7 +241,8 @@ Cleanup is intentionally defensive:
    external resources;
 3. stack disposal force-removes exact known Docker containers;
 4. managed `stop` can use persisted cleanup metadata after daemon death;
-5. startup failure has candidate cleanup derived from the requested configuration.
+5. a failure before the exact build plan exists has candidate cleanup derived from enabled catalog
+   services; a partial startup failure disposes the exact build-produced plan.
 
 These paths overlap by design and must remain idempotent.
 
@@ -220,15 +253,17 @@ These paths overlap by design and must remain idempotent.
 Detached mode adds:
 
 - `daemonLayer()`: forks a runtime-specific daemon entrypoint and returns a `RemoteStack` layer;
-- `daemon.ts`: receives the configuration over Node IPC, resolves ports, builds the foreground
-  daemon layer, claims live state, and waits for HTTP stop or a signal;
+- `daemon.ts`: receives configuration excluding the resolved Functions bundle over Node IPC,
+  resolves ports, builds the foreground daemon layer, claims live state, and waits for HTTP stop or
+  a signal;
 - `DaemonServer`: exposes the `Stack` Interface over HTTP/SSE on a Unix-domain socket;
 - `RemoteStack`: maps that transport back to the same Effect `Stack` Interface;
 - `StateManager`: atomically persists and discovers durable metadata and live state.
 
 The management transport includes health, status, status stream, start/stop, readiness,
-per-service lifecycle, logs/history, and Edge Runtime reload routes. It is local Unix-socket
-transport, not the public Supabase API proxy.
+per-service lifecycle, logs/history, and Edge Runtime reload routes. Readiness waits use validated
+`ReadyOptions` JSON bodies and preserve `StackReadinessError` across the transport. It is local
+Unix-socket transport, not the public Supabase API proxy.
 
 See [detach mode](./detach-mode.md) for paths, process startup, and compiled executable dispatch.
 
@@ -260,12 +295,15 @@ Callers may explicitly supply `projectStateRoot`, in which case durable stacks l
 ## Runtime entrypoints and exports
 
 - `bun.ts` and `node.ts` are root export-condition targets.
+- `effect-bun.ts` and `effect-node.ts` are Effect export-condition targets. They bind foreground,
+  daemon, and Unix-socket layers without exposing raw platform factories or bootstrap paths.
 - `daemon-bun.ts` is exported as `@supabase/stack/daemon-bun` so the compiled CLI can dispatch to
   it in-process.
-- `daemon-node.ts` is intentionally not a package export. `node.ts` resolves it by file URL and
-  passes that filesystem path to `daemonLayer`; the package `knip.entry` list preserves this live
-  file-URL-only entrypoint.
-- `effect.ts` is the low-level Effect export used by the CLI. There is no `internals.ts` entrypoint.
+- `daemon-node.ts` is intentionally not a package export. The internal Node platform Adapter
+  resolves it by file URL and passes that filesystem path to `daemonLayer`; the package
+  `knip.entry` list preserves this live file-URL-only entrypoint.
+- `effect.ts` is the platform-agnostic consumer contract re-exported by the conditional Effect
+  entries. There is no general-purpose `internals.ts` entrypoint.
 
 ## Testing
 
@@ -276,5 +314,6 @@ Callers may explicitly supply `projectStateRoot`, in which case durable stacks l
 - Targeted e2e tests own the expensive process/container Seam for full stack startup, parallel
   stacks, daemon lifecycle, and cleanup behavior.
 
-The authoritative current service versions are `DEFAULT_VERSIONS` in `src/versions.ts`; package
+The authoritative current service versions are the `defaultVersion` fields in
+`src/ServiceCatalog.ts`; `DEFAULT_VERSIONS` is derived from that catalog, and package
 documentation should link to that source rather than copy its values.

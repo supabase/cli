@@ -10,7 +10,7 @@ import {
   legacyPgDeltaNextTempPath,
   legacySavePgDeltaNextDebugArtifacts,
 } from "./legacy-pgdelta-next-artifacts.ts";
-import { legacyPgDeltaTempPath } from "./legacy-pgdelta.cache.ts";
+import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.cache.ts";
 
 describe("pg-delta next artifact generation", () => {
   it.effect("isolates v2 artifacts from legacy catalog paths", () =>

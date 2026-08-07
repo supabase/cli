@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
 
+import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
@@ -11,10 +12,15 @@ import {
   type LegacyPgDeltaTransactionMode,
 } from "./legacy-pgdelta-engine.service.ts";
 import {
+  type LegacyPgDeltaContext,
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
   legacyExportCatalogPgDelta,
-} from "./legacy-pgdelta.ts";
+} from "../../../shared/legacy-pgdelta.ts";
+import {
+  legacyGetMigrationsCatalogRef,
+  legacyResolveMigrationsCatalogRef,
+} from "../../../shared/legacy-pgdelta.cache.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
 
 const mapError = (cause: { readonly message: string }) =>
@@ -55,12 +61,18 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const seam = yield* LegacyDeclarativeSeam;
+    const output = yield* Output;
 
     const provideRuntime = <Success, Error>(
       operation: Effect.Effect<
         Success,
         Error,
-        LegacyEdgeRuntimeScript | LegacyPgDeltaSslProbe | FileSystem.FileSystem | Path.Path
+        | LegacyDeclarativeSeam
+        | LegacyEdgeRuntimeScript
+        | LegacyPgDeltaSslProbe
+        | FileSystem.FileSystem
+        | Output
+        | Path.Path
       >,
     ) =>
       operation.pipe(
@@ -68,23 +80,26 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         Effect.provideService(LegacyPgDeltaSslProbe, sslProbe),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
+        Effect.provideService(LegacyDeclarativeSeam, seam),
+        Effect.provideService(Output, output),
       );
 
-    const endpointRef = (endpoint: LegacyPgDeltaEndpoint, noCache: boolean) =>
+    const endpointRef = (context: LegacyPgDeltaContext, endpoint: LegacyPgDeltaEndpoint) =>
       endpoint.kind === "database"
         ? Effect.succeed(endpoint.ref)
-        : seam.exportCatalog({
-            mode: "migrations",
-            noCache,
-            ...(endpoint.projectRef !== undefined ? { projectRef: endpoint.projectRef } : {}),
-          });
+        : legacyResolveMigrationsCatalogRef(
+            fs,
+            path,
+            context,
+            endpoint.projectRef !== undefined ? { projectRef: endpoint.projectRef } : {},
+          ).pipe(provideRuntime);
 
     return LegacyPgDeltaEngine.of({
       implementation: "legacy",
       diffExplicit: (input) =>
         Effect.gen(function* () {
-          const sourceRef = yield* endpointRef(input.source, false);
-          const targetRef = yield* endpointRef(input.desired, false);
+          const sourceRef = yield* endpointRef(input.context, input.source);
+          const targetRef = yield* endpointRef(input.context, input.desired);
           const result = yield* provideRuntime(
             legacyDiffPgDelta(input.context, {
               sourceRef,
@@ -154,10 +169,16 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         }).pipe(Effect.mapError(mapError)),
       planDeclarativeSchema: (input) =>
         Effect.gen(function* () {
-          const sourceRef = yield* seam.exportCatalog({
-            mode: "migrations",
-            noCache: input.noCache,
-          });
+          const sourceRef = yield* legacyGetMigrationsCatalogRef(
+            fs,
+            path,
+            input.context,
+            input.setupInputs,
+            {
+              noCache: input.noCache,
+              ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+            },
+          ).pipe(provideRuntime);
           const targetRef = yield* seam.exportCatalog({
             mode: "declarative",
             noCache: input.noCache,

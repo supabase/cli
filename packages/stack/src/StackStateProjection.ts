@@ -17,18 +17,6 @@ function isHelperActive(state: RawServiceState): boolean {
   return state.status !== "Stopped" && state.status !== "Failed";
 }
 
-function sameState(a: StackServiceState | undefined, b: StackServiceState): boolean {
-  return (
-    a?.name === b.name &&
-    a.status === b.status &&
-    a.pid === b.pid &&
-    a.exitCode === b.exitCode &&
-    a.restartCount === b.restartCount &&
-    a.startedAt === b.startedAt &&
-    a.error === b.error
-  );
-}
-
 function projectPublicState(
   raw: RawServiceState,
   rawByName: ReadonlyMap<string, RawServiceState>,
@@ -94,11 +82,4 @@ export function projectStackState(
   catalog: StackServiceProjectionCatalog,
 ): StackServiceState | undefined {
   return projectStackStates(rawStates, catalog).find((state) => state.name === name);
-}
-
-export function changedProjectedStates(
-  previous: ReadonlyMap<string, StackServiceState>,
-  next: ReadonlyArray<StackServiceState>,
-): ReadonlyArray<StackServiceState> {
-  return next.filter((state) => !sameState(previous.get(state.name), state));
 }

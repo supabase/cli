@@ -4,8 +4,9 @@ import type {
   LegacyDbConnectOptions,
   LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
-import type { LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
-import type { LegacyPgDeltaImplementation } from "./legacy-pgdelta-next-flag.ts";
+import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
+import type { LegacySetupInputs } from "../../../shared/legacy-pgdelta.cache.ts";
+import type { LegacyPgDeltaImplementation } from "../../../shared/legacy-pgdelta-next-flag.ts";
 
 export interface LegacyPgDeltaDatabaseEndpoint {
   readonly kind: "database";
@@ -97,6 +98,7 @@ export interface LegacyPgDeltaDeclarativePlanInput extends LegacyPgDeltaCommonIn
   readonly files: ReadonlyArray<LegacyPgDeltaSqlFile>;
   readonly manifest?: LegacyPgDeltaExportManifest;
   readonly noCache: boolean;
+  readonly setupInputs: LegacySetupInputs;
 }
 
 interface LegacyPgDeltaDeclarativePlanResult extends LegacyPgDeltaDiffResult {

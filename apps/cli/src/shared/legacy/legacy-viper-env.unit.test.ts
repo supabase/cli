@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./legacy-viper-env.ts";
+import {
+  legacyViperEnvBool,
+  legacyViperEnvBoolWithProjectFallback,
+  legacyViperEnvStringWithProjectFallback,
+} from "./legacy-viper-env.ts";
 
 const KEY = "SUPABASE_TEST_VIPER_BOOL";
+const STRING_KEY = "SUPABASE_TEST_VIPER_STRING";
 
 describe("legacyViperEnvBool", () => {
   afterEach(() => {
@@ -68,5 +73,40 @@ describe("legacyViperEnvBoolWithProjectFallback", () => {
   it("keeps a true shell value over a false project value", () => {
     process.env[KEY] = "true";
     expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(true);
+  });
+});
+
+describe("legacyViperEnvStringWithProjectFallback", () => {
+  afterEach(() => {
+    delete process.env[STRING_KEY];
+  });
+
+  it("falls back to the project value only when the shell var is absent", () => {
+    delete process.env[STRING_KEY];
+    expect(
+      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
+    ).toBe("project-value");
+    expect(legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
+  });
+
+  it("keeps the shell value over a project value", () => {
+    process.env[STRING_KEY] = "shell-value";
+    expect(
+      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
+    ).toBe("shell-value");
+  });
+
+  it("treats an empty shell value as present (blocks the project value)", () => {
+    // Same presence-based semantics as legacyViperEnvBoolWithProjectFallback: godotenv.Load's
+    // "don't override a key already in os.Environ()" check is key-existence, not value-truthiness.
+    process.env[STRING_KEY] = "";
+    expect(
+      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
+    ).toBe("");
+  });
+
+  it("returns an empty string (not undefined) when absent from both, matching viper.GetString", () => {
+    delete process.env[STRING_KEY];
+    expect(legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
   });
 });

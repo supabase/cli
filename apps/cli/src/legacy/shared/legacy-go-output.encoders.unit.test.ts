@@ -101,6 +101,36 @@ describe("encodeGoJson", () => {
 `,
     );
   });
+
+  it("keeps Go's true lexicographic order for numeric-looking keys (CLI-1961 Codex review finding)", () => {
+    // A plain JS object always reorders integer-like string keys ("2", "10") into
+    // ascending NUMERIC order on enumeration, regardless of insertion order — Go's
+    // `encoding/json` has no such special case for a real Go map, so "10" sorts before
+    // "2" lexicographically. `sortKeysDeep` must build a `Map` (not a plain object) to
+    // carry that sort through to the final encoded output intact.
+    const out = encodeGoJson({ 10: "a", 2: "b", role: "anon" });
+    expect(out).toBe(
+      `{
+  "10": "a",
+  "2": "b",
+  "role": "anon"
+}
+`,
+    );
+  });
+
+  it("sorts keys by Go's byte/code-point order, not JS's UTF-16 code-unit order (CLI-1961 Codex review finding)", () => {
+    // U+E000 is a single UTF-16 code unit (0xE000); U+10000 is a surrogate PAIR whose
+    // leading unit (0xD800) is numerically SMALLER than 0xE000 — so plain JS `.sort()`
+    // (which compares UTF-16 code units) puts the astral key FIRST, while Go's real
+    // `encoding/json` (byte/code-point order) puts the high-BMP key first instead.
+    // Verified against the real binary: `json.Marshal` of a Go map keyed by these two
+    // strings emits the U+E000 key first.
+    const highBmp = String.fromCodePoint(0xe000);
+    const astral = String.fromCodePoint(0x10000);
+    const out = encodeGoJson({ [astral]: 2, [highBmp]: 1 });
+    expect(out).toBe(`{\n  "${highBmp}": 1,\n  "${astral}": 2\n}\n`);
+  });
 });
 
 describe("encodeYaml", () => {

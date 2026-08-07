@@ -23,7 +23,12 @@ import { legacyPgDeltaNextShadowLayer } from "../../../shared/legacy-pgdelta-nex
  * smart-generate flow (Go's `runDeclarativeGenerate`), which can target local /
  * linked / custom — so it needs the db-config resolver too. `Output` /
  * `LegacyGoProxy` / global flags + the Bun platform come from the legacy root /
- * `runCli`.
+ * `runCli`. `legacyDockerRunLayer` is ALSO exposed directly (not just provided to
+ * `edgeRuntime`): both the smart-target bootstrap's local-reset prompt and the
+ * failed-apply recovery reset now call `legacyResetLocalDatabase` in-process
+ * (CLI-2062), whose PG15+ recreate reuses the same one-shot migrate jobs `db
+ * start`/`db reset` back with this same layer (see those commands' own
+ * `*.layers.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
@@ -55,6 +60,7 @@ const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
 
 export const legacyDbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
   dbConfig,
+  legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,

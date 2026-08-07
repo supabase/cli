@@ -8094,8 +8094,11 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   sessions_tags: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$")).annotate({
-          expected: "a string matching the RegExp ^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$",
+        Schema.isPattern(
+          new RegExp("^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$"),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$",
         }),
       ),
       Schema.Null,
@@ -8353,8 +8356,11 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   sms_test_otp: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^([0-9]{1,15}=[0-9]+,?)*$")).annotate({
-          expected: "a string matching the RegExp ^([0-9]{1,15}=[0-9]+,?)*$",
+        Schema.isPattern(
+          new RegExp("^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$"),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$",
         }),
       ),
       Schema.Null,

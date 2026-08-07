@@ -25,7 +25,6 @@ export {
   ServiceNotFoundError,
   ServiceReadyError,
   SpawnError,
-  ShutdownTimeoutError,
 } from "./errors.ts";
 
 export type { LogEntry } from "./LogBuffer.ts";

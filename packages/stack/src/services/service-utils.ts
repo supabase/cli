@@ -1,4 +1,6 @@
-import type { ServiceDef } from "@supabase/process-compose";
+import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compose";
+import { dockerContainerName } from "../CleanupTargets.ts";
+import type { ServiceName } from "../ServiceName.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 export interface ServiceDependency {
@@ -7,8 +9,8 @@ export interface ServiceDependency {
 }
 
 interface DockerRunServiceOptions {
-  readonly name: string;
-  readonly containerName: string;
+  readonly name: ServiceName;
+  readonly apiPort: number;
   readonly image: string;
   readonly networkArgs?: ReadonlyArray<string>;
   readonly env?: Record<string, string>;
@@ -16,11 +18,11 @@ interface DockerRunServiceOptions {
   readonly cmd?: ReadonlyArray<string>;
   readonly entrypoint?: string;
   readonly volumes?: ReadonlyArray<string>;
-  readonly dependsOn?: ReadonlyArray<ServiceDependency>;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
   readonly healthCheck?: ServiceDef["healthCheck"];
   readonly restart?: ServiceDef["restart"];
   readonly shutdown?: ServiceDef["shutdown"];
-  readonly orphanCleanup?: ReadonlyArray<any>;
+  readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
 }
 
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
@@ -56,11 +58,12 @@ export const dockerExecHealthCheck = (
 });
 
 export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
+  const containerName = dockerContainerName(opts.name, opts.apiPort);
   const dockerArgs = [
     "run",
     "--rm",
     "--name",
-    opts.containerName,
+    containerName,
     ...(opts.networkArgs ?? []),
     ...(opts.volumes ?? []).flatMap((volume) => ["-v", volume]),
     ...(opts.entrypoint === undefined ? [] : ["--entrypoint", opts.entrypoint]),
@@ -74,15 +77,12 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     name: opts.name,
     command: "docker",
     args: dockerArgs,
-    dependencies: opts.dependsOn,
+    dependencies: opts.dependencies,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,
-    cleanup: dockerServiceCleanup(opts.containerName),
+    cleanup: dockerServiceCleanup(containerName),
     supervision: {
-      orphanCleanup: [
-        ...dockerServiceOrphanCleanup(opts.containerName),
-        ...(opts.orphanCleanup ?? []),
-      ],
+      orphanCleanup: [...dockerServiceOrphanCleanup(containerName), ...(opts.orphanCleanup ?? [])],
     },
     restart: opts.restart ?? "unless-stopped",
   };

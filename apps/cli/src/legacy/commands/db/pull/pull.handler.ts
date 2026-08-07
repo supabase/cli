@@ -44,7 +44,7 @@ import {
   legacyResolvePullDiffEngine,
   legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
-} from "../shared/legacy-diff-engine.ts";
+} from "../../../shared/legacy-diff-engine.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import { type LegacyDumpOptions, legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
@@ -60,12 +60,14 @@ import {
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
 import { legacyDebugBundleMessage, legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
-import type { LegacyPgDeltaContext } from "../shared/legacy-pgdelta.ts";
 import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseEndpoint,
 } from "../shared/legacy-pgdelta-engine.service.ts";
-import { legacyIsPgDeltaDebugEnabled } from "../shared/legacy-pgdelta.ts";
+import {
+  type LegacyPgDeltaContext,
+  legacyIsPgDeltaDebugEnabled,
+} from "../../../shared/legacy-pgdelta.ts";
 import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
@@ -473,8 +475,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
 
         if (
           !delegatesExperimentalPull &&
-          toml.migrationSchemaPaths !== undefined &&
-          toml.migrationSchemaPaths.length > 0
+          toml.schemaPaths !== undefined &&
+          toml.schemaPaths.length > 0
         ) {
           yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
         }

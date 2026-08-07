@@ -52,8 +52,14 @@ bundled Go binary.
 
 ## Docker
 
-- Edge-runtime container (migra, or pg-delta only under the legacy opt-out).
-- Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam).
+- Edge-runtime container (migra, or pg-delta only under the legacy opt-out). The
+  legacy explicit `--from/--to migrations` path also runs the native pg-delta
+  catalog-export script there on a cache miss (CLI-1959; no hidden `__catalog`
+  subprocess).
+- Shadow Postgres container(s), provisioned through the Go `db __shadow` seam.
+  The default engine uses isolated migrations and declarative shadows. The legacy
+  opt-out provisions a single `mode: "diff"` shadow, including on an explicit
+  migrations-catalog cache miss, and tears it down after export.
 - `supabase/migra` container — the migra OOM bash fallback only.
 
 ## API Routes (linked path, via the db-config resolver)
@@ -111,6 +117,12 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - Normal mode always compares the migrations shadow with the selected live
   database. Declarative files and `schema_paths` never replace that target; use
   `supabase db schema declarative sync` for declarative comparison.
+- Under the legacy opt-out, the explicit `migrations` target resolves natively
+  (CLI-1959): a bare
+  migrations-content hash cache lookup (`<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`,
+  shared with `db push`'s post-apply cache write), and on a miss, the existing
+  `db __shadow --mode diff` seam call plus a native pg-delta catalog export. No hidden Go
+  `db schema declarative __catalog` subprocess runs for this path any more.
 
 ### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
 
@@ -129,8 +141,9 @@ than a pending port because:
 The decision record is Linear issue CLI-1960 and the pull request that introduced
 this deprecation notice; re-open only if a TS/WASM binding for
 `stripe/pg-schema-diff` ships. It will become the CLI's sole remaining Go delegation
-once `--use-pgadmin`'s delegation, the `db __shadow`/`db __db-bootstrap` seams, and
-the rest of the M9 milestone's in-flight issues are done — it is not there yet.
+once `--use-pgadmin`'s delegation, the `db __shadow` seam (the sibling `db
+__db-bootstrap` seam was already removed outright by CLI-1955), and the rest of
+the M9 milestone's in-flight issues are done — it is not there yet.
 
 Given that, the flag is now deprecated rather than ported:
 

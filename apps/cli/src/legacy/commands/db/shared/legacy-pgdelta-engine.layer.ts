@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
 
+import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { legacyPgDeltaLegacyEngineLayer } from "./legacy-pgdelta-engine.legacy.layer.ts";
 import { legacyPgDeltaNextEngineLayer } from "./legacy-pgdelta-engine.next.layer.ts";
@@ -9,7 +10,7 @@ import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { legacyResolvePgDeltaImplementation } from "./legacy-pgdelta-next-flag.ts";
+import { legacyResolvePgDeltaImplementation } from "../../../shared/legacy-pgdelta-next-flag.ts";
 
 const FLAG = "SUPABASE_USE_PG_DELTA_NEXT";
 
@@ -61,6 +62,7 @@ function selectProductionLayer(
   | LegacyEdgeRuntimeScript
   | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
+  | Output
   | Path.Path
 > {
   return implementation === "next" ? legacyPgDeltaNextEngineLayer : legacyPgDeltaLegacyEngineLayer;

@@ -1,5 +1,7 @@
 import { Effect, FileSystem, Path } from "effect";
 
+import type { LegacyPgDeltaContext } from "../../../../shared/legacy-pgdelta.ts";
+import type { LegacySetupInputs } from "../../../../shared/legacy-pgdelta.cache.ts";
 import { legacyFindDropStatements } from "../../../../shared/legacy-sql-split.ts";
 import {
   LegacyPgDeltaEngine,
@@ -10,7 +12,6 @@ import {
   LegacyLoadPgDeltaSqlFiles,
   LegacyReadPgDeltaExportManifest,
 } from "../../shared/legacy-pgdelta-files.ts";
-import type { LegacyPgDeltaContext } from "../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
@@ -36,8 +37,16 @@ export interface LegacyDeclarativeSyncResult {
 
 const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ message });
 
+/**
+ * Computes the diff between local migrations state and the declarative schema.
+ * Mirrors Go's `DiffDeclarativeToMigrations` (`declarative.go:170`): the
+ * selected pg-delta engine owns both sides of the plan. The legacy engine
+ * resolves migrations natively via `legacyGetMigrationsCatalogRef` (CLI-1959),
+ * while pg-delta next plans against its scoped migrations/declarative shadows.
+ */
 export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
   run: LegacyDeclarativeRunContext,
+  setupInputs: LegacySetupInputs,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -63,6 +72,8 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
     debug: run.debug,
     files,
     noCache: run.noCache,
+    setupInputs,
+    ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
     ...(manifest !== undefined ? { manifest } : {}),
   });
   return {

@@ -47,11 +47,11 @@ platform view.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                              | When                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `supabase-go db schema declarative __catalog --mode baseline --experimental` — provisions and exports the legacy baseline catalog | legacy opt-out only                                            |
-| Edge-runtime container running the pg-delta declarative-export Deno script                                                        | legacy opt-out only                                            |
-| `supabase-go db reset --local`                                                                                                    | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| What                                                                                                                                                                        | When                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `supabase-go db schema declarative __catalog --mode baseline --experimental` — provisions and exports the legacy baseline catalog                                           | legacy opt-out only                                            |
+| Edge-runtime container running the pg-delta declarative-export Deno script                                                                                                  | legacy opt-out only                                            |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` | smart-mode Local choice when reset is confirmed (or `--reset`) |
 
 ## Environment Variables
 

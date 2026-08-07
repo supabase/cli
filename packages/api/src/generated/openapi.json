@@ -15824,7 +15824,7 @@
           },
           "sessions_tags": {
             "type": "string",
-            "pattern": "^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$",
+            "pattern": "^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$",
             "nullable": true
           },
           "rate_limit_anonymous_users": {
@@ -15959,7 +15959,7 @@
           },
           "sms_test_otp": {
             "type": "string",
-            "pattern": "^([0-9]{1,15}=[0-9]+,?)*$",
+            "pattern": "^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$",
             "nullable": true
           },
           "sms_test_otp_valid_until": {

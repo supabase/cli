@@ -25,6 +25,15 @@ import (
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
+func mockTransactionalStatement(conn *pgtest.MockConn, statement, reply string) *pgtest.MockConn {
+	return conn.Query("BEGIN").
+		Reply("BEGIN").
+		Query(statement).
+		Reply(reply).
+		Query("COMMIT").
+		Reply("COMMIT")
+}
+
 func TestInitBranch(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
@@ -90,9 +99,8 @@ func TestStartDatabase(t *testing.T) {
 		// the default Data API GRANTs before seeding roles.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		helper.MockApiPrivilegesRevoke(conn).
-			Query(roles).
-			Reply("CREATE ROLE")
+		helper.MockApiPrivilegesRevoke(conn)
+		mockTransactionalStatement(conn, roles, "CREATE ROLE")
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -253,13 +261,10 @@ func TestSetupDatabase(t *testing.T) {
 		// default Data API GRANTs (the May 30 2026 flip) between initial schema and roles.sql
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA")
-		helper.MockApiPrivilegesRevoke(conn).
-			Query(roles).
-			Reply("CREATE ROLE")
+		mockTransactionalStatement(conn, utils.GlobalsSql, "CREATE SCHEMA")
+		mockTransactionalStatement(conn, utils.InitialSchemaPg14Sql, "CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn)
+		mockTransactionalStatement(conn, roles, "CREATE ROLE")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -285,12 +290,9 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup mock postgres: explicit true opts into the legacy behaviour, so no revoke SQL
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query(roles).
-			Reply("CREATE ROLE")
+		mockTransactionalStatement(conn, utils.GlobalsSql, "CREATE SCHEMA")
+		mockTransactionalStatement(conn, utils.InitialSchemaPg14Sql, "CREATE SCHEMA")
+		mockTransactionalStatement(conn, roles, "CREATE ROLE")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -316,13 +318,10 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup mock postgres: the revoke SQL must execute between the initial schema and roles.sql
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA")
-		helper.MockApiPrivilegesRevoke(conn).
-			Query(roles).
-			Reply("CREATE ROLE")
+		mockTransactionalStatement(conn, utils.GlobalsSql, "CREATE SCHEMA")
+		mockTransactionalStatement(conn, utils.InitialSchemaPg14Sql, "CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn)
+		mockTransactionalStatement(conn, roles, "CREATE ROLE")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -405,7 +404,7 @@ func TestApplyDatabaseWebhooks(t *testing.T) {
 		utils.Config = cfg
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("create extension if not exists pg_net schema extensions").Reply("CREATE EXTENSION")
+		mockTransactionalStatement(conn, "create extension if not exists pg_net schema extensions", "CREATE EXTENSION")
 
 		require.NoError(t, ApplyDatabaseWebhooks(context.Background(), conn.MockClient(t)))
 	})
@@ -432,8 +431,7 @@ func TestSetupDatabaseUserExtensionActivation(t *testing.T) {
 		newWebhookConfig(t)
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("create extension if not exists pg_net schema extensions").
-			Reply("CREATE EXTENSION")
+		mockTransactionalStatement(conn, "create extension if not exists pg_net schema extensions", "CREATE EXTENSION")
 		helper.MockApiPrivilegesRevoke(conn)
 
 		err := SetupDatabase(context.Background(), conn.MockClient(t), "postgres-host", io.Discard, afero.NewMemMapFs())

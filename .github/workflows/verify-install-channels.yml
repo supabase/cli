@@ -17,9 +17,19 @@ name: Verify Install Channels
 # instead of trusting the manifest the publish step wrote.
 #
 # Each leg goes beyond `supabase --version` (handled by the Bun wrapper without
-# touching the sidecar) and runs `supabase completion bash`, a Go-proxied
-# command, so a package that omits or misplaces the colocated `supabase-go`
-# sidecar fails here instead of silently shipping broken proxied commands.
+# touching the sidecar) and directly checks that the `supabase-go` sidecar
+# binary is present and executable in the channel's install directory, so a
+# package that omits or misplaces it fails here instead of silently shipping
+# a CLI whose still-Go-proxied commands (see docs/go-cli-porting-status.md)
+# would fail for every user.
+#
+# This used to run `supabase completion bash`, since that command was
+# Go-proxied. It no longer is (CLI-1965 ported shell completion to native
+# TypeScript, and the Go CLI's own completion command was subsequently
+# removed too), so that probe silently stopped testing the sidecar at all.
+# Checking for the sidecar file directly instead of routing through some
+# still-proxied command avoids repeating that mistake as more commands get
+# natively ported.
 
 on:
   workflow_call:
@@ -156,20 +166,20 @@ jobs:
       - name: Verify Go sidecar
         run: |
           set -euo pipefail
-          # `completion bash` is proxied to the colocated `supabase-go` sidecar,
-          # so this fails (NotFound: ChildProcess.spawn) if the package omitted
-          # or misplaced supabase-go, even though `--version` above passed.
-          out="$(supabase completion bash 2>&1)" || {
-            echo "${out}"
-            echo "Go sidecar probe failed: 'supabase completion bash' did not exit 0" >&2
+          # Homebrew's `bin.install` symlinks both `supabase` and `supabase-go`
+          # into the same prefix bin/ directory, so the sidecar must sit right
+          # next to whichever `supabase` resolved from PATH.
+          bin_dir="$(dirname "$(command -v supabase)")"
+          sidecar="${bin_dir}/supabase-go"
+          if [ ! -e "${sidecar}" ]; then
+            echo "Go sidecar probe failed: ${sidecar} does not exist" >&2
             exit 1
-          }
-          printf '%s' "${out}" | grep -q "supabase" || {
-            echo "${out}"
-            echo "Go sidecar probe failed: unexpected completion output" >&2
+          fi
+          if [ ! -x "${sidecar}" ]; then
+            echo "Go sidecar probe failed: ${sidecar} exists but is not executable" >&2
             exit 1
-          }
-          echo "Go sidecar probe OK"
+          fi
+          echo "Go sidecar probe OK: ${sidecar}"
 
   scoop:
     name: Scoop (${{ inputs.scoop_name }})
@@ -212,20 +222,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # `completion bash` is proxied to the colocated `supabase-go` sidecar,
-          # so this fails if the package omitted or misplaced supabase-go.exe,
-          # even though `--version` above passed.
-          out="$(supabase completion bash 2>&1)" || {
-            echo "${out}"
-            echo "Go sidecar probe failed: 'supabase completion bash' did not exit 0" >&2
+          # Scoop's manifest only declares `supabase.exe` in `bin` (see
+          # apps/cli/scripts/update-scoop.ts), so only `supabase` gets a shim in
+          # ~/scoop/shims — `dirname "$(command -v supabase)"` would resolve to
+          # the shim directory, not the real install directory supabase-go.exe
+          # actually lives in. Go straight to the app's current version
+          # directory instead, which Scoop always maintains regardless of shims.
+          app_dir="${HOME}/scoop/apps/${SCOOP_NAME}/current"
+          sidecar="${app_dir}/supabase-go.exe"
+          if [ ! -e "${sidecar}" ]; then
+            echo "Go sidecar probe failed: ${sidecar} does not exist" >&2
             exit 1
-          }
-          printf '%s' "${out}" | grep -q "supabase" || {
-            echo "${out}"
-            echo "Go sidecar probe failed: unexpected completion output" >&2
-            exit 1
-          }
-          echo "Go sidecar probe OK"
+          fi
+          echo "Go sidecar probe OK: ${sidecar}"
 
   install-script:
     name: install script (${{ matrix.runner }})
@@ -270,17 +279,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # `completion bash` is proxied to the colocated `supabase-go` sidecar,
-          # so this fails if the install script did not place supabase-go next
-          # to supabase, even though `--version` above passed.
-          out="$(supabase completion bash 2>&1)" || {
-            echo "${out}"
-            echo "Go sidecar probe failed: 'supabase completion bash' did not exit 0" >&2
+          # The install script places `supabase-go` right next to `supabase`,
+          # so the sidecar must sit in the same directory `supabase` resolved
+          # from on PATH.
+          bin_dir="$(dirname "$(command -v supabase)")"
+          sidecar="${bin_dir}/supabase-go"
+          if [ ! -e "${sidecar}" ]; then
+            echo "Go sidecar probe failed: ${sidecar} does not exist" >&2
             exit 1
-          }
-          printf '%s' "${out}" | grep -q "supabase" || {
-            echo "${out}"
-            echo "Go sidecar probe failed: unexpected completion output" >&2
+          fi
+          if [ ! -x "${sidecar}" ]; then
+            echo "Go sidecar probe failed: ${sidecar} exists but is not executable" >&2
             exit 1
-          }
-          echo "Go sidecar probe OK"
+          fi
+          echo "Go sidecar probe OK: ${sidecar}"

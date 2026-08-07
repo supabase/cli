@@ -2,12 +2,25 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ReadyOptions, StackHandle } from "./createStack.ts";
-import { resolveConfig, resolveDaemonConfig } from "./createStack.ts";
+import { candidateCleanupTargets } from "./cleanup.ts";
+import { dockerContainerName } from "./CleanupTargets.ts";
+import { runForegroundOperation, type StackHandle } from "./createStack.ts";
+import { StackReadinessError } from "./errors.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
-import type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
+import type {
+  AuthConfig,
+  PostgresConfig,
+  PostgrestConfig,
+  ReadyOptions,
+  StackConfig,
+} from "./StackConfig.ts";
+import {
+  resolveConfig,
+  resolveDaemonConfig,
+  sanitizeDaemonConfigInput,
+} from "./StackConfigResolver.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const DEFAULT_PORTS: AllocatedPorts = {
@@ -59,6 +72,60 @@ function writeStackMetadata(
     ),
   );
 }
+
+describe("foreground operation lifecycle", () => {
+  it("disposes the foreground runtime after a direct readiness timeout", async () => {
+    let disposeCount = 0;
+    const operation = Promise.reject(
+      new StackReadinessError({
+        target: "stack",
+        timeoutMs: 10,
+        detail: "Timed out waiting for stack readiness",
+      }),
+    );
+
+    await expect(
+      runForegroundOperation(
+        operation,
+        async () => true,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
+    ).rejects.toMatchObject({ code: "STACK_READINESS_TIMEOUT" });
+    expect(disposeCount).toBe(1);
+  });
+
+  it("disposes the foreground runtime after another terminal start failure", async () => {
+    let disposeCount = 0;
+
+    await expect(
+      runForegroundOperation(
+        Promise.reject(new Error("service startup failed")),
+        async () => true,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
+    ).rejects.toMatchObject({ code: "UNKNOWN" });
+    expect(disposeCount).toBe(1);
+  });
+
+  it("keeps the foreground runtime open after a non-terminal operation failure", async () => {
+    let disposeCount = 0;
+
+    await expect(
+      runForegroundOperation(
+        Promise.reject(new Error("failed")),
+        async () => false,
+        async () => {
+          disposeCount += 1;
+        },
+      ),
+    ).rejects.toMatchObject({ code: "UNKNOWN" });
+    expect(disposeCount).toBe(0);
+  });
+});
 
 describe("createStack types", () => {
   it("StackHandle interface has expected shape", () => {
@@ -127,6 +194,15 @@ describe("createStack types", () => {
         DEFAULT_MANAGED_STACK_NAME,
       ),
     );
+  });
+
+  it("strips function bundles from daemon configuration at runtime", () => {
+    const input = {
+      cwd: "/project",
+      functions: { environment: { SECRET: "must-not-cross-ipc" } },
+    };
+
+    expect(sanitizeDaemonConfigInput(input)).toEqual({ cwd: "/project" });
   });
 
   it("resolveDaemonConfig prefers legacy defaults for a first named stack", async () => {
@@ -240,6 +316,32 @@ describe("resolveConfig edge runtime defaults", () => {
   });
 });
 
+describe("candidateCleanupTargets", () => {
+  it("derives fallback Docker identities from enabled catalog services", async () => {
+    const config = await resolveConfig({
+      mode: "docker",
+      auth: false,
+      edgeRuntime: false,
+      realtime: false,
+      storage: false,
+      imgproxy: false,
+      mailpit: false,
+      pgmeta: false,
+      studio: false,
+      analytics: false,
+      vector: false,
+      pooler: false,
+    });
+
+    expect(candidateCleanupTargets(config)).toEqual({
+      dockerContainerNames: [
+        dockerContainerName("postgres", config.apiPort),
+        dockerContainerName("postgrest", config.apiPort),
+      ],
+    });
+  });
+});
+
 describe("resolveConfig startup mode", () => {
   it("keeps eager startup as the package default", async () => {
     const config = await resolveConfig();
@@ -249,5 +351,19 @@ describe("resolveConfig startup mode", () => {
   it("preserves an explicit lazy startup mode", async () => {
     const config = await resolveConfig({ startupMode: "lazy" });
     expect(config.startupMode).toBe("lazy");
+  });
+});
+
+describe("resolveConfig readiness policy", () => {
+  it("uses a finite package default", async () => {
+    const config = await resolveConfig();
+    expect(config.readiness).toEqual({ mode: "finite", timeoutMs: 180_000 });
+    expect(config.readinessSource).toBe("default");
+  });
+
+  it("preserves an explicit infinite policy", async () => {
+    const config = await resolveConfig({ readiness: { mode: "infinite" } });
+    expect(config.readiness).toEqual({ mode: "infinite" });
+    expect(config.readinessSource).toBe("configured");
   });
 });

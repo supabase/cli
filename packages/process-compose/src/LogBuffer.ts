@@ -24,7 +24,6 @@ export class LogBuffer extends Context.Service<
       limit?: number,
       services?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<LogEntry>>;
-    readonly truncate: (service: string) => Effect.Effect<void>;
   }
 >()("process-compose/LogBuffer") {
   static layer = Layer.effect(
@@ -96,15 +95,6 @@ export class LogBuffer extends Context.Service<
                 : all.filter((entry) => services.includes(entry.service));
 
             return filtered.slice(-limit);
-          }),
-
-        truncate: (service) =>
-          Effect.gen(function* () {
-            const { buffer } = yield* getOrCreate(service);
-            yield* Ref.set(buffer, []);
-            yield* Ref.update(globalBuffer, (entries) =>
-              entries.filter((entry) => entry.service !== service),
-            );
           }),
       };
     }),

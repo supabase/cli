@@ -8,8 +8,8 @@ import {
   nativeReleaseForService,
   type ArchiveFormat,
   type NativeReleaseArtifact,
-} from "./ServiceArtifacts.ts";
-import type { ServiceName } from "./versions.ts";
+} from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
 export interface BinarySpec {
   readonly service: ServiceName;
