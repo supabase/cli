@@ -45,6 +45,10 @@ const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:\//;
 const importPathPattern =
   /(?:import|export)\s+(?:type\s+)?(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)/gi;
 
+export function shouldChmodBundleOutputDirectory(platform: NodeJS.Platform) {
+  return platform !== "win32";
+}
+
 interface FunctionsDeployFlags {
   readonly functionNames: ReadonlyArray<string>;
   readonly projectRef: Option.Option<string>;
@@ -1414,7 +1418,14 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     mkdtemp(join(outputRoot, `.supabase-output-${config.slug}-`)),
   );
   try {
-    yield* Effect.tryPromise(() => chmod(outputDir, 0o777));
+    // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
+    // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
+    if (shouldChmodBundleOutputDirectory(process.platform)) {
+      yield* Effect.tryPromise({
+        try: () => chmod(outputDir, 0o777),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
+    }
     const outputPath = join(outputDir, "output.eszip");
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config),
