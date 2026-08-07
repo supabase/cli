@@ -386,6 +386,71 @@ describe("makeSupabaseApiClient", () => {
     ]);
   });
 
+  // Both payloads are the shapes reported against 2.112.0, where the spec's
+  // Z-anchored pattern rejected them and broke `link` and `branches list`
+  // outright (supabase/cli#6115).
+  test("decodes timestamps with a numeric UTC offset", async () => {
+    const apiKeys = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1GetProjectApiKeys">(operationDefinitions.v1GetProjectApiKeys, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, [
+                {
+                  name: "anon",
+                  type: "legacy",
+                  api_key: "anon-key",
+                  inserted_at: "2026-05-01T08:00:00+00:00",
+                  updated_at: "2026-05-01T08:00:00.123456+02:00",
+                },
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(apiKeys[0]?.inserted_at).toBe("2026-05-01T08:00:00+00:00");
+    expect(apiKeys[0]?.updated_at).toBe("2026-05-01T08:00:00.123456+02:00");
+
+    const branches = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1ListAllBranches">(operationDefinitions.v1ListAllBranches, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, [
+                {
+                  id: "6f8f9d2c-1f43-4b8a-9d0e-3a2b1c4d5e6f",
+                  name: "preview",
+                  project_ref: "abcdefghijklmnopqrst",
+                  parent_project_ref: "tsrqponmlkjihgfedcba",
+                  is_default: false,
+                  persistent: false,
+                  status: "MIGRATIONS_PASSED",
+                  with_data: false,
+                  created_at: "2026-08-06T19:27:30.261795+00:00",
+                  updated_at: "2026-08-06T19:27:30.261795+00:00",
+                },
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(branches[0]?.created_at).toBe("2026-08-06T19:27:30.261795+00:00");
+  });
+
   test("accepts missing custom-hostname SSL validation records", async () => {
     const result = await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(

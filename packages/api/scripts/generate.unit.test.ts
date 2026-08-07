@@ -33,6 +33,17 @@ describe("generate", () => {
     );
   });
 
+  test("drops the spec's Z-only pattern from date-time strings (#6115)", () => {
+    expect(
+      renderOpenApiSchema({
+        type: "string",
+        format: "date-time",
+        pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+        nullable: true,
+      }),
+    ).toBe('Schema.Union([Schema.String.annotate({ "format": "date-time" }), Schema.Null])');
+  });
+
   test("accepts booleans for string-encoded boolean query parameters", () => {
     expect(
       normalizeQueryParameterSchema(
