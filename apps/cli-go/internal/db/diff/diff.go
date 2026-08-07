@@ -227,18 +227,3 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	}
 	return DatabaseDiff{SQL: output}, nil
 }
-
-func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
-	msg := make([]string, len(migrations))
-	for i, m := range migrations {
-		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
-	}
-	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
-	conn, err := utils.ConnectLocalPostgres(ctx, config, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
-}
