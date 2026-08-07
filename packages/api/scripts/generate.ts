@@ -215,6 +215,27 @@ function identifier(value: string): string {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
+// Timestamp shapes the Management API is known to serialize: a numeric UTC
+// offset (RFC 3339 §5.6) with and without fractional seconds, plus the `Z`
+// form the spec's own `example` values use.
+const DATE_TIME_SAMPLES = [
+  "2026-08-06T19:27:30.261795+00:00",
+  "2026-05-01T08:00:00+00:00",
+  "2025-03-01T00:00:00Z",
+];
+
+function acceptsKnownDateTimes(pattern: string): boolean {
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern);
+  } catch {
+    // An uncompilable pattern would fail the same way in the generated
+    // decoder, so treat it as rejecting everything.
+    return false;
+  }
+  return DATE_TIME_SAMPLES.every((sample) => regex.test(sample));
+}
+
 // Keys that we want to strip from a schema node because they describe
 // documentation / example values rather than the value's shape. JSON Schema's
 // `default` is a primitive (or array/object) literal used for documentation —
@@ -290,12 +311,17 @@ export function sanitizeOpenApiSchema(
     sanitized.pattern = UUID_PATTERN;
   }
 
-  // The spec's `date-time` patterns are Z-anchored, but the Management API
-  // serializes timestamps with a numeric UTC offset (`+00:00`, valid RFC 3339
-  // §5.6), so they reject values the API itself emits (supabase/cli#6115). The
-  // CLI only passes these strings through, so keep `format` and drop the
-  // pattern rather than tracking every shape the API may serialize.
-  if (sanitized.type === "string" && sanitized.format === "date-time") {
+  // Most of the spec's `date-time` patterns are Z-anchored and so reject the
+  // numeric-offset timestamps the API itself emits (supabase/cli#6115). Drop a
+  // pattern only when it rejects a shape the API is known to produce, so the
+  // variants that already accept offsets keep validating request inputs.
+  const pattern = sanitized.pattern;
+  if (
+    sanitized.type === "string" &&
+    sanitized.format === "date-time" &&
+    typeof pattern === "string" &&
+    !acceptsKnownDateTimes(pattern)
+  ) {
     delete sanitized.pattern;
   }
 

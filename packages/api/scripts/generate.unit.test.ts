@@ -44,6 +44,14 @@ describe("generate", () => {
     ).toBe('Schema.Union([Schema.String.annotate({ "format": "date-time" }), Schema.Null])');
   });
 
+  test("keeps a date-time pattern that already accepts numeric offsets", () => {
+    const offsetTolerant =
+      "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$";
+    expect(
+      renderOpenApiSchema({ type: "string", format: "date-time", pattern: offsetTolerant }),
+    ).toContain("isPattern");
+  });
+
   test("accepts booleans for string-encoded boolean query parameters", () => {
     expect(
       normalizeQueryParameterSchema(
