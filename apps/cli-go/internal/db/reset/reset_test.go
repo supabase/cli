@@ -173,8 +173,12 @@ func TestInitDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA")
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA").
+			Query("COMMIT").
+			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn)
 		// Run test
 		assert.NoError(t, initDatabase(context.Background(), conn.Intercept))
@@ -194,8 +198,12 @@ func TestInitDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaPg14Sql).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query(utils.InitialSchemaPg14Sql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
+			Query("ROLLBACK").
+			Reply("ROLLBACK")
 		// Run test
 		err := initDatabase(context.Background(), conn.Intercept)
 		// Check error
@@ -209,14 +217,20 @@ func TestRecreateDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query(TERMINATE_BACKENDS).
 			Reply("SELECT 1").
+			Query("COMMIT").
+			Reply("COMMIT").
 			Query(COUNT_REPLICATION_SLOTS).
 			Reply("SELECT 1", []any{0}).
+			Query("BEGIN").
+			Reply("BEGIN").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			Reply("DROP DATABASE").
 			Query("CREATE DATABASE postgres WITH OWNER postgres").
@@ -224,7 +238,9 @@ func TestRecreateDatabase(t *testing.T) {
 			Query("DROP DATABASE IF EXISTS _supabase WITH (FORCE)").
 			Reply("DROP DATABASE").
 			Query("CREATE DATABASE _supabase WITH OWNER postgres").
-			Reply("CREATE DATABASE")
+			Reply("CREATE DATABASE").
+			Query("COMMIT").
+			Reply("COMMIT")
 		// Run test
 		assert.NoError(t, recreateDatabase(context.Background(), conn.Intercept))
 	})
@@ -239,11 +255,15 @@ func TestRecreateDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
 			ReplyError(pgerrcode.InvalidCatalogName, `database "_supabase" does not exist`).
 			Query(TERMINATE_BACKENDS).
+			Query("ROLLBACK").
+			Reply("ROLLBACK").
 			Query(COUNT_REPLICATION_SLOTS).
 			ReplyError(pgerrcode.UndefinedTable, `relation "pg_replication_slots" does not exist`)
 		// Run test
@@ -257,10 +277,14 @@ func TestRecreateDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`).
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
-			Query(TERMINATE_BACKENDS)
+			Query(TERMINATE_BACKENDS).
+			Query("ROLLBACK").
+			Reply("ROLLBACK")
 		// Run test
 		err := recreateDatabase(context.Background(), conn.Intercept)
 		// Check error
@@ -272,21 +296,29 @@ func TestRecreateDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query(TERMINATE_BACKENDS).
 			Reply("SELECT 1").
+			Query("COMMIT").
+			Reply("COMMIT").
 			Query(COUNT_REPLICATION_SLOTS).
 			Reply("SELECT 1", []any{0}).
+			Query("BEGIN").
+			Reply("BEGIN").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`).
 			Query("CREATE DATABASE postgres WITH OWNER postgres").
 			Query("DROP DATABASE IF EXISTS _supabase WITH (FORCE)").
 			Reply("DROP DATABASE").
 			Query("CREATE DATABASE _supabase WITH OWNER postgres").
-			Reply("CREATE DATABASE")
+			Reply("CREATE DATABASE").
+			Query("ROLLBACK").
+			Reply("ROLLBACK")
 		err := recreateDatabase(context.Background(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" is used by an active logical replication slot (SQLSTATE 55006)`)

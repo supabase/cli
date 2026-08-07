@@ -41,12 +41,16 @@ func TestSwitchCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query(reset.TERMINATE_BACKENDS).
 			Reply("SELECT 1").
+			Query("COMMIT").
+			Reply("COMMIT").
 			Query(reset.COUNT_REPLICATION_SLOTS).
 			Reply("SELECT 1", []any{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
@@ -212,10 +216,14 @@ func TestSwitchDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`).
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
-			Query(reset.TERMINATE_BACKENDS)
+			Query(reset.TERMINATE_BACKENDS).
+			Query("ROLLBACK").
+			Reply("ROLLBACK")
 		// Run test
 		err := switchDatabase(context.Background(), "main", "target", conn.Intercept)
 		// Check error
@@ -230,12 +238,16 @@ func TestSwitchDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query(reset.TERMINATE_BACKENDS).
 			Reply("SELECT 1").
+			Query("COMMIT").
+			Reply("COMMIT").
 			Query(reset.COUNT_REPLICATION_SLOTS).
 			Reply("SELECT 1", []any{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
@@ -260,12 +272,16 @@ func TestSwitchDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
 			Query(reset.TERMINATE_BACKENDS).
 			Reply("SELECT 1").
+			Query("COMMIT").
+			Reply("COMMIT").
 			Query(reset.COUNT_REPLICATION_SLOTS).
 			Reply("SELECT 1", []any{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").

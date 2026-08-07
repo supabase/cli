@@ -25,8 +25,8 @@ import (
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
-func mockTransactionalStatement(conn *pgtest.MockConn, statement, reply string) *pgtest.MockConn {
-	return conn.Query("BEGIN").
+func mockTransactionalStatement(conn *pgtest.MockConn, statement, reply string) {
+	conn.Query("BEGIN").
 		Reply("BEGIN").
 		Query(statement).
 		Reply(reply).
