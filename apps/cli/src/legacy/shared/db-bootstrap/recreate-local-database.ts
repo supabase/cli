@@ -460,7 +460,7 @@ const legacyRecreateLocalDatabase14 = <E>(
           seed: legacyResolveResetSeedConfig(toml.seed, input.seedFlags, path),
           experimental: setup.experimental,
           pgDeltaEnabled: toml.pgDelta.enabled,
-          schemaPaths: setup.config.db.migrations.schema_paths,
+          schemaPaths: toml.schemaPaths,
         });
       }),
     );

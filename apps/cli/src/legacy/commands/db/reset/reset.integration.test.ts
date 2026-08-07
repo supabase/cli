@@ -1134,6 +1134,32 @@ describe("legacy db reset", () => {
         });
       },
     );
+
+    it.live(
+      "resolves db.migrations.schema_paths against supabase/ before applying it on an experimental PG14 reset",
+      () => {
+        // `legacyRecreateLocalDatabase14` must pass the NORMALIZED `toml.schemaPaths`
+        // (`supabase/`-prefix-resolved by `legacyCheckDbToml`) into the final
+        // `legacyMigrateAndSeed` call, not the raw, unresolved config value — the raw
+        // `["schema.sql"]` pattern would glob-match against the WORKDIR root (where no
+        // such file exists), failing the whole reset, instead of `supabase/schema.sql`
+        // (where this test actually places the file).
+        const { layer, conn } = setup(tmp.current, {
+          toml:
+            'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
+          files: { "supabase/schema.sql": "create table schema_paths_marker ();" },
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          experimental: true,
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(
+            conn.execs.some((sql) => sql.includes("create table schema_paths_marker ()")),
+          ).toBe(true);
+        });
+      },
+    );
   });
 
   describe("local reset — health timeouts", () => {

@@ -102,7 +102,14 @@ describe("legacyRestartServicesAndReloadKong", () => {
             "supabase_pooler_proj",
           ]),
         );
-        expect(mock.spawned.some((args) => args[0] === "exec" && args[1] === KONG_ID)).toBe(true);
+        expect(mock.spawned).toContainEqual([
+          "exec",
+          KONG_ID,
+          "kong",
+          "reload",
+          "--nginx-conf",
+          "/home/kong/custom_nginx.template",
+        ]);
       }),
     );
   });
@@ -282,6 +289,17 @@ describe("legacyRestartServicesAndReloadKong", () => {
         expect(error.message).toContain("failed to reload kong: error executing command");
         expect(error.message).toContain("nginx: [error] invalid config");
         expect(error.suggestion).toContain(`docker restart ${KONG_ID}`);
+        // Pins the `--nginx-conf` flag (reset.go:269, reset_test.go:512) — a bare
+        // `kong reload` regenerates nginx.conf from Kong's default template and
+        // drops the custom `email_templates` server, reintroducing #6059.
+        expect(mock.spawned).toContainEqual([
+          "exec",
+          KONG_ID,
+          "kong",
+          "reload",
+          "--nginx-conf",
+          "/home/kong/custom_nginx.template",
+        ]);
       }),
     );
   });

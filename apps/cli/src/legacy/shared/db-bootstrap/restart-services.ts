@@ -182,10 +182,13 @@ function legacyExecCaptureCombined(
  * Port of Go's `reloadKong` (`reset.go:285-305`): inspect Kong's container — not
  * found means Kong is excluded from the stack (`return nil`, not an error); any OTHER
  * inspect failure is wrapped with the recovery suggestion; not running means there's
- * no stale cache to flush (`return nil`); otherwise `docker exec <kongId> kong
- * reload`, failing hard (with the same suggestion) on a non-zero exit, the combined
- * output appended when non-empty. Not exported outside this module — only
- * {@link legacyRestartServicesAndReloadKong} calls this directly.
+ * no stale cache to flush (`return nil`); otherwise `docker exec <kongId> kong reload
+ * --nginx-conf /home/kong/custom_nginx.template` (the flag is required — a bare
+ * `kong reload` regenerates nginx.conf from Kong's default template and drops the
+ * custom `email_templates` server, reintroducing #6059), failing hard (with the same
+ * suggestion) on a non-zero exit, the combined output appended when non-empty. Not
+ * exported outside this module — only {@link legacyRestartServicesAndReloadKong}
+ * calls this directly.
  */
 function legacyReloadKong(
   spawner: Spawner,
@@ -204,7 +207,12 @@ function legacyReloadKong(
       );
     }
     if (!inspected.success.running) return;
-    const result = yield* legacyExecCaptureCombined(spawner, kongId, ["kong", "reload"]);
+    const result = yield* legacyExecCaptureCombined(spawner, kongId, [
+      "kong",
+      "reload",
+      "--nginx-conf",
+      "/home/kong/custom_nginx.template",
+    ]);
     if (result.exitCode !== 0) {
       const trimmed = result.output.trim();
       // Go's `DockerExecOnceWithStream` (`utils/docker.go:646-648`) sets a FIXED constant
