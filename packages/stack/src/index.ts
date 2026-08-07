@@ -32,4 +32,3 @@ export type {
   ResolvedFunction,
   ResolvedFunctionsBundle,
 } from "./functions.ts";
-export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";

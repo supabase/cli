@@ -25,12 +25,12 @@ export interface DaemonStartMessage {
   readonly socketPath: string;
 }
 
-export interface DaemonStartedMessage {
+interface DaemonStartedMessage {
   readonly type: "started";
   readonly state: StackState;
 }
 
-export interface DaemonErrorMessage {
+interface DaemonErrorMessage {
   readonly type: "error";
   readonly message: string;
 }

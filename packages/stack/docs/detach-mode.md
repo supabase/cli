@@ -163,20 +163,21 @@ crash-recovery metadata is deliberately separate from user-facing `/status` conn
 
 ## Package entrypoints
 
-| File                  | Reachability and role                                                                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `src/daemon.ts`       | Shared daemon protocol and lifecycle; receives runtime-specific HTTP-server factories.                        |
-| `src/daemon-bun.ts`   | Bun daemon Adapter. Exported as `@supabase/stack/daemon-bun` for compiled CLI dispatch.                       |
-| `src/daemon-node.ts`  | Node daemon Adapter. Intentionally file-URL-only: `node.ts` resolves its path and passes it to `daemonLayer`. |
-| `src/DaemonServer.ts` | Unix-socket HTTP/SSE Adapter over `Stack`.                                                                    |
-| `src/RemoteStack.ts`  | Remote Effect `Stack` Adapter over that transport.                                                            |
-| `src/layers.ts`       | Foreground, foreground-daemon, forked-daemon, and connect layer composition.                                  |
-| `src/StateManager.ts` | Durable metadata, live-state claims, scanning, stale-state removal, and deletion.                             |
-| `src/effect.ts`       | Effect-facing exports consumed by the CLI and advanced callers.                                               |
+| File                  | Reachability and role                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `src/daemon.ts`       | Shared daemon protocol and lifecycle; receives runtime-specific HTTP-server factories.                  |
+| `src/daemon-bun.ts`   | Bun daemon Adapter. Exported as `@supabase/stack/daemon-bun` for compiled CLI dispatch.                 |
+| `src/daemon-node.ts`  | Node daemon Adapter. Intentionally file-URL-only: the internal Node platform Adapter resolves its path. |
+| `src/DaemonServer.ts` | Unix-socket HTTP/SSE Adapter over `Stack`.                                                              |
+| `src/RemoteStack.ts`  | Remote Effect `Stack` Adapter over that transport.                                                      |
+| `src/layers.ts`       | Foreground, foreground-daemon, forked-daemon, and connect layer composition.                            |
+| `src/StateManager.ts` | Durable metadata, live-state claims, scanning, stale-state removal, and deletion.                       |
+| `src/effect-*.ts`     | Conditional Effect entries that bind consumer layers to Bun or Node.                                    |
+| `src/effect.ts`       | Platform-agnostic Effect contracts re-exported by the conditional entries.                              |
 
-There is no `internals.ts`. `daemon-node.ts` is not a package export because Node root consumers
-reach it by the file URL returned from `node.ts`; it is listed under `knip.entry` in `package.json`
-so static unused-code analysis preserves that live entrypoint.
+There is no `internals.ts`. `daemon-node.ts` is not a package export because the Node Effect
+Adapter reaches it through the file URL returned by the internal platform module; it is listed
+under `knip.entry` in `package.json` so static unused-code analysis preserves that live entrypoint.
 
 ## Compiled executable re-entry
 
