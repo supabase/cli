@@ -1145,8 +1145,7 @@ describe("legacy db reset", () => {
         // such file exists), failing the whole reset, instead of `supabase/schema.sql`
         // (where this test actually places the file).
         const { layer, conn } = setup(tmp.current, {
-          toml:
-            'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
+          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
           files: { "supabase/schema.sql": "create table schema_paths_marker ();" },
           args: ["db", "reset", "--local"],
           isLocal: true,
