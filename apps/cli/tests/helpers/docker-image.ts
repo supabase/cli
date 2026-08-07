@@ -1,131 +1,141 @@
-import { spawnSync } from "node:child_process";
-import { setTimeout as sleep } from "node:timers/promises";
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Duration, Effect, Layer } from "effect";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerTag } from "effect/unstable/process/ChildProcessSpawner";
 
-import { LEGACY_DOCKER_PULL_RETRY_DELAYS_MS } from "../../src/legacy/shared/legacy-docker-image-resolve.ts";
-import { legacyGetRegistryImageUrlCandidates } from "../../src/legacy/shared/legacy-docker-registry.ts";
-import { legacyIsDockerDaemonUnreachable } from "../../src/legacy/shared/legacy-docker-suggest.ts";
+import { legacyMakeDockerImageResolver } from "../../src/legacy/shared/legacy-docker-image-resolve.ts";
 
-const INSPECT_TIMEOUT_MS = 15_000;
-const PULL_ATTEMPT_TIMEOUT_MS = 120_000;
+type Spawner = ChildProcessSpawnerTag["Service"];
+
 // Overall per-image ceiling. Deliberately BELOW the tightest e2e test budget
-// (120s): a stalled registry must leave the caller room to run its test body,
-// and vitest cannot preempt a blocked synchronous spawn to enforce that itself.
+// (120s): a stalled registry must leave the caller room to run its test body.
 export const RESOLVE_BUDGET_MS = 90_000;
-const PULL_MAX_BUFFER = 16 * 1024 * 1024;
-const PULL_ATTEMPTS = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS.length + 1;
 
 const resolvedImages = new Map<string, Promise<string>>();
 
 /**
- * Resolves an image for a raw e2e `docker run`/`docker pull` the same way the
- * production resolver does (`legacy-docker-image-resolve.ts`): any candidate
- * already in the local cache wins, otherwise each registry fallback
- * (ECR → GHCR → Docker Hub) is pulled explicitly with 4s/8s retries. A raw
- * `docker run` of an uncached image implicit-pulls from a single registry,
- * where CI regularly fails with `toomanyrequests: Rate exceeded`. Returns the
- * resolved reference the caller must use in its own docker argv. Results
- * (including failures) are memoized per process so parallel/subsequent tests
- * never re-pay the retry ladder. Every subprocess call is timeout-bounded —
- * vitest's own testTimeout cannot preempt a hung synchronous spawn.
+ * Serializes distinct-image resolution. The helper this replaced spawned
+ * synchronously, so a `Promise.all` over several images was serialized whether
+ * the caller meant it or not — and `serve-main-offline.e2e.test.ts` resolves
+ * two images exactly that way. Letting them run concurrently would put two cold
+ * pulls against the same registry at the same instant, which is the
+ * `toomanyrequests` failure this helper exists to avoid, so the old ordering is
+ * preserved deliberately rather than by accident.
  */
-export function ensureImage(image: string, deadline = resolveDeadline()): Promise<string> {
+let resolveQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Resolves an image for a raw e2e `docker run`/`docker pull` by running the
+ * PRODUCTION resolver (`legacyMakeDockerImageResolver`) against a real
+ * subprocess spawner — same candidate order, same local-cache-first check, same
+ * retry ladder the CLI itself uses, so this can never drift from it. A raw
+ * `docker run` of an uncached image implicit-pulls from a single registry,
+ * where CI regularly fails with `toomanyrequests: Rate exceeded`; resolving
+ * first lets the ECR → GHCR → Docker Hub fallback do its job.
+ *
+ * Returns the resolved reference the caller must use in its own docker argv.
+ * Results (including failures) are memoized per process so parallel/subsequent
+ * tests never re-pay the retry ladder.
+ *
+ * `deadline` bounds the resolve, but only for a subprocess that exits when
+ * asked: the spawner's release sends one SIGTERM and then awaits the child, and
+ * `forceKillAfter` does not change that — it races the signal call, not the
+ * wait. A `docker` CLI that ignored SIGTERM outright could still outlast the
+ * budget. Real ones don't, and the ceiling still covers what it was added for:
+ * a registry that is slow rather than wedged.
+ */
+export function ensureImage(
+  image: string,
+  deadline?: number,
+  // Injectable so the queue/memo behavior is unit-testable with a fake spawner;
+  // every e2e caller uses the real default.
+  services: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> = BunServices.layer,
+): Promise<string> {
   const memo = resolvedImages.get(image);
   if (memo !== undefined) return memo;
-  const resolving = resolveImage(image, deadline);
+  const resolving = resolveQueue.then(() =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // A defaulted deadline is stamped when this image's turn STARTS, not when
+      // the caller enqueued it — otherwise time spent waiting behind another
+      // image's resolution would silently shrink this one's window. An explicit
+      // deadline is shared budget by contract and is left exactly as given.
+      return yield* resolveImage(spawner, image, deadline ?? resolveDeadline());
+    }).pipe(Effect.provide(services), Effect.runPromise),
+  );
+  // Both the queue link and the memo swallow nothing: callers still see the
+  // rejection, this only stops one failure from becoming an unhandled rejection
+  // or wedging the queue for the next image.
+  resolveQueue = resolving.catch(() => undefined);
+  resolving.catch(() => undefined);
   resolvedImages.set(image, resolving);
   return resolving;
 }
 
 /**
  * One deadline for a whole test's image setup: pass the same value to every
- * `ensureImage` call so multi-image tests pay at most one budget in total —
- * the synchronous spawns serialize regardless of Promise.all, so per-image
- * deadlines would otherwise stack beyond the test budget. Callers with roomier
- * test timeouts can size the budget to their own setup window.
+ * `ensureImage` call so multi-image tests pay at most one budget in total.
+ * Callers with roomier test timeouts can size the budget to their own setup
+ * window.
  */
 export function resolveDeadline(budgetMs = RESOLVE_BUDGET_MS): number {
   return Date.now() + budgetMs;
 }
 
-function spawnFailed(result: { error?: Error; signal: NodeJS.Signals | null }): boolean {
-  return result.error !== undefined && (result.signal === null || result.signal === undefined);
+/**
+ * The production resolver spawns through `spawnContainerCli`, which falls back
+ * to podman when docker is absent — but every caller then runs raw `docker`
+ * argv, so an image pulled by podman would be invisible to the command under
+ * test. Assert the docker CLI itself is present, turning that into one clear
+ * failure instead of a confusing "docker: command not found" several steps on.
+ * Deliberately a client-only probe: an unreachable daemon is a different
+ * condition that the resolver already reports with its own message.
+ */
+function requireDocker(spawner: Spawner): Effect.Effect<void, Error> {
+  return spawner.exitCode(ChildProcess.make("docker", ["--version"])).pipe(
+    Effect.mapError(() => new Error("docker is required for this test but could not be spawned")),
+    Effect.filterOrFail(
+      (exitCode) => Number(exitCode) === 0,
+      () => new Error("docker is required for this test but exited non-zero"),
+    ),
+    Effect.asVoid,
+  );
 }
 
-async function resolveImage(image: string, deadline: number): Promise<string> {
-  const candidates = legacyGetRegistryImageUrlCandidates(image);
-  for (const candidate of candidates) {
-    // Bounded by the shared deadline too: a cached hit still answers in
-    // milliseconds, but a stalled daemon can no longer stack 15s inspects
-    // past a budget an earlier image already consumed.
-    const inspect = spawnSync("docker", ["image", "inspect", candidate], {
-      encoding: "utf8",
-      stdio: ["ignore", "ignore", "pipe"],
-      timeout: Math.min(INSPECT_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
-      killSignal: "SIGKILL",
-    });
-    if (spawnFailed(inspect)) {
-      throw new Error(`failed to run docker: ${inspect.error?.message ?? "unknown spawn error"}`);
-    }
-    if (inspect.status === 0) return candidate;
-    const stderr = (inspect.stderr ?? "").trim();
-    if (legacyIsDockerDaemonUnreachable(stderr)) {
-      throw new Error(`docker daemon unreachable: ${stderr}`);
-    }
-  }
-
-  const failures: Array<string> = [];
-  for (const [candidateIndex, candidate] of candidates.entries()) {
-    // Recomputed per candidate: remaining time split across the candidates
-    // still to run. A stalled candidate can never starve the fallbacks after
-    // it, and a fast-failing one carries its unused budget forward — the last
-    // candidate gets all remaining time.
-    const candidateBudgetMs = Math.max(
-      1,
-      Math.floor((deadline - Date.now()) / (candidates.length - candidateIndex)),
-    );
-    const candidateDeadline = Math.min(Date.now() + candidateBudgetMs, deadline);
-    for (let attemptIndex = 0; attemptIndex < PULL_ATTEMPTS; attemptIndex += 1) {
-      const remainingMs = candidateDeadline - Date.now();
-      if (remainingMs <= 0) {
-        failures.push(`${candidate}: candidate budget exhausted (${candidateBudgetMs}ms)`);
-        break;
+/**
+ * The resolve itself, taking its spawner explicitly so unit tests can drive it
+ * with a fake instead of a real Docker daemon.
+ */
+export function resolveImage(
+  spawner: Spawner,
+  image: string,
+  deadline: number,
+): Effect.Effect<string, Error> {
+  const remainingMs = Math.max(1, deadline - Date.now());
+  return requireDocker(spawner).pipe(
+    // The deadline goes INTO the resolver, which divides it across the
+    // registry candidates — a stalled registry cannot starve the ECR → GHCR →
+    // Docker Hub fallbacks behind it, and an exhausted share is reported
+    // against the candidate that spent it. The outer timeout is only a
+    // backstop for the paths the resolver does not bound (a wedged daemon
+    // hanging `docker image inspect`); its 1s grace keeps the resolver's own
+    // richer per-candidate error winning every race it can.
+    Effect.andThen(() => legacyMakeDockerImageResolver(spawner)(image, deadline)),
+    Effect.timeout(Duration.millis(remainingMs + 1_000)),
+    Effect.mapError((cause) => {
+      if (Cause.isTimeoutError(cause)) {
+        return new Error(
+          `timed out resolving ${image} after ${remainingMs}ms — is the docker daemon responding?`,
+        );
       }
-      console.error(
-        `[ensureImage] pulling ${candidate} (attempt ${attemptIndex + 1}/${PULL_ATTEMPTS})`,
-      );
-      // stdout carries the (unbounded) layer-progress stream — ignore it so a
-      // large healthy pull can never die on ENOBUFS; docker writes errors to
-      // stderr, which stays small and is all the failure text needs.
-      const pull = spawnSync("docker", ["pull", candidate], {
-        encoding: "utf8",
-        stdio: ["ignore", "ignore", "pipe"],
-        timeout: Math.min(PULL_ATTEMPT_TIMEOUT_MS, remainingMs),
-        killSignal: "SIGKILL",
-        maxBuffer: PULL_MAX_BUFFER,
-      });
-      if (spawnFailed(pull)) {
-        throw new Error(`failed to run docker: ${pull.error?.message ?? "unknown spawn error"}`);
-      }
-      if (pull.status === 0) return candidate;
-      const output = (pull.stderr ?? "").trim();
-      const reason =
-        pull.signal !== null && pull.signal !== undefined
-          ? `killed by ${pull.signal} after ${PULL_ATTEMPT_TIMEOUT_MS}ms`
-          : output.length > 0
-            ? output
-            : `exit ${pull.status ?? "unknown"}`;
-      failures.push(`${candidate} attempt ${attemptIndex + 1}: ${reason}`);
-      const delay = LEGACY_DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
-      if (delay === undefined) continue;
-      if (Date.now() + delay >= candidateDeadline) break;
-      await sleep(delay);
-    }
-  }
-  return allRegistriesFailed(image, failures);
-}
-
-function allRegistriesFailed(image: string, failures: ReadonlyArray<string>): never {
-  throw new Error(
-    `failed to pull ${image} from all registries (set SUPABASE_INTERNAL_IMAGE_REGISTRY to pin one):\n${failures.join("\n")}`,
+      // The registry-pin hint only helps when the registries themselves were
+      // the problem; gluing it onto a missing binary or an unreachable daemon
+      // would misdirect the CI triage this helper exists to speed up.
+      const hint = cause.message.includes("failed to pull docker image from all registries")
+        ? " (set SUPABASE_INTERNAL_IMAGE_REGISTRY to pin one)"
+        : "";
+      return new Error(`failed to resolve ${image}${hint}: ${cause.message}`);
+    }),
   );
 }

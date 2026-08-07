@@ -38,6 +38,8 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -467,6 +469,18 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
+  // Never actually invoked by the tests in this file — the pg-delta migrations-catalog
+  // warmup `legacyStartSetupLocalDatabase` reaches on a PG15 recreate (`db-setup.ts`) gates
+  // on `[experimental.pgdelta] enabled`/`SUPABASE_EXPERIMENTAL_PG_DELTA`, neither of which
+  // any config here sets — present only to satisfy the effect's widened requirements, same
+  // as `db push`'s own integration tests (`push.integration.test.ts`).
+  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
+  });
+  const pgDeltaSslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -483,6 +497,8 @@ function setup(
       Layer.provide(child.layer),
       Layer.provide(mockProcessControl().layer),
     ),
+    edgeRuntime,
+    pgDeltaSslProbe,
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     // The remote-reset confirmation is answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
@@ -525,7 +541,7 @@ describe("legacy db reset", () => {
 
   describe("local reset — PG15+", () => {
     it.live("recreates the container, waits healthy, and runs the setup pipeline", () => {
-      const { layer, out, child } = setup(tmp.current, {
+      const { layer, out, child, telemetry } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
@@ -552,6 +568,10 @@ describe("legacy db reset", () => {
         expect(kongReloadCalls(child.spawned)).toHaveLength(1);
         expect(out.stderrText).toContain("Finished ");
         expect(out.stderrText).toContain("on branch ");
+        // The local-reset composition now lives in the shared
+        // `legacyResetLocalDatabase` (CLI-2062) — confirm this handler's own
+        // single `Effect.ensuring` finalizer still fires exactly once through it.
+        expect(telemetry.flushCount).toBe(1);
       });
     });
 
@@ -1111,6 +1131,31 @@ describe("legacy db reset", () => {
           // to `LEGACY_START_DB_GLOBALS_SQL` (see `templates/db-globals.sql.ts`) must never
           // appear in this reset's execs.
           expect(conn.execs.some((sql) => sql.includes("CREATE ROLE anon"))).toBe(false);
+        });
+      },
+    );
+
+    it.live(
+      "resolves db.migrations.schema_paths against supabase/ before applying it on an experimental PG14 reset",
+      () => {
+        // `legacyRecreateLocalDatabase14` must pass the NORMALIZED `toml.schemaPaths`
+        // (`supabase/`-prefix-resolved by `legacyCheckDbToml`) into the final
+        // `legacyMigrateAndSeed` call, not the raw, unresolved config value — the raw
+        // `["schema.sql"]` pattern would glob-match against the WORKDIR root (where no
+        // such file exists), failing the whole reset, instead of `supabase/schema.sql`
+        // (where this test actually places the file).
+        const { layer, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
+          files: { "supabase/schema.sql": "create table schema_paths_marker ();" },
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          experimental: true,
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(
+            conn.execs.some((sql) => sql.includes("create table schema_paths_marker ()")),
+          ).toBe(true);
         });
       },
     );

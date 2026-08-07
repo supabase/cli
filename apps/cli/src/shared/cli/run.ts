@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { ProjectConfigStore } from "@supabase/config";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
@@ -55,10 +55,12 @@ const globalFlagsWithValues = new Set([
 // Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `legacyStart`
 // installs no signal handling of its own — excluding it left Ctrl-C mid-bring-up as a raw,
 // unhandled OS signal that hard-kills the process, skipping every Effect finalizer
-// including `legacyRollbackStart`. Go's own `start` DOES roll back on SIGINT
+// including `legacyRollbackStart`. Go's own `start` DID roll back on SIGINT
 // (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
-// `internal/start/start.go:73-82` rolls back on any non-nil `run()` error, including the
-// `context.Canceled` a SIGINT produces), so native `start` must participate in the global
+// formerly `internal/start/start.go:73-82`, which rolled back on any non-nil `run()`
+// error, including the `context.Canceled` a SIGINT produces — internal/start was
+// deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
+// `start` must participate in the global
 // wrapper to match. This list is matched purely against argv command-path segments — it has
 // no notion of which shell (legacy vs next) registered the matching command, so `next start`
 // (a completely different command tree that happens to share the literal path `["start"]`)

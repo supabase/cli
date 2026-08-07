@@ -21,12 +21,12 @@
  * `docker create`, so it deliberately diverges here (CWE-214/522, `ps aux`/
  * `/proc/<pid>/cmdline`): `kong.yml` (the service-role key) and the TLS
  * cert/key (the highest-value secret — a private key) travel via
- * {@link LegacyStartContainerSpec.secretFiles} instead — a HOST temp file,
- * mode `0644` (world-readable — Kong's image runs its process as uid 100
- * `kong`, a non-root user, and a Linux/Podman bind mount preserves the host
- * file's mode verbatim, so `0600` would make it unreadable in-container; see
- * `legacyStageStartSecretFiles`'s doc comment), bind-mounted read-only at the
- * exact fixed paths
+ * {@link LegacyStartContainerSpec.secretFiles} instead — a short-lived HOST
+ * temp file, mode `0644` (world-readable — Kong's image runs its process as
+ * uid 100 `kong`, a non-root user, and `docker cp`'s tar transfer preserves
+ * the host file's mode verbatim, so `0600` would make it unreadable
+ * in-container; see `legacyCopyStartSecretFileIntoContainer`'s doc comment),
+ * `docker cp`'d straight into the container at the exact fixed paths
  * `KONG_DECLARATIVE_CONFIG`/`KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` already
  * reference — and never appear in this process's own argv. Only
  * `custom_nginx.template`, which carries no secret content, still travels via

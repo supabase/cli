@@ -602,6 +602,106 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
+    () => {
+      // Same v.Set-above-AutomaticEnv precedence as auth.enabled/pgdelta.enabled
+      // (config.go:635-637): a matched remote block's experimental.webhooks.enabled must win
+      // over SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED. Without the fix, the suppressed env value
+      // (false) would win instead, and the merged [experimental.webhooks] section (present via
+      // the remote block) would then fail validation ("Webhooks cannot be deactivated").
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.webhooks]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED still wins when the remote block omits webhooks",
+    () => {
+      // Control: the env override is suppressed only for keys the matched block explicitly
+      // set; a block that omits experimental.webhooks leaves the env override in force — a
+      // base [experimental.webhooks] section (present, default true) flipped off by the env
+      // var still fails Go's "cannot be deactivated" validation.
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[experimental.webhooks]",
+          "enabled = true",
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("Webhooks cannot be deactivated");
+            }
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "ignores a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when [experimental.webhooks] is absent",
+    () => {
+      // Verified empirically against apps/cli-go/pkg/config (config.Load with an in-memory fs,
+      // no [experimental.webhooks] section, env override set to a non-boolean string): Go's
+      // Load() succeeds and Experimental.Webhooks stays nil — the env override is never applied
+      // because the key is only "known" to viper (and thus AutomaticEnv-bindable) when the
+      // section is declared, unlike experimental.pgdelta.enabled (always known via the Eject
+      // template merged into defaults). Before the presence gate, this reader parsed the env
+      // override unconditionally and failed the whole config load on the bogus value.
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "bogus";
+      const dir = withConfig("");
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
     // even with no TOML project_id (here it lifts major_version 15 over the base default).
@@ -2022,36 +2122,45 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect(
-    "legacyApplyProjectEnv sets only the allowlisted key in-scope, never overrides, reverts on close",
+    "legacyApplyProjectEnv sets only the allowlisted keys in-scope, never overrides, reverts on close",
     () => {
       // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
       // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
       // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
-      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the one process.env-only
-      // reader): a .env project-ref must not retarget the lazy ref/pooler resolvers,
-      // and a .env SUPABASE_ENV must not switch the env-file set.
+      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY`
+      // (the two process.env-only readers): a .env project-ref must not retarget the
+      // lazy ref/pooler resolvers, and a .env SUPABASE_ENV must not switch the
+      // env-file set.
       const saved: Record<string, string | undefined> = {};
-      for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
+      for (const k of [
+        "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+        "PGDELTA_NPM_REGISTRY",
+        "SUPABASE_PROJECT_ID",
+        "SUPABASE_ENV",
+      ]) {
         saved[k] = process.env[k];
         delete process.env[k];
       }
       const loaded = {
         SUPABASE_INTERNAL_IMAGE_REGISTRY: "my-mirror.example.com",
+        PGDELTA_NPM_REGISTRY: "https://npm.example.com",
         SUPABASE_PROJECT_ID: "envonlyref",
         SUPABASE_ENV: "staging",
       };
       return Effect.gen(function* () {
-        // Inside the scope: only the registry key is applied; the ref/env selector are not.
+        // Inside the scope: only the registry keys are applied; the ref/env selector are not.
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* legacyApplyProjectEnv(loaded);
             expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
+            expect(process.env["PGDELTA_NPM_REGISTRY"]).toBe("https://npm.example.com");
             expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
             expect(process.env["SUPABASE_ENV"]).toBeUndefined();
           }),
         );
-        // After the scope closes the applied key is reverted (no test-worker leak).
+        // After the scope closes the applied keys are reverted (no test-worker leak).
         expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+        expect(process.env["PGDELTA_NPM_REGISTRY"]).toBeUndefined();
 
         // An existing process.env value is never overridden, and is NOT deleted on close.
         process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = "shell-wins.example.com";

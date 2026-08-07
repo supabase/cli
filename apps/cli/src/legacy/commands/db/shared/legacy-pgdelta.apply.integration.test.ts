@@ -15,7 +15,7 @@ import {
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import { legacyApplyDeclarativePgDelta } from "./legacy-pgdelta.apply.ts";
-import type { LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 
 const CTX: LegacyPgDeltaContext = {
   projectId: "ref",

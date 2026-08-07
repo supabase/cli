@@ -138,18 +138,21 @@ export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
 }
 
 /**
- * Docker's/Podman's "container doesn't exist" stderr shapes — "No such container"/
- * "No such object" (Docker, either casing depending on daemon version/CLI path) or
- * "no container with name or ID" (Podman's own wording) — Go's `errdefs.IsNotFound(err)`
- * equivalent for a CLI-shelled-out (rather than Engine-API) caller. Case-insensitive
- * and covers all three shapes, matching the pre-existing Podman-aware parser in
- * `commands/start/start.handler.ts`'s own `isContainerNotFoundMessage` — a lowercase
- * Podman message must be tolerated exactly like an uppercase Docker one, or a reset
- * excluding a satellite service (storage/auth/realtime/pooler) or Kong would report a
- * hard restart/reload failure instead of tolerating the absent container. Hoisted here
- * so callers across the container-lifecycle/restart/health-check domain
- * (`legacyIsLocalDbRunning`, `legacyRestartSatelliteService`, `legacyReloadKong`) share
- * one predicate instead of re-deriving the same match.
+ * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect` — Docker's
+ * "No such container"/"No such object" (either casing depending on daemon version/CLI path) or
+ * Podman's own differently worded "no container with name or ID ... found: no such container" —
+ * the subprocess equivalent of Go's `errdefs.IsNotFound` for a CLI-shelled-out (rather than
+ * Engine-API) caller. Case-insensitive and covers all three shapes so a lowercase Podman message
+ * is tolerated exactly like an uppercase Docker one — the same distinction
+ * `legacy-docker-image-resolve.ts`'s `isImageNotFoundMessage` draws for `image inspect`, and the
+ * same distinction the pre-existing Podman-aware parser in `commands/start/start.handler.ts`'s
+ * own (now-removed) local `isContainerNotFoundMessage` used to draw. Hoisted here (rather than
+ * left as separate per-caller copies) so every container-not-found check across the
+ * container-lifecycle/start/restart/health-check domain (`legacyIsLocalDbRunning`,
+ * `legacyRestartSatelliteService`, `legacyReloadKong`, …) shares one predicate instead of
+ * re-deriving the same match with different Podman coverage — a reset excluding a satellite
+ * service (storage/auth/realtime/pooler) or Kong would otherwise report a hard restart/reload
+ * failure instead of tolerating the absent container.
  */
 export function legacyIsContainerNotFoundMessage(message: string): boolean {
   return (

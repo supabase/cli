@@ -45,6 +45,10 @@ const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:\//;
 const importPathPattern =
   /(?:import|export)\s+(?:type\s+)?(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)/gi;
 
+export function shouldChmodBundleOutputDirectory(platform: NodeJS.Platform) {
+  return platform !== "win32";
+}
+
 interface FunctionsDeployFlags {
   readonly functionNames: ReadonlyArray<string>;
   readonly projectRef: Option.Option<string>;
@@ -298,10 +302,23 @@ function toBundledFileUrl(hostPath: string) {
   return url.toString();
 }
 
+const DOCKER_BIND_MODE_PATTERN = /:(?:ro|rw)(?:,[zZ])?$/;
+
 export function dockerBindHostPath(bind: string) {
-  const withoutMode = bind.replace(/:(?:ro|rw)$/, "");
+  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
   const separatorIndex = withoutMode.lastIndexOf(":");
   return separatorIndex === -1 ? withoutMode : withoutMode.slice(0, separatorIndex);
+}
+
+/**
+ * Container side of a `host:container[:mode]` bind. Unlike {@link dockerBindHostPath},
+ * a bind with no separator yields `""` rather than the whole string, so a malformed
+ * entry can never prefix-match a real container path.
+ */
+export function dockerBindContainerPath(bind: string) {
+  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
+  const separatorIndex = withoutMode.lastIndexOf(":");
+  return separatorIndex === -1 ? "" : withoutMode.slice(separatorIndex + 1);
 }
 
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
@@ -1401,7 +1418,14 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     mkdtemp(join(outputRoot, `.supabase-output-${config.slug}-`)),
   );
   try {
-    yield* Effect.tryPromise(() => chmod(outputDir, 0o777));
+    // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
+    // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
+    if (shouldChmodBundleOutputDirectory(process.platform)) {
+      yield* Effect.tryPromise({
+        try: () => chmod(outputDir, 0o777),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
+    }
     const outputPath = join(outputDir, "output.eszip");
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config),
@@ -1617,7 +1641,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
         ...(bundleOnly ? { bundleOnly: true } : {}),
         body: {
           metadata,
-          ...(files.length > 0 ? { file: files } : {}),
+          file: files,
         },
       })
       .pipe(

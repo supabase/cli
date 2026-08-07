@@ -10,19 +10,21 @@ container-recreate composition (`legacy/shared/db-bootstrap/recreate-local-datab
 reusing the same container-bootstrap primitives `db start` uses — see that command's
 own `SIDE_EFFECTS.md`), the post-recreate satellite-restart + Kong reload
 (`legacy/shared/db-bootstrap/restart-services.ts`), the storage-health gate
-(`legacy/commands/db/reset/await-storage-ready.ts`), bucket seeding, and the
+(`legacy/shared/db-bootstrap/await-storage-ready.ts`), bucket seeding, and the
 git-branch line are all native TS. Only the niche **`--experimental`** schema-files
 path with no resolved version still delegates to the Go binary, and only for the
 **remote** target — the local target's `--experimental` path is fully native (see
 "Notes").
 
-**Known, deliberate scope boundary** (not fixed by this port): `db schema declarative`
-(the smart-target path) and `db schema sync` both still spawn `db reset --local`
-through the Go binary's own real `reset.Run` command — a completely different,
-unrelated seam (`LegacyDeclarativeSeam.execInherit`), not the one this document
-describes. Those two call sites are unaffected by this port; making them call the
-native `legacyDbReset` handler in-process instead is a larger, separate refactor,
-tracked as a known follow-up rather than done here.
+The whole local-reset composition is hoisted into `legacy/shared/db-bootstrap/
+reset-local-database.ts`'s `legacyResetLocalDatabase` (CLI-2062), which this
+handler's own `cfg.isLocal` branch calls as a thin wrapper (keeping only version/
+seed-flags resolution and the JSON envelope, which are specific to this top-level
+command). `db schema declarative`'s smart-target local-reset prompt and `db schema
+sync`'s failed-apply recovery reset both call the SAME function in-process now,
+instead of shelling out to a second `supabase-go` child through the previously
+removed `LegacyDeclarativeSeam.execInherit` seam — see those commands' own
+`SIDE_EFFECTS.md`.
 
 ## Files Read
 
@@ -204,19 +206,18 @@ path has no confirmation prompt.
   (the removed seam forwarded `--experimental` straight through to its own Go child),
   and `legacyMigrateAndSeed` (reused by both PG14 and PG15) already implements Go's
   `apply.MigrateAndSeed` declarative-schema-files branch.
-- **Accepted, documented divergence**: the best-effort pg-delta migrations-catalog
-  cache write (`pgcache.TryCacheMigrationsCatalog`, reachable from the PG15 recreate
-  via `SetupLocalDatabase`) is not ported — same accepted gap as `db start`. This is a
-  performance-only gap (the next pg-delta-enabled `db push`/`db schema declarative`
-  re-extracts the catalog itself instead of reusing a freshly-primed cache), not a
-  correctness or observable-output one (the write is silent on success, warning-only
-  on failure in Go). Porting it would require wiring `legacyEdgeRuntimeScriptLayer` +
-  `legacyPgDeltaSslProbeLayer` into `db reset`'s runtime purely for this optional,
-  feature-flagged step — left as an explicit follow-up rather than silently dropped.
+- The best-effort pg-delta migrations-catalog cache write
+  (`pgcache.TryCacheMigrationsCatalog`, reachable from the PG15 recreate via
+  `SetupLocalDatabase`) IS reached on the local PG15 path, same as `db start` —
+  `reset.layers.ts` composes `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer`
+  for it (see `db-setup.ts`'s own header for the exact gate). The write is silent on
+  success; a failure only warns on stderr and never fails the reset, matching Go.
 - `encrypted:` vault secrets are skipped on the remote path.
-- **Known, deliberate scope boundary**: `db schema declarative`/`db schema sync` still
-  invoke `db reset --local` via the Go binary's own real `reset.Run` command (a
-  different seam, `LegacyDeclarativeSeam.execInherit`) — untouched by this port. A
-  follow-up would need `legacyDbReset`'s core extracted into an in-process-callable
-  function (it currently reads `CliArgs` directly and owns its own telemetry/
-  linked-project-cache finalizers), materially larger in scope than this change.
+- `db schema declarative`/`db schema sync`'s own local-reset paths now call
+  `legacyResetLocalDatabase` in-process too (CLI-2062) — the previous scope boundary
+  (those two commands shelling out to a second `supabase-go` child via the now-removed
+  `LegacyDeclarativeSeam.execInherit`) is closed. That in-process call collapses to a
+  single telemetry/linked-project-cache finalizer cycle (the outer `db schema
+declarative`/`sync` command's own), matching Go's single-process `reset.Run` call —
+  the removed subprocess design used to fire a second, independent one from the child
+  process's own `Execute()`.

@@ -1,6 +1,8 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
 import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerStorageOptions {
   readonly image: string;
@@ -17,7 +19,7 @@ interface DockerStorageOptions {
   readonly enableImageTransformation: boolean;
   readonly imgproxyUrl: string;
   readonly s3ProtocolEnabled: boolean;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
   readonly cleanupDataDirOnExit?: boolean;
 }
@@ -38,17 +40,15 @@ const storageHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/status",
     scheme: "http",
   },
-  initialDelaySeconds: 1,
-  periodSeconds: 0.5,
-  failureThreshold: 30,
+  ...stackHealthBudgets.storage,
 });
 
 export const makeStorageServiceDocker = (opts: DockerStorageOptions): ServiceDef =>
   dockerRunService({
     name: "storage",
-    containerName: `supabase-storage-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:${STORAGE_DATA_DIR}`],
     env: {
       PORT: String(opts.port),
@@ -76,7 +76,7 @@ export const makeStorageServiceDocker = (opts: DockerStorageOptions): ServiceDef
       UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
       SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
     },
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: storageHealthCheck(opts.port),
     orphanCleanup: orphanCleanup(opts),
   });

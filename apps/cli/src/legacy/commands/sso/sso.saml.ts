@@ -5,7 +5,7 @@ import { Effect, FileSystem } from "effect";
  * (both commands bind the same Go `ssoNameIDFormat` enum var,
  * `cmd/sso.go:158,176`). Order matters twice: it drives the CLI help text
  * and it is joined verbatim into pflag's `invalid argument … must be one of
- * [ … ]` error (`legacySsoPflagEnumValue`), which must byte-match Go.
+ * [ … ]` error (`legacyPflagEnumValue`), which must byte-match Go.
  */
 export const LEGACY_SSO_NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",

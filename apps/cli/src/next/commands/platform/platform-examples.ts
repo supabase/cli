@@ -179,10 +179,24 @@ function buildMultipartBodyExample(schema: PlatformSchemaNode | undefined): Json
   }
 
   if (schema.kind === "object") {
-    return objectExampleForNode(schema, false, false);
+    return objectExampleForNode(
+      {
+        ...schema,
+        properties: schema.properties?.filter((property) => !isBinaryProperty(property)),
+      },
+      false,
+      false,
+    );
   }
 
   return exampleValueForNode(schema, false, false);
+}
+
+function isBinaryProperty(property: PlatformSchemaNode): boolean {
+  return (
+    property.format === "binary" ||
+    (property.kind === "array" && property.items?.format === "binary")
+  );
 }
 
 function multipartUploadSegments(schema: PlatformSchemaNode | undefined): ReadonlyArray<string> {

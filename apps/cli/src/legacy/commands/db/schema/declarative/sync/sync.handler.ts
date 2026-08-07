@@ -2,7 +2,6 @@ import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import {
   LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
   legacyResolveExperimentalWithProjectEnv,
   legacyResolveYesWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
@@ -10,6 +9,7 @@ import { legacyPromptYesNo } from "../../../../../../shared/legacy/legacy-prompt
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
+import { legacyResetLocalDatabase } from "../../../../../shared/db-bootstrap/reset-local-database.ts";
 import { legacyBold, legacyRed, legacyYellow } from "../../../../../shared/legacy-colors.ts";
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
 import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
@@ -26,7 +26,8 @@ import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-
 import {
   legacyListLocalMigrations,
   legacyPgDeltaTempPath,
-} from "../../../shared/legacy-pgdelta.cache.ts";
+  legacyResolveSetupInputs,
+} from "../../../../../shared/legacy-pgdelta.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
   type LegacyDebugBundle,
@@ -89,7 +90,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
     // auto-confirm too, not just the flag (CLI-1974).
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-    const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const seam = yield* LegacyDeclarativeSeam;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
@@ -260,15 +260,26 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
         // regardless of --no-cache (the warm is skipped, the line is not). It prints
         // `utils.GetDeclarativeDir()` — the relative dir above, never a resolved
-        // absolute path, because Go chdirs into the workdir (CLI-1980). NOTE:
-        // `generate`'s port of this same Go line still prints the absolute dir
-        // today — a follow-up candidate for the same relative-dir treatment.
+        // absolute path, because Go chdirs into the workdir (CLI-1980).
         yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
       }
 
       // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
+      // `setupInputs` is the cache-key/baseline-setup subset of `toml` that the now-
+      // native migrations-catalog resolution needs (CLI-1959) — see
+      // `legacyResolveSetupInputs`'s doc comment.
+      const setupInputs = yield* legacyResolveSetupInputs(
+        fs,
+        path,
+        cliConfig.workdir,
+        toml.majorVersion,
+        Option.getOrUndefined(toml.orioledbVersion),
+        toml.baseline,
+      );
       const result: LegacyDeclarativeSyncResult = yield* legacyDiffDeclarativeToMigrations(
         run,
+        toml,
+        setupInputs,
       ).pipe(
         Effect.tapError((error) =>
           Effect.gen(function* () {
@@ -380,22 +391,20 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           { defaultValue: false },
         );
         if (shouldReset) {
-          // Forward --network-id: Go's in-process reset.Run honors the root viper
-          // network-id (`apps/cli-go/internal/utils/docker.go:267-271`), so the
-          // seam-spawned reset must carry it to stay on a custom network.
-          const code = yield* seam.execInherit([
-            "db",
-            "reset",
-            "--local",
-            ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
-          ]);
-          if (code !== 0) {
-            // Go returns `resetErr` here (`apps/cli-go/cmd/db_schema_declarative.go:414-423`),
-            // surfacing the failure that actually blocked recovery — not the original
-            // apply error. The seam yields only an exit code, so build the reset error
-            // from it and use that one value for the message, debug bundle, and return.
+          // Go runs reset in-process (`cmd/db_schema_declarative.go:414-423`).
+          // `legacyResetLocalDatabase` now runs the same way — in-process, sharing this
+          // command's own context — rather than shelling out to a second `supabase-go`
+          // child (CLI-2062): it resolves `LegacyNetworkIdFlag` itself, so no
+          // argv-forwarding is needed to stay on a custom network.
+          const resetExit = yield* legacyResetLocalDatabase().pipe(Effect.exit);
+          if (Exit.isFailure(resetExit)) {
+            // Go returns `resetErr` here, surfacing the failure that actually blocked
+            // recovery — not the original apply error. Build the reset error from the
+            // real typed failure and use that one value for the message, debug bundle,
+            // and return.
+            const resetFailure = resetExit.cause.reasons.find(Cause.isFailReason)?.error;
             const resetError = new LegacyDeclarativeApplyError({
-              message: `database reset failed (exit ${code})`,
+              message: `database reset failed: ${resetFailure?.message ?? "unknown error"}`,
             });
             yield* output.raw(
               `${legacyRed(`Database reset also failed: ${resetError.message}`)}\n`,

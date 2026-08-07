@@ -59,7 +59,7 @@ import {
   legacyApplyDeclarativePgDelta,
 } from "./legacy-pgdelta.apply.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
-import type { LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 

@@ -1,8 +1,6 @@
-import { daemonEntryPoint } from "@supabase/stack";
 import {
   connectLayer,
   daemonLayer,
-  resolveDaemonConfig,
   stackMetadata,
   Stack,
   StateManager,
@@ -31,7 +29,7 @@ import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts"
 import { startStackWithProgress } from "../../../stack/stack.shared.ts";
 import {
   functionsDevWatchPaths,
-  toStackFunctionsConfig,
+  resolveFunctionsBundle,
   type FunctionsDevConfigOptions,
   type FunctionsDevWatchPath,
 } from "./functions-dev-config.ts";
@@ -69,29 +67,26 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
-  const config = yield* Effect.promise(() =>
-    resolveDaemonConfig({
-      cacheRoot: cliConfig.supabaseHome,
-      cwd: runtimeInfo.cwd,
-      projectDir: projectHome.projectRoot,
-      projectStateRoot: projectHome.projectHomeDir,
-      name: opts.stack,
-      edgeRuntime: opts.edgeRuntime,
-      functions: toStackFunctionsConfig(opts),
-      ...versionsFromContext(serviceVersionContext),
-    }),
-  );
+  const stackLayer = yield* daemonLayer({
+    cacheRoot: cliConfig.supabaseHome,
+    cwd: runtimeInfo.cwd,
+    projectDir: projectHome.projectRoot,
+    projectStateRoot: projectHome.projectHomeDir,
+    name: opts.stack,
+    edgeRuntime: opts.edgeRuntime,
+    ...versionsFromContext(serviceVersionContext),
+  });
+  const state = yield* stateManager.read(opts.stack);
 
   yield* stateManager.writeMetadata(
     opts.stack,
     stackMetadata({
-      ports: config.ports,
+      ports: state.ports,
       services: serviceVersionContext.pinnedBaseline,
       launch: { mode: "auto", excludedServices: [] },
     }),
   );
 
-  const stackLayer = yield* daemonLayer(config, daemonEntryPoint);
   yield* startStackWithProgress().pipe(Effect.provide(stackLayer));
   const stack = yield* Stack.pipe(Effect.provide(stackLayer));
 
@@ -180,9 +175,9 @@ function reloadEdgeRuntime(
   opts: FunctionsDevRuntimeOptions,
   edgeRuntime: EdgeRuntimeConfig,
 ) {
-  return stack.reloadEdgeRuntime({
-    edgeRuntime,
-    functions: toStackFunctionsConfig(opts),
+  return Effect.gen(function* () {
+    const functions = yield* resolveFunctionsBundle(opts);
+    yield* stack.reloadEdgeRuntime({ edgeRuntime, functions });
   });
 }
 
@@ -226,49 +221,51 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
     ...opts,
     edgeRuntime: edgeRuntimeState.config,
   });
-  yield* ensureFunctionsDirectory();
-  yield* reloadEdgeRuntime(stack, opts, edgeRuntimeState.config);
-  const info = yield* stack.getInfo();
-  const watchPathList = yield* functionsDevWatchPaths(opts.envFile);
+  const restoreFunctions = startedByCommand
+    ? undefined
+    : yield* resolveFunctionsBundle({ envFile: Option.none(), noVerifyJwt: false });
 
-  yield* output.success("Edge Functions dev server is running.", {
-    functions_url: `${info.url}/functions/v1`,
-  });
-  yield* output.info(`Functions URL: ${info.url}/functions/v1/<function-name>`);
+  yield* Effect.gen(function* () {
+    yield* ensureFunctionsDirectory();
+    yield* reloadEdgeRuntime(stack, opts, edgeRuntimeState.config);
+    const info = yield* stack.getInfo();
+    const watchPathList = yield* functionsDevWatchPaths(opts.envFile);
 
-  const restartOnChange = watchPaths(watchPathList).pipe(
-    Stream.runForEach((change) =>
-      Effect.gen(function* () {
-        const result = yield* applyWatchedChange(edgeRuntimeState, change);
-        if (result.action === "edge-runtime") {
-          yield* output.info("Edge runtime config changed. Restarting edge-runtime...");
-          yield* reloadEdgeRuntime(stack, opts, result.state.config);
+    yield* output.success("Edge Functions dev server is running.", {
+      functions_url: `${info.url}/functions/v1`,
+    });
+    yield* output.info(`Functions URL: ${info.url}/functions/v1/<function-name>`);
+
+    const restartOnChange = watchPaths(watchPathList).pipe(
+      Stream.runForEach((change) =>
+        Effect.gen(function* () {
+          const result = yield* applyWatchedChange(edgeRuntimeState, change);
+          if (result.action === "edge-runtime") {
+            yield* output.info("Edge runtime config changed. Restarting edge-runtime...");
+            yield* reloadEdgeRuntime(stack, opts, result.state.config);
+            edgeRuntimeState = result.state;
+            return;
+          }
           edgeRuntimeState = result.state;
-          return;
-        }
-        edgeRuntimeState = result.state;
-        yield* output.info("Function files changed. Restarting edge-runtime...");
-        yield* stack.reloadFunctions(toStackFunctionsConfig(opts));
-      }).pipe(
-        Effect.catch((error) =>
-          output.error(error instanceof Error ? error.message : String(error)),
+          yield* output.info("Function files changed. Restarting edge-runtime...");
+          yield* stack.reloadFunctions({ functions: yield* resolveFunctionsBundle(opts) });
+        }).pipe(
+          Effect.catch((error) =>
+            output.error(error instanceof Error ? error.message : String(error)),
+          ),
         ),
       ),
-    ),
-  );
+    );
 
-  const logs = logEntryStream(stack).pipe(Stream.runForEach((event) => output.event(event)));
-  const shutdown = processControl.awaitShutdown;
+    const logs = logEntryStream(stack).pipe(Stream.runForEach((event) => output.event(event)));
+    const shutdown = processControl.awaitShutdown;
 
-  yield* Effect.raceFirst(Effect.raceFirst(restartOnChange, logs), shutdown).pipe(
+    yield* Effect.raceFirst(Effect.raceFirst(restartOnChange, logs), shutdown);
+  }).pipe(
     Effect.ensuring(
-      Effect.gen(function* () {
-        if (startedByCommand) {
-          yield* stack.dispose().pipe(Effect.ignore);
-        } else {
-          yield* stack.reloadFunctions({}).pipe(Effect.ignore);
-        }
-      }),
+      startedByCommand
+        ? stack.dispose().pipe(Effect.ignore)
+        : stack.reloadFunctions({ functions: restoreFunctions }).pipe(Effect.ignore),
     ),
   );
 });

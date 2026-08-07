@@ -32,9 +32,11 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
 /**
  * Port of Go's `utils.AssertSupabaseDbIsRunning` (`internal/utils/misc.go:144`):
  * inspect the local Postgres container. Resolves `true` when it exists (the
- * stack is up) and `false` when the container-CLI reports "No such container" or
- * "No such object" (the same pair handled in `shared/functions/serve.ts`) —
- * Go's `ErrNotRunning`. Any other inspect failure (e.g. the Docker daemon is
+ * stack is up) and `false` when the container-CLI reports a missing container —
+ * Docker's "No such container"/"No such object" or Podman's own "no container with
+ * name or ID ... found" wording, via the shared `legacyIsContainerNotFoundMessage`
+ * matcher (`../legacy-container-cli.ts`) — Go's `ErrNotRunning`. Any other inspect
+ * failure (e.g. the Docker daemon is
  * unreachable) fails with {@link LegacyLocalDbRunningError} instead of being
  * treated as "not running", matching Go, which returns the wrapped inspect
  * error rather than silently treating the database as stopped.
@@ -111,7 +113,11 @@ export function legacyIsLocalDbRunning(
 
       const stderr = decodeChunks(stderrChunks).trim();
       // Only a missing container means "not running". Any other inspect
-      // failure propagates, matching Go's `AssertSupabaseDbIsRunning`.
+      // failure propagates, matching Go's `AssertSupabaseDbIsRunning`. Uses the
+      // shared, Podman-aware matcher (`legacyIsContainerNotFoundMessage`) rather than a
+      // Docker-only substring check, since `spawnContainerCli` above falls back to Podman
+      // on Docker-less hosts, and Podman's inspect-miss wording ("no container with name
+      // or ID ... found: no such container") differs from Docker's.
       if (!legacyIsContainerNotFoundMessage(stderr)) {
         // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
         // on a daemon-connection failure (`misc.go:148-154`), so a down daemon

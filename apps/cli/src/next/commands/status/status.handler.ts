@@ -14,8 +14,6 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import type { StatusFlags } from "./status.command.ts";
 
-const READY_STATUSES = new Set(["Healthy", "Running"]);
-
 function formatServiceStateLine(service: {
   readonly name: string;
   readonly status: string;
@@ -148,7 +146,9 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
       : fillServiceVersionManifest(managedStack.state.services),
   );
   const sortedServices = [...services].sort((a, b) => a.name.localeCompare(b.name));
-  const allReady = sortedServices.every((service) => READY_STATUSES.has(service.status));
+  const allReady = services.every((service) =>
+    ["Running", "Healthy", "Dormant"].includes(service.status),
+  );
   const message = allReady
     ? "Local Supabase stack is running."
     : "Local Supabase stack is running, but some services are not ready.";

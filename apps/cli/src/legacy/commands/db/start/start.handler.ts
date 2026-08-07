@@ -22,7 +22,9 @@ import {
   legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyEnvOverrideUint,
   legacyResolveAuthEmail,
+  legacyResolveAuthEmailSmtp,
   legacyResolveAuthExternalProviders,
+  legacyResolveAuthHooks,
   legacyResolveAuthMfa,
   legacyResolveAuthSms,
   legacyResolveDbSettingsEnvOverrides,
@@ -31,12 +33,15 @@ import {
   legacyResolveGotrueRateLimit,
   legacyResolveGotrueSessions,
   legacyResolveGotrueWeb3,
+  legacyResolveLocalConfigValues,
+  legacyResolveThirdPartyProviders,
 } from "../../../shared/legacy-local-config-values.ts";
 import {
   legacyParseGoDuration,
   legacyResolveHealthTimeoutSeconds,
 } from "../../../shared/legacy-go-duration.ts";
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
+import { legacyGoUrlParse } from "../../../shared/legacy-storage-url.ts";
 import { legacyLoadLocalProjectContext } from "../../../shared/legacy-local-project-context.ts";
 import { legacyCliProjectFilterValue } from "../../../shared/legacy-docker-ids.ts";
 import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
@@ -87,15 +92,16 @@ function wrapDbConfigOverride<T>(
  * removed entirely.
  *
  * Parity notes: this is `db start`, NOT the top-level `supabase start`. It does NOT print
- * a status table and does NOT fire `cli_stack_started` — those belong to
- * `internal/start/start.go`. There is no `Finished` line. Unlike `supabase start`, there
- * is no `--exclude`/`--ignore-health-check` here at all (Go's `db start` has neither
- * flag) — a health-check timeout always fails the command UNLESS `--from-backup` is set,
- * in which case `legacyStartDatabase` itself swallows it (a large restore can take longer
- * than the health timeout, `start.go:179-181`) and the command still succeeds.
- * `--exclude`'s absence also means the fresh-volume one-shot setup jobs (realtime/storage/
- * auth migrate) are gated purely on each service's own `enabled` flag, with no `--exclude`
- * filtering to layer on top.
+ * a status table and does NOT fire `cli_stack_started` — those belonged to
+ * `internal/start/start.go`, deleted outright as unreachable (CLI-1966; last present at
+ * commit a253ccba2) and now natively ported in `legacy/commands/start/`. There is no
+ * `Finished` line. Unlike `supabase start`, there is no `--exclude`/`--ignore-health-check`
+ * here at all (Go's `db start` has neither flag) — a health-check timeout always fails the
+ * command UNLESS `--from-backup` is set, in which case `legacyStartDatabase` itself
+ * swallows it (a large restore can take longer than the health timeout, `start.go:179-181`)
+ * and the command still succeeds. `--exclude`'s absence also means the fresh-volume
+ * one-shot setup jobs (realtime/storage/auth migrate) are gated purely on each service's
+ * own `enabled` flag, with no `--exclude` filtering to layer on top.
  */
 export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: LegacyDbStartFlags) {
   const output = yield* Output;
@@ -122,7 +128,26 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // is that exact load+validate — call it here (not via `legacyIsLocalDbRunning`'s
     // best-effort read, which swallows config errors) so `db start` fails fast on a
     // broken config.
-    yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+    const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+
+    // Go's `Config.Validate` prints this unconditionally, right after the `project_id` check and
+    // BEFORE `if c.Api.Enabled`/`if c.Auth.Enabled`/anything else in `Validate`
+    // (`pkg/config/config.go:1002-1005`) — so it fires regardless of `api.enabled`/`auth.enabled`,
+    // and regardless of whether Postgres is already running, matching `flags.LoadConfig` running
+    // before `AssertSupabaseDbIsRunning` (`internal/db/start/start.go:45-47`). The removed hidden
+    // Go bootstrap child used to print this itself (it ran the real `Config.Validate`); the native
+    // path has no equivalent call, so this handler must reproduce the print directly — neither
+    // `legacyCheckDbToml` nor `legacyLoadLocalProjectContext` emits it (review:
+    // PRRT_kwDOErm0O86WC8J7). Reuses `legacyCheckDbToml`'s own tri-state resolution
+    // (`dbTomlValues.baseline.apiAutoExposeNewTables`), which already replicates Go's
+    // `SUPABASE_API_AUTO_EXPOSE_NEW_TABLES` override + malformed-value abort, instead of
+    // re-deriving the value a second time.
+    if (Option.getOrElse(dbTomlValues.baseline.apiAutoExposeNewTables, () => false)) {
+      yield* output.raw(
+        "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.\n",
+        "stderr",
+      );
+    }
 
     // The rest of Go's `flags.LoadConfig` — full config decode/resolution
     // (`legacyLoadLocalProjectContext`) plus the eager `time.Duration` field validation right
@@ -136,11 +161,13 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       cliConfig.workdir,
       (message) => new LegacyDbConfigLoadError({ message }),
     );
-    // `hostname`/`projectId` are NOT destructured here — this eager battery only needs
-    // `config`/`projectEnvValues`/`loaded`, and the not-running branch below reloads its OWN
-    // (identical) copy of the whole context via `legacyBuildLocalDbContainerInputs`, which
-    // returns its own `context.hostname`/`context.projectId`.
-    const { config, projectEnvValues, loaded } = context;
+    // `projectId`/`hostname` are NOT destructured under their bare names here — the not-running
+    // branch below reloads its OWN (identical) copy of the whole context via
+    // `legacyBuildLocalDbContainerInputs`, which returns its own `context.projectId`/
+    // `context.hostname`, and re-declaring those names in this same scope would collide.
+    // `hostnameForValidation` is still needed here, for the eager, discarded
+    // `legacyResolveLocalConfigValues` call further down.
+    const { config, projectEnvValues, loaded, hostname: hostnameForValidation } = context;
 
     // Go decodes every `time.Duration` config field — including these 5 — in the same single,
     // unconditional `Config.Load` pass (`mapstructure.StringToTimeDurationHookFunc()`,
@@ -159,6 +186,27 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     );
     yield* wrapDbConfigOverride("auth.email.max_frequency", () =>
       legacyParseGoDuration(resolvedEmailForValidation.max_frequency),
+    );
+    // Same gap for `auth.email.smtp.*` — Viper-bound like every other nested field once
+    // `[auth.email.smtp]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
+    // `config.go:581-586`), decoded in the SAME unconditional `Config.Load` pass as
+    // `auth.email`/`auth.email.max_frequency` above — confirmed empirically against the real Go
+    // binary: `SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus` with `[auth.email.smtp]` present fails
+    // `config.Load` (`'auth.email.smtp.port' cannot parse value as 'uint16'`) even when `auth.
+    // enabled = false`, since this decode runs before `Config.Validate`'s `if c.Auth.Enabled` gate,
+    // let alone `AssertSupabaseDbIsRunning`. `legacyResolveAuthEmail` does NOT cover this — its own
+    // doc comment explicitly defers the smtp presence gap elsewhere in this file. `db start` never
+    // builds a GoTrue container, so nothing else in this handler calls `legacyResolveAuthEmailSmtp`;
+    // it's only otherwise reached via `legacyResolveLocalConfigValues`'s OWN `authEnabled`-gated
+    // call, in the not-running branch only — so a disabled-auth project would never reach it at all
+    // (review: PRRT_kwDOErm0O86WC8J3). `legacyResolveAuthEmailSmtp` already gates on
+    // `[auth.email.smtp]` presence internally (returns `undefined` when absent, matching Go's
+    // `AutomaticEnv` only intercepting already-bound keys — confirmed empirically too: the same
+    // override is silently ignored when the TOML has no `[auth.email.smtp]` table at all), so
+    // calling it here, once, eagerly, and discarding the result closes the gap without over-firing
+    // on an SMTP-less config.
+    yield* wrapDbConfigOverride("auth.email.smtp", () =>
+      legacyResolveAuthEmailSmtp(authDocForValidation, projectEnvValues),
     );
     const smsForValidation = yield* wrapDbConfigOverride("auth.sms", () =>
       legacyResolveAuthSms(authDocForValidation, config.auth.sms, projectEnvValues),
@@ -360,6 +408,32 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Same gap for `auth.third_party.<provider>.{enabled,...}` — Go's `Auth.ThirdParty`
+    // (`pkg/config/auth.go:187-198`) is value-typed exactly like `auth.web3`/`auth.oauth_server`
+    // above, decoded in the SAME unconditional `Config.Load` pass regardless of `auth.enabled`,
+    // even though `(tpa *thirdParty) validate()` itself only runs `if c.Auth.Enabled`
+    // (`config.go:1151-1153`). `legacyCheckDbToml`'s own third-party validation (run via
+    // `legacyValidateResolvedConfig`, above) only sees raw TOML `enabled =` values, not
+    // `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_ENABLED` AutomaticEnv overrides, and
+    // `legacyResolveThirdPartyProviders` is otherwise only reached via
+    // `legacyResolveLocalConfigValues`'s not-running-only call — so a malformed override (e.g.
+    // `SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=bogus`) would otherwise be silently accepted
+    // whenever Postgres is already running, unlike Go (review: PRRT_kwDOErm0O86WXFqj).
+    yield* wrapDbConfigOverride("auth.third_party", () =>
+      legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
+    );
+    // Same gap for `auth.hook.<type>.{enabled,uri,secrets}` — Go's `hook.validate()`
+    // (`pkg/config/config.go:1453-1485`) reads pointer-backed `*hookConfig` fields Viper-bound
+    // like every other nested field (`AutomaticEnv`, `config.go:581-586`), decoded in the same
+    // unconditional `Config.Load` pass as `auth.external` above — `db start` never builds a
+    // GoTrue container, so nothing else in this handler calls `legacyResolveAuthHooks` (it's
+    // only otherwise reached via `legacyResolveLocalConfigValues`'s not-running-only call).
+    // `legacyEnvOverrideBool` throws internally on a malformed
+    // `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED` override, so calling it here, once, eagerly, and
+    // discarding the result closes the gap (review: PRRT_kwDOErm0O86WBGSW).
+    yield* wrapDbConfigOverride("auth.hook", () =>
+      legacyResolveAuthHooks(authDocForValidation, config.auth.hook, projectEnvValues),
+    );
 
     // Same gap for `api.enabled`/`api.tls.enabled` — plain bools decoded in the same
     // unconditional `Config.Load` pass (`pkg/config/config.go:1006-1027`), regardless of whether
@@ -468,14 +542,45 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Same gap for `storage.image_transformation.enabled` — Go's `Storage.ImageTransformation` is
+    // a nil-unless-declared pointer (`pkg/config/storage.go:16`), Viper-bound like every other
+    // nested pointer field ONLY once `[storage.image_transformation]` is present in config.toml —
+    // the same shape as `auth.hook`/`auth.email.smtp` above, not the plain-bool shape of
+    // `storage.vector.enabled`/`storage.s3_protocol.enabled` above (confirmed empirically against
+    // the real Go binary: `SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus` fails
+    // `config.Load` when the section is present, even though `db start` never builds ImgProxy or
+    // the Storage container; the identical override is silently ignored when the section is
+    // absent, so this check must gate on presence — not decode unconditionally like the plain
+    // booleans above — or a section-less project would eagerly fail on a bogus env var Go itself
+    // ignores). `@supabase/config`'s decoded `config.storage.image_transformation` can't be used
+    // as the presence proxy itself — it decodes to a default, never `undefined` — so presence
+    // comes from the raw document, same `asRecord(loaded?.document?.[...])` gate
+    // `legacyResolveAuthEmailSmtp`/`legacyResolveGotruePasskeyWebauthn` above already use for the
+    // identical Go-pointer-section shape (also `start.gates.ts`'s own identical gate for `supabase
+    // start`'s ImgProxy boolean). `db start` never resolves this field elsewhere, so it's called
+    // here purely to force the eager decode-time error (review: PRRT_kwDOErm0O86WDkO9).
+    const imageTransformationSectionPresent =
+      asRecord(asRecord(loaded?.document?.["storage"])?.["image_transformation"]) !== undefined;
+    if (imageTransformationSectionPresent) {
+      yield* wrapDbConfigOverride("storage.image_transformation.enabled", () =>
+        legacyEnvOverrideBool(
+          "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
+          config.storage.image_transformation?.enabled ?? false,
+          "storage.image_transformation.enabled",
+          projectEnvValues,
+        ),
+      );
+    }
 
     // Same gap for Mailpit's three ports and Logflare's two — Go's `Config.Load` applies
     // `SUPABASE_LOCAL_SMTP_{PORT,SMTP_PORT,POP3_PORT}`/`SUPABASE_ANALYTICS_{PORT,VECTOR_PORT}`
     // generically (`pkg/config/config.go:580-586`), regardless of whether `db start` itself ever
     // reads them: it never builds Mailpit or Logflare. `smtp_port`/`pop3_port`/`vector_port` have
     // no TOML default (Go's zero-value `uint16`), matching `commands/start/start.handler.ts`'s own
-    // `?? 0` fallback. Discarded.
-    yield* wrapDbConfigOverride("local_smtp.port", () =>
+    // `?? 0` fallback. `smtp_port`/`pop3_port` are discarded; `local_smtp.port` itself is captured
+    // — see the `local_smtp.enabled`-gated zero check further below (review:
+    // PRRT_kwDOErm0O86WEBfq).
+    const localSmtpPortForValidation = yield* wrapDbConfigOverride("local_smtp.port", () =>
       legacyEnvOverridePort(
         "SUPABASE_LOCAL_SMTP_PORT",
         config.local_smtp.port,
@@ -667,6 +772,33 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Same gap for `db.ssl_enforcement.enabled` — Go's `SslEnforcement` is a nil-unless-declared
+    // pointer (`db.go:95`), Viper-bound like every other nested pointer field ONLY once
+    // `[db.ssl_enforcement]` is present in config.toml — the same presence-gated shape as
+    // `storage.image_transformation` above, not the plain-bool shape of
+    // `db.network_restrictions.enabled` right above (which IS a non-pointer field, decoded
+    // unconditionally). `db start` never builds any container gated on this value, but a
+    // malformed override (e.g. `SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus`) must still fail
+    // before `AssertSupabaseDbIsRunning` whenever the section is declared, matching every other
+    // field in this battery — so it would otherwise be silently accepted whenever Postgres is
+    // already running, unlike Go. `@supabase/config`'s decoded `config.db.ssl_enforcement` can't
+    // be used as the presence proxy itself — it decodes to a default `{ enabled: false }`, never
+    // `undefined` (confirmed empirically, same as `storage.image_transformation`) — so presence
+    // comes from the raw document, same `asRecord(loaded?.document?.[...])` gate used above.
+    // `db start` never resolves this field elsewhere, so it's called here purely to force the
+    // eager decode-time error (review: PRRT_kwDOErm0O86WE42a).
+    const sslEnforcementSectionPresent =
+      asRecord(asRecord(loaded?.document?.["db"])?.["ssl_enforcement"]) !== undefined;
+    if (sslEnforcementSectionPresent) {
+      yield* wrapDbConfigOverride("db.ssl_enforcement.enabled", () =>
+        legacyEnvOverrideBool(
+          "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED",
+          config.db.ssl_enforcement?.enabled ?? false,
+          "db.ssl_enforcement.enabled",
+          projectEnvValues,
+        ),
+      );
+    }
     const studioEnabledForValidation = yield* wrapDbConfigOverride("studio.enabled", () =>
       legacyEnvOverrideBool(
         "SUPABASE_STUDIO_ENABLED",
@@ -702,7 +834,30 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         }),
       );
     }
-    yield* wrapDbConfigOverride("local_smtp.enabled", () =>
+    // Same enabled-gated shape as `studio.port` above, immediately after it in Go: `Config.Validate`
+    // parses `studio.api_url` with `net/url.Parse` right after the port check, still inside the
+    // same `if c.Studio.Enabled` (`pkg/config/config.go:1074-1078`). `legacy-config-validate.ts`'s
+    // scope table marks `studio.api_url` "L-only — D has no studio section" too, and
+    // `legacyResolveLocalConfigValues`'s `studioApiUrl` resolution is the only other place this
+    // parses — called ONLY in the not-running branch below — so a malformed
+    // `SUPABASE_STUDIO_API_URL` (e.g. an unterminated IPv6 literal like `http://[::1`) would
+    // otherwise be silently accepted whenever Postgres is already running, unlike Go (review:
+    // PRRT_kwDOErm0O86WEBfl). Reuses `legacyGoUrlParse`, the same `net/url.Parse` port
+    // `legacy-config-validate.ts`'s own `studio.api_url` check and the storage-URL commands share,
+    // rather than re-deriving parse semantics here.
+    const studioApiUrlForValidation =
+      legacyEnvOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+      config.studio.api_url;
+    if (studioEnabledForValidation) {
+      yield* Effect.try({
+        try: () => legacyGoUrlParse(studioApiUrlForValidation),
+        catch: (cause) =>
+          new LegacyDbConfigLoadError({
+            message: `Invalid config for studio.api_url: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      });
+    }
+    const localSmtpEnabledForValidation = yield* wrapDbConfigOverride("local_smtp.enabled", () =>
       legacyEnvOverrideBool(
         "SUPABASE_LOCAL_SMTP_ENABLED",
         config.local_smtp.enabled,
@@ -710,6 +865,61 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
         projectEnvValues,
       ),
     );
+    // Same enabled-gated shape as `studio.port` above — Go's `Config.Validate` rejects
+    // `local_smtp.port === 0`/`SUPABASE_LOCAL_SMTP_PORT=0` ONLY when `local_smtp.enabled`
+    // (`pkg/config/config.go:1081-1085`), still unconditionally inside `flags.LoadConfig`, before
+    // `AssertSupabaseDbIsRunning`. `legacy-config-validate.ts`'s scope table marks this "L-only"
+    // too, and `legacyResolveLocalConfigValues`'s `mailpitEnabled`/`mailpitPort` pair is the only
+    // other place this is checked — called ONLY in the not-running branch below — so a malformed/
+    // zero `SUPABASE_LOCAL_SMTP_PORT` would otherwise be silently accepted whenever Postgres is
+    // already running, unlike Go (review: PRRT_kwDOErm0O86WEBfq).
+    if (localSmtpEnabledForValidation && localSmtpPortForValidation === 0) {
+      yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: "Missing required field in config: local_smtp.port",
+        }),
+      );
+    }
+
+    // Closes an entire recurring class of gaps in the battery above, rather than adding another
+    // one-off field check: `legacyResolveLocalConfigValues` is the SAME resolver
+    // `legacyBuildLocalDbContainerInputs` calls again below, in the not-running branch, to build
+    // the REAL `values` the container bring-up needs — calling it EAGERLY here too, before the
+    // already-running shortcut, closes 6 review findings at once, because they're all steps this
+    // one resolver already performs internally: `auth.captcha` decode (`legacyResolveAuthCaptcha`,
+    // review: PRRT_kwDOErm0O86WYMj_), `auth.jwt_secret` length validation
+    // (`resolveJwtSecret`/`generateAPIKeys`, review: PRRT_kwDOErm0O86WYMkJ), `auth.signing_keys_path`
+    // file read (`legacyResolveConfiguredSigningKeys`, review: PRRT_kwDOErm0O86WYMkM), `api.tls`
+    // cert/key path validation + file reads (`readApiTlsFiles`, review: PRRT_kwDOErm0O86WYMkP),
+    // `auth.external.*` required-field validation (`validateAuthExternalProviders`, review:
+    // PRRT_kwDOErm0O86WYMkT), and `auth.email`/notification template content reads
+    // (`readAuthEmailTemplateContent`, review: PRRT_kwDOErm0O86WYMkW) — all genuinely unconditional
+    // in Go's `Config.Load`/`Validate`, all before `AssertSupabaseDbIsRunning`
+    // (`internal/db/start/start.go:45-47`), same as everything else in this battery. This
+    // deliberately does NOT replace the individual checks above for fields this resolver does
+    // NOT cover (anything only `db start`'s own fresh-volume setup jobs read: `edge_runtime.*`,
+    // `realtime.*`, `storage.{vector,s3_protocol,analytics,image_transformation}`, `db.pooler.*`,
+    // `db.ssl_enforcement.enabled`, `db.health_timeout`, `storage.{enabled,file_size_limit}`,
+    // Mailpit/Logflare's non-primary ports) — `status`/`stop` never read those either, so
+    // `legacyResolveLocalConfigValues` never decodes them, and they still need their own eager
+    // check the same way they always have. Its result is discarded here — only the fail-fast
+    // behavior matters — and `legacyBuildLocalDbContainerInputs` below re-resolves the REAL
+    // `values`, same "resolve once, still call again to force the decode" precedent
+    // `db.settings`/`realtime.*` already use elsewhere in this battery.
+    yield* Effect.try({
+      try: () =>
+        legacyResolveLocalConfigValues(
+          config,
+          hostnameForValidation,
+          cliConfig.workdir,
+          projectEnvValues,
+          loaded?.document,
+        ),
+      catch: (cause) =>
+        new LegacyDbConfigLoadError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
 
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
     // stderr and return nil (exit 0). Already native — see this module's header. Runs AFTER

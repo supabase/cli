@@ -268,11 +268,20 @@ export function mockLegacyLoginApi(
 export function mockLegacyTelemetryStateTracked(): {
   readonly layer: Layer.Layer<LegacyTelemetryState>;
   readonly flushed: boolean;
+  /**
+   * Number of `flush` calls — beyond the plain `flushed` boolean, this lets a
+   * test prove a command's own `Effect.ensuring` finalizer fired EXACTLY once
+   * even when its body calls an in-process helper (e.g. `legacyResetLocalDatabase`,
+   * CLI-2062) that could, if it wrongly owned a second finalizer, double the
+   * count instead of leaving it at 1.
+   */
+  readonly flushCount: number;
   readonly stitchedDistinctId: string | undefined;
   readonly clearedDistinctId: boolean;
   readonly identityReset: boolean;
 } {
   let flushed = false;
+  let flushCount = 0;
   let stitchedDistinctId: string | undefined;
   let clearedDistinctId = false;
   let identityReset = false;
@@ -280,6 +289,7 @@ export function mockLegacyTelemetryStateTracked(): {
     get flush() {
       return Effect.sync(() => {
         flushed = true;
+        flushCount += 1;
       });
     },
     stitchLogin: (distinctId: string) =>
@@ -302,6 +312,9 @@ export function mockLegacyTelemetryStateTracked(): {
     get flushed() {
       return flushed;
     },
+    get flushCount() {
+      return flushCount;
+    },
     get stitchedDistinctId() {
       return stitchedDistinctId;
     },
@@ -317,11 +330,14 @@ export function mockLegacyTelemetryStateTracked(): {
 export function mockLegacyLinkedProjectCacheTracked(): {
   readonly layer: Layer.Layer<LegacyLinkedProjectCache>;
   readonly cached: boolean;
+  /** Number of `cache` calls — see {@link mockLegacyTelemetryStateTracked}'s own `flushCount`. */
+  readonly cacheCount: number;
   readonly cachedRef: string | undefined;
   readonly cachedApiUrl: string | undefined;
   readonly cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
 } {
   let cached = false;
+  let cacheCount = 0;
   let cachedRef: string | undefined;
   let cachedApiUrl: string | undefined;
   let cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
@@ -334,6 +350,7 @@ export function mockLegacyLinkedProjectCacheTracked(): {
     ) =>
       Effect.sync(() => {
         cached = true;
+        cacheCount += 1;
         cachedRef = ref;
         cachedApiUrl = apiUrl;
         cachedAccessToken = accessToken;
@@ -343,6 +360,9 @@ export function mockLegacyLinkedProjectCacheTracked(): {
     layer,
     get cached() {
       return cached;
+    },
+    get cacheCount() {
+      return cacheCount;
     },
     get cachedRef() {
       return cachedRef;

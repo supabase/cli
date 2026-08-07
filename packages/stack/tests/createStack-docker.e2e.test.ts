@@ -4,11 +4,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { activationTimeoutSecondsForService } from "../src/ServiceActivation.ts";
 import { createStack, type StackHandle } from "../src/node.ts";
+import { dependencyTimeoutSecondsForServices } from "../src/services/health-budgets.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
-const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 5_000;
-const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS = 90_000;
+const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 180_000;
+const STACK_DOCKER_E2E_SETUP_OVERHEAD_MS = 90_000;
+const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS =
+  dependencyTimeoutSecondsForServices(["postgres"]) * 1000 + STACK_DOCKER_E2E_SETUP_OVERHEAD_MS;
+const ANALYTICS_COLD_START_TEST_TIMEOUT_MS = activationTimeoutSecondsForService("analytics") * 1000;
 
 function hasDockerDaemon(): boolean {
   try {
@@ -32,8 +37,10 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     stack = await createStack({
       mode: "docker",
+      startupMode: "lazy",
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
+      analytics: {},
     });
 
     try {
@@ -68,6 +75,8 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     "runs the core services in Docker containers and serves health endpoints",
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {
+      await Promise.all([stack.startService("postgrest"), stack.startService("auth")]);
+
       const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
       expect(runningImages).toContain("supabase/postgrest");
       expect(runningImages).toContain("supabase/postgres");
@@ -90,11 +99,10 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     "runs the edge runtime in Docker and serves the functions placeholder through the local gateway",
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {
-      const [runningImages, states, functionsRes] = await Promise.all([
-        Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
-        stack.getStatus(),
-        fetch(`${stack.url}/functions/v1/test`),
-      ]);
+      const functionsRes = await fetch(`${stack.url}/functions/v1/test`);
+      await stack.serviceReady("edge-runtime");
+      const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
+      const states = await stack.getStatus();
 
       expect(runningImages).toContain("supabase/edge-runtime");
       expect(states).toEqual(
@@ -107,6 +115,28 @@ dockerDescribe("createStack e2e (docker mode)", () => {
         code: "FUNCTIONS_NOT_CONFIGURED",
         message: "Edge Functions are not configured for this local stack yet.",
       });
+    },
+  );
+
+  test(
+    "cold-starts analytics through lazy service activation",
+    { timeout: ANALYTICS_COLD_START_TEST_TIMEOUT_MS },
+    async () => {
+      expect(await stack.getServiceStatus("analytics")).toEqual(
+        expect.objectContaining({ status: "Dormant" }),
+      );
+
+      await stack.startService("analytics");
+
+      const [runningImages, states] = await Promise.all([
+        Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
+        stack.getStatus(),
+      ]);
+
+      expect(runningImages).toContain("supabase/logflare");
+      expect(states).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "analytics", status: "Healthy" })]),
+      );
     },
   );
 

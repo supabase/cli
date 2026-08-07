@@ -2,17 +2,34 @@ import { Context, type Effect } from "effect";
 
 import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 
-/** Which shadow-database catalog the Go seam should produce. */
-export type LegacyCatalogMode = "baseline" | "migrations" | "declarative";
+/**
+ * Which shadow-database catalog the Go seam should produce.
+ *
+ * `"migrations"` was removed from this union under CLI-1959: both call sites
+ * that used it (`db diff`'s explicit `--from/--to migrations`, and
+ * `db schema declarative sync`'s migrations-catalog diff source) now resolve
+ * natively — see `legacy-pgdelta.cache.ts`'s `legacyResolveMigrationsCatalogRef`
+ * and `legacyGetMigrationsCatalogRef` respectively; CLI-1956 then ported the
+ * shadow those two functions provision off the Go seam too (see
+ * `legacy-pgdelta.cache.ts`'s `exportViaShadowCatalog`), so nothing under this
+ * seam provisions a shadow database at all any more. `"baseline"` and
+ * `"declarative"` remain seam-backed because they need a shadow provisioned with
+ * ONLY the platform baseline (no migrations) or with declarative files applied —
+ * neither has a native TS equivalent yet (`start.SetupDatabase` against an
+ * arbitrary shadow, and `pgdelta.ApplyDeclarative`), and porting either
+ * overlaps with CLI-1956's native shadow-provisioning work. CLI-1823 (native
+ * pg-delta lib) and CLI-1956's remaining follow-ups are the tracked next steps
+ * for retiring the rest of this seam.
+ */
+export type LegacyCatalogMode = "baseline" | "declarative";
 
 interface LegacyDeclarativeSeamShape {
   /**
-   * Provisions the shadow-database platform baseline (and, for
-   * `migrations`/`declarative`, applies migrations / declarative files) via the
-   * bundled Go binary's hidden `db schema declarative __catalog` command, and
-   * returns the workdir-relative path of the exported pg-delta catalog (cached
-   * under `supabase/.temp/pgdelta/`). Go's progress is teed to stderr; only the
-   * catalog path is captured from stdout.
+   * Provisions the shadow-database platform baseline (and, for `declarative`,
+   * applies declarative files) via the bundled Go binary's hidden
+   * `db schema declarative __catalog` command, and returns the workdir-relative
+   * path of the exported pg-delta catalog (cached under `supabase/.temp/pgdelta/`).
+   * Go's progress is teed to stderr; only the catalog path is captured from stdout.
    *
    * The shadow-database provisioning this needs (`start.SetupDatabase`, the
    * auth/storage/realtime service migrations) IS now natively ported
@@ -36,23 +53,18 @@ interface LegacyDeclarativeSeamShape {
     readonly projectRef?: string;
   }) => Effect.Effect<string, LegacyDeclarativeShadowDbError>;
   /**
-   * Runs the bundled Go binary with the given args, inheriting stdio (so the
-   * user sees its output) and returning its exit code — without exiting the
-   * host process. Used for the sync apply-failure recovery (`db reset --local`),
-   * where the failure must be catchable rather than terminating the process
-   * (`db reset` is still a `wrapped` Go command).
-   */
-  readonly execInherit: (
-    args: ReadonlyArray<string>,
-  ) => Effect.Effect<number, LegacyDeclarativeShadowDbError>;
-  /**
    * Go's `ensureLocalDatabaseStarted` for the `--local` declarative paths
    * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`): inspects the local
-   * Postgres container and, when it is not running, starts the stack via the
-   * bundled `supabase-go start` (the stack-start subsystem is not yet ported).
-   * A no-op when the container is already running, so
-   * `db schema declarative generate --local` bootstraps a stopped stack instead
-   * of failing to connect, matching Go.
+   * Postgres container and, when it is not running, starts ONLY the database via
+   * the bundled Go binary's own DB-only `db start` (`internal/db/start.Run`, the
+   * same hidden path `supabase db start` uses) -- not the full `supabase start`
+   * stack, which was deleted outright as unreachable (CLI-1966); this also avoids
+   * failing on unavailable auth/storage/etc. ports or images. TS's own native
+   * `db start` (`legacy/commands/db/start/`) exists but is not yet
+   * in-process-callable either, so this seam shells out to the Go binary
+   * directly rather than to the TS handler. A no-op when the container is
+   * already running, so `db schema declarative generate --local` bootstraps a
+   * stopped stack instead of failing to connect, matching Go.
    */
   readonly ensureLocalDatabaseStarted: () => Effect.Effect<void, LegacyDeclarativeShadowDbError>;
   /**

@@ -1,8 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
-import { unixHttpClientLayer } from "@supabase/stack";
 import {
-  DaemonServer,
   DEFAULT_VERSIONS,
   fullVersionManifest,
   type PartialVersionManifest,
@@ -14,7 +12,9 @@ import {
   type StackInfo,
   type StackMetadata,
   type StackState,
+  unixHttpClientLayer,
 } from "@supabase/stack/effect";
+import { DaemonServer } from "@supabase/stack/testing";
 import { Effect, Layer, ManagedRuntime, Option, Stream } from "effect";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -125,6 +125,7 @@ function makeProjectHome(projectRoot: string) {
 function makeStackLayer(opts: {
   info: StackInfo;
   states: ReadonlyArray<StackServiceState>;
+  waitAllReadyNever?: boolean;
   history: ReadonlyArray<LogEntry>;
   live: ReadonlyArray<LogEntry>;
   onStop?: () => void;
@@ -178,7 +179,7 @@ function makeStackLayer(opts: {
       opts.states.some((state) => state.name === name)
         ? Effect.void
         : Effect.fail(new ServiceNotFoundError({ name })),
-    waitAllReady: () => Effect.void,
+    waitAllReady: () => (opts.waitAllReadyNever ? Effect.never : Effect.void),
     subscribeLogs: (name: string) =>
       Stream.fromIterable(opts.live.filter((entry) => entry.service === name)),
     subscribeAllLogs: (services?: ReadonlyArray<string>) =>
@@ -238,6 +239,7 @@ export async function makeStackFixture(
     services?: PartialVersionManifest;
     metadata?: StackMetadata;
     states?: ReadonlyArray<StackServiceState>;
+    waitAllReadyNever?: boolean;
     history?: ReadonlyArray<LogEntry>;
     live?: ReadonlyArray<LogEntry>;
   } = {},
@@ -308,6 +310,7 @@ export async function makeStackFixture(
           makeStackLayer({
             info,
             states,
+            waitAllReadyNever: opts.waitAllReadyNever,
             history,
             live,
             onStop: () => {

@@ -1,4 +1,4 @@
-import { legacyIsPostgresURL } from "../shared/legacy-pgdelta.ts";
+import { legacyIsPostgresURL } from "../../../shared/legacy-pgdelta.ts";
 
 /** The kinds an explicit `--from`/`--to` ref resolves to. */
 export type LegacyExplicitRefKind = "local" | "linked" | "migrations" | "url" | "unknown";

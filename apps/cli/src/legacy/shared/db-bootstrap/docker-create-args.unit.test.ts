@@ -268,7 +268,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
     expect(args.some((a) => a.startsWith("--health"))).toBe(false);
   });
 
-  test("never reads spec.secretFiles — the pure builder emits nothing from it (container-lifecycle.ts alone stages it into a real bind, CWE-214/522)", () => {
+  test("never reads spec.secretFiles — the pure builder emits nothing from it (container-lifecycle.ts alone `docker cp`s it into the container, CWE-214/522)", () => {
     const spec: LegacyStartContainerSpec = {
       image: "kong:3",
       containerName: "supabase_kong_proj",

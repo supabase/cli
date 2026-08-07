@@ -1,11 +1,16 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { ServiceNotFoundError, type LogEntry } from "@supabase/process-compose";
-import { Effect, Layer, ManagedRuntime, Stream } from "effect";
+import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
+import { Effect, Fiber, Layer, ManagedRuntime, Stream } from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
-import { Stack, type StackInfo } from "./Stack.ts";
+import { StackBuildError, StackReadinessError } from "./errors.ts";
+import type { FunctionsReloadConfig, ResolvedFunctionsBundle } from "./functions.ts";
+import { RemoteStack } from "./RemoteStack.ts";
+import { Stack, type EdgeRuntimeReloadConfig, type StackInfo } from "./Stack.ts";
+import type { ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
+import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -41,7 +46,21 @@ const AUTH_STATE = new StackServiceState({
   error: null,
 });
 
-const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE, AUTH_STATE];
+const HEALTH_FAILED_STATE = new StackServiceState({
+  name: "edge-runtime",
+  status: "Failed",
+  pid: null,
+  exitCode: null,
+  restartCount: 2,
+  startedAt: Date.now(),
+  error: "Health check failed and restart budget was exhausted",
+});
+
+const MOCK_STATES: ReadonlyArray<StackServiceState> = [
+  POSTGRES_STATE,
+  AUTH_STATE,
+  HEALTH_FAILED_STATE,
+];
 
 const MOCK_LOGS: ReadonlyArray<LogEntry> = [
   { timestamp: 1000, service: "postgres", stream: "stdout", line: "starting" },
@@ -53,9 +72,20 @@ const MOCK_LOGS: ReadonlyArray<LogEntry> = [
 // Mock Stack (server-side, backing the DaemonServer)
 // ---------------------------------------------------------------------------
 
-function mockStack() {
+function mockStack(
+  options: {
+    readonly startServiceBuildError?: string;
+    readonly startServiceReadyError?: string;
+    readonly waitReadyBuildError?: string;
+    readonly waitReadyTimeoutMs?: number;
+    readonly restartServiceReadyError?: string;
+  } = {},
+) {
   let stopped = false;
   const serviceCalls: string[] = [];
+  const functionReloads: FunctionsReloadConfig[] = [];
+  const edgeRuntimeReloads: EdgeRuntimeReloadConfig[] = [];
+  const readinessCalls: Array<{ readonly target: string; readonly options?: ReadyOptions }> = [];
 
   const layer = Layer.succeed(Stack, {
     getInfo: () => Effect.succeed(MOCK_INFO),
@@ -71,9 +101,18 @@ function mockStack() {
     startService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.sync(() => {
-            serviceCalls.push(`start:${name}`);
-          }),
+        : options.startServiceBuildError !== undefined
+          ? Effect.fail(new StackBuildError({ detail: options.startServiceBuildError }))
+          : options.startServiceReadyError !== undefined
+            ? Effect.fail(
+                new ServiceReadyError({
+                  name,
+                  reason: options.startServiceReadyError,
+                }),
+              )
+            : Effect.sync(() => {
+                serviceCalls.push(`start:${name}`);
+              }),
     stopService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
@@ -83,15 +122,24 @@ function mockStack() {
     restartService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.sync(() => {
-            serviceCalls.push(`restart:${name}`);
-          }),
-    reloadFunctions: () =>
+        : options.restartServiceReadyError !== undefined
+          ? Effect.fail(
+              new ServiceReadyError({
+                name,
+                reason: options.restartServiceReadyError,
+              }),
+            )
+          : Effect.sync(() => {
+              serviceCalls.push(`restart:${name}`);
+            }),
+    reloadFunctions: (config) =>
       Effect.sync(() => {
+        functionReloads.push(config ?? {});
         serviceCalls.push("reload-functions");
       }),
-    reloadEdgeRuntime: () =>
+    reloadEdgeRuntime: (config) =>
       Effect.sync(() => {
+        edgeRuntimeReloads.push(config);
         serviceCalls.push("reload-edge-runtime");
       }),
     getState: (name: string) => {
@@ -106,11 +154,31 @@ function mockStack() {
         : Effect.fail(new ServiceNotFoundError({ name }));
     },
     allStateChanges: () => Stream.fromIterable(MOCK_STATES),
-    waitReady: (name: string) => {
+    waitReady: (name: string, readyOptions?: ReadyOptions) => {
       const match = MOCK_STATES.find((s) => s.name === name);
-      return match ? Effect.void : Effect.fail(new ServiceNotFoundError({ name }));
+      if (match === undefined) return Effect.fail(new ServiceNotFoundError({ name }));
+      if (options.waitReadyBuildError !== undefined) {
+        return Effect.fail(new StackBuildError({ detail: options.waitReadyBuildError }));
+      }
+      if (options.waitReadyTimeoutMs !== undefined) {
+        return Effect.fail(
+          new StackReadinessError({
+            target: name,
+            timeoutMs: options.waitReadyTimeoutMs,
+            detail: `Timed out waiting for ${name}`,
+          }),
+        );
+      }
+      return Effect.sync(() => {
+        readinessCalls.push({ target: name, options: readyOptions });
+        serviceCalls.push(`ready:${name}`);
+      });
     },
-    waitAllReady: () => Effect.void,
+    waitAllReady: (readyOptions?: ReadyOptions) =>
+      Effect.sync(() => {
+        readinessCalls.push({ target: "stack", options: readyOptions });
+        serviceCalls.push("ready:all");
+      }),
     subscribeLogs: (name: string) =>
       Stream.fromIterable(MOCK_LOGS.filter((l) => l.service === name)),
     subscribeAllLogs: (services?: ReadonlyArray<string>) =>
@@ -136,8 +204,25 @@ function mockStack() {
       return stopped;
     },
     serviceCalls,
+    readinessCalls,
+    functionReloads,
+    edgeRuntimeReloads,
   };
 }
+
+const functionsBundle: ResolvedFunctionsBundle = {
+  env: { SHARED_SECRET: "shared-secret-value" },
+  functions: [
+    {
+      name: "hello",
+      verifyJWT: false,
+      entrypointPath: "/project/supabase/functions/hello/index.ts",
+      importMapPath: null,
+      staticFiles: [],
+      env: { FUNCTION_SECRET: "function-secret-value" },
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Layer builder — DaemonServer backed by mock Stack on TCP port
@@ -149,7 +234,18 @@ function buildServerLayer(
   return DaemonServer.layer.pipe(
     Layer.provide(mock.layer),
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
-  ) as Layer.Layer<DaemonServer, never, never>;
+  );
+}
+
+function buildClientLayer(url: string): Layer.Layer<Stack, never, never> {
+  const clientLayer = Layer.succeed(UnixHttpClient, {
+    request: (socketPath, path, init) =>
+      Effect.tryPromise({
+        try: () => fetch(`${url}${path}`, init),
+        catch: (cause) => new UnixHttpClientError({ socketPath, path, cause }),
+      }),
+  });
+  return RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer));
 }
 
 // ---------------------------------------------------------------------------
@@ -166,123 +262,11 @@ describe("RemoteStack integration", () => {
     serverRuntime = ManagedRuntime.make(buildServerLayer(mock));
     const daemon = await serverRuntime.runPromise(DaemonServer);
 
-    // Build RemoteStack layer targeting the server's TCP address.
-    // RemoteStack uses Bun's `fetch({ unix })` but we test with TCP here
-    // since the HTTP behavior is identical.
     const addr = daemon.address;
     if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
     const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
-
-    // For TCP testing, we override the fetch helper by using a custom layer
-    // that patches the socket path to a TCP URL. Since RemoteStack uses
-    // `fetch("http://localhost/...", { unix })`, we can't directly test TCP.
-    //
-    // Instead, we'll test the RemoteStack methods via raw fetch to the TCP
-    // server, validating the HTTP contract that RemoteStack relies on.
-    // The DaemonServer integration tests already cover the HTTP endpoints.
-    //
-    // For a true end-to-end test, we'd need a Unix socket server.
-    // Here we verify the RemoteStack layer constructor + method wiring.
-
-    // Use the RemoteStack layer with a Unix socket path.
-    // Since we can't use Unix socket with the TCP test server,
-    // we test the layer construction only.
     const url = `http://${host}:${addr.port}`;
-
-    // Create a RemoteStack-like client that uses TCP instead of Unix socket
-    clientRuntime = ManagedRuntime.make(
-      Layer.succeed(Stack, {
-        getInfo: () =>
-          Effect.promise(async () => {
-            const res = await fetch(`${url}/status`);
-            const body = (await res.json()) as { info: StackInfo };
-            return body.info;
-          }),
-        start: () => Effect.void,
-        stop: () =>
-          Effect.promise(async () => {
-            await fetch(`${url}/stop`, { method: "POST" });
-          }),
-        dispose: () =>
-          Effect.promise(async () => {
-            await fetch(`${url}/stop`, { method: "POST" });
-          }),
-        startService: (name: string) =>
-          Effect.gen(function* () {
-            const res = yield* Effect.promise(() =>
-              fetch(`${url}/services/${name}/start`, { method: "POST" }),
-            );
-            if (res.status === 404) return yield* new ServiceNotFoundError({ name });
-          }),
-        stopService: (name: string) =>
-          Effect.gen(function* () {
-            const res = yield* Effect.promise(() =>
-              fetch(`${url}/services/${name}/stop`, { method: "POST" }),
-            );
-            if (res.status === 404) return yield* new ServiceNotFoundError({ name });
-          }),
-        restartService: (name: string) =>
-          Effect.gen(function* () {
-            const res = yield* Effect.promise(() =>
-              fetch(`${url}/services/${name}/restart`, { method: "POST" }),
-            );
-            if (res.status === 404) return yield* new ServiceNotFoundError({ name });
-          }),
-        reloadFunctions: () =>
-          Effect.gen(function* () {
-            yield* Effect.promise(() => fetch(`${url}/functions/reload`, { method: "POST" }));
-          }),
-        reloadEdgeRuntime: () =>
-          Effect.gen(function* () {
-            yield* Effect.promise(() =>
-              fetch(`${url}/edge-runtime/reload`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ edgeRuntime: {} }),
-              }),
-            );
-          }),
-        getState: (name: string) =>
-          Effect.gen(function* () {
-            const res = yield* Effect.promise(() => fetch(`${url}/status`));
-            const body = (yield* Effect.promise(() => res.json())) as {
-              services: Array<StackServiceState>;
-            };
-            const s = body.services.find((s) => s.name === name);
-            if (!s) return yield* new ServiceNotFoundError({ name });
-            return new StackServiceState(s);
-          }),
-        getAllStates: () =>
-          Effect.promise(async () => {
-            const res = await fetch(`${url}/status`);
-            const body = (await res.json()) as { services: Array<StackServiceState> };
-            return body.services.map((s) => new StackServiceState(s));
-          }),
-        stateChanges: () => Effect.succeed(Stream.empty),
-        allStateChanges: () => Stream.empty,
-        waitReady: () => Effect.void,
-        waitAllReady: () => Effect.void,
-        subscribeLogs: () => Stream.empty,
-        subscribeAllLogs: () => Stream.empty,
-        logHistory: (name: string, limit?: number) =>
-          Effect.promise(async () => {
-            const query = limit !== undefined ? `?limit=${limit}` : "";
-            const res = await fetch(`${url}/logs/${name}/history${query}`);
-            return (await res.json()) as ReadonlyArray<LogEntry>;
-          }),
-        logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
-          Effect.promise(async () => {
-            const searchParams = new URLSearchParams();
-            if (limit !== undefined) searchParams.set("limit", String(limit));
-            for (const service of services ?? []) {
-              searchParams.append("service", service);
-            }
-            const query = searchParams.toString();
-            const res = await fetch(`${url}/logs/history${query.length > 0 ? `?${query}` : ""}`);
-            return (await res.json()) as ReadonlyArray<LogEntry>;
-          }),
-      }),
-    );
+    clientRuntime = ManagedRuntime.make(buildClientLayer(url));
   });
 
   afterAll(async () => {
@@ -299,9 +283,16 @@ describe("RemoteStack integration", () => {
     const states = await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) => stack.getAllStates()),
     );
-    expect(states).toHaveLength(2);
+    expect(states).toHaveLength(3);
     expect(states.at(0)?.name).toBe("postgres");
     expect(states.at(1)?.name).toBe("auth");
+    expect(states.at(2)).toMatchObject({
+      name: "edge-runtime",
+      status: "Failed",
+      pid: null,
+      exitCode: null,
+      error: "Health check failed and restart budget was exhausted",
+    });
   });
 
   test("getState returns a single service state", async () => {
@@ -333,6 +324,158 @@ describe("RemoteStack integration", () => {
     expect(exit._tag).toBe("Failure");
   });
 
+  test("waitReady passes one validated finite override through the daemon", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.waitReady("auth", { mode: "finite", timeoutMs: 250 })),
+    );
+    expect(mock.serviceCalls).toContain("ready:auth");
+    expect(mock.readinessCalls).toContainEqual({
+      target: "auth",
+      options: { mode: "finite", timeoutMs: 250 },
+    });
+  });
+
+  test("waitReady rejects dot path segments locally", async () => {
+    const error = await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.waitReady("..")).pipe(Effect.flip),
+    );
+    expect(error._tag).toBe("ServiceNotFoundError");
+    expect(mock.serviceCalls).not.toContain("ready:all");
+  });
+
+  test("waitAllReady sends explicit inherit semantics to the daemon", async () => {
+    await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.waitAllReady()));
+    expect(mock.serviceCalls).toContain("ready:all");
+    expect(mock.readinessCalls).toContainEqual({
+      target: "stack",
+      options: { mode: "inherit" },
+    });
+  });
+
+  test("preserves StackReadinessError across the daemon transport", async () => {
+    const failingMock = mockStack({ waitReadyTimeoutMs: 75 });
+    const failingServer = ManagedRuntime.make(buildServerLayer(failingMock));
+    let failingClient: ManagedRuntime.ManagedRuntime<Stack, never> | undefined;
+    try {
+      const daemon = await failingServer.runPromise(DaemonServer);
+      const addr = daemon.address;
+      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
+      failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
+
+      const error = await failingClient.runPromise(
+        Effect.flatMap(Stack, (stack) => stack.waitReady("auth")).pipe(Effect.flip),
+      );
+      expect(error._tag).toBe("StackReadinessError");
+      if (error._tag === "StackReadinessError") {
+        expect(error.target).toBe("auth");
+        expect(error.timeoutMs).toBe(75);
+      }
+    } finally {
+      await failingClient?.dispose();
+      await failingServer.dispose();
+    }
+  });
+
+  test("interrupting waitReady aborts the daemon request", async () => {
+    let notifyRequestStarted: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      notifyRequestStarted = resolve;
+    });
+    let aborted = false;
+    const clientLayer = Layer.succeed(UnixHttpClient, {
+      request: (socketPath, path, init) =>
+        Effect.tryPromise({
+          try: () =>
+            new Promise<Response>((_resolve, reject) => {
+              notifyRequestStarted?.();
+              init?.signal?.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                  reject(new DOMException("Aborted", "AbortError"));
+                },
+                { once: true },
+              );
+            }),
+          catch: (cause) => new UnixHttpClientError({ socketPath, path, cause }),
+        }),
+    });
+    const runtime = ManagedRuntime.make(
+      RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer)),
+    );
+    try {
+      const fiber = runtime.runFork(Effect.flatMap(Stack, (stack) => stack.waitReady("auth")));
+      await requestStarted;
+      await runtime.runPromise(Fiber.interrupt(fiber));
+      expect(aborted).toBe(true);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  test("preserves StackBuildError across remote service operations", async () => {
+    const failingMock = mockStack({
+      restartServiceReadyError: "restart failed readiness",
+      startServiceBuildError: "stack is stopped",
+      waitReadyBuildError: "service has not been activated",
+    });
+    const failingServer = ManagedRuntime.make(buildServerLayer(failingMock));
+    let failingClient: ManagedRuntime.ManagedRuntime<Stack, never> | undefined;
+    try {
+      const daemon = await failingServer.runPromise(DaemonServer);
+      const addr = daemon.address;
+      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
+      failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
+
+      const startError = await failingClient.runPromise(
+        Effect.flatMap(Stack, (stack) => stack.startService("auth")).pipe(Effect.flip),
+      );
+      expect(startError._tag).toBe("StackBuildError");
+
+      const readyError = await failingClient.runPromise(
+        Effect.flatMap(Stack, (stack) => stack.waitReady("auth")).pipe(Effect.flip),
+      );
+      expect(readyError._tag).toBe("StackBuildError");
+
+      const restartError = await failingClient.runPromise(
+        Effect.flatMap(Stack, (stack) => stack.restartService("auth")).pipe(Effect.flip),
+      );
+      expect(restartError._tag).toBe("ServiceReadyError");
+      if (restartError._tag === "ServiceReadyError") {
+        expect(restartError.reason).toBe("restart failed readiness");
+      }
+    } finally {
+      await failingClient?.dispose();
+      await failingServer.dispose();
+    }
+  });
+
+  test("preserves ServiceReadyError from remote startService", async () => {
+    const failingMock = mockStack({ startServiceReadyError: "start failed readiness" });
+    const failingServer = ManagedRuntime.make(buildServerLayer(failingMock));
+    let failingClient: ManagedRuntime.ManagedRuntime<Stack, never> | undefined;
+    try {
+      const daemon = await failingServer.runPromise(DaemonServer);
+      const addr = daemon.address;
+      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
+      failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
+
+      const error = await failingClient.runPromise(
+        Effect.flatMap(Stack, (stack) => stack.startService("auth")).pipe(Effect.flip),
+      );
+      expect(error._tag).toBe("ServiceReadyError");
+      if (error._tag === "ServiceReadyError") {
+        expect(error.reason).toBe("start failed readiness");
+      }
+    } finally {
+      await failingClient?.dispose();
+      await failingServer.dispose();
+    }
+  });
+
   test("stopService records the call", async () => {
     await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.stopService("auth")));
     expect(mock.serviceCalls).toContain("stop:auth");
@@ -345,13 +488,46 @@ describe("RemoteStack integration", () => {
     expect(mock.serviceCalls).toContain("restart:postgres");
   });
 
+  test("reloadFunctions transports the validated bundle in a JSON body", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.reloadFunctions({ functions: functionsBundle })),
+    );
+
+    expect(mock.functionReloads).toEqual([{ functions: functionsBundle }]);
+  });
+
+  test("reloadFunctions returns a typed build error for an invalid bundle", async () => {
+    const invalidBundle = {
+      ...functionsBundle,
+      functions: [{ ...functionsBundle.functions[0]!, entrypointPath: "relative/index.ts" }],
+    };
+
+    const error = await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) =>
+        stack.reloadFunctions({ functions: invalidBundle }).pipe(Effect.flip),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(StackBuildError);
+    expect(error._tag).toBe("StackBuildError");
+    if (error._tag === "StackBuildError") {
+      expect(error.detail).toBe("Invalid Edge Functions reload payload");
+    }
+  });
+
   test("reloadEdgeRuntime records the call", async () => {
     await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) =>
-        stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } }),
+        stack.reloadEdgeRuntime({
+          edgeRuntime: { policy: "oneshot" },
+          functions: functionsBundle,
+        }),
       ),
     );
     expect(mock.serviceCalls).toContain("reload-edge-runtime");
+    expect(mock.edgeRuntimeReloads).toEqual([
+      { edgeRuntime: { policy: "oneshot" }, functions: functionsBundle },
+    ]);
   });
 
   test("logHistory returns entries", async () => {

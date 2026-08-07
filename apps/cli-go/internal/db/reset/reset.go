@@ -263,7 +263,10 @@ func reloadKong(ctx context.Context) error {
 		return nil
 	}
 	var out bytes.Buffer
-	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload"}, &out, &out); err != nil {
+	// Reload re-renders nginx.conf from Kong's default template, so it needs the
+	// template bring-up wrote (start.go:589-592) handed back — otherwise it drops
+	// that template's email_templates server. https://github.com/supabase/cli/issues/6059
+	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"}, &out, &out); err != nil {
 		if msg := strings.TrimSpace(out.String()); len(msg) > 0 {
 			return suggestKongRecovery(errors.Errorf("failed to reload kong: %w:\n%s", err, msg))
 		}

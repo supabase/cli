@@ -1,18 +1,11 @@
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
 import { Effect, Layer, Context } from "effect";
-import type { CleanupTargets } from "./CleanupTargets.ts";
+import { dockerContainerName, type CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
-import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
 import { generateJwks } from "./JwtGenerator.ts";
-import {
-  detectPlatform,
-  dockerHostAddress,
-  dockerNetworkArgs,
-  dockerPortMapArgs,
-} from "./Platform.ts";
-import type { ServiceResolution } from "./resolve.ts";
-import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
+import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
   makeEdgeRuntimeServiceDocker,
@@ -21,7 +14,7 @@ import {
 import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
 import { makeMailpitServiceDocker } from "./services/mailpit.ts";
 import { makePgmetaServiceDocker } from "./services/pgmeta.ts";
-import { makePoolerServiceDocker, poolerContainerPorts } from "./services/pooler.ts";
+import { makePoolerServiceDocker } from "./services/pooler.ts";
 import { makePostgresInitService } from "./services/postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./services/postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./services/postgrest.ts";
@@ -34,268 +27,16 @@ import {
 } from "./services/storage.ts";
 import { makeStudioServiceDocker } from "./services/studio.ts";
 import { makeVectorServiceDocker } from "./services/vector.ts";
-import type { PreparedStackArtifacts } from "./StackPreparation.ts";
+import {
+  dependencyTimeoutSecondsForServices,
+  POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
+} from "./services/health-budgets.ts";
+import type { PreparedStackArtifacts, ServiceResolution } from "./StackPreparation.ts";
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
-import type { ServiceName, VersionManifest } from "./versions.ts";
-
-export interface PostgresConfig {
-  readonly port?: number;
-  readonly dataDir?: string;
-  readonly version?: string;
-  /**
-   * When true (default), the bundled initial schema GRANTs that expose new tables, views,
-   * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
-   * `service_role`) are kept in place. When false, those default privileges are revoked so the
-   * local stack matches the new cloud default and requires explicit GRANTs to surface entities
-   * through the Data API.
-   */
-  readonly autoExposeNewTables?: boolean;
-}
-
-export interface PostgrestConfig {
-  readonly schemas?: ReadonlyArray<string>;
-  readonly extraSearchPath?: ReadonlyArray<string>;
-  readonly maxRows?: number;
-  readonly version?: string;
-}
-
-export interface AuthConfig {
-  readonly port?: number;
-  readonly siteUrl?: string;
-  readonly jwtExpiry?: number;
-  readonly externalUrl?: string;
-  readonly version?: string;
-}
-
-export interface RealtimeConfig {
-  readonly port?: number;
-  readonly version?: string;
-  readonly tenantId?: string;
-  readonly encryptionKey?: string;
-  readonly secretKeyBase?: string;
-  readonly maxHeaderLength?: number;
-}
-
-export interface EdgeRuntimeConfig {
-  readonly enabled?: boolean;
-  readonly port?: number;
-  readonly inspectorPort?: number;
-  readonly policy?: "oneshot" | "per_worker";
-  readonly version?: string;
-  readonly env?: Readonly<Record<string, string>>;
-}
-
-export interface StorageConfig {
-  readonly port?: number;
-  readonly dataDir?: string;
-  readonly fileSizeLimit?: string;
-  readonly s3ProtocolEnabled?: boolean;
-  readonly version?: string;
-}
-
-export interface ImgproxyConfig {
-  readonly port?: number;
-  readonly version?: string;
-}
-
-export interface MailpitConfig {
-  readonly port?: number;
-  readonly smtpPort?: number;
-  readonly pop3Port?: number;
-  readonly version?: string;
-  readonly adminEmail?: string;
-  readonly senderName?: string;
-}
-
-export interface PgmetaConfig {
-  readonly port?: number;
-  readonly version?: string;
-}
-
-export interface StudioConfig {
-  readonly port?: number;
-  readonly apiUrl?: string;
-  readonly version?: string;
-}
-
-export interface AnalyticsConfig {
-  readonly port?: number;
-  readonly version?: string;
-  readonly backend?: "postgres" | "bigquery";
-  readonly apiKey?: string;
-}
-
-export interface VectorConfig {
-  readonly version?: string;
-}
-
-export interface PoolerConfig {
-  readonly port?: number;
-  readonly apiPort?: number;
-  readonly mode?: "transaction" | "session";
-  readonly version?: string;
-  readonly tenantId?: string;
-  readonly encryptionKey?: string;
-  readonly secretKeyBase?: string;
-  readonly defaultPoolSize?: number;
-  readonly maxClientConn?: number;
-}
-
-export interface StackConfig {
-  readonly cacheRoot?: string;
-  readonly stackRoot?: string;
-  readonly runtimeRoot?: string;
-  readonly projectDir?: string;
-  readonly mode?: "native" | "auto" | "docker";
-  readonly jwtSecret?: string;
-  readonly port?: number;
-  readonly publishableKey?: string;
-  readonly secretKey?: string;
-  readonly functions?: FunctionsConfig | false;
-  readonly postgres?: PostgresConfig;
-  readonly postgrest?: PostgrestConfig | false;
-  readonly auth?: AuthConfig | false;
-  readonly edgeRuntime?: EdgeRuntimeConfig | false;
-  readonly realtime?: RealtimeConfig | false;
-  readonly storage?: StorageConfig | false;
-  readonly imgproxy?: ImgproxyConfig | false;
-  readonly mailpit?: MailpitConfig | false;
-  readonly pgmeta?: PgmetaConfig | false;
-  readonly studio?: StudioConfig | false;
-  readonly analytics?: AnalyticsConfig | false;
-  readonly vector?: VectorConfig | false;
-  readonly pooler?: PoolerConfig | false;
-}
-
-export interface ResolvedPostgresConfig {
-  readonly port: number;
-  readonly dataDir: string;
-  readonly version: string;
-  readonly autoExposeNewTables: boolean;
-}
-
-export interface ResolvedPostgrestConfig {
-  readonly port: number;
-  readonly adminPort: number;
-  readonly schemas: ReadonlyArray<string>;
-  readonly extraSearchPath: ReadonlyArray<string>;
-  readonly maxRows: number;
-  readonly version: string;
-}
-
-export interface ResolvedAuthConfig {
-  readonly port: number;
-  readonly siteUrl: string;
-  readonly jwtExpiry: number;
-  readonly externalUrl: string;
-  readonly version: string;
-}
-
-export interface ResolvedRealtimeConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly tenantId: string;
-  readonly encryptionKey: string;
-  readonly secretKeyBase: string;
-  readonly maxHeaderLength: number;
-}
-
-export interface ResolvedEdgeRuntimeConfig {
-  readonly enabled: boolean;
-  readonly port: number;
-  readonly inspectorPort: number;
-  readonly policy: "oneshot" | "per_worker";
-  readonly version: string;
-  readonly env: Readonly<Record<string, string>>;
-}
-
-export interface ResolvedStorageConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly dataDir: string;
-  readonly fileSizeLimit: string;
-  readonly s3ProtocolEnabled: boolean;
-}
-
-export interface ResolvedImgproxyConfig {
-  readonly port: number;
-  readonly version: string;
-}
-
-export interface ResolvedMailpitConfig {
-  readonly port: number;
-  readonly smtpPort: number;
-  readonly pop3Port: number;
-  readonly version: string;
-  readonly adminEmail: string;
-  readonly senderName: string;
-}
-
-export interface ResolvedPgmetaConfig {
-  readonly port: number;
-  readonly version: string;
-}
-
-export interface ResolvedStudioConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly apiUrl: string;
-}
-
-export interface ResolvedAnalyticsConfig {
-  readonly port: number;
-  readonly version: string;
-  readonly backend: "postgres" | "bigquery";
-  readonly apiKey: string;
-}
-
-export interface ResolvedVectorConfig {
-  readonly version: string;
-}
-
-export interface ResolvedPoolerConfig {
-  readonly port: number;
-  readonly apiPort: number;
-  readonly mode: "transaction" | "session";
-  readonly version: string;
-  readonly tenantId: string;
-  readonly encryptionKey: string;
-  readonly secretKeyBase: string;
-  readonly defaultPoolSize: number;
-  readonly maxClientConn: number;
-}
-
-export interface ResolvedStackConfig {
-  readonly cacheRoot: string;
-  readonly stackRoot: string;
-  readonly runtimeRoot: string;
-  readonly projectDir: string;
-  readonly mode: "native" | "auto" | "docker";
-  readonly jwtSecret: string;
-  readonly ports: AllocatedPorts;
-  readonly apiPort: number;
-  readonly dbPort: number;
-  readonly publishableKey: string;
-  readonly secretKey: string;
-  readonly functions: ResolvedFunctionsConfig | false;
-  readonly autoManagedPaths: ReadonlyArray<string>;
-  readonly anonJwt: string;
-  readonly serviceRoleJwt: string;
-  readonly postgres: ResolvedPostgresConfig;
-  readonly postgrest: ResolvedPostgrestConfig | false;
-  readonly auth: ResolvedAuthConfig | false;
-  readonly edgeRuntime: ResolvedEdgeRuntimeConfig | false;
-  readonly realtime: ResolvedRealtimeConfig | false;
-  readonly storage: ResolvedStorageConfig | false;
-  readonly imgproxy: ResolvedImgproxyConfig | false;
-  readonly mailpit: ResolvedMailpitConfig | false;
-  readonly pgmeta: ResolvedPgmetaConfig | false;
-  readonly studio: ResolvedStudioConfig | false;
-  readonly analytics: ResolvedAnalyticsConfig | false;
-  readonly vector: ResolvedVectorConfig | false;
-  readonly pooler: ResolvedPoolerConfig | false;
-}
+import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
+import type { VersionManifest } from "./versions.ts";
 
 export interface BuildResult {
   readonly graph: ResolvedGraph;
@@ -303,18 +44,17 @@ export interface BuildResult {
   readonly serviceProjection: StackServiceProjectionCatalog;
 }
 
-const dockerOnlyServices = [
-  "edge-runtime",
-  "realtime",
-  "storage",
-  "imgproxy",
-  "mailpit",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "vector",
-  "pooler",
-] as const;
+const dockerOnlyServices = SERVICE_NAMES.filter(
+  (service) => serviceMetadata(service).runtimeSupport === "docker-only",
+);
+
+// Serial health-check paths used by dependency waits; keep each path aligned
+// with the corresponding service's transitive dependencies.
+const postgresStartupPath: ReadonlyArray<ServiceName> = ["postgres"];
+const storageStartupPath: ReadonlyArray<ServiceName> = ["postgres", "storage"];
+const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics"];
+
+const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
 const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDependency> =>
   hasPostgresInit
@@ -345,8 +85,6 @@ const publicServiceProjection = (
   return serviceProjection;
 };
 
-const dockerContainerName = (service: string, apiPort: number) => `supabase-${service}-${apiPort}`;
-
 const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
   config.autoManagedPaths.some(
     (managedPath) =>
@@ -355,10 +93,8 @@ const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
       path.startsWith(`${managedPath}\\`),
   );
 
-const resolvedConfigForService = (
-  config: ResolvedStackConfig,
-  service: Exclude<ServiceName, "postgres">,
-) => (service === "edge-runtime" ? config.edgeRuntime : config[service]);
+const resolvedConfigForService = (config: ResolvedStackConfig, service: ServiceName) =>
+  config[serviceMetadata(service).configKey];
 
 export const validateResolvedConfig = (
   config: ResolvedStackConfig,
@@ -402,66 +138,21 @@ export const validateResolvedConfig = (
     }
   });
 
-export const enabledServicesForConfig = (
-  config: ResolvedStackConfig,
-): ReadonlyArray<ServiceName> => {
-  const services: ServiceName[] = ["postgres"];
+export const enabledServicesForConfig = (config: ResolvedStackConfig): ReadonlyArray<ServiceName> =>
+  SERVICE_NAMES.filter(
+    (service) => service === "postgres" || resolvedConfigForService(config, service) !== false,
+  );
 
-  if (config.postgrest !== false) {
-    services.push("postgrest");
+export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionManifest> => {
+  const versions: Partial<Record<ServiceName, string>> = {};
+  for (const service of enabledServicesForConfig(config)) {
+    const serviceConfig = resolvedConfigForService(config, service);
+    if (serviceConfig !== false) {
+      versions[service] = serviceConfig.version;
+    }
   }
-  if (config.auth !== false) {
-    services.push("auth");
-  }
-  if (config.edgeRuntime !== false) {
-    services.push("edge-runtime");
-  }
-  if (config.realtime !== false) {
-    services.push("realtime");
-  }
-  if (config.storage !== false) {
-    services.push("storage");
-  }
-  if (config.imgproxy !== false) {
-    services.push("imgproxy");
-  }
-  if (config.mailpit !== false) {
-    services.push("mailpit");
-  }
-  if (config.pgmeta !== false) {
-    services.push("pgmeta");
-  }
-  if (config.studio !== false) {
-    services.push("studio");
-  }
-  if (config.analytics !== false) {
-    services.push("analytics");
-  }
-  if (config.vector !== false) {
-    services.push("vector");
-  }
-  if (config.pooler !== false) {
-    services.push("pooler");
-  }
-
-  return services;
+  return versions;
 };
-
-export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionManifest> => ({
-  postgres: config.postgres.version,
-  ...(config.postgrest === false ? {} : { postgrest: config.postgrest.version }),
-  ...(config.auth === false ? {} : { auth: config.auth.version }),
-  ...(config.edgeRuntime === false ? {} : { "edge-runtime": config.edgeRuntime.version }),
-  ...(config.realtime === false ? {} : { realtime: config.realtime.version }),
-  ...(config.storage === false ? {} : { storage: config.storage.version }),
-  ...(config.imgproxy === false ? {} : { imgproxy: config.imgproxy.version }),
-  ...(config.mailpit === false ? {} : { mailpit: config.mailpit.version }),
-  ...(config.pgmeta === false ? {} : { pgmeta: config.pgmeta.version }),
-  ...(config.studio === false ? {} : { studio: config.studio.version }),
-  ...(config.analytics === false ? {} : { analytics: config.analytics.version }),
-  ...(config.vector === false ? {} : { vector: config.vector.version }),
-  ...(config.pooler === false ? {} : { pooler: config.pooler.version }),
-});
 
 const requirePreparedResolution = (
   prepared: PreparedStackArtifacts,
@@ -551,6 +242,17 @@ export class StackBuilder extends Context.Service<
         );
         const hasPostgresInit = postgresResolution.type === "binary";
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
+        const postgresInitCompletionBudgetSeconds = hasPostgresInit
+          ? POSTGRES_INIT_COMPLETION_BUDGET_SECONDS
+          : 0;
+        const postgresConsumerDependencyTimeoutSeconds =
+          postgresDependencyTimeoutSeconds + postgresInitCompletionBudgetSeconds;
+        const storageDependencyTimeoutSeconds =
+          dependencyTimeoutSecondsForServices(storageStartupPath) +
+          postgresInitCompletionBudgetSeconds;
+        const analyticsDependencyTimeoutSeconds =
+          dependencyTimeoutSecondsForServices(analyticsStartupPath) +
+          postgresInitCompletionBudgetSeconds;
         const jwtJwks = generateJwks(config.jwtSecret);
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
@@ -562,16 +264,18 @@ export class StackBuilder extends Context.Service<
                   port: config.dbPort,
                   dockerAccessible: needsDockerAccess,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                  dependencies: [],
                 })
               : makePostgresServiceDocker({
                   image: postgresResolution.image,
                   dataDir: config.postgres.dataDir,
                   port: config.dbPort,
-                  networkArgs: dockerNetworkArgs(platform.os, [config.dbPort]),
+                  platformOs: platform.os,
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
                   apiPort: config.apiPort,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                  dependencies: [],
                 })),
             enabled: true,
           },
@@ -583,7 +287,9 @@ export class StackBuilder extends Context.Service<
               postgresDir: postgresResolution.path,
               dbPort: config.dbPort,
               autoExposeNewTables: config.postgres.autoExposeNewTables,
+              dependencies: [{ service: "postgres", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -599,6 +305,7 @@ export class StackBuilder extends Context.Service<
                   extraSearchPath: config.postgrest.extraSearchPath,
                   maxRows: config.postgrest.maxRows,
                   jwtSecret: config.jwtSecret,
+                  dependencies: postgresDeps,
                 })
               : makePostgrestServiceDocker({
                   image: postgrestResolution.image,
@@ -610,17 +317,11 @@ export class StackBuilder extends Context.Service<
                   extraSearchPath: config.postgrest.extraSearchPath,
                   maxRows: config.postgrest.maxRows,
                   jwtSecret: config.jwtSecret,
-                  networkArgs: dockerNetworkArgs(platform.os, [
-                    config.postgrest.port,
-                    config.postgrest.adminPort,
-                  ]),
+                  platformOs: platform.os,
                   apiPort: config.apiPort,
+                  dependencies: postgresDeps,
                 })),
-            ...(hasPostgresInit
-              ? {}
-              : {
-                  dependencies: [{ service: "postgres", condition: "healthy" as const }],
-                }),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -655,10 +356,11 @@ export class StackBuilder extends Context.Service<
                   smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
-                  networkArgs: dockerNetworkArgs(platform.os, [config.auth.port]),
+                  platformOs: platform.os,
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -684,9 +386,10 @@ export class StackBuilder extends Context.Service<
                   inspectorPort: config.edgeRuntime.inspectorPort,
                   policy: config.edgeRuntime.policy,
                   env: config.edgeRuntime.env,
-                  networkArgs: dockerNetworkArgs(platform.os, [config.edgeRuntime.port]),
+                  platformOs: platform.os,
                   dependencies: postgresDeps,
                 })),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -700,11 +403,8 @@ export class StackBuilder extends Context.Service<
               webPort: config.mailpit.port,
               smtpPort: config.mailpit.smtpPort,
               pop3Port: config.mailpit.pop3Port,
-              networkArgs: dockerNetworkArgs(platform.os, [
-                config.mailpit.port,
-                config.mailpit.smtpPort,
-                config.mailpit.pop3Port,
-              ]),
+              platformOs: platform.os,
+              dependencies: [],
             }),
             enabled: true,
           });
@@ -725,9 +425,10 @@ export class StackBuilder extends Context.Service<
               encryptionKey: config.realtime.encryptionKey,
               secretKeyBase: config.realtime.secretKeyBase,
               maxHeaderLength: config.realtime.maxHeaderLength,
-              networkArgs: dockerNetworkArgs(platform.os, [config.realtime.port]),
+              platformOs: platform.os,
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -751,10 +452,11 @@ export class StackBuilder extends Context.Service<
               imgproxyUrl:
                 config.imgproxy !== false ? `http://${serviceHost}:${config.imgproxy.port}` : "",
               s3ProtocolEnabled: config.storage.s3ProtocolEnabled,
-              networkArgs: dockerNetworkArgs(platform.os, [config.storage.port]),
+              platformOs: platform.os,
               dependencies: postgresDeps,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
             }),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -768,9 +470,10 @@ export class StackBuilder extends Context.Service<
               port: config.imgproxy.port,
               apiPort: config.apiPort,
               dataDir: storageConfig === false ? "" : storageConfig.dataDir,
-              networkArgs: dockerNetworkArgs(platform.os, [config.imgproxy.port]),
+              platformOs: platform.os,
               dependencies: [{ service: "storage", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: storageDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -784,36 +487,29 @@ export class StackBuilder extends Context.Service<
               port: config.pgmeta.port,
               dbHost: serviceHost,
               dbPort: config.dbPort,
-              networkArgs: dockerNetworkArgs(platform.os, [config.pgmeta.port]),
+              platformOs: platform.os,
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
 
         if (config.analytics !== false) {
           const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
-          const analyticsRuntimeNetwork = analyticsDockerRuntimeNetwork(
-            platform.os,
-            config.analytics.port,
-            serviceHost,
-          );
           defs.push({
             ...makeAnalyticsServiceDocker({
               image: analyticsImage,
               apiPort: config.apiPort,
               hostPort: config.analytics.port,
-              listenPort: analyticsRuntimeNetwork.listenPort,
-              nodeHost: analyticsRuntimeNetwork.nodeHost,
+              platformOs: platform.os,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,
               backend: config.analytics.backend,
-              networkArgs: dockerPortMapArgs(platform.os, [
-                { host: config.analytics.port, container: 4000 },
-              ]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -828,9 +524,10 @@ export class StackBuilder extends Context.Service<
               serviceHost,
               analyticsPort: analyticsConfig === false ? 0 : analyticsConfig.port,
               analyticsApiKey: analyticsConfig === false ? "api-key" : analyticsConfig.apiKey,
-              networkArgs: dockerNetworkArgs(platform.os, []),
+              platformOs: platform.os,
               dependencies: [{ service: "analytics", condition: "healthy" }],
             }),
+            dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -842,6 +539,8 @@ export class StackBuilder extends Context.Service<
               image: poolerImage,
               apiPort: config.apiPort,
               hostAdminPort: config.pooler.apiPort,
+              hostPort: config.pooler.port,
+              platformOs: platform.os,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               poolMode: config.pooler.mode,
@@ -851,21 +550,9 @@ export class StackBuilder extends Context.Service<
               tenantId: config.pooler.tenantId,
               encryptionKey: config.pooler.encryptionKey,
               secretKeyBase: config.pooler.secretKeyBase,
-              networkArgs: dockerPortMapArgs(platform.os, [
-                {
-                  host: config.pooler.apiPort,
-                  container: poolerContainerPorts.admin,
-                },
-                {
-                  host: config.pooler.port,
-                  container:
-                    config.pooler.mode === "session"
-                      ? poolerContainerPorts.session
-                      : poolerContainerPorts.transaction,
-                },
-              ]),
               dependencies: postgresDeps,
             }),
+            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
@@ -891,16 +578,23 @@ export class StackBuilder extends Context.Service<
               analyticsUrl:
                 config.analytics !== false ? `http://${serviceHost}:${config.analytics.port}` : "",
               analyticsApiKey: config.analytics !== false ? config.analytics.apiKey : "api-key",
-              networkArgs: dockerNetworkArgs(platform.os, [config.studio.port]),
-              dependencies: [{ service: "pgmeta", condition: "healthy" }],
+              platformOs: platform.os,
+              dependencies:
+                config.analytics === false
+                  ? [{ service: "pgmeta", condition: "healthy" }]
+                  : [
+                      { service: "pgmeta", condition: "healthy" },
+                      { service: "analytics", condition: "healthy" },
+                    ],
             }),
+            dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
             enabled: true,
           });
         }
 
-        const dockerContainerNames = defs
-          .filter((def) => def.command === "docker")
-          .map((def) => dockerContainerName(def.name, config.apiPort));
+        const dockerContainerNames = SERVICE_NAMES.filter((service) =>
+          defs.some((def) => def.name === service && def.command === "docker"),
+        ).map((service) => dockerContainerName(service, config.apiPort));
 
         const graph = yield* buildGraph(defs).pipe(
           Effect.mapError(

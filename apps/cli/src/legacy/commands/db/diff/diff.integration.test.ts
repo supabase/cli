@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -116,7 +117,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       exportCatalogCalls.push({ mode, projectRef });
       return Effect.succeed("supabase/.temp/pgdelta/migrations.json");
     },
-    execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
   });
@@ -717,16 +717,45 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("delegates --use-pg-schema to the Go binary without a duplicate warning", () => {
-    const s = setup(tmp.current);
+  it.effect(
+    "delegates --use-pg-schema to the Go binary, printing a deprecation warning without duplicating Go's own warning",
+    () => {
+      const s = setup(tmp.current);
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
+        // CLI-1960: the TS wrapper prints its own deprecation notice pointing at
+        // pg-delta / the default migra engine, additive to (not a replacement for)
+        // the delegated Go child's own "experimental" warning (`cmd/db.go:121`,
+        // unchanged, printed by the real Go binary rather than this mocked proxy).
+        // Assert on a stable substring so future wording tweaks don't require
+        // touching every test site.
+        expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
+        // The TS wrapper must not print a second copy of Go's own warning.
+        expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
+        // Delegation to Go is unchanged besides the new warning.
+        expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("does not print the --use-pg-schema deprecation warning on other diff paths", () => {
+    const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
-      // The delegated Go `db diff --use-pg-schema` prints the experimental
-      // warning itself; the TS wrapper must not print a second copy.
-      expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
-      expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
+      yield* legacyDbDiff(flags());
+      expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "does not print the --use-pg-schema deprecation warning when delegating --use-pgadmin",
+    () => {
+      const s = setup(tmp.current);
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+        expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("--use-pgadmin in json mode wraps the captured SQL in a structured envelope", () => {
     // Regression: the delegated child inherited stdout and returned without
@@ -757,6 +786,10 @@ describe("legacy db diff", () => {
       expect(s.proxyCaptureCalls).toHaveLength(1);
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ diff: "create table e ();\n", engine: "pg-schema" });
+      // CLI-1960: the deprecation notice is a diagnostic, so it must still reach
+      // stderr in machine output mode (CLI-1546) rather than being dropped or
+      // leaking into the stdout payload.
+      expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -957,19 +990,79 @@ describe("legacy db diff", () => {
     },
   );
 
-  it.effect("explicit --from migrations resolves a shadow catalog via the seam", () => {
+  it.effect("explicit --from migrations resolves a shadow catalog natively", () => {
+    // CLI-1959 (cache mechanics) + CLI-1956 (shadow provisioning): the migrations
+    // ref now resolves via the SAME native `legacyCreateShadowDatabase`/
+    // `legacyPrepareShadowSource`/`legacyRemoveShadowDatabase` primitives `db
+    // diff`'s own shadow uses, not the retired `db __shadow` seam — a shadow is
+    // created and torn down (`s.shadowSpawned`), and no seam `exportCatalog` call
+    // is made (unlike the "declarative"/"baseline" modes, still seam-backed).
     const s = setup(tmp.current, { diffSql: "create table m ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
-      expect(s.exportCalls).toEqual(["migrations"]);
+      expect(s.exportCalls).toEqual([]);
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+      // `resolveMigrationsCatalogRef` (Go's `explicit.go:88-126`) calls the shadow
+      // primitives directly, without `DiffDatabase`'s own progress line — unlike
+      // `db schema declarative sync`'s `getMigrationsCatalogRef`, which DOES print
+      // it (`legacy-pgdelta.cache.ts`'s `legacyGetMigrationsCatalogRef`). This
+      // stderr asymmetry is the parity fix CLI-1959 makes; pin it here even though
+      // a shadow was actually provisioned on this cache miss.
+      expect(s.out.stderrText).not.toContain("Creating shadow database...");
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect(
-    "explicit --from linked --to migrations exports the catalog with the linked ref",
+    "explicit --from migrations reuses an already-cached catalog without provisioning a shadow",
+    () => {
+      // A cache pre-warmed by a prior `db push` (`legacyTryCacheMigrationsCatalog`)
+      // or `db diff --from migrations` run keys off the BARE migrations hash
+      // (`pgcache.HashMigrations` — no setup-inputs token; see
+      // `legacyResolveMigrationsCatalogRef`'s doc comment), so it must be reused
+      // here without spinning up a new shadow database at all.
+      const noMigrationsHash = createHash("sha256").digest("hex");
+      const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      const cachedPath = join(tempDir, `catalog-local-migrations-${noMigrationsHash}-1000.json`);
+      writeFileSync(cachedPath, '{"cached":true}');
+      const s = setup(tmp.current, { diffSql: "create table m ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
+        expect(s.shadowSpawned).toEqual([]);
+        expect(s.exportCalls).toEqual([]);
+        const diffCall = s.edgeCalls.find((c) => c.script.includes("renderPlanFiles"));
+        expect(diffCall?.env["SOURCE"]).toBe(
+          `/workspace/${join("supabase", ".temp", "pgdelta", `catalog-local-migrations-${noMigrationsHash}-1000.json`)}`,
+        );
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "explicit --from linked --to migrations provisions the shadow with the linked ref",
     () => {
       // Go resolves linked first (LoadConfig merges [remotes.<ref>]), so the later
-      // migrations catalog is built from the remote-merged config (explicit.go).
+      // migrations catalog is built from the remote-merged config (explicit.go) —
+      // and the migrations shadow's OWN container spec must reflect it too, not
+      // just the pg-delta ref (same probe as "a linked [remotes.<ref>]
+      // db.major_version override reaches the shadow's OWN container spec" above:
+      // PG <= 14 is the only branch that emits `--tmpfs` on `docker create` argv).
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+        ].join("\n"),
+      );
       const s = setup(tmp.current, {
         isLocal: false,
         linkedRef: "abcdefghijklmnopqrst",
@@ -977,15 +1070,31 @@ describe("legacy db diff", () => {
       });
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
-        const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
-        expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
+        const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
+        expect(createArgs).toContain("--tmpfs");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
-  it.effect("explicit --from migrations --to linked exports the catalog with base config", () => {
+  it.effect("explicit --from migrations --to linked provisions the shadow with base config", () => {
     // Migrations is resolved BEFORE linked here, so Go's LoadConfig(ref) hasn't run
-    // yet — the catalog must use base config (no ref forwarded), matching order.
+    // yet — the catalog (and its shadow's own container spec) must use base config
+    // (no ref forwarded), matching order.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db]",
+        "major_version = 17",
+        "",
+        "[remotes.staging]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "",
+        "[remotes.staging.db]",
+        "major_version = 14",
+        "",
+      ].join("\n"),
+    );
     const s = setup(tmp.current, {
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
@@ -993,16 +1102,31 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
-      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
-      expect(migrations?.projectRef).toBeUndefined();
+      const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
+      expect(createArgs).not.toContain("--tmpfs");
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("explicit --from local --to migrations --linked seeds the merged config", () => {
     // Go's root ParseDatabaseConfig runs LoadProjectRef+LoadConfig for a changed
     // --linked before RunExplicit, leaving the config remote-merged — so the
-    // migrations catalog (and local refs/format options) use the linked override
-    // even though neither explicit ref is itself `linked`.
+    // migrations catalog's shadow (and local refs/format options) use the linked
+    // override even though neither explicit ref is itself `linked`.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db]",
+        "major_version = 17",
+        "",
+        "[remotes.staging]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "",
+        "[remotes.staging.db]",
+        "major_version = 14",
+        "",
+      ].join("\n"),
+    );
     const s = setup(tmp.current, {
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
@@ -1016,8 +1140,8 @@ describe("legacy db diff", () => {
           linked: Option.some(true),
         }),
       );
-      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
-      expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
+      const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
+      expect(createArgs).toContain("--tmpfs");
     }).pipe(Effect.provide(s.layer));
   });
 

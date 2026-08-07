@@ -1,5 +1,7 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerPgmetaOptions {
   readonly image: string;
@@ -7,7 +9,7 @@ interface DockerPgmetaOptions {
   readonly port: number;
   readonly dbHost: string;
   readonly dbPort: number;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -19,17 +21,15 @@ const pgmetaHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/health",
     scheme: "http",
   },
-  initialDelaySeconds: 1,
-  periodSeconds: 0.5,
-  failureThreshold: 30,
+  ...stackHealthBudgets.pgmeta,
 });
 
 export const makePgmetaServiceDocker = (opts: DockerPgmetaOptions): ServiceDef =>
   dockerRunService({
     name: "pgmeta",
-    containerName: `supabase-pgmeta-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     env: {
       PG_META_PORT: String(opts.port),
       PG_META_DB_HOST: opts.dbHost,
@@ -38,6 +38,6 @@ export const makePgmetaServiceDocker = (opts: DockerPgmetaOptions): ServiceDef =
       PG_META_DB_PORT: String(opts.dbPort),
       PG_META_DB_PASSWORD: "postgres",
     },
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: pgmetaHealthCheck(opts.port),
   });

@@ -21,6 +21,11 @@ import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
  * `db schema declarative __catalog --mode <m> --experimental` with stdout piped
  * (the catalog path) and stderr inherited (shadow-DB progress / image pulls).
  * The Go binary is resolved exactly like `LegacyGoProxy` (`resolveBinary`).
+ *
+ * `exportCatalog`'s `mode` is now restricted to `"baseline" | "declarative"`
+ * (CLI-1959 removed `"migrations"` from `LegacyCatalogMode` — see that type's
+ * doc comment in `legacy-pgdelta.seam.service.ts` for why those two modes still
+ * need this hidden Go command while `"migrations"` no longer does).
  */
 export const legacyDeclarativeSeamLayer = Layer.effect(
   LegacyDeclarativeSeam,
@@ -121,31 +126,6 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             return new TextDecoder().decode(bytes).trim();
           }),
         ),
-      execInherit: (args) =>
-        Effect.gen(function* () {
-          if (!("found" in resolved)) {
-            return yield* Effect.fail(
-              new LegacyDeclarativeShadowDbError({
-                message: "Could not find the supabase-go binary.",
-              }),
-            );
-          }
-          const command = ChildProcess.make(resolved.found, args, {
-            cwd: cliConfig.workdir,
-            stdin: "inherit",
-            stdout: "inherit",
-            stderr: "inherit",
-            extendEnv: true,
-            detached: false,
-          });
-          return yield* spawner
-            .exitCode(command)
-            .pipe(
-              Effect.mapError(
-                () => new LegacyDeclarativeShadowDbError({ message: "failed to run supabase-go." }),
-              ),
-            );
-        }),
       ensureLocalDatabaseStarted: () =>
         Effect.scoped(
           Effect.gen(function* () {

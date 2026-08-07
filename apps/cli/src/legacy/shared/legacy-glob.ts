@@ -142,10 +142,18 @@ export const legacyWalkSqlFiles = (
         Effect.orElseSucceed(() => false),
       );
       if (isSymlink) continue;
-      const info = yield* fs.stat(absChild).pipe(Effect.orElseSucceed(() => undefined));
-      if (info?.type === "Directory") {
+      // Unlike the `readLink` probe above (where failure legitimately just means "not a
+      // symlink"), a `stat` failure here means something actually went wrong reading an entry
+      // `readDirectory` just listed (removed mid-walk, permission denied, I/O error) — Go's
+      // `fs.WalkDir` (`walkMatchedDir`, `pkg/config/config.go:194-207`) propagates that exact
+      // error from its walk callback, aborting `Glob.SQLFiles`/`Config.Load` entirely rather than
+      // silently treating the entry as absent. Swallowing it here would let a declared
+      // `db.migrations.schema_paths`/`db.seed.sql_paths` directory silently apply an incomplete
+      // set of files instead of failing the command (review: PRRT_kwDOErm0O86WXFqr).
+      const info = yield* fs.stat(absChild);
+      if (info.type === "Directory") {
         files.push(...(yield* legacyWalkSqlFiles(fs, absChild, relChild)));
-      } else if (info?.type === "File" && relChild.endsWith(".sql")) {
+      } else if (info.type === "File" && relChild.endsWith(".sql")) {
         files.push(relChild);
       }
     }

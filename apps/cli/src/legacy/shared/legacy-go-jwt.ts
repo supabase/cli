@@ -1,4 +1,5 @@
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
+import { encodeGoJsonCompact } from "./legacy-go-json.ts";
 
 /**
  * RFC 7517 JWK fields Go's `JWK` struct round-trips (`pkg/config/auth.go:88-108`,
@@ -159,61 +160,176 @@ function ensureRsaCrtParams(jwk: LegacyJwk): LegacyJwk {
   };
 }
 
+type LegacySupportedJwtAlgorithm = "RS256" | "ES256";
+
 /**
- * Go's `GenerateAsymmetricJWT` (`pkg/config/apikeys.go:88-113`), reached from
- * `generateJWT` only when `auth.signing_keys_path` resolves to a non-empty JWK
- * array (`pkg/config/apikeys.go:76-80`) — the first key in the file signs both
- * the anon and service_role tokens. Same claim shape as {@link legacyGenerateGoJwt}
- * (`iss`/`role`/`exp`), except the expiry is 10 years from now rather than Go's
- * fixed HMAC-path timestamp, since `generateJWT` sets `claims.ExpiresAt`
- * explicitly before calling this function instead of falling through to
- * `CustomClaims.NewToken()`'s fixed default.
+ * Go's `config.Algorithm.UnmarshalText` (`apps/cli-go/pkg/config/auth.go:80-86`) —
+ * `encoding/json` calls this automatically whenever a JWK's `alg` field decodes from
+ * a JSON STRING (the only shape a pasted stdin JWK or a `signing_keys_path` file ever
+ * provides), rejecting anything other than `RS256`/`ES256` at JSON-DECODE time — well
+ * BEFORE the JWK ever reaches signing. An absent `alg` never reaches this check at
+ * all (`encoding/json` only calls `UnmarshalText` for a key present in the source
+ * JSON; a missing key just leaves the struct field at its zero value), so that case
+ * is caught later, at SIGN time, by {@link legacySignJwtWithJwk}'s own `unsupported
+ * algorithm: ` check instead. Throws Go's own bare `UnmarshalText` error text
+ * unwrapped; callers apply their own decode-context wrapping (`"failed to parse
+ * JWK: %w"` for a pasted stdin JWK, `"failed to decode signing keys: failed to parse
+ * response body: %w"` for a `signing_keys_path` file — see `fetcher.ParseJSON`,
+ * `apps/cli-go/pkg/fetcher/http.go:144-151`).
+ */
+export function legacyAssertDecodableJwkAlgorithm(alg: string | undefined): void {
+  if (alg !== undefined && alg !== "RS256" && alg !== "ES256") {
+    throw new Error("must be one of [RS256 ES256]");
+  }
+}
+
+/**
+ * Go's `jwkToPrivateKey` (`apps/cli-go/pkg/config/apikeys.go:120-129`): validates
+ * `jwk.kty`/`jwk.crv` ONLY — it has no awareness of `jwk.alg` at all. Throws Go's
+ * own unwrapped message text; the caller ({@link legacySignJwtWithJwk}) applies
+ * `GenerateAsymmetricJWT`'s `"failed to convert JWK to private key: %w"` wrapper
+ * (`apikeys.go:91-94`) on top.
+ */
+function assertSupportedKty(jwk: LegacyJwk): void {
+  if (jwk.kty === "EC") {
+    if (jwk.crv !== "P-256") {
+      throw new Error(`unsupported curve: ${jwk.crv ?? ""}`);
+    }
+    return;
+  }
+  if (jwk.kty !== "RSA") {
+    throw new Error(`unsupported key type: ${jwk.kty ?? ""}`);
+  }
+}
+
+/**
+ * Go's `jwkToECDSAPrivateKey`/`jwkToRSAPrivateKey` (`apps/cli-go/pkg/config/apikeys.go:132-185`)
+ * decode every numeric field with `base64.RawURLEncoding.DecodeString` immediately after the
+ * kty/curve check above — and that decoder genuinely REJECTS `=`-padded input (`RawURLEncoding`
+ * has no pad character at all), unlike Node's own JWK importer
+ * (`createPrivateKey({format:"jwk"})`), which happily accepts a padded coordinate and signs a
+ * token Go would have refused to produce (verified empirically: Go's decoder raises
+ * `illegal base64 data at input byte 43` for a padded 32-byte P-256 coordinate; Node's importer
+ * raises nothing at all and returns a usable key) — CLI-1961 Codex review finding.
  *
- * Only `RS256`/`ES256` are supported, matching Go's `jwkToPrivateKey`
- * (RSA/EC key types) + this function's own switch on `jwk.alg`. `kty`/`alg`
- * are cross-validated (RS256 requires `kty: "RSA"`, ES256 requires
- * `kty: "EC"` and `crv: "P-256"`) — matching Go's `jwkToRSAPrivateKey` /
- * `jwkToECDSAPrivateKey`, which reject any other combination rather than
- * signing with a mismatched key or curve (Node's `createPrivateKey`/`createSign`
- * do not themselves catch this: an EC key signed as RS256, or a non-P-256
- * curve signed as ES256, both "succeed" and produce a spec-invalid token that
- * silently fails verification instead of raising an error). The header key
+ * Runs in Go's exact per-field order (EC: x, y, d; RSA: n, e, d, p, q) so the FIRST invalid field
+ * matches Go's own first-failure-wins decode order. Reproduces
+ * `encoding/base64`'s `CorruptInputError` text exactly: the reported byte offset is the index of
+ * the first character outside the `RawURLEncoding` alphabet (`A-Za-z0-9-_` — a padding `=` is
+ * such a character, since this encoding has no pad character to special-case), or
+ * `value.length - 1` for an otherwise-valid string whose length is impossible for base64
+ * (`length % 4 === 1`) — both verified directly against the Go standard library's
+ * `decodeQuantum`. An absent field is Go's own zero value (`""`), which decodes cleanly to zero
+ * bytes, so `undefined` is skipped here rather than treated as invalid.
+ */
+function assertDecodableJwkNumericFields(jwk: LegacyJwk): void {
+  const assertField = (label: string, value: string | undefined): void => {
+    if (value === undefined) return;
+    for (let i = 0; i < value.length; i++) {
+      if (!/^[A-Za-z0-9_-]$/.test(value[i]!)) {
+        throw new Error(`failed to decode ${label}: illegal base64 data at input byte ${i}`);
+      }
+    }
+    if (value.length % 4 === 1) {
+      throw new Error(
+        `failed to decode ${label}: illegal base64 data at input byte ${value.length - 1}`,
+      );
+    }
+  };
+  if (jwk.kty === "EC") {
+    assertField("x coordinate", jwk.x);
+    assertField("y coordinate", jwk.y);
+    assertField("private key", jwk.d);
+    return;
+  }
+  assertField("modulus", jwk.n);
+  assertField("exponent", jwk.e);
+  assertField("private exponent", jwk.d);
+  assertField("first prime factor", jwk.p);
+  assertField("second prime factor", jwk.q);
+}
+
+/**
+ * Go has NO explicit cross-check between `jwk.Algorithm` and `jwk.KeyType` before
+ * signing: `jwkToPrivateKey` only validates kty/curve (see {@link assertSupportedKty}),
+ * and `GenerateAsymmetricJWT`'s algorithm switch only validates `jwk.Algorithm`
+ * itself. A mismatched pair (e.g. `kty: "RSA"` signed as `ES256`) reaches
+ * `token.SignedString(privateKey)` and fails INSIDE golang-jwt's own signing
+ * method, which type-asserts the key (jwt/v5@v5.3.1 `rsa.go:76` / `ecdsa.go:99`):
+ * `"key is of invalid type: <detail>"`, wrapped by `apikeys.go:113` into
+ * `"failed to sign JWT: %w"`. Node's own `createSign(...).sign(privateKey)` would
+ * also fail on this mismatch, but with an OpenSSL-level message that does not
+ * match Go's text — so this reproduces Go's OBSERVABLE error deliberately, ahead
+ * of ever touching Node's signer.
+ */
+function assertKeyMatchesAlgorithm(jwk: LegacyJwk, algorithm: LegacySupportedJwtAlgorithm): void {
+  if (algorithm === "RS256" && jwk.kty !== "RSA") {
+    throw new Error("key is of invalid type: RSA sign expects *rsa.PrivateKey");
+  }
+  if (algorithm === "ES256" && jwk.kty !== "EC") {
+    throw new Error("key is of invalid type: ECDSA sign expects *ecdsa.PrivateKey");
+  }
+}
+
+/**
+ * Go's `GenerateAsymmetricJWT` (`pkg/config/apikeys.go:88-113`): signs an
+ * already-encoded JSON claims payload with a JWK private key. Callers own their
+ * own claims shape/serialization (struct-field order for
+ * {@link legacyGenerateAsymmetricGoJwt}'s fixed anon/service_role claims, Go
+ * map-key alphabetical order for `gen bearer-jwt`'s `jwt.MapClaims`-shaped
+ * claims) — this function only handles the parts Go's `GenerateAsymmetricJWT`
+ * itself handles: key validation, header construction, and signing.
+ *
+ * Validation order matches Go exactly: kty/curve first (wrapped
+ * `"failed to convert JWK to private key: %w"`, {@link assertSupportedKty}),
+ * then the algorithm switch (unwrapped `"unsupported algorithm: %s"`), then the
+ * kty-vs-alg mismatch Go's OWN signing method raises (wrapped
+ * `"failed to sign JWT: %w"`, {@link assertKeyMatchesAlgorithm}). The header key
  * order (`alg`, `kid`, `typ`) matches Go's `encoding/json` alphabetically
- * sorting `map[string]interface{}` keys — `kid` is only present when set on
- * the JWK, matching Go's `if len(jwk.KeyID) > 0` guard.
+ * sorting `map[string]interface{}` keys — `kid` is only present when set on the
+ * JWK, matching Go's `if len(jwk.KeyID) > 0` guard.
  *
  * `dsaEncoding: "ieee-p1363"` is required for ES256: Node's default ECDSA
  * signature output is DER-encoded, which is not the raw (r‖s) format JWS
  * requires — verified by round-tripping through `jose`'s `jwtVerify`.
+ *
+ * The header is serialized with {@link encodeGoJsonCompact}, NOT `JSON.stringify` — Go's
+ * `token.SignedString` marshals the header via `encoding/json`'s default `json.Marshal`
+ * (`golang-jwt/jwt/v5`'s `Token.SigningString`), which HTML-escapes `<`/`>`/`&` (verified
+ * directly against the Go standard library: `json.Marshal` of a `kid` containing those
+ * characters produces `<`/`>`/`&`, where `JSON.stringify` leaves them literal) —
+ * a `kid` with any of those characters would otherwise sign different header bytes (and thus a
+ * different signature) than Go for identical input (CLI-1961 Codex review finding).
  */
-export function legacyGenerateAsymmetricGoJwt(
-  jwk: LegacyJwk,
-  role: "anon" | "service_role",
-): string {
+export function legacySignJwtWithJwk(jwk: LegacyJwk, payloadJson: string): string {
+  try {
+    assertSupportedKty(jwk);
+    assertDecodableJwkNumericFields(jwk);
+  } catch (cause) {
+    throw new Error(
+      `failed to convert JWK to private key: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+
   const algorithm = jwk.alg;
   if (algorithm !== "RS256" && algorithm !== "ES256") {
     throw new Error(`unsupported algorithm: ${algorithm ?? ""}`);
   }
-  if (algorithm === "RS256" && jwk.kty !== "RSA") {
-    throw new Error(`unsupported key type: ${jwk.kty}`);
+
+  try {
+    assertKeyMatchesAlgorithm(jwk, algorithm);
+  } catch (cause) {
+    throw new Error(
+      `failed to sign JWT: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
   }
-  if (algorithm === "ES256") {
-    if (jwk.kty !== "EC") {
-      throw new Error(`unsupported key type: ${jwk.kty}`);
-    }
-    if (jwk.crv !== "P-256") {
-      throw new Error(`unsupported curve: ${jwk.crv ?? ""}`);
-    }
-  }
+
   const header =
     jwk.kid !== undefined && jwk.kid.length > 0
       ? { alg: algorithm, kid: jwk.kid, typ: "JWT" }
       : { alg: algorithm, typ: "JWT" };
-  const expiresAt = Math.floor(Date.now() / 1000) + GO_JWT_ASYMMETRIC_EXPIRY_SECONDS;
-  const headerEncoded = base64UrlEncode(JSON.stringify(header));
-  const payloadEncoded = base64UrlEncode(
-    JSON.stringify({ iss: GO_JWT_ISSUER, role, exp: expiresAt }),
-  );
+  const headerEncoded = base64UrlEncode(encodeGoJsonCompact(header));
+  const payloadEncoded = base64UrlEncode(payloadJson);
   const data = `${headerEncoded}.${payloadEncoded}`;
 
   const privateKey = createPrivateKey({
@@ -229,4 +345,25 @@ export function legacyGenerateAsymmetricGoJwt(
           .sign({ key: privateKey, dsaEncoding: "ieee-p1363" });
 
   return `${data}.${signature.toString("base64url")}`;
+}
+
+/**
+ * Go's `(a auth) generateJWT` asymmetric branch (`pkg/config/apikeys.go:76-80`),
+ * reached only when `auth.signing_keys_path` resolves to a non-empty JWK array —
+ * the first key in the file signs both the anon and service_role tokens. Same
+ * claim shape as {@link legacyGenerateGoJwt} (`iss`/`role`/`exp`), except the
+ * expiry is 10 years from now rather than Go's fixed HMAC-path timestamp, since
+ * `generateJWT` sets `claims.ExpiresAt` explicitly before calling
+ * `GenerateAsymmetricJWT` with a `CustomClaims` STRUCT value (not a map) —
+ * `encoding/json` serializes a struct in field-DECLARATION order, so this
+ * builds the payload with a plain (insertion-order) `JSON.stringify`, unlike
+ * `gen bearer-jwt`'s claims (always a real `jwt.MapClaims`, alphabetically
+ * key-sorted — see `bearer-jwt.claims.ts`).
+ */
+export function legacyGenerateAsymmetricGoJwt(
+  jwk: LegacyJwk,
+  role: "anon" | "service_role",
+): string {
+  const expiresAt = Math.floor(Date.now() / 1000) + GO_JWT_ASYMMETRIC_EXPIRY_SECONDS;
+  return legacySignJwtWithJwk(jwk, JSON.stringify({ iss: GO_JWT_ISSUER, role, exp: expiresAt }));
 }

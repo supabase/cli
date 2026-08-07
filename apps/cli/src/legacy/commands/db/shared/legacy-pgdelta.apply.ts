@@ -23,7 +23,7 @@ import {
   legacyEdgeRuntimeId,
   legacyPgDeltaNpmRegistryOption,
   type LegacyPgDeltaContext,
-} from "./legacy-pgdelta.ts";
+} from "../../../shared/legacy-pgdelta.ts";
 
 const errMessage = (e: unknown): string =>
   typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"

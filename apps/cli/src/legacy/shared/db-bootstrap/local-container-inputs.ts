@@ -52,10 +52,7 @@ import {
 } from "./bootstrap-config.ts";
 import type { LegacyFreshDbSetupInput } from "./db-setup.ts";
 import type { LegacyContainerOpts } from "./container-lifecycle.ts";
-import {
-  legacyEnsureImagesCached,
-  type LegacyImagePrepullError,
-} from "./image-prepull.ts";
+import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
 import type { LegacyPostgresStartServiceInput } from "./postgres.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];

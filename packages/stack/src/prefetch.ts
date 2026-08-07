@@ -1,16 +1,20 @@
 import { Effect } from "effect";
 import type { ChecksumMismatchError } from "./errors.ts";
 import type { DockerPullError } from "./errors.ts";
-import { type PreparedStackArtifacts, type StackPreparationInput } from "./StackPreparation.ts";
+import {
+  type PreparedStackArtifacts,
+  type ServiceResolution,
+  type StackPreparationInput,
+} from "./StackPreparation.ts";
 import { StackPreparation } from "./StackPreparation.ts";
-import type { ServiceResolution } from "./resolve.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
 export interface PrefetchOptions extends StackPreparationInput {}
 
-export type PrefetchResult = Record<string, ServiceResolution>;
+export type PrefetchResult = Partial<Record<ServiceName, ServiceResolution>>;
 
 const toPrefetchResult = (artifacts: PreparedStackArtifacts): PrefetchResult =>
-  artifacts.resolutions as PrefetchResult;
+  artifacts.resolutions;
 
 export const prefetch = (
   options?: PrefetchOptions,

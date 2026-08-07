@@ -27,6 +27,16 @@ export class StackBuildError extends Data.TaggedError("StackBuildError")<{
   readonly cause?: unknown;
 }> {}
 
+export class StackNotRunningError extends Data.TaggedError("StackNotRunningError")<{
+  readonly phase: string;
+}> {}
+
+export class StackReadinessError extends Data.TaggedError("StackReadinessError")<{
+  readonly target: string;
+  readonly timeoutMs: number;
+  readonly detail: string;
+}> {}
+
 export class PortConflictError extends Data.TaggedError("PortConflictError")<{
   readonly port: number;
   readonly service: string;
@@ -58,6 +68,18 @@ export function toStackError(err: unknown): StackError {
       case "StackBuildError":
         return new StackError({
           code: "BUILD_ERROR",
+          message: taggedMessage,
+          cause: err,
+        });
+      case "StackNotRunningError":
+        return new StackError({
+          code: "STACK_NOT_RUNNING",
+          message: taggedMessage,
+          cause: err,
+        });
+      case "StackReadinessError":
+        return new StackError({
+          code: "STACK_READINESS_TIMEOUT",
           message: taggedMessage,
           cause: err,
         });
