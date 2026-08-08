@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "eciesjs": "^0.5.0",
-    "jose": "^6.2.4"
+    "jose": "^6.2.6"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
@@ -61,7 +61,7 @@
     "@types/bun": "catalog:",
     "@types/pg": "^8.15.0",
     "@types/pg-copy-streams": "^1.2.5",
-    "@types/react": "^19.2.17",
+    "@types/react": "^19.2.18",
     "@typescript/native-preview": "catalog:",
     "@vercel/detect-agent": "^1.2.3",
     "@vitest/coverage-istanbul": "catalog:",
@@ -76,7 +76,7 @@
     "oxlint-tsgolint": "catalog:",
     "pg": "^8.22.0",
     "pg-copy-streams": "^7.0.0",
-    "posthog-node": "^5.46.1",
+    "posthog-node": "^5.47.3",
     "react": "^19.2.8",
     "react-devtools-core": "^7.0.1",
     "semantic-release": "^25.0.8",
