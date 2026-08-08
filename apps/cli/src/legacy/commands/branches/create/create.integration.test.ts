@@ -344,7 +344,7 @@ describe("legacy branches create integration", () => {
 
   it.live("surfaces malformed successful responses as schema errors, not network errors", () => {
     const { layer } = setup({
-      response: { ...CREATED, created_at: "not-a-timestamp" },
+      response: { ...CREATED, created_at: 42 },
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
