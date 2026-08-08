@@ -84,6 +84,12 @@ func TestSquashCommand(t *testing.T) {
 		// revokes the default Data API GRANTs before applying migration history.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("create extension if not exists pg_net schema extensions").
+			Reply("CREATE EXTENSION").
+			Query("COMMIT").
+			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
@@ -321,6 +327,12 @@ func TestSquashMigrations(t *testing.T) {
 		// revokes the default Data API GRANTs before applying migration history.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("create extension if not exists pg_net schema extensions").
+			Reply("CREATE EXTENSION").
+			Query("COMMIT").
+			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").

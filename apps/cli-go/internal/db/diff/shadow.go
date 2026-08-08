@@ -58,7 +58,7 @@ func PreparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, options ...fun
 		freePort: utils.GetFreeHostPort,
 		create:   CreateShadowDatabase,
 		wait:     start.WaitForHealthyService,
-		migrate:  MigrateShadowDatabase,
+		migrate:  MigratePgDeltaNextShadowDatabase,
 		setup:    SetupPgDeltaNextDeclarativeShadowDatabase,
 		remove:   utils.DockerRemove,
 	}, options...)

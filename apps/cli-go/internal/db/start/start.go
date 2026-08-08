@@ -382,6 +382,7 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 
 type setupDatabaseOptions struct {
 	activateUserExtensions bool
+	legacyPgNetBaseline    bool
 }
 
 // SetupDatabaseOption customises platform setup for specialised database
@@ -397,6 +398,15 @@ func WithoutUserExtensionActivation() SetupDatabaseOption {
 	}
 }
 
+// WithLegacyPgNetBaseline preserves the historical shadow-database baseline,
+// where pg_net was installed independently of the Database Webhooks setting.
+// New provisioning paths should use the config-gated default instead.
+func WithLegacyPgNetBaseline() SetupDatabaseOption {
+	return func(options *setupDatabaseOptions) {
+		options.legacyPgNetBaseline = true
+	}
+}
+
 func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs, opts ...SetupDatabaseOption) error {
 	options := setupDatabaseOptions{activateUserExtensions: true}
 	for _, option := range opts {
@@ -405,7 +415,11 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
 	}
-	if options.activateUserExtensions {
+	if options.legacyPgNetBaseline {
+		if err := enablePgNet(ctx, conn); err != nil {
+			return err
+		}
+	} else if options.activateUserExtensions {
 		if err := ApplyDatabaseWebhooks(ctx, conn); err != nil {
 			return err
 		}
@@ -434,6 +448,10 @@ func ApplyDatabaseWebhooks(ctx context.Context, conn *pgx.Conn) error {
 	if webhooks == nil || !webhooks.Enabled {
 		return nil
 	}
+	return enablePgNet(ctx, conn)
+}
+
+func enablePgNet(ctx context.Context, conn *pgx.Conn) error {
 	file, err := migration.NewMigrationFromReader(strings.NewReader(EnableDatabaseWebhooksSql))
 	if err != nil {
 		return err

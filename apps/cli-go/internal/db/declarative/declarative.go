@@ -673,12 +673,11 @@ func baselineVersionToken() string {
 	return catalogPrefixRegexp.ReplaceAllString(image, "-")
 }
 
-// setupInputsToken hashes every project input that start.SetupDatabase consumes
-// and that therefore shapes the platform baseline:
+// setupInputsToken hashes every project input that shapes the legacy shadow
+// baseline produced by start.SetupDatabase with WithLegacyPgNetBaseline:
 //
 //   - the Postgres image (initSchema content);
 //   - the service toggles that gate initSchema — auth/storage/realtime;
-//   - experimental.webhooks.enabled (conditional pg_net installation);
 //   - api.auto_expose_new_tables (ApplyApiPrivileges default ACLs);
 //   - vault secret names (UpsertVaultSecrets);
 //   - supabase/roles.sql (SeedGlobals).
@@ -692,8 +691,6 @@ func setupInputsToken(fsys afero.Fs) (string, error) {
 	// initSchema conditionally provisions these service schemas.
 	fmt.Fprintf(h, "auth=%t storage=%t realtime=%t\n",
 		utils.Config.Auth.Enabled, utils.Config.Storage.Enabled, utils.Config.Realtime.Enabled)
-	webhooksEnabled := utils.Config.Experimental.Webhooks != nil && utils.Config.Experimental.Webhooks.Enabled
-	fmt.Fprintf(h, "database_webhooks=%t\n", webhooksEnabled)
 	// api.auto_expose_new_tables drives ApplyApiPrivileges (default ACLs). Key on the
 	// effective value, not the raw tri-state: as of the 2026-05-30 flip an unset flag
 	// resolves to the same revoke-by-default baseline as explicit false (see

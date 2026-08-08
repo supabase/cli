@@ -469,15 +469,10 @@ func TestBaselineCatalogKeyVariesWithServiceToggles(t *testing.T) {
 	assert.NotEqual(t, on, off, "toggling a service must change the baseline cache key")
 }
 
-func TestBaselineCatalogKeyVariesWithDatabaseWebhooks(t *testing.T) {
+func TestBaselineCatalogKeyIgnoresDatabaseWebhooks(t *testing.T) {
 	originalConfig := utils.Config
 	t.Cleanup(func() { utils.Config = originalConfig })
 	fSys := afero.NewMemMapFs()
-
-	disabled := config.NewConfig()
-	utils.Config = disabled
-	disabledKey, err := baselineCatalogKey(fSys)
-	require.NoError(t, err)
 
 	enabled := config.NewConfig()
 	require.NoError(t, enabled.Load("config.toml", fstest.MapFS{
@@ -486,8 +481,11 @@ func TestBaselineCatalogKeyVariesWithDatabaseWebhooks(t *testing.T) {
 	utils.Config = enabled
 	enabledKey, err := baselineCatalogKey(fSys)
 	require.NoError(t, err)
+	utils.Config.Experimental.Webhooks = nil
+	disabledKey, err := baselineCatalogKey(fSys)
+	require.NoError(t, err)
 
-	assert.NotEqual(t, disabledKey, enabledKey, "Database Webhooks must change the baseline cache key")
+	assert.Equal(t, disabledKey, enabledKey, "Database Webhooks no longer changes the legacy baseline")
 }
 
 func TestDeclarativeCatalogCacheKeyVariesWithSetupInputs(t *testing.T) {

@@ -151,8 +151,6 @@ export interface LegacyBaselineTomlConfig {
   readonly storageEnabled: boolean;
   /** `[realtime] enabled`, default true. */
   readonly realtimeEnabled: boolean;
-  /** Effective `[experimental.webhooks] enabled` (absent → false). */
-  readonly webhooksEnabled: boolean;
   /**
    * `[api] auto_expose_new_tables` (tri-state `*bool`). `None` when unset. Drives
    * `ApplyApiPrivileges`; the cache key folds in the *effective* bool (unset and
@@ -2078,7 +2076,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         true,
         lookup,
       ),
-      webhooksEnabled,
       apiAutoExposeNewTables,
       vaultNames,
     },

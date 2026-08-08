@@ -189,7 +189,6 @@ const setupInputs: LegacySetupInputs = {
   authEnabled: true,
   storageEnabled: true,
   realtimeEnabled: true,
-  webhooksEnabled: false,
   autoExpose: false,
   vaultNames: [],
   rolesSql: "",

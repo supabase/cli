@@ -72,6 +72,12 @@ func TestRun(t *testing.T) {
 		// Setup mock postgres: with auto_expose_new_tables unset, the shadow database setup
 		// revokes the default Data API GRANTs before creating the regression template.
 		conn := pgtest.NewConn()
+		conn.Query("BEGIN").
+			Reply("BEGIN").
+			Query("create extension if not exists pg_net schema extensions").
+			Reply("CREATE EXTENSION").
+			Query("COMMIT").
+			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
@@ -149,6 +155,12 @@ func TestRun(t *testing.T) {
 			Reply("BEGIN").
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
+			Query("COMMIT").
+			Reply("COMMIT").
+			Query("BEGIN").
+			Reply("BEGIN").
+			Query("create extension if not exists pg_net schema extensions").
+			Reply("CREATE EXTENSION").
 			Query("COMMIT").
 			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(shadowConn).
@@ -238,6 +250,12 @@ func TestMigrateShadow(t *testing.T) {
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
 			Query("COMMIT").
+			Reply("COMMIT").
+			Query("BEGIN").
+			Reply("BEGIN").
+			Query("create extension if not exists pg_net schema extensions").
+			Reply("CREATE EXTENSION").
+			Query("COMMIT").
 			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
@@ -302,7 +320,38 @@ func TestMigrateShadow(t *testing.T) {
 	})
 }
 
+func TestMigratePgDeltaNextShadowDatabase(t *testing.T) {
+	originalConfig := utils.Config
+	t.Cleanup(func() { utils.Config = originalConfig })
+	utils.Config = pkgconfig.NewConfig()
+	utils.Config.Db.MajorVersion = 17
+	utils.Config.Db.ShadowPort = 54320
+	utils.Config.Auth.Enabled = false
+	utils.Config.Storage.Enabled = false
+	utils.Config.Realtime.Enabled = false
+
+	conn := pgtest.NewConn()
+	defer conn.Close(t)
+	// The config has no Database Webhooks section. Expecting API privileges first
+	// makes any leaked legacy pg_net activation fail as an unmatched query.
+	helper.MockApiPrivilegesRevoke(conn).
+		Query(CREATE_TEMPLATE).
+		Reply("CREATE DATABASE")
+
+	err := MigratePgDeltaNextShadowDatabase(
+		context.Background(),
+		"pg-delta-next-migrations",
+		afero.NewMemMapFs(),
+		conn.Intercept,
+	)
+
+	require.NoError(t, err)
+}
+
 func TestSetupShadowDatabase(t *testing.T) {
+	originalConfig := utils.Config
+	t.Cleanup(func() { utils.Config = originalConfig })
+	utils.Config = pkgconfig.NewConfig()
 	utils.Config.Db.MajorVersion = 14
 
 	t.Run("sets up platform baseline without applying migrations", func(t *testing.T) {
@@ -329,11 +378,18 @@ func TestSetupShadowDatabase(t *testing.T) {
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
 			Query("COMMIT").
+			Reply("COMMIT").
+			Query("BEGIN").
+			Reply("BEGIN").
+			Query("create extension if not exists pg_net schema extensions").
+			Reply("CREATE EXTENSION").
+			Query("COMMIT").
 			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
-		// Run test
+		// Run with Database Webhooks disabled. Legacy shadows still include pg_net
+		// because declarative directories historically diffed against that baseline.
 		err := SetupShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
@@ -377,7 +433,7 @@ func TestSetupPgDeltaNextDeclarativeShadowDatabase(t *testing.T) {
 		utils.Config = cfg
 	}
 
-	t.Run("provisions PG17 without activating user-managed extensions", func(t *testing.T) {
+	t.Run("keeps pg-delta-next declarative baseline free of pg_net", func(t *testing.T) {
 		newPg17Config(t)
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -586,6 +642,12 @@ create schema public`)
 			Reply("BEGIN").
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
+			Query("COMMIT").
+			Reply("COMMIT").
+			Query("BEGIN").
+			Reply("BEGIN").
+			Query("create extension if not exists pg_net schema extensions").
+			Reply("CREATE EXTENSION").
 			Query("COMMIT").
 			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn).

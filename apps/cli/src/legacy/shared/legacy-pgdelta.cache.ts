@@ -34,7 +34,7 @@ const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/;
 // `internal/utils/misc.go` — `ProjectHostPattern`, matches a direct `db.<ref>.supabase.{co,red}` host.
 const PROJECT_HOST_PATTERN = /^(db\.)([a-z]{20})\.supabase\.(co|red)$/;
 
-/** Inputs to `setupInputsToken` — everything `start.SetupDatabase` consumes. */
+/** Inputs that shape the legacy `WithLegacyPgNetBaseline` shadow setup. */
 export interface LegacySetupInputs {
   /** The resolved Postgres image (`Config.Db.Image`); only its tag is used. */
   readonly image: string;
@@ -42,8 +42,6 @@ export interface LegacySetupInputs {
   readonly authEnabled: boolean;
   readonly storageEnabled: boolean;
   readonly realtimeEnabled: boolean;
-  /** Effective `experimental.webhooks.enabled` (absent → false). */
-  readonly webhooksEnabled: boolean;
   /** Effective `api.auto_expose_new_tables` (unset and false both → false). */
   readonly autoExpose: boolean;
   /** `[db.vault]` secret names (sorted before hashing). */
@@ -103,7 +101,6 @@ export function legacySetupInputsToken(inputs: LegacySetupInputs): string {
   payload += `auth=${boolToken(inputs.authEnabled)} storage=${boolToken(
     inputs.storageEnabled,
   )} realtime=${boolToken(inputs.realtimeEnabled)}\n`;
-  payload += `database_webhooks=${boolToken(inputs.webhooksEnabled)}\n`;
   payload += `auto_expose_new_tables=${boolToken(inputs.autoExpose)}\n`;
   for (const name of [...inputs.vaultNames].sort()) payload += `vault=${name}\n`;
   payload += inputs.rolesSql;
@@ -148,7 +145,6 @@ export const legacyResolveSetupInputs = Effect.fnUntraced(function* (
     authEnabled: baseline.authEnabled,
     storageEnabled: baseline.storageEnabled,
     realtimeEnabled: baseline.realtimeEnabled,
-    webhooksEnabled: baseline.webhooksEnabled,
     autoExpose:
       Option.isSome(baseline.apiAutoExposeNewTables) && baseline.apiAutoExposeNewTables.value,
     vaultNames: baseline.vaultNames,

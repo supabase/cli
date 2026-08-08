@@ -97,8 +97,8 @@ const CREATE_TEMPLATE = "CREATE DATABASE contrib_regression TEMPLATE postgres"
 // database. It deliberately stops short of applying user migrations so that
 // callers which only need the platform baseline (declarative apply) share the
 // exact same starting point as callers that also replay migrations.
-func setupShadowConn(ctx context.Context, conn *pgx.Conn, container string, fsys afero.Fs) error {
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+func setupShadowConn(ctx context.Context, conn *pgx.Conn, container string, fsys afero.Fs, options ...start.SetupDatabaseOption) error {
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys, options...); err != nil {
 		return err
 	}
 	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
@@ -118,7 +118,7 @@ func SetupShadowDatabase(ctx context.Context, container string, fsys afero.Fs, o
 		return err
 	}
 	defer conn.Close(context.Background())
-	return setupShadowConn(ctx, conn, container, fsys)
+	return setupShadowConn(ctx, conn, container, fsys, start.WithLegacyPgNetBaseline())
 }
 
 var pgDeltaNextDeclarativeExtensionDrops = []struct {
@@ -162,7 +162,7 @@ func SetupPgDeltaNextDeclarativeShadowDatabase(ctx context.Context, container st
 	return nil
 }
 
-func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func migrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, setupOptions []start.SetupDatabaseOption, options ...func(*pgx.ConnConfig)) error {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return err
@@ -172,10 +172,22 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := setupShadowConn(ctx, conn, container, fsys); err != nil {
+	if err := setupShadowConn(ctx, conn, container, fsys, setupOptions...); err != nil {
 		return err
 	}
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
+}
+
+// MigrateShadowDatabase preserves the historical platform baseline used by the
+// legacy diff engines, including pg_net even when Database Webhooks is disabled.
+func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	return migrateShadowDatabase(ctx, container, fsys, []start.SetupDatabaseOption{start.WithLegacyPgNetBaseline()}, options...)
+}
+
+// MigratePgDeltaNextShadowDatabase provisions the migrations side of the
+// isolated pg-delta-next comparison without inheriting legacy baseline behavior.
+func MigratePgDeltaNextShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	return migrateShadowDatabase(ctx, container, fsys, nil, options...)
 }
 
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {

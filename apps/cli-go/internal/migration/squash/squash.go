@@ -93,7 +93,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, shadow[:12], os.Stderr, fsys); err != nil {
+	if err := start.SetupDatabase(ctx, conn, shadow[:12], os.Stderr, fsys, start.WithLegacyPgNetBaseline()); err != nil {
 		return err
 	}
 	// Assuming entities in managed schemas are not altered, we can simply diff the dumps before and after migrations.
