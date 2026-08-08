@@ -155,11 +155,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@supabase/pg-delta':
-        specifier: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@ad62ae432865f67bb359a8183a2b3279fa9ebccb
-        version: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@ad62ae432865f67bb359a8183a2b3279fa9ebccb(@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb)
+        specifier: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@2f1d6b677bb44485f0a6874caf288f2c77896f86
+        version: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@2f1d6b677bb44485f0a6874caf288f2c77896f86(@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86)
       '@supabase/pg-topo':
-        specifier: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb
-        version: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb
+        specifier: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86
+        version: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86
       '@supabase/process-compose':
         specifier: workspace:*
         version: link:../../packages/process-compose
@@ -2839,8 +2839,8 @@ packages:
     resolution: {integrity: sha512-RW/OCsd6MO592zU8ifzP8/f8XzxxIdpb+Up5XaOtE26Fw+3zTp475WX7+GuuktiD1WF8pFUDe6khUPbMp77RCw==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/pg-delta@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@ad62ae432865f67bb359a8183a2b3279fa9ebccb':
-    resolution: {integrity: sha512-zD/OOjOZaOIaMMjm7VbhlZa23hqeQFDYaWT3mnfT7/6/JgSEp5rge4gwTY+cjy+Q7ObLdwqJe+wDO7ARujJMbA==, tarball: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@ad62ae432865f67bb359a8183a2b3279fa9ebccb}
+  '@supabase/pg-delta@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@2f1d6b677bb44485f0a6874caf288f2c77896f86':
+    resolution: {integrity: sha512-jEEZhv8uh2vFPIoMeRd4GK1qiTNZh+LiIpY1bjd+oFVlacnb+UIrjS85JdDWStniRT03+NPOUkpjOtGiTspsIg==, tarball: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@2f1d6b677bb44485f0a6874caf288f2c77896f86}
     version: 1.0.0-alpha.33
     engines: {node: '>=20.0.0'}
     hasBin: true
@@ -2850,8 +2850,8 @@ packages:
       '@supabase/pg-topo':
         optional: true
 
-  '@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb':
-    resolution: {integrity: sha512-HoqxATDYB2WygDOV1XQBN/hM/hcfvVUrc7F+R691j6CD89cHumR/nRiRJ+0bh9siZb7Fx81Bp9BAPRfzEkEydA==, tarball: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb}
+  '@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86':
+    resolution: {integrity: sha512-HoqxATDYB2WygDOV1XQBN/hM/hcfvVUrc7F+R691j6CD89cHumR/nRiRJ+0bh9siZb7Fx81Bp9BAPRfzEkEydA==, tarball: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86}
     version: 1.0.0-alpha.5
 
   '@supabase/phoenix@0.4.5':
@@ -9093,18 +9093,18 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/pg-delta@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@ad62ae432865f67bb359a8183a2b3279fa9ebccb(@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb)':
+  '@supabase/pg-delta@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-delta@2f1d6b677bb44485f0a6874caf288f2c77896f86(@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86)':
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       pg: 8.22.0
       pg-connection-string: 2.14.0
     optionalDependencies:
-      '@supabase/pg-topo': https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb
+      '@supabase/pg-topo': https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86
     transitivePeerDependencies:
       - pg-native
       - supports-color
 
-  '@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@ad62ae432865f67bb359a8183a2b3279fa9ebccb':
+  '@supabase/pg-topo@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-topo@2f1d6b677bb44485f0a6874caf288f2c77896f86':
     dependencies:
       '@pgsql/traverse': 17.2.6
       plpgsql-parser: 0.5.16
