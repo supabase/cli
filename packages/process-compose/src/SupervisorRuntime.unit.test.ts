@@ -220,7 +220,9 @@ describe("supervisor-runtime", () => {
                 `setInterval(() => {}, 1000);`,
               ].join("\n"),
             ],
-            timeoutMs: 100,
+            // Budget starts at spawn, so it must outlast node booting, spawning
+            // the worker, and writing the pid file. 100ms lost that race on CI.
+            timeoutMs: 2_000,
           },
           { _tag: "RemovePath", path: cleanupDir, recursive: true },
         ],
