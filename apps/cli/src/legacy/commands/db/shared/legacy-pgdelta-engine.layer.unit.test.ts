@@ -154,6 +154,7 @@ describe("legacyPgDeltaEngineSelectorLayer", () => {
           schema: [],
           formatOptions: "",
           debug: false,
+          strictCoverage: false,
         })
         .pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);

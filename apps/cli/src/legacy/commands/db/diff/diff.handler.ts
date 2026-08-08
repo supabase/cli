@@ -287,6 +287,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
         debug: legacyIsPgDeltaDebugEnabled(),
+        strictCoverage: flags.strictCoverage,
       });
       // Explicit-mode output: `--output` file (Go's `writeOutput`) or stdout
       // (Go's `fmt.Print`, no trailing newline — pg-delta ends each statement `;\n`).
@@ -443,6 +444,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             formatOptions,
             ...(connType === "linked" && linkedRef !== undefined ? { projectRef: linkedRef } : {}),
             debug: legacyIsPgDeltaDebugEnabled(),
+            strictCoverage: flags.strictCoverage,
           });
           return { sql: result.sql, files: result.files };
         })

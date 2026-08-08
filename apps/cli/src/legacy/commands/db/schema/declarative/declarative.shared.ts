@@ -16,5 +16,10 @@ export const legacyDbSchemaDeclarativeSharedBase = Command.make("declarative").p
     noCache: Flag.boolean("no-cache").pipe(
       Flag.withDescription("Disable catalog cache and force fresh shadow database setup."),
     ),
+    strictCoverage: Flag.boolean("strict-coverage").pipe(
+      Flag.withDescription(
+        "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
+      ),
+    ),
   }),
 );

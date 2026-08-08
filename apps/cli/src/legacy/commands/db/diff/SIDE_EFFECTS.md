@@ -19,10 +19,11 @@ bundled Go binary.
   `metadata.json` and, when available, `source-snapshot.json`,
   `desired-snapshot.json`, `plan.json`, and `diagnostics.json`. These are diagnostic
   artifacts, not reusable catalogs.
-- The default engine refuses to emit a diff when extraction reports an error or a
-  strict coverage gap (`unmodeled_kind` or `unresolved_security_label`). The error
-  identifies the diagnostic origin, code, subject, and message; when debug capture
-  is enabled, the bundle is saved before the refusal.
+- The default engine always refuses extraction errors. Coverage gaps
+  (`unmodeled_kind` or `unresolved_security_label`) warn and remain unmanaged by
+  default; `--strict-coverage` turns them into a refusal. Warnings identify the
+  diagnostic origin and explain that unsupported changes are absent from the diff;
+  when debug capture is enabled, the bundle is saved before policy evaluation.
 - SQL text and file segmentation may differ from the legacy renderer. Applicable
   output and convergence (a subsequent diff is empty) are the compatibility contract.
 
@@ -114,6 +115,8 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   binary (their side effects are Go's); the Go child's telemetry is disabled so the
   single `cli_command_executed` event comes from this TS command.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
+- `--strict-coverage` applies to the bundled pg-delta engine and refuses output when
+  it encounters schema objects it cannot manage.
 - Normal mode always compares the migrations shadow with the selected live
   database. Declarative files and `schema_paths` never replace that target; use
   `supabase db schema declarative sync` for declarative comparison.

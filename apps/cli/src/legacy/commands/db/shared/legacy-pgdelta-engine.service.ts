@@ -86,6 +86,8 @@ interface LegacyPgDeltaCommonInput {
   readonly formatOptions: string;
   readonly projectRef?: string;
   readonly debug: boolean;
+  /** Refuse coverage-gap diagnostics instead of continuing with those objects unmanaged. */
+  readonly strictCoverage: boolean;
 }
 
 export interface LegacyPgDeltaExplicitDiffInput extends LegacyPgDeltaCommonInput {

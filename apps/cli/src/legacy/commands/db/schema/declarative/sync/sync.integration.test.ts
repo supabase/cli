@@ -315,6 +315,7 @@ const flags = (
   over: Partial<LegacyDbSchemaDeclarativeSyncFlags> = {},
 ): LegacyDbSchemaDeclarativeSyncFlags => ({
   noCache: over.noCache ?? false,
+  strictCoverage: over.strictCoverage ?? false,
   schema: over.schema ?? [],
   file: over.file ?? Option.none(),
   name: over.name ?? Option.none(),

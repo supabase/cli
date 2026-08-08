@@ -38,10 +38,11 @@ Notes/Delegation section below).
   `supabase/.temp/pgdelta/v2/debug/<id>/` as `metadata.json` plus available
   snapshot, plan, and diagnostics JSON files. These artifacts are never catalog
   cache inputs.
-- The default engine refuses migration or declarative output when extraction
-  reports an error or a strict coverage gap (`unmodeled_kind` or
-  `unresolved_security_label`). The refusal names the diagnostic, and debug
-  artifacts are saved first when capture is enabled.
+- The default engine always refuses extraction errors. Coverage gaps
+  (`unmodeled_kind` or `unresolved_security_label`) warn and remain unmanaged by
+  default; `--strict-coverage` turns them into a refusal. Declarative warnings make
+  clear that unsupported objects are absent from the exported files. Debug
+  artifacts are saved before policy evaluation when capture is enabled.
 - New-engine SQL bytes and transaction-split filenames may differ. Successful
   execution and convergence on a subsequent pull/diff are the contract.
 
@@ -136,6 +137,8 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
 - `--use-pg-delta` is hidden and emits the cobra deprecation line to stderr.
+- `--strict-coverage` applies to bundled pg-delta diff and declarative-export paths;
+  it refuses output when pg-delta encounters schema objects it cannot manage.
 - The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
   the remote schema into the migration file, then appends the migra diff. An empty
   diff after a non-empty dump is swallowed (Go's `swallowInitialInSync`); an empty

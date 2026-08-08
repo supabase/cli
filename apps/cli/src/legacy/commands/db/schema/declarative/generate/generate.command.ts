@@ -61,7 +61,7 @@ const config = {
 // so the handler input merges it in alongside the leaf's own flags.
 export type LegacyDbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<
   typeof config
-> & { readonly noCache: boolean };
+> & { readonly noCache: boolean; readonly strictCoverage: boolean };
 
 export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription("Generate declarative schema from a database."),
@@ -70,7 +70,11 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
       const shared = yield* legacyDbSchemaDeclarativeSharedBase;
-      const merged: LegacyDbSchemaDeclarativeGenerateFlags = { ...flags, noCache: shared.noCache };
+      const merged: LegacyDbSchemaDeclarativeGenerateFlags = {
+        ...flags,
+        noCache: shared.noCache,
+        strictCoverage: shared.strictCoverage,
+      };
       return yield* legacyDbSchemaDeclarativeGenerate(merged).pipe(
         // Go's PostRun prints this on success via `fmt.Println` → stdout
         // (`cmd/db_schema_declarative.go:93`), so keep it on stdout in text mode. In
@@ -91,6 +95,7 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
         withLegacyCommandInstrumentation({
           flags: {
             "no-cache": merged.noCache,
+            "strict-coverage": merged.strictCoverage,
             overwrite: merged.overwrite,
             reset: merged.reset,
             schema: merged.schema,

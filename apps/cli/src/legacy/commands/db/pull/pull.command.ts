@@ -34,6 +34,11 @@ const config = {
     Flag.withDescription("Diff engine to use for migration-style db pull."),
     Flag.optional,
   ),
+  strictCoverage: Flag.boolean("strict-coverage").pipe(
+    Flag.withDescription(
+      "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
+    ),
+  ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
@@ -76,6 +81,7 @@ export const legacyDbPullCommand = Command.make("pull", config).pipe(
           declarative: flags.declarative,
           "use-pg-delta": flags.usePgDelta,
           "diff-engine": flags.diffEngine,
+          "strict-coverage": flags.strictCoverage,
           schema: flags.schema,
           "db-url": flags.dbUrl,
           linked: flags.linked,

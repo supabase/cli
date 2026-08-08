@@ -37,6 +37,11 @@ const config = {
     Flag.withDescription("Use pg-delta to generate schema diff."),
     Flag.optional,
   ),
+  strictCoverage: Flag.boolean("strict-coverage").pipe(
+    Flag.withDescription(
+      "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
+    ),
+  ),
   from: Flag.string("from").pipe(
     Flag.withDescription("Diff from local, linked, migrations, or a Postgres URL."),
     Flag.optional,
@@ -99,6 +104,7 @@ export const legacyDbDiffCommand = Command.make("diff", config).pipe(
           "use-pgadmin": flags.usePgAdmin,
           "use-pg-schema": flags.usePgSchema,
           "use-pg-delta": flags.usePgDelta,
+          "strict-coverage": flags.strictCoverage,
           from: flags.from,
           to: flags.to,
           output: flags.output,

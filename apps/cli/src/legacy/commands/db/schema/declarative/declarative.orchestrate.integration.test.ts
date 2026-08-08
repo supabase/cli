@@ -115,6 +115,7 @@ const ctx = (cwd: string, declarativeDir: string): LegacyDeclarativeRunContext =
   schema: [],
   noCache: false,
   debug: false,
+  strictCoverage: false,
   dnsResolver: "native",
 });
 
@@ -166,7 +167,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       }),
     );
     return legacyDiffDeclarativeToMigrations(
-      { ...ctx(dir, declDir), debug: true, noCache: true },
+      { ...ctx(dir, declDir), debug: true, noCache: true, strictCoverage: true },
       setupInputs,
     ).pipe(
       Effect.tap((result) =>
@@ -178,6 +179,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           expect(calls[0]?.manifest).toEqual({ redactSecrets: true, scope: "database" });
           expect(calls[0]?.debug).toBe(true);
           expect(calls[0]?.noCache).toBe(true);
+          expect(calls[0]?.strictCoverage).toBe(true);
           expect(result.manifestPresent).toBe(true);
           expect(result.removals).toEqual({
             extensions: ["pgcrypto"],
@@ -500,8 +502,12 @@ describe("legacyDiffDeclarativeToMigrations", () => {
 });
 
 describe("legacyGenerateDeclarativeOutput", () => {
-  it.effect("propagates debug and no-cache to the selected engine", () => {
-    const calls: Array<{ readonly debug: boolean; readonly noCache: boolean }> = [];
+  it.effect("propagates debug, no-cache, and strict coverage to the selected engine", () => {
+    const calls: Array<{
+      readonly debug: boolean;
+      readonly noCache: boolean;
+      readonly strictCoverage: boolean;
+    }> = [];
     const engine = Layer.succeed(
       LegacyPgDeltaEngine,
       LegacyPgDeltaEngine.of({
@@ -509,21 +515,34 @@ describe("legacyGenerateDeclarativeOutput", () => {
         diffExplicit: () => Effect.die("diffExplicit not used"),
         diffDatabase: () => Effect.die("diffDatabase not used"),
         exportDeclarativeSchema: (input) => {
-          calls.push({ debug: input.debug, noCache: input.noCache });
+          calls.push({
+            debug: input.debug,
+            noCache: input.noCache,
+            strictCoverage: input.strictCoverage,
+          });
           return Effect.succeed({ files: [] });
         },
         planDeclarativeSchema: () => Effect.die("planDeclarativeSchema not used"),
       }),
     );
     return legacyGenerateDeclarativeOutput(
-      { ...ctx("/proj", "/proj/supabase/database"), debug: true, noCache: true },
+      {
+        ...ctx("/proj", "/proj/supabase/database"),
+        debug: true,
+        noCache: true,
+        strictCoverage: true,
+      },
       {
         kind: "database",
         ref: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
         connectOptions: { isLocal: true, dnsResolver: "native" },
       },
     ).pipe(
-      Effect.tap(() => Effect.sync(() => expect(calls).toEqual([{ debug: true, noCache: true }]))),
+      Effect.tap(() =>
+        Effect.sync(() =>
+          expect(calls).toEqual([{ debug: true, noCache: true, strictCoverage: true }]),
+        ),
+      ),
       Effect.provide(engine),
     );
   });

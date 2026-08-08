@@ -140,6 +140,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     operation: "diff" | "export";
     targetRef: string;
     projectRef?: string;
+    strictCoverage: boolean;
   }> = [];
   let engineDiffCount = 0;
   const pgDeltaEngine = Layer.succeed(
@@ -152,6 +153,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           operation: "diff",
           targetRef: input.target.ref,
           projectRef: input.projectRef,
+          strictCoverage: input.strictCoverage,
         });
         engineDiffCount += 1;
         if (opts.edgeFailFirstWith !== undefined && engineDiffCount === 1) {
@@ -225,6 +227,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           operation: "export",
           targetRef: input.target.ref,
           projectRef: input.projectRef,
+          strictCoverage: input.strictCoverage,
         });
         if (opts.edgeFailFirstWith !== undefined && engineCalls.length === 1) {
           return Effect.fail(
@@ -429,6 +432,7 @@ const flags = (over: Partial<LegacyDbPullFlags> = {}): LegacyDbPullFlags => ({
   declarative: over.declarative ?? Option.none(),
   usePgDelta: over.usePgDelta ?? Option.none(),
   diffEngine: over.diffEngine ?? Option.none(),
+  strictCoverage: over.strictCoverage ?? false,
   schema: over.schema ?? [],
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? Option.none(),
@@ -466,7 +470,7 @@ describe("legacy db pull", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+      yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta"), strictCoverage: true }));
       const dir = join(tmp.current, "supabase", "migrations");
       expect(existsSync(join(dir, `${"20240101000000"}_local.sql`))).toBe(true);
       // A single-unit plan keeps the unchanged `<ts>_remote_schema.sql` filename.
@@ -483,6 +487,7 @@ describe("legacy db pull", () => {
       expect(s.historyUpserts.length).toBe(1);
       expect(s.engineCalls).toHaveLength(1);
       expect(s.engineCalls[0]?.operation).toBe("diff");
+      expect(s.engineCalls[0]?.strictCoverage).toBe(true);
       expect(s.edgeRunCount).toBe(0);
       expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
       // The linked ref is pre-loaded (cheap, local-only) before `resolve()` runs, so
@@ -658,8 +663,9 @@ describe("legacy db pull", () => {
   it.effect("pull --declarative exports declarative files (no migration)", () => {
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+      yield* legacyDbPull(flags({ declarative: Option.some(true), strictCoverage: true }));
       expect(s.engineCalls[0]?.operation).toBe("export");
+      expect(s.engineCalls[0]?.strictCoverage).toBe(true);
       expect(s.edgeRunCount).toBe(0);
       const err = streamText(s.out, "stderr");
       // Go's order: `ConnectByConfig` prints Connecting (`pull.go:40`), then

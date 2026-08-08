@@ -150,6 +150,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         schema: flags.schema,
         noCache: flags.noCache,
         debug: legacyIsPgDeltaDebugEnabled(),
+        strictCoverage: flags.strictCoverage,
         dnsResolver,
         ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),
       };

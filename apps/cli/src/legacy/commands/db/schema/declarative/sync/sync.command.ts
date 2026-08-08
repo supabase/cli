@@ -52,6 +52,7 @@ const config = {
 // so the handler input merges it in alongside the leaf's own flags.
 export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config> & {
   readonly noCache: boolean;
+  readonly strictCoverage: boolean;
 };
 
 export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
@@ -61,11 +62,16 @@ export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config)
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
       const shared = yield* legacyDbSchemaDeclarativeSharedBase;
-      const merged: LegacyDbSchemaDeclarativeSyncFlags = { ...flags, noCache: shared.noCache };
+      const merged: LegacyDbSchemaDeclarativeSyncFlags = {
+        ...flags,
+        noCache: shared.noCache,
+        strictCoverage: shared.strictCoverage,
+      };
       return yield* legacyDbSchemaDeclarativeSync(merged).pipe(
         withLegacyCommandInstrumentation({
           flags: {
             "no-cache": merged.noCache,
+            "strict-coverage": merged.strictCoverage,
             schema: merged.schema,
             file: merged.file,
             name: merged.name,

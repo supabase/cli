@@ -429,6 +429,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               formatOptions,
               projectRef: connType === "linked" ? linkedRef : undefined,
               debug: legacyIsPgDeltaDebugEnabled(),
+              strictCoverage: flags.strictCoverage,
               noCache: false,
             }),
           );
@@ -652,6 +653,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 formatOptions,
                 projectRef: connType === "linked" ? linkedRef : undefined,
                 debug: legacyIsPgDeltaDebugEnabled(),
+                strictCoverage: flags.strictCoverage,
               }),
             )
           : yield* Effect.gen(function* () {

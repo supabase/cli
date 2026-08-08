@@ -17,10 +17,11 @@ platform view.
   change its extraction behavior.
 - With `PGDELTA_DEBUG`, default-engine export diagnostics are written below
   `supabase/.temp/pgdelta/v2/debug/<id>/`; they are never reused as catalogs.
-- The default engine refuses an export when extraction reports an error or a
-  strict coverage gap (`unmodeled_kind` or `unresolved_security_label`). The
-  refusal names the diagnostic, and debug artifacts are saved first when capture
-  is enabled.
+- The default engine always refuses extraction errors. Coverage gaps
+  (`unmodeled_kind` or `unresolved_security_label`) warn by default and explain that
+  unsupported objects are absent from the generated files; `--strict-coverage`
+  turns them into a refusal. Debug artifacts are saved before policy evaluation
+  when capture is enabled.
 - Generated SQL bytes and grouping may differ between engines. Reloading the
   export to the same managed state is the compatibility contract.
 

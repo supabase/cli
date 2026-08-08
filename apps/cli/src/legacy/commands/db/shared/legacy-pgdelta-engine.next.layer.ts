@@ -1,5 +1,6 @@
 import { Clock, Effect, FileSystem, Layer, Path } from "effect";
 
+import { Output } from "../../../../shared/output/output.service.ts";
 import { parseLegacyConnectionString } from "../../../shared/legacy-db-config.parse.ts";
 import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import { legacyAcquirePgPool } from "../../../shared/legacy-db-connection.sql-pg.layer.ts";
@@ -22,8 +23,8 @@ import {
 } from "./legacy-pgdelta-next-artifacts.ts";
 import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
 import {
-  legacyPgDeltaNextBlockingDiagnostic,
-  legacyPgDeltaNextBlockingDiagnosticMessage,
+  legacyPgDeltaNextDiagnosticReport,
+  legacyReportPgDeltaNextDiagnostics,
 } from "./legacy-pgdelta-next-diagnostics.ts";
 
 /** Shared by both declarative planner entrypoints over the full isolated baseline. */
@@ -116,6 +117,8 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const debugLogger = yield* LegacyDebugLogger;
+    const output = yield* Output;
+    let feedbackInvitationShown = false;
 
     const saveDebugArtifacts = (
       workdir: string,
@@ -153,19 +156,20 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
     const acquireDatabase = (endpoint: LegacyPgDeltaDatabaseEndpoint) =>
       legacyAcquirePgPool(parseEndpoint(endpoint), endpoint.connectOptions);
 
-    const rejectBlockingDiagnostic = (
+    const reportDiagnostics = (
       operation: LegacyPgDeltaNextOperation,
-      diagnostics: Parameters<typeof legacyPgDeltaNextBlockingDiagnostic>[0],
+      diagnostics: Parameters<typeof legacyReportPgDeltaNextDiagnostics>[1],
+      strictCoverage: boolean,
     ) => {
-      const blocking = legacyPgDeltaNextBlockingDiagnostic(diagnostics);
-      return blocking === undefined
-        ? Effect.void
-        : Effect.fail(
-            new LegacyPgDeltaEngineError({
-              message: legacyPgDeltaNextBlockingDiagnosticMessage(operation, blocking),
-              cause: blocking,
-            }),
-          );
+      const report = legacyPgDeltaNextDiagnosticReport(diagnostics, strictCoverage);
+      const showFeedback = !feedbackInvitationShown && report.unmodeledKinds.length > 0;
+      if (showFeedback) feedbackInvitationShown = true;
+      return legacyReportPgDeltaNextDiagnostics(
+        operation,
+        diagnostics,
+        strictCoverage,
+        showFeedback,
+      ).pipe(Effect.provideService(Output, output));
     };
 
     return LegacyPgDeltaEngine.of({
@@ -228,7 +232,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     diagnostics: result.diagnostics,
                   })
                 : undefined;
-            yield* rejectBlockingDiagnostic("diff", result.diagnostics);
+            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage);
             return normalizeNextDiff(result, debugDirectory);
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
@@ -267,7 +271,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     diagnostics: result.diagnostics,
                   })
                 : undefined;
-            yield* rejectBlockingDiagnostic("diff", result.diagnostics);
+            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage);
             return normalizeNextDiff(result, debugDirectory);
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
@@ -293,7 +297,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     : [...result.diagnostics, ...capture.diagnostics],
               });
             }
-            yield* rejectBlockingDiagnostic("declarativeExport", result.diagnostics);
+            yield* reportDiagnostics("declarativeExport", result.diagnostics, input.strictCoverage);
             return { files: result.files, manifest: result.manifest };
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
@@ -336,7 +340,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     diagnostics: result.diagnostics,
                   })
                 : undefined;
-            yield* rejectBlockingDiagnostic("declarativePlan", result.diagnostics);
+            yield* reportDiagnostics("declarativePlan", result.diagnostics, input.strictCoverage);
             return {
               ...normalizeNextDiff(result, debugDirectory),
               sourceRef: "pg-delta-next:migrations",

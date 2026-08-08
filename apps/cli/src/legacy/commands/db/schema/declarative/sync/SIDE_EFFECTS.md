@@ -14,10 +14,11 @@ as a new timestamped migration.
   extracts current state and maintains no reusable catalog cache.
 - With `PGDELTA_DEBUG`, default-engine snapshots, plan, and diagnostics are
   written below `supabase/.temp/pgdelta/v2/debug/<id>/` and are not reusable.
-- The default engine refuses to emit a migration when extraction or declarative
-  loading reports an error or a strict coverage gap (`unmodeled_kind` or
-  `unresolved_security_label`). The refusal names the diagnostic, and debug
-  artifacts are saved first when capture is enabled.
+- The default engine always refuses extraction or declarative-loading errors.
+  Coverage gaps (`unmodeled_kind` or `unresolved_security_label`) warn by default
+  and explain that unsupported changes are absent from the migration plan;
+  `--strict-coverage` turns them into a refusal. Debug artifacts are saved before
+  policy evaluation when capture is enabled.
 - Default-engine migrations may differ byte-for-byte and may be split into
   ordered files to preserve transaction boundaries. Successful execution and an
   empty subsequent sync are the compatibility contract.

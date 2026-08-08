@@ -275,6 +275,7 @@ const flags = (
   over: Partial<LegacyDbSchemaDeclarativeGenerateFlags> = {},
 ): LegacyDbSchemaDeclarativeGenerateFlags => ({
   noCache: over.noCache ?? false,
+  strictCoverage: over.strictCoverage ?? false,
   overwrite: over.overwrite ?? false,
   reset: over.reset ?? false,
   schema: over.schema ?? [],

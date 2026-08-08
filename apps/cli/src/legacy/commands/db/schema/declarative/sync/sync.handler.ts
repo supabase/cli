@@ -158,6 +158,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         schema: flags.schema,
         noCache: flags.noCache,
         debug: legacyIsPgDeltaDebugEnabled(),
+        strictCoverage: flags.strictCoverage,
         dnsResolver,
       };
       const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();

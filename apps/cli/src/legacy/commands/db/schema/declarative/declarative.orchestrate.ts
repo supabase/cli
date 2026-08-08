@@ -23,6 +23,7 @@ export interface LegacyDeclarativeRunContext {
   readonly schema: ReadonlyArray<string>;
   readonly noCache: boolean;
   readonly debug: boolean;
+  readonly strictCoverage: boolean;
   readonly dnsResolver: "native" | "https";
   readonly linkedProjectRef?: string;
 }
@@ -73,6 +74,7 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
     schema: run.schema,
     formatOptions: run.formatOptions,
     debug: run.debug,
+    strictCoverage: run.strictCoverage,
     files,
     noCache: run.noCache,
     setupInputs,
@@ -100,6 +102,7 @@ export const legacyGenerateDeclarativeOutput = Effect.fnUntraced(function* (
     schema: run.schema,
     formatOptions: run.formatOptions,
     debug: run.debug,
+    strictCoverage: run.strictCoverage,
     noCache: run.noCache,
     ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
     target,

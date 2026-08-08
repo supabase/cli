@@ -250,6 +250,7 @@ const flags = (over: Partial<LegacyDbDiffFlags> = {}): LegacyDbDiffFlags => ({
   usePgAdmin: over.usePgAdmin ?? Option.none(),
   usePgSchema: over.usePgSchema ?? Option.none(),
   usePgDelta: over.usePgDelta ?? Option.none(),
+  strictCoverage: over.strictCoverage ?? false,
   from: over.from ?? Option.none(),
   to: over.to ?? Option.none(),
   output: over.output ?? Option.none(),
@@ -295,11 +296,14 @@ describe("legacy db diff", () => {
   it.effect("diffs local with pgdelta when --use-pg-delta is set", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), schema: ["public"] }));
+      yield* legacyDbDiff(
+        flags({ usePgDelta: Option.some(true), strictCoverage: true, schema: ["public"] }),
+      );
       expect(s.provisionCalls).toEqual([]);
       expect(s.databaseDiffCalls).toHaveLength(1);
       expect(s.databaseDiffCalls[0]).toMatchObject({
         schema: ["public"],
+        strictCoverage: true,
         target: {
           kind: "database",
           connection: {
