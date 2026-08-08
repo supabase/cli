@@ -45,6 +45,11 @@ Notes/Delegation section below).
   artifacts are saved before policy evaluation when capture is enabled.
 - New-engine SQL bytes and transaction-split filenames may differ. Successful
   execution and convergence on a subsequent pull/diff are the contract.
+- Default-engine migration and declarative SQL retains pg-delta's safe compaction
+  and uses its human-facing formatter (lowercase keywords, max width 180). A JSON
+  object in `[experimental.pgdelta].format_options` partially overrides the
+  preset; the JSON literal `null` disables formatting without disabling
+  compaction.
 
 ## Files Read
 

@@ -22,6 +22,10 @@ as a new timestamped migration.
 - Default-engine migrations may differ byte-for-byte and may be split into
   ordered files to preserve transaction boundaries. Successful execution and an
   empty subsequent sync are the compatibility contract.
+- Default-engine migrations use pg-delta's human-facing formatter (lowercase
+  keywords, max width 180) after safe plan compaction. A JSON object in
+  `[experimental.pgdelta].format_options` partially overrides the formatter;
+  the JSON literal `null` disables formatting without disabling compaction.
 
 ## Files Read
 

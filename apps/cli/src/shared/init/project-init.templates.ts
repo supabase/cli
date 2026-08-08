@@ -412,6 +412,7 @@ enabled = true
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2,\\"maxWidth\\":80,\\"commaStyle\\":\\"trailing\\"}"
+# Set to "null" to disable formatting while retaining plan compaction.
 `;
 
 export const INIT_GITIGNORE_TEMPLATE = `# Supabase

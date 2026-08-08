@@ -58,6 +58,7 @@ export interface LegacyPgDeltaNextDiffInput {
   readonly redactSecrets?: boolean;
   readonly restrictToApplier?: boolean;
   readonly schema?: readonly string[];
+  readonly formatOptions?: string;
 }
 
 interface LegacyPgDeltaNextDiffResult {
@@ -134,6 +135,7 @@ export interface LegacyPgDeltaNextDeclarativePlanInput {
   readonly seedAssumedSchemas?: boolean;
   readonly restrictToApplier?: boolean;
   readonly strictFunctionBodies?: boolean;
+  readonly formatOptions?: string;
   /** Defaults to true, preserving pg-topo statement-level reorder support. */
   readonly reorder?: boolean;
   readonly onWarning?: (message: string) => void;

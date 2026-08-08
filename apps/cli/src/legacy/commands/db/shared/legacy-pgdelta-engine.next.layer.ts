@@ -224,6 +224,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               allowDrops: true,
               debug: input.debug,
               schema: input.schema,
+              formatOptions: input.formatOptions,
             });
             const debugDirectory =
               result.debug !== undefined
@@ -263,6 +264,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               allowDrops: true,
               debug: input.debug,
               schema: input.schema,
+              formatOptions: input.formatOptions,
             });
             const debugDirectory =
               result.debug !== undefined
@@ -331,6 +333,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               reorder: true,
               ...legacyPgDeltaNextIsolatedShadowPlanOptions,
               schema: input.schema,
+              formatOptions: input.formatOptions,
               ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
             });
             const debugDirectory =

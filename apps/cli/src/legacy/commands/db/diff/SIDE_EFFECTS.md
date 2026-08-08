@@ -26,6 +26,10 @@ bundled Go binary.
   when debug capture is enabled, the bundle is saved before policy evaluation.
 - SQL text and file segmentation may differ from the legacy renderer. Applicable
   output and convergence (a subsequent diff is empty) are the compatibility contract.
+- Default-engine plans retain pg-delta's safe compaction and are formatted with
+  its human-facing preset (lowercase keywords, max width 180). A JSON object in
+  `[experimental.pgdelta].format_options` partially overrides that preset; the
+  JSON literal `null` disables formatting without disabling compaction.
 
 ## Files Read
 

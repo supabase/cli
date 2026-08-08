@@ -62,7 +62,7 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
       desired: FakeFactBase;
       options: FakePlanOptions & { redactSecrets: boolean };
     }>,
-    renderAllowDrops: [] as boolean[],
+    renderOptions: [] as Array<{ allowDrops: boolean }>,
     exportInputs: [] as object[],
     declarativeInputs: [] as object[],
     snapshotMetadata: [] as object[],
@@ -106,21 +106,22 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
       state.planCalls.push({ source, desired, options });
       return { source: source.id, desired: desired.id };
     },
-    renderPlanFiles: (generatedPlan, options) => {
-      state.renderAllowDrops.push(options.allowDrops);
+    renderPlanFiles: (_generatedPlan, options) => {
+      state.renderOptions.push(options);
       if (!state.renderChanges) return { changes: false, files: [] };
       return {
         changes: true,
         files: [
           {
             suffix: "_1",
-            contents: `begin ${generatedPlan.source};\n`,
+            contents: "CREATE TABLE public.widgets (id integer, display_name text);\n",
             transactional: true,
             actionCount: 2,
           },
           {
             suffix: "_2",
-            contents: `alter ${generatedPlan.desired};\n`,
+            contents:
+              "-- pg-delta: transaction=false\nSET check_function_bodies = off;\n\nGRANT SELECT ON TABLE public.widgets TO anon;\n\nRESET ALL;\n",
             transactional: false,
             actionCount: 1,
           },
@@ -335,6 +336,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
           redactSecrets: false,
           restrictToApplier: true,
           schema: ["public"],
+          formatOptions: '{"keywordCase":"upper","indent":4}',
         });
 
         expect(state.resolveCalls).toEqual([
@@ -355,23 +357,26 @@ describe("LegacyPgDeltaNextAdapter", () => {
             options: { redactSecrets: false, managedView: "shared-profile-options" },
           },
         ]);
+        expect(state.renderOptions).toEqual([{ allowDrops: true }]);
         expect(result.files).toEqual([
           {
             sequence: 1,
             suffix: "_1",
-            sql: "begin source-facts;\n",
+            sql: "CREATE TABLE public.widgets (\n    id           integer,\n    display_name text\n);\n",
             transactionMode: "transactional",
             actionCount: 2,
           },
           {
             sequence: 2,
             suffix: "_2",
-            sql: "alter desired-facts;\n",
+            sql: "-- pg-delta: transaction=false\nSET check_function_bodies = off;\n\nGRANT SELECT ON TABLE public.widgets TO anon;\n\nRESET ALL;\n",
             transactionMode: "none",
             actionCount: 1,
           },
         ]);
-        expect(result.sql).toBe("begin source-facts;\n\n\nalter desired-facts;\n");
+        expect(result.sql).toBe(
+          "CREATE TABLE public.widgets (\n    id           integer,\n    display_name text\n);\n\n\n-- pg-delta: transaction=false\nSET check_function_bodies = off;\n\nGRANT SELECT ON TABLE public.widgets TO anon;\n\nRESET ALL;\n",
+        );
         expect(result.diagnostics).toEqual([
           {
             origin: "source",
@@ -427,7 +432,30 @@ describe("LegacyPgDeltaNextAdapter", () => {
       expect(result.files).toEqual([]);
       expect(result.debug).toBeUndefined();
       expect(state.snapshotMetadata).toEqual([]);
-      expect(state.renderAllowDrops).toEqual([false]);
+      expect(state.renderOptions).toEqual([{ allowDrops: false }]);
+      yield* Effect.promise(() => Promise.all([sourcePool.end(), desiredPool.end()]));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("formats rendered migration files with the human-readable defaults", () => {
+    const sourcePool = new Pool();
+    const desiredPool = new Pool();
+    const { layer } = setupLibraries(sourcePool, desiredPool);
+
+    return Effect.gen(function* () {
+      const adapter = yield* LegacyPgDeltaNextAdapter;
+      const result = yield* adapter.diff({
+        sourcePool,
+        desiredPool,
+        allowDrops: false,
+        debug: false,
+      });
+      expect(result.files[0]?.sql).toBe(
+        "create table public.widgets (\n  id           integer,\n  display_name text\n);\n",
+      );
+      expect(result.files[1]?.sql).toBe(
+        "-- pg-delta: transaction=false\nset check_function_bodies = off;\n\ngrant select on table public.widgets to anon;\n\nreset all;\n",
+      );
       yield* Effect.promise(() => Promise.all([sourcePool.end(), desiredPool.end()]));
     }).pipe(Effect.provide(layer));
   });
@@ -480,6 +508,14 @@ describe("LegacyPgDeltaNextAdapter", () => {
         });
         expect(state.exportInputs[0]).not.toHaveProperty("formatOptions");
 
+        yield* adapter.exportDeclarativeSchema({
+          pool: targetPool,
+          layout: "grouped",
+        });
+        expect(state.exportInputs[1]).toMatchObject({
+          format: { keywordCase: "lower", maxWidth: 180 },
+        });
+
         const planned = yield* adapter.planDeclarativeSchema({
           targetPool,
           shadowPool,
@@ -488,6 +524,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
           debug: true,
           isolatedShadow: true,
           seedAssumedSchemas: true,
+          formatOptions: "null",
         });
         expect(state.declarativeInputs).toHaveLength(1);
         expect(state.declarativeInputs[0]).toMatchObject({
@@ -508,7 +545,11 @@ describe("LegacyPgDeltaNextAdapter", () => {
         expect(planned.debug).toEqual({
           plan: JSON.stringify({ source: "target-facts", desired: "loaded-files" }),
         });
-        expect(state.renderAllowDrops).toEqual([true]);
+        expect(planned.files.map((file) => file.sql)).toEqual([
+          "CREATE TABLE public.widgets (id integer, display_name text);\n",
+          "-- pg-delta: transaction=false\nSET check_function_bodies = off;\n\nGRANT SELECT ON TABLE public.widgets TO anon;\n\nRESET ALL;\n",
+        ]);
+        expect(state.renderOptions).toEqual([{ allowDrops: true }]);
         yield* Effect.promise(() => Promise.all([targetPool.end(), shadowPool.end()]));
       }).pipe(Effect.provide(layer));
     },

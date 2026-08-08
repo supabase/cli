@@ -24,6 +24,11 @@ platform view.
   when capture is enabled.
 - Generated SQL bytes and grouping may differ between engines. Reloading the
   export to the same managed state is the compatibility contract.
+- The default engine applies pg-delta's human-facing formatter (lowercase
+  keywords, max width 180) and export-specific safe constraint folding. A JSON
+  object in `[experimental.pgdelta].format_options` partially overrides the
+  formatter; the JSON literal `null` disables formatting without disabling plan
+  compaction.
 
 ## Files Read
 

@@ -15,7 +15,7 @@ import {
 import { plan, serializePlan } from "@supabase/pg-delta/plan";
 import type { Plan as PgDeltaPlan } from "@supabase/pg-delta/plan";
 import type { Policy } from "@supabase/pg-delta/policy";
-import type { SqlFormatOptions } from "@supabase/pg-delta/sql-format";
+import { formatSqlStatements, type SqlFormatOptions } from "@supabase/pg-delta/sql-format";
 
 import {
   LegacyPgDeltaNextAdapter,
@@ -338,10 +338,18 @@ export function legacyPgDeltaNextProfile(
   return { ...supabaseProfile, policy };
 }
 
+const legacyPgDeltaNextHumanFormatOptions: SqlFormatOptions = {
+  keywordCase: "lower",
+  maxWidth: 180,
+};
+
 function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptions | undefined {
-  if (raw === undefined || raw.trim().length === 0) return undefined;
+  if (raw === undefined || raw.trim().length === 0) return legacyPgDeltaNextHumanFormatOptions;
   const parsed: unknown = JSON.parse(raw);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  if (parsed === null) return undefined;
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    return legacyPgDeltaNextHumanFormatOptions;
+  }
   const value = (key: string): unknown => Reflect.get(parsed, key);
   const keywordCase = value("keywordCase");
   const commaStyle = value("commaStyle");
@@ -353,6 +361,7 @@ function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptio
   const preserveViewBodies = value("preserveViewBodies");
   const preserveRuleBodies = value("preserveRuleBodies");
   return {
+    ...legacyPgDeltaNextHumanFormatOptions,
     ...(keywordCase === "upper" || keywordCase === "lower" || keywordCase === "preserve"
       ? { keywordCase }
       : {}),
@@ -365,6 +374,24 @@ function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptio
     ...(typeof preserveViewBodies === "boolean" ? { preserveViewBodies } : {}),
     ...(typeof preserveRuleBodies === "boolean" ? { preserveRuleBodies } : {}),
   };
+}
+
+function legacyTerminatePgDeltaNextStatement(sql: string): string {
+  const trimmed = sql.trimEnd();
+  return trimmed.endsWith(";") ? trimmed : `${trimmed};`;
+}
+
+function legacyFormatPgDeltaNextRenderedFiles(
+  files: readonly LegacyPgDeltaNextLibraryRenderedFile[],
+  format: SqlFormatOptions | undefined,
+): readonly LegacyPgDeltaNextLibraryRenderedFile[] {
+  if (format === undefined) return files;
+  return files.map((file) => ({
+    ...file,
+    contents: `${formatSqlStatements([file.contents], format)
+      .map(legacyTerminatePgDeltaNextStatement)
+      .join("\n\n")}\n`,
+  }));
 }
 
 function legacyPgDeltaNextExportOptions(input: LegacyPgDeltaNextDeclarativeExportInput) {
@@ -440,6 +467,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
   return {
     diff: (input: LegacyPgDeltaNextDiffInput) =>
       legacyTryPgDeltaNext("diff", async () => {
+        const format = legacyPgDeltaNextFormatOptions(input.formatOptions);
         const redactSecrets = input.redactSecrets ?? true;
         const profile = await libraries.resolveProfile(
           input.sourcePool,
@@ -462,6 +490,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
         const rendered = libraries.renderPlanFiles(generatedPlan, {
           allowDrops: input.allowDrops,
         });
+        const renderedFiles = legacyFormatPgDeltaNextRenderedFiles(rendered.files, format);
         const diagnostics = [
           ...legacyNormalizePgDeltaNextDiagnostics(
             source.diagnostics,
@@ -476,8 +505,8 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
         ];
         return {
           changes: rendered.changes,
-          sql: rendered.files.map((file) => file.contents).join("\n\n"),
-          files: legacyNormalizePgDeltaNextRenderedFiles(rendered.files),
+          sql: renderedFiles.map((file) => file.contents).join("\n\n"),
+          files: legacyNormalizePgDeltaNextRenderedFiles(renderedFiles),
           diagnostics,
           ...(input.debug
             ? {
@@ -519,6 +548,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
       }),
     planDeclarativeSchema: (input: LegacyPgDeltaNextDeclarativePlanInput) =>
       legacyTryPgDeltaNext("declarativePlan", async () => {
+        const format = legacyPgDeltaNextFormatOptions(input.formatOptions);
         const planningInput = { ...input, reorder: input.reorder ?? true };
         const result = await libraries.planSchemaFiles(
           input.targetPool,
@@ -529,10 +559,11 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
         const rendered = libraries.renderPlanFiles(result.plan, {
           allowDrops: input.allowDrops,
         });
+        const renderedFiles = legacyFormatPgDeltaNextRenderedFiles(rendered.files, format);
         return {
           changes: rendered.changes,
-          sql: rendered.files.map((file) => file.contents).join("\n\n"),
-          files: legacyNormalizePgDeltaNextRenderedFiles(rendered.files),
+          sql: renderedFiles.map((file) => file.contents).join("\n\n"),
+          files: legacyNormalizePgDeltaNextRenderedFiles(renderedFiles),
           diagnostics: [
             ...legacyNormalizePgDeltaNextDiagnostics(
               result.loadDiagnostics,
