@@ -1,18 +1,23 @@
 import type { LegacyPgDeltaImplementation } from "../../../../shared/legacy-pgdelta-next-flag.ts";
 import type { LegacyPgDeltaRemovalSummary } from "../../shared/legacy-pgdelta-engine.service.ts";
 
-/**
- * Pure control-flow helpers ported 1:1 from
- * `apps/cli-go/cmd/db_schema_declarative.go`. Kept free of Effect/services so
- * the precedence rules are unit-testable in isolation; the handlers run the
- * actual TTY prompt for the `"prompt"` decision.
- */
+/** Extensions that legacy pg-delta treated as part of its implicit Supabase baseline. */
+const LEGACY_IMPLICIT_EXTENSIONS = ["pg_net", "pgcrypto", "uuid-ossp"] as const;
+
+type LegacyDeclarativeCompatibilityAction = "none" | "repair-extensions" | "stage-next-export";
+
+export interface LegacyDeclarativeCompatibilityGap {
+  readonly repairableExtensions: ReadonlyArray<string>;
+  readonly extensionIntents: LegacyPgDeltaRemovalSummary["extensionIntents"];
+  readonly ambiguousRemovals: ReadonlyArray<string>;
+  readonly recommendedAction: LegacyDeclarativeCompatibilityAction;
+}
 
 /**
- * Resolves the migration name. The explicit `--name` wins over `--file`
- * (default `declarative_sync`). Mirrors Go's `resolveDeclarativeMigrationName`
- * (`:99-104`).
+ * Pure control-flow helpers ported from the legacy Go implementation and kept
+ * free of Effect/services so handler decisions remain unit-testable.
  */
+
 export function legacyResolveDeclarativeMigrationName(name: string, file: string): string {
   return name.length > 0 ? name : file;
 }
@@ -20,11 +25,6 @@ export function legacyResolveDeclarativeMigrationName(name: string, file: string
 /** Whether sync applies the generated migration, prompts, or skips. */
 export type LegacyDeclarativeApplyDecision = "apply" | "skip" | "prompt";
 
-/**
- * Decides whether to apply the generated migration to the local database.
- * Precedence (Go's `resolveDeclarativeSyncShouldApply`, `:106-124`):
- * `--no-apply` > `--apply` > global `--yes` > TTY prompt > non-TTY default (skip).
- */
 export function legacyResolveDeclarativeSyncApplyDecision(opts: {
   readonly apply: boolean;
   readonly noApply: boolean;
@@ -38,41 +38,68 @@ export function legacyResolveDeclarativeSyncApplyDecision(opts: {
   return "skip";
 }
 
-/**
- * Warns when pg-delta next sees semantic removals that a manifest-less,
- * potentially legacy-authored declarative tree may simply have omitted.
- */
-export function legacyDeclarativeCompatibilityWarning(opts: {
+const emptyCompatibilityGap = (): LegacyDeclarativeCompatibilityGap => ({
+  repairableExtensions: [],
+  extensionIntents: [],
+  ambiguousRemovals: [],
+  recommendedAction: "none",
+});
+
+/** Classifies manifest-less pg-delta next removals without performing any I/O. */
+export function legacyClassifyDeclarativeCompatibilityGap(opts: {
   readonly implementation: LegacyPgDeltaImplementation;
   readonly manifestPresent: boolean;
   readonly removals: LegacyPgDeltaRemovalSummary;
-}): string | undefined {
-  if (opts.implementation !== "next" || opts.manifestPresent) return undefined;
-  const { extensions, extensionIntents } = opts.removals;
-  if (extensions.length === 0 && extensionIntents.length === 0) return undefined;
+}): LegacyDeclarativeCompatibilityGap {
+  if (opts.implementation !== "next" || opts.manifestPresent) return emptyCompatibilityGap();
 
-  const cronJobs = extensionIntents
-    .filter((intent) => intent.extension === "pg_cron" && intent.intentKind === "job")
-    .map((intent) => intent.key);
-  const otherIntents = extensionIntents.filter(
-    (intent) => intent.extension !== "pg_cron" || intent.intentKind !== "job",
+  const extensions = [...new Set(opts.removals.extensions)].sort();
+  const repairableExtensions = extensions.filter((extension) =>
+    LEGACY_IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
   );
+  const ambiguousRemovals = extensions.filter(
+    (extension) => !LEGACY_IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
+  );
+  const extensionIntents = opts.removals.extensionIntents;
+
+  if (extensions.length === 0 && extensionIntents.length === 0) return emptyCompatibilityGap();
+  const repairable =
+    repairableExtensions.length > 0 &&
+    ambiguousRemovals.length === 0 &&
+    extensionIntents.length === 0;
+  return {
+    repairableExtensions,
+    extensionIntents,
+    ambiguousRemovals,
+    recommendedAction: repairable ? "repair-extensions" : "stage-next-export",
+  };
+}
+
+export const legacyExtensionDeclaration = (extension: string): string =>
+  `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";`;
+
+export function legacyFormatStagedExportRecommendation(
+  gap: LegacyDeclarativeCompatibilityGap,
+): string {
   const detected = [
-    ...(extensions.length > 0 ? [`Extensions: ${extensions.join(", ")}`] : []),
-    ...(cronJobs.length > 0 ? [`pg_cron jobs: ${cronJobs.join(", ")}`] : []),
-    ...(otherIntents.length > 0
+    ...(gap.repairableExtensions.length > 0
+      ? [`Legacy-implicit extensions: ${gap.repairableExtensions.join(", ")}`]
+      : []),
+    ...(gap.ambiguousRemovals.length > 0
+      ? [`Extensions: ${gap.ambiguousRemovals.join(", ")}`]
+      : []),
+    ...(gap.extensionIntents.length > 0
       ? [
-          `Extension intents: ${otherIntents
+          `Extension-managed objects: ${gap.extensionIntents
             .map((intent) => `${intent.extension} ${intent.intentKind} ${intent.key}`)
             .join(", ")}`,
         ]
       : []),
   ];
-
   return [
-    "WARNING: This declarative schema has no pg-delta next export manifest and may have been generated by the legacy engine.",
-    "pg-delta next plans to remove objects that legacy exports may omit:",
+    "WARNING: pg-delta next manages schema state that the legacy export did not represent.",
     ...detected,
-    "If these removals are unintended, do not apply this migration. Re-export using pg-delta next with `supabase db schema declarative generate --overwrite` for the intended target, or add declarations for the objects you want to keep, then run sync again.",
+    "Generate a next-compatible schema into a separate directory, review it, and adopt it when ready:",
+    "supabase db schema declarative generate <target> --output supabase/database-next",
   ].join("\n");
 }

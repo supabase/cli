@@ -15,10 +15,10 @@ as a new timestamped migration.
 - With `PGDELTA_DEBUG`, default-engine snapshots, plan, and diagnostics are
   written below `supabase/.temp/pgdelta/v2/debug/<id>/` and are not reusable.
 - The default engine always refuses extraction or declarative-loading errors.
-  Coverage gaps (`unmodeled_kind` or `unresolved_security_label`) warn by default
-  and explain that unsupported changes are absent from the migration plan;
-  `--strict-coverage` turns them into a refusal. Debug artifacts are saved before
-  policy evaluation when capture is enabled.
+  Fatal diagnostics are always shown. By default, `unmodeled_kind` coverage gaps
+  are summarized once while nonfatal internal diagnostics remain quiet;
+  `--strict-coverage` refuses coverage gaps and prints the exact blockers. Debug
+  mode prints every diagnostic. Artifacts are saved before policy evaluation.
 - Default-engine migrations may differ byte-for-byte and may be split into
   ordered files to preserve transaction boundaries. Successful execution and an
   empty subsequent sync are the compatibility contract.
@@ -45,6 +45,7 @@ as a new timestamped migration.
 | Path                                                               | Format | When                                                 |
 | ------------------------------------------------------------------ | ------ | ---------------------------------------------------- |
 | `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql` | SQL    | changes; default engine may emit ordered segments    |
+| `<workdir>/supabase/database/extension.sql`                        | SQL    | interactive, explicit legacy-extension repair only   |
 | `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out only: native/Go-backed catalog caches |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | default engine with `PGDELTA_DEBUG`                  |
 
@@ -79,6 +80,7 @@ as a new timestamped migration.
 | `1`  | no declarative schema files found                                                                   |
 | `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
 | `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
+| `1`  | repairable legacy extension omissions in non-interactive mode                                       |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: Go's
@@ -97,6 +99,15 @@ opt-out it prints after catalog warming — on both interactive and `--yes` path
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
 
+Before writing a migration, a manifest-less legacy tree that would remove only
+`pgcrypto`, `uuid-ossp`, or `pg_net` offers three explicit choices: append the
+detected declarations to root `extension.sql` and re-plan, continue with the
+removals, or cancel. The repair uses `CREATE EXTENSION IF NOT EXISTS ... WITH
+SCHEMA "extensions"`, never overwrites existing SQL, never creates a next-export
+manifest, and proceeds only when the re-plan removes the compatibility gap.
+Non-interactive execution, including global `--yes`, does not modify declarations
+and stops with the exact SQL to add.
+
 ## Notes
 
 - Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
@@ -104,9 +115,13 @@ are mutually exclusive.
   object omitted from it is intended to be removed, including extensions. This
   is deterministic regardless of whether the directory was generated, written
   by hand, or has a `.pgdelta-export.json` manifest.
-- Projects upgrading from the legacy workflow should regenerate declarations or
-  add declarations for every extension they intend to retain before syncing.
-  Review the existing drop-statement warning before applying destructive changes.
+- For gaps involving unknown extensions or extension-managed state such as
+  `pg_cron` jobs, generate a staged next-compatible tree with
+  `generate <target> --output supabase/database-next`, review it, and adopt or
+  merge it explicitly. `--output` neither changes `config.toml` nor activates the
+  staged tree.
+- The targeted `extension.sql` repair preserves detected installed extensions;
+  it does not certify the legacy tree as a complete pg-delta next export.
 - `--file` sets the migration filename stem (default `declarative_sync`); `--name`
   overrides it. In a TTY without `--name`/`--yes`, the name is prompted.
 - When no declarative files exist, a TTY offers to generate them (from local) first.

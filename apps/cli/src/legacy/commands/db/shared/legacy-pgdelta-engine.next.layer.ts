@@ -160,6 +160,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       operation: LegacyPgDeltaNextOperation,
       diagnostics: Parameters<typeof legacyReportPgDeltaNextDiagnostics>[1],
       strictCoverage: boolean,
+      verboseDiagnostics: boolean,
     ) => {
       const report = legacyPgDeltaNextDiagnosticReport(diagnostics, strictCoverage);
       const showFeedback = !feedbackInvitationShown && report.unmodeledKinds.length > 0;
@@ -169,7 +170,11 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
         diagnostics,
         strictCoverage,
         showFeedback,
-      ).pipe(Effect.provideService(Output, output));
+        verboseDiagnostics,
+      ).pipe(
+        Effect.provideService(Output, output),
+        Effect.provideService(LegacyDebugLogger, debugLogger),
+      );
     };
 
     return LegacyPgDeltaEngine.of({
@@ -233,7 +238,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     diagnostics: result.diagnostics,
                   })
                 : undefined;
-            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage);
+            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
             return normalizeNextDiff(result, debugDirectory);
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
@@ -273,7 +278,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     diagnostics: result.diagnostics,
                   })
                 : undefined;
-            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage);
+            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
             return normalizeNextDiff(result, debugDirectory);
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
@@ -299,7 +304,12 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     : [...result.diagnostics, ...capture.diagnostics],
               });
             }
-            yield* reportDiagnostics("declarativeExport", result.diagnostics, input.strictCoverage);
+            yield* reportDiagnostics(
+              "declarativeExport",
+              result.diagnostics,
+              input.strictCoverage,
+              input.debug,
+            );
             return { files: result.files, manifest: result.manifest };
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
@@ -343,7 +353,12 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                     diagnostics: result.diagnostics,
                   })
                 : undefined;
-            yield* reportDiagnostics("declarativePlan", result.diagnostics, input.strictCoverage);
+            yield* reportDiagnostics(
+              "declarativePlan",
+              result.diagnostics,
+              input.strictCoverage,
+              input.debug,
+            );
             return {
               ...normalizeNextDiff(result, debugDirectory),
               sourceRef: "pg-delta-next:migrations",

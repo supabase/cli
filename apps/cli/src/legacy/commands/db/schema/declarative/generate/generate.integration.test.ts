@@ -277,6 +277,7 @@ const flags = (
   noCache: over.noCache ?? false,
   strictCoverage: over.strictCoverage ?? false,
   overwrite: over.overwrite ?? false,
+  output: over.output ?? Option.none(),
   reset: over.reset ?? false,
   schema: over.schema ?? [],
   dbUrl: over.dbUrl ?? Option.none(),
@@ -462,6 +463,117 @@ describe("legacy db schema declarative generate integration", () => {
       expect(s.out.rawChunks.some((c) => c.text.includes(tmp.current))).toBe(false);
       // Go runs ensureLocalDatabaseStarted before generating from local.
       expect(s.ensureStartedCalls).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "--output writes a complete next export relative to the project without activating it",
+    () => {
+      mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "select 1;");
+      const configPath = join(tmp.current, "supabase", "config.toml");
+      const config = [
+        "[experimental.pgdelta]",
+        "enabled = true",
+        'declarative_schema_path = "supabase/database"',
+        "",
+      ].join("\n");
+      writeFileSync(configPath, config);
+      const destination = join("supabase", "database-next");
+      const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
+      return Effect.gen(function* () {
+        yield* legacyDbSchemaDeclarativeGenerate(
+          flags({ local: Option.some(true), output: Option.some(destination) }),
+        );
+
+        expect(
+          readFileSync(
+            join(tmp.current, destination, "schemas", "public", "tables", "players.sql"),
+            "utf8",
+          ),
+        ).toBe("create table players ();");
+        expect(
+          JSON.parse(readFileSync(join(tmp.current, destination, ".pgdelta-export.json"), "utf8")),
+        ).toMatchObject({
+          formatVersion: 1,
+          profile: "supabase",
+          files: ["schemas/public/tables/players.sql"],
+        });
+        expect(
+          readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
+        ).toBe("select 1;");
+        expect(readFileSync(configPath, "utf8")).toBe(config);
+        expect(
+          s.out.rawChunks.map((chunk) => ({ text: stripAnsi(chunk.text), stream: chunk.stream })),
+        ).toContainEqual({
+          text: `Declarative schema written to ${destination}\n`,
+          stream: "stderr",
+        });
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("--output protects a non-empty destination without --overwrite", () => {
+    const destination = join(tmp.current, "staged-schema");
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(join(destination, "keep.sql"), "select 'keep';");
+    const s = setup(tmp.current, {
+      experimental: true,
+      engineImplementation: "next",
+      promptConfirmResponses: [false],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(
+        flags({ local: Option.some(true), output: Option.some(destination) }),
+      );
+      expect(readFileSync(join(destination, "keep.sql"), "utf8")).toBe("select 'keep';");
+      expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(false);
+      expect(s.out.rawChunks.some((chunk) => chunk.text.includes("Skipped writing"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--output does not warm the configured legacy declarative tree", () => {
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(
+        flags({ local: Option.some(true), output: Option.some("staged-schema") }),
+      );
+      expect(s.seamCalls).toEqual(["baseline"]);
+      expect(
+        existsSync(
+          join(tmp.current, "staged-schema", "schemas", "public", "tables", "players.sql"),
+        ),
+      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "database"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--overwrite replaces only the absolute --output destination", () => {
+    const destination = mkdtempSync(join(tmpdir(), "legacy-decl-output-"));
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "select 1;");
+    writeFileSync(join(destination, "stale.sql"), "select 'stale';");
+    const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(
+        flags({
+          local: Option.some(true),
+          output: Option.some(destination),
+          overwrite: true,
+        }),
+      );
+      expect(existsSync(join(destination, "stale.sql"))).toBe(false);
+      expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(true);
+      expect(
+        readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
+      ).toBe("select 1;");
+      expect(
+        s.out.rawChunks.map((chunk) => ({ text: stripAnsi(chunk.text), stream: chunk.stream })),
+      ).toContainEqual({
+        text: `Declarative schema written to ${destination}\n`,
+        stream: "stderr",
+      });
+      rmSync(destination, { recursive: true, force: true });
     }).pipe(Effect.provide(s.layer));
   });
 

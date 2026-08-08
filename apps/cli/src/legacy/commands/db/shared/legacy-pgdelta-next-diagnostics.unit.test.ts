@@ -1,8 +1,9 @@
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import type { LegacyPgDeltaNextDiagnostic } from "./legacy-pgdelta-next-adapter.service.ts";
 import {
   legacyPgDeltaNextDiagnosticMessage,
@@ -24,32 +25,73 @@ const unmodeled = (
   ...overrides,
 });
 
+const debugLayer = (messages: string[]) =>
+  Layer.succeed(LegacyDebugLogger, {
+    debug: (message) => Effect.sync(() => messages.push(message)),
+    http: () => Effect.void,
+  });
+
 describe("pg-delta next diagnostic coverage policy", () => {
-  it("allows coverage gaps by default after rendering diagnostics and one feedback invitation", () => {
+  it("summarizes unmodeled kinds and routes nonfatal diagnostic detail to debug", () => {
     const out = mockOutput();
+    const debugMessages: string[] = [];
     return Effect.gen(function* () {
       yield* legacyReportPgDeltaNextDiagnostics(
         "diff",
-        [unmodeled("text search configuration"), unmodeled("statistics object")],
+        [
+          unmodeled("text search configuration"),
+          unmodeled("statistics object"),
+          {
+            origin: "source",
+            code: "dangling_edge",
+            severity: "warning",
+            subject: "role:postgres",
+            message: "edge references a fact not in the base",
+          },
+          {
+            origin: "declarativeLoad",
+            code: "invalid_routine_body",
+            severity: "warning",
+            message: "routine body failed validation",
+          },
+          {
+            origin: "snapshot",
+            code: "unresolved_security_label",
+            severity: "warning",
+            message: "provider was not resolved",
+          },
+        ],
         false,
       );
 
-      expect(out.messages.filter(({ type }) => type === "warn")).toHaveLength(3);
+      expect(out.messages.filter(({ type }) => type === "warn")).toHaveLength(1);
       expect(out.messages).toContainEqual({
         type: "warn",
         message:
-          "pg-delta found schema objects it does not manage. Changes to these objects are omitted from the generated database diff.",
+          "pg-delta does not manage these PostgreSQL object kinds: statistics object, text search configuration. Changes to these objects are omitted from the generated database diff.",
       });
+      expect(out.messages.some(({ message }) => message.includes("dangling_edge"))).toBe(false);
+      expect(out.messages.some(({ message }) => message.includes("invalid_routine_body"))).toBe(
+        false,
+      );
+      expect(
+        out.messages.some(({ message }) => message.includes("unresolved_security_label")),
+      ).toBe(false);
+      expect(debugMessages).toHaveLength(5);
+      expect(debugMessages).toContain(
+        "pg-delta next diagnostic: origin=source code=dangling_edge subject=role:postgres message=edge references a fact not in the base",
+      );
       const invitations = out.messages.filter(({ message }) =>
         message.startsWith("Request pg-delta support:"),
       );
       expect(invitations).toHaveLength(1);
       expect(invitations[0]?.message).toContain("statistics object, text search configuration");
-    }).pipe(Effect.provide(out.layer));
+    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
   });
 
   it("renders coverage diagnostics and then fails in strict mode", () => {
     const out = mockOutput();
+    const debugMessages: string[] = [];
     return Effect.gen(function* () {
       const exit = yield* legacyReportPgDeltaNextDiagnostics(
         "declarativePlan",
@@ -61,16 +103,23 @@ describe("pg-delta next diagnostic coverage policy", () => {
       expect(out.messages).toContainEqual({
         type: "warn",
         message:
-          "pg-delta found schema objects it does not manage. Strict coverage is enabled, so the operation will stop.",
+          "pg-delta next diagnostic: origin=desired code=unmodeled_kind subject=object:public.unsupported message=object kind is not modeled",
       });
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message:
+          "pg-delta does not manage these PostgreSQL object kinds: text search configuration. Strict coverage is enabled, so the operation will stop.",
+      });
+      expect(debugMessages).toEqual([]);
       expect(out.messages.some(({ message }) => message.includes("supabase issue feature"))).toBe(
         true,
       );
-    }).pipe(Effect.provide(out.layer));
+    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
   });
 
   it("can suppress a repeated feedback invitation without suppressing warnings", () => {
     const out = mockOutput();
+    const debugMessages: string[] = [];
     return Effect.gen(function* () {
       yield* legacyReportPgDeltaNextDiagnostics(
         "declarativePlan",
@@ -83,11 +132,12 @@ describe("pg-delta next diagnostic coverage policy", () => {
         false,
       );
       expect(out.messages.some(({ type }) => type === "warn")).toBe(true);
-    }).pipe(Effect.provide(out.layer));
+    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
   });
 
   it("always renders and fails error diagnostics", () => {
     const out = mockOutput();
+    const debugMessages: string[] = [];
     return Effect.gen(function* () {
       const exit = yield* legacyReportPgDeltaNextDiagnostics(
         "declarativeExport",
@@ -108,7 +158,47 @@ describe("pg-delta next diagnostic coverage policy", () => {
         message:
           "pg-delta next diagnostic: origin=export code=extraction_failed message=catalog query failed",
       });
-    }).pipe(Effect.provide(out.layer));
+    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+  });
+
+  it("renders every diagnostic with full detail when pg-delta debug is enabled", () => {
+    const out = mockOutput();
+    const debugMessages: string[] = [];
+    return Effect.gen(function* () {
+      yield* legacyReportPgDeltaNextDiagnostics(
+        "diff",
+        [
+          {
+            origin: "source",
+            code: "dangling_edge",
+            severity: "warning",
+            subject: "role:postgres",
+            message: "edge references a fact not in the base",
+          },
+          {
+            origin: "declarativeLoad",
+            code: "invalid_routine_body",
+            severity: "info",
+            message: "routine body failed validation",
+          },
+        ],
+        false,
+        true,
+        true,
+      );
+
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message:
+          "pg-delta next diagnostic: origin=source code=dangling_edge subject=role:postgres message=edge references a fact not in the base",
+      });
+      expect(out.messages).toContainEqual({
+        type: "info",
+        message:
+          "pg-delta next diagnostic: origin=declarativeLoad code=invalid_routine_body message=routine body failed validation",
+      });
+      expect(debugMessages).toEqual([]);
+    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
   });
 
   it("classifies both coverage codes and aggregates arbitrary kinds safely", () => {

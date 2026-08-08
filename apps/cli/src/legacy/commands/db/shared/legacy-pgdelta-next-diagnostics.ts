@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
 import type {
   LegacyPgDeltaNextDiagnostic,
@@ -65,14 +66,19 @@ export function legacyPgDeltaNextDiagnosticMessage(
   return `pg-delta next diagnostic: origin=${diagnostic.origin} code=${diagnostic.code}${subject} message=${diagnostic.message}`;
 }
 
-function legacyPgDeltaNextCoverageMessage(
+function legacyPgDeltaNextUnmodeledKindsMessage(
   operation: LegacyPgDeltaNextOperation,
+  kinds: readonly string[],
   strictCoverage: boolean,
 ): string {
   const policy = strictCoverage
     ? "Strict coverage is enabled, so the operation will stop."
     : operationConsequence[operation];
-  return `pg-delta found schema objects it does not manage. ${policy}`;
+  const summary =
+    kinds.length === 0
+      ? "pg-delta found schema objects it does not manage."
+      : `pg-delta does not manage these PostgreSQL object kinds: ${kinds.join(", ")}.`;
+  return `${summary} ${policy}`;
 }
 
 function shellQuote(value: string): string {
@@ -99,18 +105,28 @@ function legacyPgDeltaNextBlockingDiagnosticMessage(
   return `pg-delta next refused to ${operationAction[operation]}: ${reason}`;
 }
 
-/** Render every adapter diagnostic and enforce the selected coverage policy. */
+/** Render actionable diagnostics, route internal detail to debug, and enforce coverage policy. */
 export const legacyReportPgDeltaNextDiagnostics = Effect.fnUntraced(function* (
   operation: LegacyPgDeltaNextOperation,
   diagnostics: readonly LegacyPgDeltaNextDiagnostic[],
   strictCoverage: boolean,
   showFeedback = true,
+  verboseDiagnostics = false,
 ) {
   const output = yield* Output;
+  const debug = yield* LegacyDebugLogger;
   const report = legacyPgDeltaNextDiagnosticReport(diagnostics, strictCoverage);
 
   for (const diagnostic of report.diagnostics) {
     const message = legacyPgDeltaNextDiagnosticMessage(diagnostic);
+    const renderDetail =
+      verboseDiagnostics ||
+      diagnostic.severity === "error" ||
+      (strictCoverage && coverageDiagnosticCodes.has(diagnostic.code));
+    if (!renderDetail) {
+      yield* debug.debug(message);
+      continue;
+    }
     if (diagnostic.severity === "error") {
       yield* output.error(message);
     } else if (diagnostic.severity === "warning") {
@@ -120,8 +136,13 @@ export const legacyReportPgDeltaNextDiagnostics = Effect.fnUntraced(function* (
     }
   }
 
-  if (report.coverage.length > 0) {
-    yield* output.warn(legacyPgDeltaNextCoverageMessage(operation, strictCoverage));
+  const unmodeledCount = report.diagnostics.filter(
+    (diagnostic) => diagnostic.code === "unmodeled_kind",
+  ).length;
+  if (unmodeledCount > 0) {
+    yield* output.warn(
+      legacyPgDeltaNextUnmodeledKindsMessage(operation, report.unmodeledKinds, strictCoverage),
+    );
   }
 
   const feedback = showFeedback

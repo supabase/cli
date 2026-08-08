@@ -44,12 +44,12 @@ platform view.
 
 ## Files Written
 
-| Path                                                                                                                        | Format | When                                         |
-| --------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------- |
-| `<workdir>/supabase/database/**/*.sql` (declarative dir; configurable via `[experimental.pgdelta] declarative_schema_path`) | SQL    | always — the entire dir is wiped + rewritten |
-| `<workdir>/supabase/database/.pgdelta-export.json`                                                                          | JSON   | default-engine export policy/manifest        |
-| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                                                                           | JSON   | legacy opt-out only: catalog cache           |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                                                     | JSON   | default engine with `PGDELTA_DEBUG`          |
+| Path                                                                                                                                                        | Format | When                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------- |
+| `<workdir>/supabase/database/**/*.sql` (declarative dir; configurable via `[experimental.pgdelta] declarative_schema_path`, or invocation-local `--output`) | SQL    | the selected destination is wiped + rewritten after overwrite confirmation |
+| `<selected-output>/.pgdelta-export.json`                                                                                                                    | JSON   | default-engine export policy/manifest                                      |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                                                                                                           | JSON   | legacy opt-out only: catalog cache                                         |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                                                                                     | JSON   | default engine with `PGDELTA_DEBUG`                                        |
 
 ## Subprocesses / Containers
 
@@ -105,6 +105,10 @@ always go to stderr, in every `--output-format`. On success:
 - Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
 - `--db-url` / `--linked` / `--local` are mutually exclusive; absent all three,
   smart mode prompts (existing-files overwrite → Local/Custom choice + reset offer).
+- `--output <dir>` selects a destination for this invocation only. Relative paths
+  resolve from the project workdir; it does not edit config or activate the output
+  for later syncs. A non-empty destination still requires confirmation or
+  `--overwrite`, and the configured declarative tree is left untouched.
 - The default engine preserves the shared direct/pooler, DNS, TLS, and client
   certificate connection behavior. The legacy opt-out retains its embedded CA
   file and `sslmode=verify-ca` URL rewrite.

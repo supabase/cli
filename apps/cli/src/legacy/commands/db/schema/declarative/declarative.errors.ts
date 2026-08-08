@@ -71,6 +71,13 @@ export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarat
   readonly message: string;
 }> {}
 
+/** Sync stopped because a manifest-less legacy schema needs an explicit migration choice. */
+export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
+  "LegacyDeclarativeCompatibilityError",
+)<{
+  readonly message: string;
+}> {}
+
 /**
  * Applying the generated migration to the local database failed. Wraps Go's
  * `applyMigrationToLocal` error; in interactive mode the handler offers a

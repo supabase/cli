@@ -41,15 +41,19 @@ import {
 } from "../../../shared/legacy-debug-bundle.ts";
 import {
   LegacyDeclarativeApplyError,
+  LegacyDeclarativeCompatibilityError,
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNoFilesGeneratedError,
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
 import {
-  legacyDeclarativeCompatibilityWarning,
+  legacyClassifyDeclarativeCompatibilityGap,
+  legacyExtensionDeclaration,
+  legacyFormatStagedExportRecommendation,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
+import { legacyAppendExtensionDeclarations } from "../declarative.extension-repair.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
   type LegacyDeclarativeRunContext,
@@ -283,28 +287,101 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         Option.getOrUndefined(toml.orioledbVersion),
         toml.baseline,
       );
-      const result: LegacyDeclarativeSyncResult = yield* legacyDiffDeclarativeToMigrations(
-        run,
-        setupInputs,
-      ).pipe(
-        Effect.tapError((error) =>
-          Effect.gen(function* () {
-            const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-            yield* legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, {
-              id: formatDebugId(yield* Clock.currentTimeMillis),
-              error: error.message,
-              migrations,
-            }).pipe(
-              Effect.matchEffect({
-                // Go prints nothing when SaveDebugBundle errors on the diff path
-                // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
-                onFailure: () => Effect.void,
-                onSuccess: (debugDir) => output.raw(legacyDebugBundleMessage(debugDir), "stderr"),
+      const planDeclarativeSync = () =>
+        legacyDiffDeclarativeToMigrations(run, setupInputs).pipe(
+          Effect.tapError((error) =>
+            Effect.gen(function* () {
+              const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
+              yield* legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, {
+                id: formatDebugId(yield* Clock.currentTimeMillis),
+                error: error.message,
+                migrations,
+              }).pipe(
+                Effect.matchEffect({
+                  // Go prints nothing when SaveDebugBundle errors on the diff path
+                  // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
+                  onFailure: () => Effect.void,
+                  onSuccess: (debugDir) => output.raw(legacyDebugBundleMessage(debugDir), "stderr"),
+                }),
+              );
+            }),
+          ),
+        );
+      let result: LegacyDeclarativeSyncResult = yield* planDeclarativeSync();
+
+      // Resolve manifest-less legacy compatibility before printing or writing a
+      // migration. A repair is always explicit, even when global --yes is set.
+      const compatibility = legacyClassifyDeclarativeCompatibilityGap({
+        implementation: engine.implementation,
+        manifestPresent: result.manifestPresent,
+        removals: result.removals,
+      });
+      if (compatibility.recommendedAction === "repair-extensions") {
+        const statements = compatibility.repairableExtensions.map(legacyExtensionDeclaration);
+        const explanation = [
+          "This declarative schema appears to use legacy pg-delta behavior. Legacy pg-delta treated these installed extensions as implicit, while pg-delta next treats their omission as removal:",
+          "",
+          ...compatibility.repairableExtensions.map((extension) => `- ${extension}`),
+        ].join("\n");
+        if (!tty.stdinIsTty || yes) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeCompatibilityError({
+              message: [
+                explanation,
+                "",
+                "Non-interactive sync will not modify the declarative schema automatically. Add these statements to extension.sql, then run sync again:",
+                ...statements,
+                "",
+                "Or generate a next-compatible schema into a separate directory:",
+                "supabase db schema declarative generate <target> --output supabase/database-next",
+              ].join("\n"),
+            }),
+          );
+        }
+
+        yield* output.raw(`${legacyYellow(explanation)}\n`, "stderr");
+        const choice = yield* output.promptSelect("How would you like to continue?", [
+          {
+            value: "repair",
+            label: "Add declarations and re-plan",
+            hint: "recommended",
+          },
+          { value: "continue", label: "Continue with removals" },
+          { value: "cancel", label: "Cancel" },
+        ]);
+        if (choice === "cancel") return;
+        if (choice === "repair") {
+          const repaired = yield* legacyAppendExtensionDeclarations(
+            declarativeDir,
+            compatibility.repairableExtensions,
+          );
+          yield* output.raw(
+            `Updated ${legacyBold(repaired.path)} with:\n${repaired.addedDeclarations.join("\n")}\n`,
+            "stderr",
+          );
+          result = yield* planDeclarativeSync();
+          const remaining = legacyClassifyDeclarativeCompatibilityGap({
+            implementation: engine.implementation,
+            manifestPresent: result.manifestPresent,
+            removals: result.removals,
+          });
+          if (remaining.recommendedAction !== "none") {
+            return yield* Effect.fail(
+              new LegacyDeclarativeCompatibilityError({
+                message: [
+                  "The compatibility removals remain after adding extension declarations.",
+                  legacyFormatStagedExportRecommendation(remaining),
+                ].join("\n"),
               }),
             );
-          }),
-        ),
-      );
+          }
+        }
+      } else if (compatibility.recommendedAction === "stage-next-export") {
+        yield* output.raw(
+          `${legacyYellow(legacyFormatStagedExportRecommendation(compatibility))}\n`,
+          "stderr",
+        );
+      }
 
       // Step 3: empty diff.
       if (result.diffSQL.trim().length < 2) {
@@ -313,15 +390,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       }
       yield* output.raw("Generated migration SQL:\n", "stderr");
       yield* output.raw(`${result.diffSQL}\n`, "stderr");
-
-      const compatibilityWarning = legacyDeclarativeCompatibilityWarning({
-        implementation: engine.implementation,
-        manifestPresent: result.manifestPresent,
-        removals: result.removals,
-      });
-      if (compatibilityWarning !== undefined) {
-        yield* output.raw(`${legacyYellow(compatibilityWarning)}\n`, "stderr");
-      }
 
       // Step 4: resolve migration name (prompt in TTY when --name unset).
       const file = Option.getOrElse(flags.file, () => DEFAULT_SYNC_NAME);

@@ -57,7 +57,7 @@ export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer
 
 export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription(
-    "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
+    "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
   ),
   Command.withShortDescription("Generate a new migration from declarative schema"),
   Command.withHandler((flags) =>
