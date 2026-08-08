@@ -8,9 +8,11 @@ import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 
 import { makeApiClient, operationDefinitions } from "./effect.ts";
 import {
+  ApiKeyResponse,
   V1CreateASsoProviderOutput,
   V1DeleteASsoProviderOutput,
   V1GetASsoProviderOutput,
+  V1GetProjectApiKeysOutput,
   V1ListAllSsoProviderOutput,
   V1UpdateASsoProviderOutput,
 } from "./generated/contracts.ts";
@@ -111,6 +113,37 @@ describe("SSO provider response contracts", () => {
       expect(decoded.saml).not.toHaveProperty("id");
       expect(decoded.domains?.[0]).not.toHaveProperty("id");
     }
+  });
+});
+
+describe("project API key response contracts", () => {
+  // `inserted_at`/`updated_at` are RFC 3339 timestamps. The Management API
+  // emits numeric offsets (e.g. `2026-08-07T09:00:00.000+00:00`) rather than
+  // `Z`, so the pattern must accept both forms.
+  const KEY_WITH_OFFSET = {
+    name: "anon",
+    api_key: "anon-secret",
+    inserted_at: "2026-08-07T09:00:00.000+00:00",
+    updated_at: "2026-08-07T10:00:00.000+00:00",
+  };
+
+  const KEY_WITH_Z = {
+    name: "anon",
+    api_key: "anon-secret",
+    inserted_at: "2026-08-07T09:00:00.000Z",
+    updated_at: "2026-08-07T10:00:00.000Z",
+  };
+
+  test("decodes api keys with numeric UTC offsets in inserted_at and updated_at", () => {
+    expect(() => Schema.decodeUnknownSync(ApiKeyResponse)(KEY_WITH_OFFSET)).not.toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(V1GetProjectApiKeysOutput)([KEY_WITH_OFFSET]),
+    ).not.toThrow();
+  });
+
+  test("still decodes api keys with Z-suffixed timestamps", () => {
+    expect(() => Schema.decodeUnknownSync(ApiKeyResponse)(KEY_WITH_Z)).not.toThrow();
+    expect(() => Schema.decodeUnknownSync(V1GetProjectApiKeysOutput)([KEY_WITH_Z])).not.toThrow();
   });
 });
 

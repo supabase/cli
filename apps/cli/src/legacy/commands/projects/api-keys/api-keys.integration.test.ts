@@ -198,6 +198,40 @@ describe("legacy projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("decodes api keys with a +00:00 offset in inserted_at and updated_at", () => {
+    const { layer, out } = setup({
+      response: [
+        {
+          name: "anon",
+          api_key: "anon-secret",
+          inserted_at: "2026-08-07T09:00:00.000+00:00",
+          updated_at: "2026-08-07T10:00:00.000+00:00",
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      expect(out.stdoutText).toContain("anon-secret");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("decodes api keys with a Z-suffixed timestamp in inserted_at and updated_at", () => {
+    const { layer, out } = setup({
+      response: [
+        {
+          name: "anon",
+          api_key: "anon-secret",
+          inserted_at: "2026-08-07T09:00:00.000Z",
+          updated_at: "2026-08-07T10:00:00.000Z",
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      expect(out.stdoutText).toContain("anon-secret");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails with LegacyProjectsApiKeysNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
