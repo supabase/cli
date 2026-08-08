@@ -19,7 +19,7 @@ func TestHandoffPgDeltaNextShadowTransfersOwnershipAfterAck(t *testing.T) {
 	var output bytes.Buffer
 	var removed []string
 
-	err := handoffPgDeltaNextShadow(context.Background(), shadow, strings.NewReader("ack\n"), &output, func(container string) {
+	err := handoffPgDeltaNextPlanShadow(context.Background(), shadow, strings.NewReader("ack\n"), &output, func(container string) {
 		removed = append(removed, container)
 	})
 
@@ -42,7 +42,7 @@ func TestHandoffPgDeltaNextShadowRetainsOwnershipOnHandshakeFailure(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var removed []string
-			err := handoffPgDeltaNextShadow(context.Background(), testPgDeltaNextShadow(), strings.NewReader(tt.input), io.Discard, func(container string) {
+			err := handoffPgDeltaNextPlanShadow(context.Background(), testPgDeltaNextShadow(), strings.NewReader(tt.input), io.Discard, func(container string) {
 				removed = append(removed, container)
 			})
 
@@ -54,7 +54,7 @@ func TestHandoffPgDeltaNextShadowRetainsOwnershipOnHandshakeFailure(t *testing.T
 
 func TestHandoffPgDeltaNextShadowCleansBothOnEncodingFailure(t *testing.T) {
 	var removed []string
-	err := handoffPgDeltaNextShadow(context.Background(), testPgDeltaNextShadow(), strings.NewReader("ack\n"), failingWriter{}, func(container string) {
+	err := handoffPgDeltaNextPlanShadow(context.Background(), testPgDeltaNextShadow(), strings.NewReader("ack\n"), failingWriter{}, func(container string) {
 		removed = append(removed, container)
 	})
 
@@ -72,7 +72,7 @@ func TestHandoffPgDeltaNextShadowCleansBothOnCancellation(t *testing.T) {
 	})
 	var removed []string
 
-	err := handoffPgDeltaNextShadow(ctx, testPgDeltaNextShadow(), reader, io.Discard, func(container string) {
+	err := handoffPgDeltaNextPlanShadow(ctx, testPgDeltaNextShadow(), reader, io.Discard, func(container string) {
 		removed = append(removed, container)
 	})
 
@@ -80,8 +80,34 @@ func TestHandoffPgDeltaNextShadowCleansBothOnCancellation(t *testing.T) {
 	assert.Equal(t, []string{"migrations-container", "declarative-container"}, removed)
 }
 
-func testPgDeltaNextShadow() diff.PgDeltaNextShadow {
-	return diff.PgDeltaNextShadow{
+func TestHandoffPgDeltaNextMigrationsShadowTransfersOneContainer(t *testing.T) {
+	shadow := testPgDeltaNextShadow().Migrations
+	var output bytes.Buffer
+	var removed []string
+
+	err := handoffPgDeltaNextMigrationsShadow(context.Background(), shadow, strings.NewReader("ack\n"), &output, func(container string) {
+		removed = append(removed, container)
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "{\"migrations\":{\"containerId\":\"migrations-container\",\"url\":\"postgresql://postgres@migrations-host:6543/postgres?connect_timeout=10\"}}\n", output.String())
+	assert.Empty(t, removed)
+}
+
+func TestHandoffPgDeltaNextMigrationsShadowCleansOneContainerOnFailure(t *testing.T) {
+	shadow := testPgDeltaNextShadow().Migrations
+	var removed []string
+
+	err := handoffPgDeltaNextMigrationsShadow(context.Background(), shadow, strings.NewReader("nope\n"), io.Discard, func(container string) {
+		removed = append(removed, container)
+	})
+
+	assert.ErrorContains(t, err, "unexpected")
+	assert.Equal(t, []string{"migrations-container"}, removed)
+}
+
+func testPgDeltaNextShadow() diff.PgDeltaNextPlanShadow {
+	return diff.PgDeltaNextPlanShadow{
 		Migrations: diff.PgDeltaNextShadowDatabase{
 			Container: "migrations-container",
 			Config: pgconn.Config{

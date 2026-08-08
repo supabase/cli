@@ -343,6 +343,35 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("honors pg-delta's no-transaction migration header", () => {
+    const set = "SET check_function_bodies = off";
+    const action = "DROP SUBSCRIPTION app_events";
+    const { layer, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile(
+        "20240101000000",
+        `-- pg-delta: transaction=false\n${set};\n${action};\nRESET ALL;`,
+      ),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      const setupCommit = conn.execs.indexOf("COMMIT");
+      const setIndex = conn.execs.indexOf(set);
+      const actionIndex = conn.execs.indexOf(action);
+      const cleanupIndex = conn.execs.lastIndexOf("RESET ALL");
+
+      expect(conn.execs.filter((sql) => sql === "BEGIN")).toHaveLength(1);
+      expect(conn.execs.filter((sql) => sql === "COMMIT")).toHaveLength(1);
+      expect(setIndex).toBeGreaterThan(setupCommit);
+      expect(actionIndex).toBeGreaterThan(setIndex);
+      expect(cleanupIndex).toBeGreaterThan(actionIndex);
+      expect(
+        conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+      ).toBe(true);
+    });
+  });
+
   it.live("does not attempt to cache the migrations catalog when pg-delta is disabled", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {
       toml: 'project_id = "test"\n',

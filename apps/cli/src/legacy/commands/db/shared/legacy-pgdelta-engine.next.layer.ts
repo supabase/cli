@@ -98,13 +98,17 @@ function normalizeNextDiff(
   };
 }
 
-function parseEndpoint(endpoint: LegacyPgDeltaDatabaseEndpoint) {
-  if (endpoint.connection !== undefined) return endpoint.connection;
-  const parsed = parseLegacyConnectionString(endpoint.ref);
-  if (parsed !== undefined) return parsed;
-  throw new LegacyPgDeltaEngineError({
-    message: "failed to parse Postgres connection string for pg-delta",
-    cause: endpoint.ref.replace(/:[^:@/]+@/, ":***@"),
+export function legacyParsePgDeltaNextEndpoint(endpoint: LegacyPgDeltaDatabaseEndpoint) {
+  return Effect.gen(function* () {
+    if (endpoint.connection !== undefined) return endpoint.connection;
+    const parsed = parseLegacyConnectionString(endpoint.ref);
+    if (parsed !== undefined) return parsed;
+    return yield* Effect.fail(
+      new LegacyPgDeltaEngineError({
+        message: "failed to parse Postgres connection string for pg-delta",
+        cause: endpoint.ref.replace(/:[^:@/]+@/, ":***@"),
+      }),
+    );
   });
 }
 
@@ -154,7 +158,9 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       );
 
     const acquireDatabase = (endpoint: LegacyPgDeltaDatabaseEndpoint) =>
-      legacyAcquirePgPool(parseEndpoint(endpoint), endpoint.connectOptions);
+      legacyParsePgDeltaNextEndpoint(endpoint).pipe(
+        Effect.flatMap((connection) => legacyAcquirePgPool(connection, endpoint.connectOptions)),
+      );
 
     const reportDiagnostics = (
       operation: LegacyPgDeltaNextOperation,
@@ -182,9 +188,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       diffExplicit: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            let shadow:
-              | { readonly migrationsUrl: string; readonly declarativeUrl: string }
-              | undefined;
+            let shadow: { readonly migrationsUrl: string } | undefined;
             const migrationsEndpoint =
               input.source.kind === "migrations"
                 ? input.source
@@ -192,7 +196,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                   ? input.desired
                   : undefined;
             if (migrationsEndpoint !== undefined) {
-              shadow = yield* shadowService.provision({
+              shadow = yield* shadowService.provisionMigrations({
                 schema: input.schema,
                 ...(migrationsEndpoint.projectRef !== undefined
                   ? { projectRef: migrationsEndpoint.projectRef }
@@ -245,7 +249,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       diffDatabase: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const shadow = yield* shadowService.provision({
+            const shadow = yield* shadowService.provisionMigrations({
               schema: input.schema,
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
             });
@@ -316,7 +320,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       planDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const shadow = yield* shadowService.provision({ schema: input.schema });
+            const shadow = yield* shadowService.provisionPlan({ schema: input.schema });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
             const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
             if (migrations === undefined || declarative === undefined) {

@@ -49,7 +49,9 @@ function mockSeam(paths: Record<LegacyCatalogMode, string>) {
     },
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
-    provisionNextShadow: () => Effect.die("provisionNextShadow not used in declarative tests"),
+    provisionNextMigrationsShadow: () =>
+      Effect.die("next migrations shadow not used in declarative tests"),
+    provisionNextPlanShadows: () => Effect.die("next plan shadows not used in declarative tests"),
     // The migrations-catalog source now resolves natively (CLI-1959) via
     // `legacyGetMigrationsCatalogRef`, which provisions its shadow through this
     // EXISTING `provisionShadow` (Go's unchanged `db __shadow --mode diff`) rather

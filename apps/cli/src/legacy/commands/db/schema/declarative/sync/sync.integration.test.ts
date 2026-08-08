@@ -141,7 +141,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             : Effect.void,
         ),
       ),
-    provisionNextShadow: () => Effect.die("provisionNextShadow not used in declarative tests"),
+    provisionNextMigrationsShadow: () =>
+      Effect.die("next migrations shadow not used in declarative tests"),
+    provisionNextPlanShadows: () => Effect.die("next plan shadows not used in declarative tests"),
     provisionShadow: ({ mode }) =>
       Effect.sync(() => {
         provisionShadowCalls.push({ mode, rawChunksAt: out.rawChunks.length });

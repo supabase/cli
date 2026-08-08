@@ -50,6 +50,7 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
 const nextShadow = legacyPgDeltaNextShadowLayer.pipe(Layer.provide(seam));
 const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
+  Layer.provide(cliConfig),
   Layer.provide(legacyPgDeltaNextAdapterLayer),
   Layer.provide(nextShadow),
   Layer.provide(edgeRuntime),

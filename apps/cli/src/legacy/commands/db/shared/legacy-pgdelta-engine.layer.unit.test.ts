@@ -1,8 +1,14 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Effect, Exit, Layer } from "effect";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { it } from "@effect/vitest";
 import { afterEach, describe, expect } from "vitest";
 
+import {
+  mockLegacyCliConfig,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
@@ -52,7 +58,8 @@ const unusedLegacyRuntime = Layer.mergeAll(
     ensureLocalDatabaseStarted: () => Effect.die("local start not needed"),
     ensureLocalPostgresImageCurrent: () => Effect.die("image check not needed"),
     provisionShadow: () => Effect.die("shadow not needed"),
-    provisionNextShadow: () => Effect.die("next shadow not needed"),
+    provisionNextMigrationsShadow: () => Effect.die("next migrations shadow not needed"),
+    provisionNextPlanShadows: () => Effect.die("next plan shadows not needed"),
     removeShadowContainer: () => Effect.die("cleanup not needed"),
   }),
   Layer.succeed(LegacyPgDeltaNextAdapter, {
@@ -62,7 +69,8 @@ const unusedLegacyRuntime = Layer.mergeAll(
     captureSnapshot: () => Effect.die("adapter not needed"),
   }),
   Layer.succeed(LegacyPgDeltaNextShadow, {
-    provision: () => Effect.die("next shadow not needed"),
+    provisionMigrations: () => Effect.die("next migrations shadow not needed"),
+    provisionPlan: () => Effect.die("next plan shadows not needed"),
   }),
   mockOutput().layer,
 );
@@ -171,8 +179,61 @@ describe("legacyPgDeltaEngineSelectorLayer", () => {
 });
 
 describe("legacyPgDeltaEngineLayer", () => {
+  const tmp = useLegacyTempWorkdir("pgdelta-engine-selector-");
+
   afterEach(() => {
     delete process.env[FLAG];
+  });
+
+  const provideProductionSelector = (messages: Array<string>) =>
+    legacyPgDeltaEngineLayer.pipe(
+      Layer.provide(unusedLegacyRuntime),
+      Layer.provide(debugLayer(messages)),
+      Layer.provide(mockLegacyCliConfig({ workdir: tmp.current })),
+    );
+
+  const writeProjectFlag = (value: string) => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", ".env"), `${FLAG}=${value}\n`);
+  };
+
+  it.effect("selects legacy from the project environment when the shell is unset", () => {
+    const messages: Array<string> = [];
+    writeProjectFlag("false");
+
+    return Effect.gen(function* () {
+      const engine = yield* LegacyPgDeltaEngine;
+      expect(engine.implementation).toBe("legacy");
+      expect(messages).toEqual(["Using pg-delta legacy implementation."]);
+    }).pipe(Effect.provide(provideProductionSelector(messages)));
+  });
+
+  it.effect("prefers a true shell value over a false project value", () => {
+    const messages: Array<string> = [];
+    process.env[FLAG] = "true";
+    writeProjectFlag("false");
+
+    return Effect.gen(function* () {
+      expect((yield* LegacyPgDeltaEngine).implementation).toBe("next");
+    }).pipe(Effect.provide(provideProductionSelector(messages)));
+  });
+
+  it.effect("prefers a false shell value over a true project value", () => {
+    const messages: Array<string> = [];
+    process.env[FLAG] = "false";
+    writeProjectFlag("true");
+
+    return Effect.gen(function* () {
+      expect((yield* LegacyPgDeltaEngine).implementation).toBe("legacy");
+    }).pipe(Effect.provide(provideProductionSelector(messages)));
+  });
+
+  it.effect("defaults to next when neither environment defines the flag", () => {
+    const messages: Array<string> = [];
+    return Effect.gen(function* () {
+      expect((yield* LegacyPgDeltaEngine).implementation).toBe("next");
+      expect(messages).toEqual(["Using pg-delta next implementation."]);
+    }).pipe(Effect.provide(provideProductionSelector(messages)));
   });
 
   it.effect("reads the environment once for the command-scoped service", () => {
@@ -187,13 +248,6 @@ describe("legacyPgDeltaEngineLayer", () => {
       expect(first).toBe(second);
       expect(second.implementation).toBe("legacy");
       expect(messages).toEqual(["Using pg-delta legacy implementation."]);
-    }).pipe(
-      Effect.provide(
-        legacyPgDeltaEngineLayer.pipe(
-          Layer.provide(unusedLegacyRuntime),
-          Layer.provide(debugLayer(messages)),
-        ),
-      ),
-    );
+    }).pipe(Effect.provide(provideProductionSelector(messages)));
   });
 });

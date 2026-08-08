@@ -13,7 +13,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func TestPreparePgDeltaNextShadow(t *testing.T) {
+func TestPreparePgDeltaNextPlanShadow(t *testing.T) {
 	originalConfig := utils.Config
 	t.Cleanup(func() { utils.Config = originalConfig })
 	utils.Config.Hostname = "shadow-host"
@@ -66,7 +66,7 @@ func TestPreparePgDeltaNextShadow(t *testing.T) {
 		remove: func(container string) { removedContainers = append(removedContainers, container) },
 	}
 
-	result, err := preparePgDeltaNextShadow(context.Background(), afero.NewMemMapFs(), dependencies)
+	result, err := preparePgDeltaNextPlanShadow(context.Background(), afero.NewMemMapFs(), dependencies)
 
 	require.NoError(t, err)
 	assert.Equal(t, []uint16{6543, 7654}, createdPorts)
@@ -82,7 +82,57 @@ func TestPreparePgDeltaNextShadow(t *testing.T) {
 	assert.Equal(t, "postgres", result.Declarative.Config.Database)
 }
 
-func TestPreparePgDeltaNextShadowRemovesEveryCreatedContainerOnFailure(t *testing.T) {
+func TestPreparePgDeltaNextMigrationsShadowOnlyCreatesMigratedDatabase(t *testing.T) {
+	originalConfig := utils.Config
+	t.Cleanup(func() { utils.Config = originalConfig })
+	utils.Config.Hostname = "shadow-host"
+	utils.Config.Db.Password = "secret"
+
+	var portCalls, createCalls, waitCalls, migrateCalls, setupCalls int
+	dependencies := pgDeltaNextShadowDependencies{
+		freePort: func() (int, error) {
+			portCalls++
+			return 6543, nil
+		},
+		create: func(_ context.Context, port uint16) (string, error) {
+			createCalls++
+			assert.Equal(t, uint16(6543), port)
+			return "migrations-container", nil
+		},
+		wait: func(_ context.Context, _ time.Duration, containers ...string) error {
+			waitCalls++
+			assert.Equal(t, []string{"migrations-container"}, containers)
+			return nil
+		},
+		migrate: func(_ context.Context, container string, _ afero.Fs, options ...func(*pgx.ConnConfig)) error {
+			migrateCalls++
+			assert.Equal(t, "migrations-container", container)
+			config := &pgx.ConnConfig{}
+			for _, option := range options {
+				option(config)
+			}
+			assert.Equal(t, uint16(6543), config.Port)
+			return nil
+		},
+		setup: func(context.Context, string, afero.Fs, ...func(*pgx.ConnConfig)) error {
+			setupCalls++
+			return nil
+		},
+		remove: func(string) { t.Fatal("successful provision should not remove its container") },
+	}
+
+	result, err := preparePgDeltaNextMigrationsShadow(context.Background(), afero.NewMemMapFs(), dependencies)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, portCalls)
+	assert.Equal(t, 1, createCalls)
+	assert.Equal(t, 1, waitCalls)
+	assert.Equal(t, 1, migrateCalls)
+	assert.Zero(t, setupCalls)
+	assert.Equal(t, "migrations-container", result.Container)
+}
+
+func TestPreparePgDeltaNextPlanShadowRemovesEveryCreatedContainerOnFailure(t *testing.T) {
 	wantErr := errors.New("provisioning failed")
 	tests := []struct {
 		name        string
@@ -98,9 +148,9 @@ func TestPreparePgDeltaNextShadowRemovesEveryCreatedContainerOnFailure(t *testin
 		{name: "migrations", failAt: "migrate", firstID: "migrations", wantRemoved: []string{"migrations"}},
 		{name: "second port", failAt: "second-port", firstID: "migrations", wantRemoved: []string{"migrations"}},
 		{name: "second create without id", failAt: "second-create", firstID: "migrations", wantRemoved: []string{"migrations"}},
-		{name: "second create with id", failAt: "second-create", firstID: "migrations", secondID: "declarative", wantRemoved: []string{"migrations", "declarative"}},
-		{name: "second health", failAt: "second-health", firstID: "migrations", secondID: "declarative", wantRemoved: []string{"migrations", "declarative"}},
-		{name: "declarative setup", failAt: "setup", firstID: "migrations", secondID: "declarative", wantRemoved: []string{"migrations", "declarative"}},
+		{name: "second create with id", failAt: "second-create", firstID: "migrations", secondID: "declarative", wantRemoved: []string{"declarative", "migrations"}},
+		{name: "second health", failAt: "second-health", firstID: "migrations", secondID: "declarative", wantRemoved: []string{"declarative", "migrations"}},
+		{name: "declarative setup", failAt: "setup", firstID: "migrations", secondID: "declarative", wantRemoved: []string{"declarative", "migrations"}},
 	}
 
 	for _, tt := range tests {
@@ -150,7 +200,7 @@ func TestPreparePgDeltaNextShadowRemovesEveryCreatedContainerOnFailure(t *testin
 				remove: func(container string) { removed = append(removed, container) },
 			}
 
-			result, err := preparePgDeltaNextShadow(context.Background(), afero.NewMemMapFs(), dependencies)
+			result, err := preparePgDeltaNextPlanShadow(context.Background(), afero.NewMemMapFs(), dependencies)
 
 			assert.ErrorIs(t, err, wantErr)
 			assert.Empty(t, result)

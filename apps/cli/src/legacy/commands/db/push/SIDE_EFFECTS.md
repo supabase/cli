@@ -34,13 +34,13 @@ never read by the default engine.
 
 ## Database Mutations
 
-| Statement                                                                                                                                | When                                                                                                                    |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `RESET ALL` + `BEGIN` … migration statements … `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` … `COMMIT` | per pending migration (after confirmation); pipeline-incompatible statements run standalone between batches — see Notes |
-| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                                              | once before applying migrations (idempotent)                                                                            |
-| `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                                                 | per `--include-roles` globals file (after confirmation)                                                                 |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets and migrations are applied                                                       |
-| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …`                      | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                  |
+| Statement                                                                                                           | When                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); normally transaction-batched, except pg-delta `transaction=false` files and standalone-incompatible statements — see Notes |
+| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations (idempotent)                                                                                                                           |
+| `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                            | per `--include-roles` globals file (after confirmation)                                                                                                                |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets and migrations are applied                                                                                                      |
+| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                                                                 |
 
 ## API Routes
 
@@ -125,6 +125,13 @@ stdout is payload-only. A single `result` object is emitted:
   directly into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`) and
   back-ported to the pinned `apps/cli-go` oracle under the CLI-1989 parity ruling
   (2026-07-30).
+- **Pg-delta no-transaction files**: an exact first-line
+  `-- pg-delta: transaction=false` directive is durable execution metadata. Every
+  statement in that file runs sequentially without a CLI-owned transaction on the
+  same session, preserving pg-delta's session preamble through its nontransactional
+  action and generated cleanup. The history row is inserted only after all statements
+  succeed; failures best-effort `RESET ALL` and leave no history row. Marker-like
+  comments elsewhere do not change the normal transactional default.
 - **Migrations catalog cache**: retained only for
   `SUPABASE_USE_PG_DELTA_NEXT=false` (Go's best-effort
   `pgcache.TryCacheMigrationsCatalog`). After a successful migration apply, when

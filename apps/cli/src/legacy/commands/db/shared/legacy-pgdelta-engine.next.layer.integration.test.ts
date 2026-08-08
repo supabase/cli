@@ -1,0 +1,156 @@
+import * as BunServices from "@effect/platform-bun/BunServices";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Layer } from "effect";
+
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
+import { legacyPgDeltaNextEngineLayer } from "./legacy-pgdelta-engine.next.layer.ts";
+import { LegacyPgDeltaEngine, LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
+import { LegacyPgDeltaNextAdapter } from "./legacy-pgdelta-next-adapter.service.ts";
+import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
+
+const common = {
+  context: { projectId: "test", cwd: "/tmp/test", npmVersion: undefined, denoVersion: 2 },
+  schema: ["public"],
+  formatOptions: "",
+  debug: false,
+  strictCoverage: false,
+} as const;
+
+function setup() {
+  const state = { migrations: 0, plan: 0 };
+  const shadow = Layer.succeed(LegacyPgDeltaNextShadow, {
+    provisionMigrations: () =>
+      Effect.sync(() => {
+        state.migrations += 1;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
+        ),
+      ),
+    provisionPlan: () =>
+      Effect.sync(() => {
+        state.plan += 1;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
+        ),
+      ),
+  });
+  const unusedAdapter = Layer.succeed(LegacyPgDeltaNextAdapter, {
+    diff: () => Effect.die("adapter not used"),
+    exportDeclarativeSchema: () => Effect.die("adapter not used"),
+    planDeclarativeSchema: () => Effect.die("adapter not used"),
+    captureSnapshot: () => Effect.die("adapter not used"),
+  });
+  const debug = Layer.succeed(LegacyDebugLogger, {
+    debug: () => Effect.void,
+    http: () => Effect.void,
+  });
+  const dependencies = Layer.mergeAll(
+    BunServices.layer,
+    shadow,
+    unusedAdapter,
+    debug,
+    mockOutput().layer,
+  );
+  return {
+    state,
+    layer: legacyPgDeltaNextEngineLayer.pipe(Layer.provide(dependencies)),
+  };
+}
+
+describe("pg-delta next shadow selection", () => {
+  it.effect("uses only the migrated shadow for database diffs", () => {
+    const { state, layer } = setup();
+    return Effect.gen(function* () {
+      const engine = yield* LegacyPgDeltaEngine;
+      yield* engine
+        .diffDatabase({
+          ...common,
+          target: {
+            kind: "database",
+            ref: "postgresql://postgres@localhost/postgres",
+            connectOptions: { isLocal: true, dnsResolver: "native" },
+          },
+        })
+        .pipe(Effect.exit);
+
+      expect(state).toEqual({ migrations: 1, plan: 0 });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses only the migrated shadow for explicit migrations diffs", () => {
+    const { state, layer } = setup();
+    return Effect.gen(function* () {
+      const engine = yield* LegacyPgDeltaEngine;
+      yield* engine
+        .diffExplicit({
+          ...common,
+          source: { kind: "migrations", projectRef: "linked-project" },
+          desired: {
+            kind: "database",
+            ref: "postgresql://postgres@localhost/postgres",
+            connectOptions: { isLocal: true, dnsResolver: "native" },
+          },
+        })
+        .pipe(Effect.exit);
+
+      expect(state).toEqual({ migrations: 1, plan: 0 });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses both isolated shadows for declarative plans", () => {
+    const { state, layer } = setup();
+    return Effect.gen(function* () {
+      const engine = yield* LegacyPgDeltaEngine;
+      yield* engine
+        .planDeclarativeSchema({
+          ...common,
+          files: [{ name: "schema.sql", sql: "create table example(id int);" }],
+          noCache: false,
+          setupInputs: {
+            image: "postgres:17",
+            majorVersion: 17,
+            authEnabled: true,
+            storageEnabled: true,
+            realtimeEnabled: true,
+            autoExpose: false,
+            vaultNames: [],
+            rolesSql: "",
+          },
+        })
+        .pipe(Effect.exit);
+
+      expect(state).toEqual({ migrations: 0, plan: 1 });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("returns malformed explicit URLs as typed failures rather than defects", () => {
+    const { state, layer } = setup();
+    return Effect.gen(function* () {
+      const engine = yield* LegacyPgDeltaEngine;
+      const error = yield* engine
+        .diffExplicit({
+          ...common,
+          source: {
+            kind: "database",
+            ref: "postgresql://postgres:source-secret@[/postgres",
+            connectOptions: { isLocal: false, dnsResolver: "native" },
+          },
+          desired: {
+            kind: "database",
+            ref: "postgresql://postgres:desired-secret@[/postgres",
+            connectOptions: { isLocal: false, dnsResolver: "native" },
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(LegacyPgDeltaEngineError);
+      expect(String(error.cause)).not.toContain("source-secret");
+      expect(String(error.cause)).not.toContain("desired-secret");
+      expect(state).toEqual({ migrations: 0, plan: 0 });
+    }).pipe(Effect.provide(layer));
+  });
+});

@@ -37,10 +37,14 @@ export interface LegacyShadowSource {
   readonly sourceUrl: string;
 }
 
-/** The independently hosted databases used by the pg-delta next planner. */
-export interface LegacyNextShadowSource {
+/** The independently hosted migrated database used by pg-delta next diffs. */
+export interface LegacyNextMigrationsShadowSource {
   /** Platform baseline with local configuration and migrations applied. */
   readonly migrationsUrl: string;
+}
+
+/** The independently hosted databases used by the pg-delta next planner. */
+export interface LegacyNextPlanShadowSource extends LegacyNextMigrationsShadowSource {
   /** Platform baseline with local configuration, ready for declarative SQL. */
   readonly declarativeUrl: string;
 }
@@ -115,15 +119,26 @@ interface LegacyDeclarativeSeamShape {
     readonly projectRef?: string;
   }) => Effect.Effect<LegacyShadowSource, LegacyDeclarativeShadowDbError>;
   /**
-   * Provisions the two isolated pg-delta next shadows through the Go seam's
-   * JSON/ack ownership protocol. Both containers are owned by the current
-   * Effect scope before the child is acknowledged, and are independently
-   * removed when that scope closes.
+   * Provisions only the migrated pg-delta next shadow through the Go seam's
+   * JSON/ack ownership protocol. The container is owned by the current Effect
+   * scope before the child is acknowledged.
    */
-  readonly provisionNextShadow: (opts: {
+  readonly provisionNextMigrationsShadow: (opts: {
     readonly schema: ReadonlyArray<string>;
     readonly projectRef?: string;
-  }) => Effect.Effect<LegacyNextShadowSource, LegacyDeclarativeShadowDbError, Scope.Scope>;
+  }) => Effect.Effect<
+    LegacyNextMigrationsShadowSource,
+    LegacyDeclarativeShadowDbError,
+    Scope.Scope
+  >;
+  /**
+   * Provisions the migrated and declarative pg-delta next shadows through the
+   * same ownership protocol. Both are independently removed with the scope.
+   */
+  readonly provisionNextPlanShadows: (opts: {
+    readonly schema: ReadonlyArray<string>;
+    readonly projectRef?: string;
+  }) => Effect.Effect<LegacyNextPlanShadowSource, LegacyDeclarativeShadowDbError, Scope.Scope>;
   /**
    * Removes a shadow database container left running by `provisionShadow`
    * (`docker rm -f <id>`). Best-effort: a failure to remove is swallowed so it

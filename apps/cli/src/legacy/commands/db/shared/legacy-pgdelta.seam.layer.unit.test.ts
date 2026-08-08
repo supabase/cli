@@ -144,7 +144,7 @@ describe("LegacyDeclarativeSeam next shadow protocol", () => {
       const exit = yield* Effect.scoped(
         Effect.gen(function* () {
           const seam = yield* LegacyDeclarativeSeam;
-          const databases = yield* seam.provisionNextShadow({
+          const databases = yield* seam.provisionNextPlanShadows({
             schema: ["public", "extensions"],
             projectRef: "linked-project",
           });
@@ -166,7 +166,7 @@ describe("LegacyDeclarativeSeam next shadow protocol", () => {
           "db",
           "__shadow",
           "--mode",
-          "pgdelta-next",
+          "pgdelta-next-plan",
           "--schema",
           "public,extensions",
           "--network-id",
@@ -183,13 +183,41 @@ describe("LegacyDeclarativeSeam next shadow protocol", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("owns and cleans only the migrated container for a database diff", () => {
+    const migrationsProtocol = JSON.stringify({
+      migrations: {
+        containerId: "migrations-container",
+        url: "postgresql://postgres@localhost:55432/postgres",
+      },
+    });
+    const { layer, state } = setup({ stdout: migrationsProtocol });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const seam = yield* LegacyDeclarativeSeam;
+          const database = yield* seam.provisionNextMigrationsShadow({ schema: ["public"] });
+          expect(state.stdin).toBe("ack\n");
+          expect(database).toEqual({
+            migrationsUrl: "postgresql://postgres:postgres@localhost:55432/postgres",
+          });
+          return yield* Effect.fail("caller failed");
+        }),
+      ).pipe(Effect.exit);
+
+      expect(exit._tag).toBe("Failure");
+      expect(state.cleanupAttempts).toEqual(["migrations-container"]);
+      expect(state.childScopeClosed).toBe(1);
+      expect(state.commands[0]?.args).toContain("pgdelta-next-migrations");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("has both cleanup finalizers installed when the ack write is interrupted", () => {
     const { layer, state } = setup({ interruptOnAck: true });
     return Effect.gen(function* () {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const seam = yield* LegacyDeclarativeSeam;
-          yield* seam.provisionNextShadow({ schema: [] });
+          yield* seam.provisionNextPlanShadows({ schema: [] });
         }),
       ).pipe(Effect.exit);
       expect(state.stdin).toBe("ack\n");
@@ -204,7 +232,7 @@ describe("LegacyDeclarativeSeam next shadow protocol", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const seam = yield* LegacyDeclarativeSeam;
-          yield* seam.provisionNextShadow({ schema: [] });
+          yield* seam.provisionNextPlanShadows({ schema: [] });
         }),
       ).pipe(Effect.exit);
       expect(state.stdin).toBe("");
@@ -222,7 +250,7 @@ describe("LegacyDeclarativeSeam next shadow protocol", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const seam = yield* LegacyDeclarativeSeam;
-          yield* seam.provisionNextShadow({ schema: [] });
+          yield* seam.provisionNextPlanShadows({ schema: [] });
         }),
       ).pipe(Effect.exit);
       expect(state.stdin).toBe("");

@@ -1359,6 +1359,34 @@ describe("legacy db reset", () => {
       });
     });
 
+    it.live("honors pg-delta's no-transaction migration header on remote reset", () => {
+      const set = "SET check_function_bodies = off";
+      const action = "DROP SUBSCRIPTION app_events";
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile(
+          "20240101000000",
+          `-- pg-delta: transaction=false\n${set};\n${action};\nRESET ALL;`,
+        ),
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        const setupCommit = conn.execs.indexOf("COMMIT");
+        const setIndex = conn.execs.indexOf(set);
+        const actionIndex = conn.execs.indexOf(action);
+        const cleanupIndex = conn.execs.lastIndexOf("RESET ALL");
+
+        expect(setIndex).toBeGreaterThan(setupCommit);
+        expect(actionIndex).toBeGreaterThan(setIndex);
+        expect(cleanupIndex).toBeGreaterThan(actionIndex);
+        expect(conn.execs.slice(setIndex, cleanupIndex + 1)).toEqual([set, action, "RESET ALL"]);
+        expect(
+          conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+        ).toBe(true);
+      });
+    });
+
     it.live("fails a remote reset before dropping schemas on an undecryptable secret", () => {
       // Regression: the old point-of-use vault decryption ran AFTER `legacyDropUserSchemas`,
       // so an undecryptable `encrypted:` secret dropped the schemas before failing. Go runs

@@ -72,12 +72,12 @@ remote path produces whatever the delegated Go binary writes.
 
 ### Remote path (native, in TS)
 
-| Statement                                                                                                                                        | When                                                         |
-| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                                  | always, first                                                |
-| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                       |
-| migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | when `[db.migrations].enabled`, for migrations `≤ --version` |
-| seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed`                 |
+| Statement                                                                                                                                                                           | When                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                                                                     | always, first                                                |
+| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                                                      | when `[db.vault]` has syncable secrets                       |
+| migration statements + `schema_migrations` history insert (normally transaction-batched; pg-delta `transaction=false` files run sequentially without a CLI transaction — see Notes) | when `[db.migrations].enabled`, for migrations `≤ --version` |
+| seed statements + `seed_files` hash upsert                                                                                                                                          | when `[db.seed].enabled` and not `--no-seed`                 |
 
 ### Local path (native, in TS)
 
@@ -189,6 +189,11 @@ path has no confirmation prompt.
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
   closed Go PR supabase/cli#5156, CLI-1989 parity ruling).
+- **Pg-delta no-transaction files** use the same durable first-line
+  `-- pg-delta: transaction=false` directive as `db push`. The complete file runs
+  sequentially on one session without a CLI transaction; its history row is written
+  only after success, and failures best-effort reset the session. See `db push`'s
+  SIDE_EFFECTS Notes for the shared apply contract.
 - `--no-seed` forces seeding off (Go sets `Config.Db.Seed.Enabled = false`); on the
   local path it feeds `legacyResolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override

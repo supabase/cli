@@ -32,11 +32,11 @@ type PgDeltaNextShadowDatabase struct {
 	Config    pgconn.Config
 }
 
-// PgDeltaNextShadow contains the two isolated clusters used by the native
+// PgDeltaNextPlanShadow contains the two isolated clusters used by the native
 // pg-delta engine. Migrations has the platform baseline plus local migrations;
 // Declarative has the same platform baseline and local configuration, ready for
 // pg-delta to load declarative SQL into postgres.
-type PgDeltaNextShadow struct {
+type PgDeltaNextPlanShadow struct {
 	Migrations  PgDeltaNextShadowDatabase
 	Declarative PgDeltaNextShadowDatabase
 }
@@ -50,11 +50,11 @@ type pgDeltaNextShadowDependencies struct {
 	remove   func(string)
 }
 
-// PreparePgDeltaNextShadow provisions isolated migrated and declarative
-// clusters. On failure, every container created so far is removed best-effort
-// without replacing the provisioning error.
-func PreparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadow, error) {
-	return preparePgDeltaNextShadow(ctx, fsys, pgDeltaNextShadowDependencies{
+// PreparePgDeltaNextMigrationsShadow provisions only the migrated cluster used
+// by database diffs. On failure, every container created so far is removed
+// best-effort without replacing the provisioning error.
+func PreparePgDeltaNextMigrationsShadow(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadowDatabase, error) {
+	return preparePgDeltaNextMigrationsShadow(ctx, fsys, pgDeltaNextShadowDependencies{
 		freePort: utils.GetFreeHostPort,
 		create:   CreateShadowDatabase,
 		wait:     start.WaitForHealthyService,
@@ -64,63 +64,80 @@ func PreparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, options ...fun
 	}, options...)
 }
 
-func preparePgDeltaNextShadow(ctx context.Context, fsys afero.Fs, dependencies pgDeltaNextShadowDependencies, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadow, error) {
-	var containers []string
+// PreparePgDeltaNextPlanShadow provisions isolated migrated and declarative
+// clusters for a declarative plan.
+func PreparePgDeltaNextPlanShadow(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (PgDeltaNextPlanShadow, error) {
+	return preparePgDeltaNextPlanShadow(ctx, fsys, pgDeltaNextShadowDependencies{
+		freePort: utils.GetFreeHostPort,
+		create:   CreateShadowDatabase,
+		wait:     start.WaitForHealthyService,
+		migrate:  MigratePgDeltaNextShadowDatabase,
+		setup:    SetupPgDeltaNextDeclarativeShadowDatabase,
+		remove:   utils.DockerRemove,
+	}, options...)
+}
+
+func preparePgDeltaNextMigrationsShadow(ctx context.Context, fsys afero.Fs, dependencies pgDeltaNextShadowDependencies, options ...func(*pgx.ConnConfig)) (PgDeltaNextShadowDatabase, error) {
+	return preparePgDeltaNextShadowDatabase(ctx, fsys, 0, dependencies, dependencies.migrate, options...)
+}
+
+func preparePgDeltaNextPlanShadow(ctx context.Context, fsys afero.Fs, dependencies pgDeltaNextShadowDependencies, options ...func(*pgx.ConnConfig)) (PgDeltaNextPlanShadow, error) {
+	migrations, err := preparePgDeltaNextMigrationsShadow(ctx, fsys, dependencies, options...)
+	if err != nil {
+		return PgDeltaNextPlanShadow{}, err
+	}
 	ok := false
 	defer func() {
 		if !ok {
-			for _, container := range containers {
-				dependencies.remove(container)
-			}
+			dependencies.remove(migrations.Container)
 		}
 	}()
 
-	migrationsPort, err := allocatePgDeltaNextPort(dependencies.freePort, 0)
+	declarative, err := preparePgDeltaNextShadowDatabase(ctx, fsys, migrations.Config.Port, dependencies, dependencies.setup, options...)
 	if err != nil {
-		return PgDeltaNextShadow{}, err
-	}
-	migrationsContainer, err := dependencies.create(ctx, migrationsPort)
-	if migrationsContainer != "" {
-		containers = append(containers, migrationsContainer)
-	}
-	if err != nil {
-		return PgDeltaNextShadow{}, err
-	}
-	if err := dependencies.wait(ctx, utils.Config.Db.HealthTimeout, migrationsContainer); err != nil {
-		return PgDeltaNextShadow{}, err
-	}
-	if err := dependencies.migrate(ctx, migrationsContainer, fsys, append(options, withShadowPort(migrationsPort))...); err != nil {
-		return PgDeltaNextShadow{}, err
-	}
-
-	declarativePort, err := allocatePgDeltaNextPort(dependencies.freePort, migrationsPort)
-	if err != nil {
-		return PgDeltaNextShadow{}, err
-	}
-	declarativeContainer, err := dependencies.create(ctx, declarativePort)
-	if declarativeContainer != "" {
-		containers = append(containers, declarativeContainer)
-	}
-	if err != nil {
-		return PgDeltaNextShadow{}, err
-	}
-	if err := dependencies.wait(ctx, utils.Config.Db.HealthTimeout, declarativeContainer); err != nil {
-		return PgDeltaNextShadow{}, err
-	}
-	if err := dependencies.setup(ctx, declarativeContainer, fsys, append(options, withShadowPort(declarativePort))...); err != nil {
-		return PgDeltaNextShadow{}, err
+		return PgDeltaNextPlanShadow{}, err
 	}
 
 	ok = true
-	return PgDeltaNextShadow{
-		Migrations: PgDeltaNextShadowDatabase{
-			Container: migrationsContainer,
-			Config:    pgDeltaNextShadowConfig(migrationsPort),
-		},
-		Declarative: PgDeltaNextShadowDatabase{
-			Container: declarativeContainer,
-			Config:    pgDeltaNextShadowConfig(declarativePort),
-		},
+	return PgDeltaNextPlanShadow{
+		Migrations:  migrations,
+		Declarative: declarative,
+	}, nil
+}
+
+func preparePgDeltaNextShadowDatabase(
+	ctx context.Context,
+	fsys afero.Fs,
+	excludedPort uint16,
+	dependencies pgDeltaNextShadowDependencies,
+	initialize func(context.Context, string, afero.Fs, ...func(*pgx.ConnConfig)) error,
+	options ...func(*pgx.ConnConfig),
+) (PgDeltaNextShadowDatabase, error) {
+	port, err := allocatePgDeltaNextPort(dependencies.freePort, excludedPort)
+	if err != nil {
+		return PgDeltaNextShadowDatabase{}, err
+	}
+	container, err := dependencies.create(ctx, port)
+	ok := false
+	defer func() {
+		if !ok && container != "" {
+			dependencies.remove(container)
+		}
+	}()
+	if err != nil {
+		return PgDeltaNextShadowDatabase{}, err
+	}
+	if err := dependencies.wait(ctx, utils.Config.Db.HealthTimeout, container); err != nil {
+		return PgDeltaNextShadowDatabase{}, err
+	}
+	if err := initialize(ctx, container, fsys, append(options, withShadowPort(port))...); err != nil {
+		return PgDeltaNextShadowDatabase{}, err
+	}
+
+	ok = true
+	return PgDeltaNextShadowDatabase{
+		Container: container,
+		Config:    pgDeltaNextShadowConfig(port),
 	}, nil
 }
 

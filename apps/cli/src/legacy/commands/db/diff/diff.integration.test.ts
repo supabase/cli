@@ -75,7 +75,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
       });
     },
-    provisionNextShadow: () => Effect.die("provisionNextShadow not used"),
+    provisionNextMigrationsShadow: () => Effect.die("next migrations shadow not used"),
+    provisionNextPlanShadows: () => Effect.die("next plan shadows not used"),
     removeShadowContainer: (container) =>
       Effect.sync(() => {
         removedContainers.push(container);

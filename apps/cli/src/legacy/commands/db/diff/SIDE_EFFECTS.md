@@ -11,8 +11,9 @@ bundled Go binary.
 - The default implementation is the in-process pg-delta engine bundled into the
   CLI binary together with pg-topo. Its version is fixed when the CLI is built;
   there is no runtime package download or automatic fallback to the legacy engine.
-- `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy edge-runtime implementation.
-  Only that opt-out reads legacy catalogs under `supabase/.temp/pgdelta/`,
+- `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy edge-runtime implementation
+  from either the shell or project `supabase/.env` (the shell wins). Only that
+  opt-out reads legacy catalogs under `supabase/.temp/pgdelta/`,
   `supabase/.temp/pgdelta-version`, or `PGDELTA_NPM_REGISTRY`.
 - With `PGDELTA_DEBUG`, default-engine snapshots, plans, and diagnostics are written
   under `supabase/.temp/pgdelta/v2/debug/<id>/`. The directory contains
@@ -61,10 +62,11 @@ bundled Go binary.
   legacy explicit `--from/--to migrations` path also runs the native pg-delta
   catalog-export script there on a cache miss (CLI-1959; no hidden `__catalog`
   subprocess).
-- Shadow Postgres container(s), provisioned through the Go `db __shadow` seam.
-  The default engine uses isolated migrations and declarative shadows. The legacy
-  opt-out provisions a single `mode: "diff"` shadow, including on an explicit
-  migrations-catalog cache miss, and tears it down after export.
+- One shadow Postgres container, provisioned through the Go `db __shadow` seam.
+  The default engine provisions only its isolated migrations shadow for normal
+  and explicit migrations diffs. The legacy opt-out provisions a single
+  `mode: "diff"` shadow, including on an explicit migrations-catalog cache miss,
+  and tears it down after export.
 - `supabase/migra` container — the migra OOM bash fallback only.
 
 ## API Routes (linked path, via the db-config resolver)

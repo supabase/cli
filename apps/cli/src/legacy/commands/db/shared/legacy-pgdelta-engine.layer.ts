@@ -1,6 +1,8 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
+import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { legacyPgDeltaLegacyEngineLayer } from "./legacy-pgdelta-engine.legacy.layer.ts";
 import { legacyPgDeltaNextEngineLayer } from "./legacy-pgdelta-engine.next.layer.ts";
@@ -41,10 +43,16 @@ export function legacyPgDeltaEngineSelectorLayer(
   );
 }
 
-/** Reads the rollout flag once when the command-scoped layer is constructed. */
+/** Resolves the rollout flag once when the command-scoped layer is constructed. */
 export const legacyPgDeltaEngineLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const raw = process.env[FLAG];
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cliConfig = yield* LegacyCliConfig;
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    // godotenv.Load never replaces a shell value, including an empty or invalid
+    // one, so presence in process.env must suppress the project-file fallback.
+    const raw = process.env[FLAG] ?? projectEnv[FLAG];
     const implementation = yield* resolveAndLog(raw);
     return selectProductionLayer(implementation);
   }),

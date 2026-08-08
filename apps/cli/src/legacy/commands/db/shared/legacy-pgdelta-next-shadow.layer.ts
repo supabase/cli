@@ -2,7 +2,8 @@ import { Effect, Layer } from "effect";
 
 import {
   LegacyPgDeltaNextShadow,
-  type LegacyPgDeltaNextShadowDatabases,
+  type LegacyPgDeltaNextMigrationsShadow,
+  type LegacyPgDeltaNextPlanShadows,
 } from "./legacy-pgdelta-next-shadow.service.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
 
@@ -17,12 +18,19 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
     const seam = yield* LegacyDeclarativeSeam;
 
     return LegacyPgDeltaNextShadow.of({
-      provision: ({ schema, projectRef }) =>
+      provisionMigrations: ({ schema, projectRef }) =>
         Effect.gen(function* () {
-          return (yield* seam.provisionNextShadow({
+          return (yield* seam.provisionNextMigrationsShadow({
             schema,
             ...(projectRef !== undefined ? { projectRef } : {}),
-          })) satisfies LegacyPgDeltaNextShadowDatabases;
+          })) satisfies LegacyPgDeltaNextMigrationsShadow;
+        }),
+      provisionPlan: ({ schema, projectRef }) =>
+        Effect.gen(function* () {
+          return (yield* seam.provisionNextPlanShadows({
+            schema,
+            ...(projectRef !== undefined ? { projectRef } : {}),
+          })) satisfies LegacyPgDeltaNextPlanShadows;
         }),
     });
   }),

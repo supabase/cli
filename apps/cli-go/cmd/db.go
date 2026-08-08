@@ -40,34 +40,25 @@ type pgDeltaNextShadowEndpoint struct {
 }
 
 type pgDeltaNextShadowHandoff struct {
-	Migrations  pgDeltaNextShadowEndpoint `json:"migrations"`
-	Declarative pgDeltaNextShadowEndpoint `json:"declarative"`
+	Migrations  pgDeltaNextShadowEndpoint  `json:"migrations"`
+	Declarative *pgDeltaNextShadowEndpoint `json:"declarative,omitempty"`
 }
 
 // handoffPgDeltaNextShadow transfers cleanup ownership only after the caller
 // has received and acknowledged the complete JSON description. Until then Go
-// removes both containers on every exit path, including cancellation and I/O
-// failure.
-func handoffPgDeltaNextShadow(ctx context.Context, shadow diff.PgDeltaNextShadow, in io.Reader, out io.Writer, remove func(string)) error {
+// removes every described container on exit, including cancellation and I/O failure.
+func handoffPgDeltaNextShadow(ctx context.Context, payload pgDeltaNextShadowHandoff, in io.Reader, out io.Writer, remove func(string)) error {
 	transferred := false
 	defer func() {
 		if transferred {
 			return
 		}
-		remove(shadow.Migrations.Container)
-		remove(shadow.Declarative.Container)
+		remove(payload.Migrations.ContainerID)
+		if payload.Declarative != nil {
+			remove(payload.Declarative.ContainerID)
+		}
 	}()
 
-	payload := pgDeltaNextShadowHandoff{
-		Migrations: pgDeltaNextShadowEndpoint{
-			ContainerID: shadow.Migrations.Container,
-			URL:         utils.ToPostgresURLWithoutPassword(shadow.Migrations.Config),
-		},
-		Declarative: pgDeltaNextShadowEndpoint{
-			ContainerID: shadow.Declarative.Container,
-			URL:         utils.ToPostgresURLWithoutPassword(shadow.Declarative.Config),
-		},
-	}
 	if err := json.NewEncoder(out).Encode(payload); err != nil {
 		return fmt.Errorf("failed to encode pg-delta shadow handoff: %w", err)
 	}
@@ -104,6 +95,29 @@ func handoffPgDeltaNextShadow(ctx context.Context, shadow diff.PgDeltaNextShadow
 
 	transferred = true
 	return nil
+}
+
+func handoffPgDeltaNextMigrationsShadow(ctx context.Context, shadow diff.PgDeltaNextShadowDatabase, in io.Reader, out io.Writer, remove func(string)) error {
+	return handoffPgDeltaNextShadow(ctx, pgDeltaNextShadowHandoff{
+		Migrations: pgDeltaNextShadowEndpoint{
+			ContainerID: shadow.Container,
+			URL:         utils.ToPostgresURLWithoutPassword(shadow.Config),
+		},
+	}, in, out, remove)
+}
+
+func handoffPgDeltaNextPlanShadow(ctx context.Context, shadow diff.PgDeltaNextPlanShadow, in io.Reader, out io.Writer, remove func(string)) error {
+	declarative := pgDeltaNextShadowEndpoint{
+		ContainerID: shadow.Declarative.Container,
+		URL:         utils.ToPostgresURLWithoutPassword(shadow.Declarative.Config),
+	}
+	return handoffPgDeltaNextShadow(ctx, pgDeltaNextShadowHandoff{
+		Migrations: pgDeltaNextShadowEndpoint{
+			ContainerID: shadow.Migrations.Container,
+			URL:         utils.ToPostgresURLWithoutPassword(shadow.Migrations.Config),
+		},
+		Declarative: &declarative,
+	}, in, out, remove)
 }
 
 var (
@@ -284,7 +298,7 @@ var (
 	// commands to provision throwaway shadow databases, then leave them running
 	// so the TS caller can run the differ itself and remove the containers
 	// afterwards. Legacy modes print two newline-separated lines. pgdelta-next
-	// emits a JSON object describing its two isolated clusters, then retains
+	// modes emit a JSON object describing the requested isolated clusters, then retain
 	// cleanup ownership until the caller acknowledges receipt. URLs are emitted
 	// WITHOUT the password
 	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
@@ -319,12 +333,19 @@ var (
 			if err := flags.LoadConfig(fsys); err != nil {
 				return err
 			}
-			if shadowMode == "pgdelta-next" {
-				nextShadow, err := diff.PreparePgDeltaNextShadow(cmd.Context(), fsys)
+			if shadowMode == "pgdelta-next-migrations" {
+				nextShadow, err := diff.PreparePgDeltaNextMigrationsShadow(cmd.Context(), fsys)
 				if err != nil {
 					return err
 				}
-				return handoffPgDeltaNextShadow(cmd.Context(), nextShadow, os.Stdin, os.Stdout, utils.DockerRemove)
+				return handoffPgDeltaNextMigrationsShadow(cmd.Context(), nextShadow, os.Stdin, os.Stdout, utils.DockerRemove)
+			}
+			if shadowMode == "pgdelta-next-plan" {
+				nextShadow, err := diff.PreparePgDeltaNextPlanShadow(cmd.Context(), fsys)
+				if err != nil {
+					return err
+				}
+				return handoffPgDeltaNextPlanShadow(cmd.Context(), nextShadow, os.Stdin, os.Stdout, utils.DockerRemove)
 			}
 			var src diff.ShadowSource
 			var err error
@@ -689,7 +710,7 @@ func init() {
 	dbCmd.AddCommand(dbPullCmd)
 	// Build hidden shadow-provisioning seam command
 	shadowFlags := dbShadowCmd.Flags()
-	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations), declarative (bare shadow), or pgdelta-next (migrated + empty scratch).")
+	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations), declarative (bare shadow), pgdelta-next-migrations (migrated), or pgdelta-next-plan (migrated + declarative scratch).")
 	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
 	dbCmd.AddCommand(dbShadowCmd)

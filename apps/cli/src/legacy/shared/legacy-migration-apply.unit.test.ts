@@ -171,6 +171,75 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
+  it.effect("honors pg-delta's file-level no-transaction directive", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_drop_subscription.sql");
+    writeFileSync(
+      file,
+      "-- pg-delta: transaction=false\n" +
+        "SET check_function_bodies = off;\n" +
+        "DROP SUBSCRIPTION app_events;\n" +
+        "RESET ALL;",
+    );
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          const setupCommit = execs.indexOf("COMMIT");
+          const set = execs.indexOf("SET check_function_bodies = off");
+          const action = execs.indexOf("DROP SUBSCRIPTION app_events");
+          const cleanup = execs.lastIndexOf("RESET ALL");
+
+          // The history-table setup owns the only CLI transaction. Pg-delta's
+          // preamble, action, and cleanup then run sequentially on this session.
+          expect(execs.filter((sql) => sql === "BEGIN")).toHaveLength(1);
+          expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(1);
+          expect(set).toBeGreaterThan(setupCommit);
+          expect(action).toBeGreaterThan(set);
+          expect(cleanup).toBeGreaterThan(action);
+
+          const history = calls.filter((call) => call.kind === "query");
+          expect(history).toHaveLength(1);
+          expect(history[0]?.params).toEqual([
+            "20240101120000",
+            "drop_subscription",
+            ["SET check_function_bodies = off", "DROP SUBSCRIPTION app_events", "RESET ALL"],
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("resets the session and omits history when a no-transaction migration fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_drop_subscription.sql");
+    writeFileSync(
+      file,
+      "-- pg-delta: transaction=false\n" +
+        "SET check_function_bodies = off;\n" +
+        "DROP SUBSCRIPTION app_events;\n" +
+        "RESET ALL;",
+    );
+    const { session, calls } = fakeSession({ failOn: "DROP SUBSCRIPTION" });
+    return run(session, file).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.at(-1)).toBe("RESET ALL");
+          expect(calls.some((call) => call.kind === "query")).toBe(false);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("At statement: 1");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("reports a pipeline-incompatible statement failure with its statement index", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_add_index.sql");

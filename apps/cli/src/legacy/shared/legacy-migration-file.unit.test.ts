@@ -1,7 +1,50 @@
 import type { Path } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { legacyFormatMigrationTimestamp, legacyGetMigrationPath } from "./legacy-migration-file.ts";
+import {
+  legacyFormatMigrationTimestamp,
+  legacyGetMigrationPath,
+  legacyParseMigrationContent,
+} from "./legacy-migration-file.ts";
+
+describe("legacyParseMigrationContent", () => {
+  it.each([
+    ["LF", "-- pg-delta: transaction=false\nSET check_function_bodies = off;"],
+    ["CRLF", "-- pg-delta: transaction=false\r\nSET check_function_bodies = off;"],
+    ["a UTF-8 BOM", "\uFEFF-- pg-delta: transaction=false\nSET check_function_bodies = off;"],
+  ])("recognizes the anchored no-transaction directive with %s", (_name, content) => {
+    expect(legacyParseMigrationContent(content)).toEqual({
+      statements: ["SET check_function_bodies = off"],
+      transactionMode: "none",
+    });
+  });
+
+  it("defaults an ordinary migration to transactional execution", () => {
+    expect(legacyParseMigrationContent("CREATE TABLE example (id bigint);")).toEqual({
+      statements: ["CREATE TABLE example (id bigint)"],
+      transactionMode: "transactional",
+    });
+  });
+
+  it("leaves a later transaction marker as an ordinary transactional comment", () => {
+    const content = "-- generated migration\n-- pg-delta: transaction=false\nVACUUM;";
+    expect(legacyParseMigrationContent(content)).toEqual({
+      statements: [content.slice(0, -1)],
+      transactionMode: "transactional",
+    });
+  });
+
+  it.each([
+    "-- pg-delta: transaction=true\nSELECT 1;",
+    " -- pg-delta: transaction=false\nSELECT 1;",
+    "-- pg-delta: transaction=none\nSELECT 1;",
+  ])("leaves a malformed first-line marker transactional: %s", (content) => {
+    expect(legacyParseMigrationContent(content)).toEqual({
+      statements: [content.trim().slice(0, -1)],
+      transactionMode: "transactional",
+    });
+  });
+});
 
 describe("legacyFormatMigrationTimestamp", () => {
   it("formats epoch millis as UTC YYYYMMDDHHMMSS", () => {

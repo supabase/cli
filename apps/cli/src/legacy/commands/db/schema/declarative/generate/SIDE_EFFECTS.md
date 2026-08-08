@@ -9,7 +9,8 @@ platform view.
   into the CLI binary at build time, so the installed CLI fixes their version and
   performs no runtime package download or automatic legacy fallback.
 - `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy catalog/edge-runtime
-  implementation. Only that opt-out uses `supabase/.temp/pgdelta-version`,
+  implementation from either the shell or project `supabase/.env` (the shell
+  wins). Only that opt-out uses `supabase/.temp/pgdelta-version`,
   `PGDELTA_NPM_REGISTRY`, edge-runtime, or legacy catalogs directly below
   `supabase/.temp/pgdelta/`.
 - `--no-cache` bypasses legacy catalog reuse/warming. The default engine already

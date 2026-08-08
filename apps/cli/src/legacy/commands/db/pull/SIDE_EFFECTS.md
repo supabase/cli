@@ -32,7 +32,8 @@ Notes/Delegation section below).
 - Pg-delta diff and declarative export use the in-process engine bundled into the
   CLI binary by default. Pg-topo is bundled with it and the version is fixed at
   CLI build time; the command never downloads it or falls back automatically.
-- `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy edge-runtime path.
+- `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy edge-runtime path from
+  either the shell or project `supabase/.env` (the shell wins).
   `PGDELTA_NPM_REGISTRY`, `supabase/.temp/pgdelta-version`, and legacy catalogs
   directly below `supabase/.temp/pgdelta/` apply only to that opt-out.
 - With `PGDELTA_DEBUG`, default-engine diagnostic data is stored under
@@ -46,6 +47,9 @@ Notes/Delegation section below).
   artifacts are saved before policy evaluation when capture is enabled.
 - New-engine SQL bytes and transaction-split filenames may differ. Successful
   execution and convergence on a subsequent pull/diff are the contract.
+- Nontransactional plan files retain pg-delta's exact first-line
+  `-- pg-delta: transaction=false` directive. Later push/reset/up commands consume
+  that durable header to keep the whole file outside a CLI-owned transaction.
 - Default-engine migration and declarative SQL retains pg-delta's safe compaction
   and uses its human-facing formatter (lowercase keywords, max width 180). A JSON
   object in `[experimental.pgdelta].format_options` partially overrides the
@@ -81,7 +85,8 @@ Notes/Delegation section below).
 ## Docker
 
 - Edge-runtime container (migra, or pg-delta only under the legacy opt-out).
-- Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam).
+- One shadow Postgres container (provisioned + torn down via the Go `db __shadow`
+  seam); pg-delta next provisions only its migrated shadow for this diff.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
   (`legacyStreamPgDump`, shared with `db dump`).

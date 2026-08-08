@@ -129,7 +129,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
       });
     },
-    provisionNextShadow: () => Effect.die("provisionNextShadow not used"),
+    provisionNextMigrationsShadow: () => Effect.die("next migrations shadow not used"),
+    provisionNextPlanShadows: () => Effect.die("next plan shadows not used"),
     removeShadowContainer: (container) =>
       Effect.sync(() => {
         removedContainers.push(container);
@@ -514,7 +515,7 @@ describe("legacy db pull", () => {
           {
             name: "non_transactional",
             transactionMode: "none",
-            sql: "-- unit 3\n\ncreate index concurrently i on t (c);",
+            sql: "-- pg-delta: transaction=false\n-- unit 3\n\ncreate index concurrently i on t (c);",
           },
         ]),
         yes: true,
@@ -533,9 +534,9 @@ describe("legacy db pull", () => {
         const versions = written.map((f) => f.slice(0, 14));
         expect((versions[0] ?? "") < (versions[1] ?? "")).toBe(true);
         expect((versions[1] ?? "") < (versions[2] ?? "")).toBe(true);
-        expect(readFileSync(join(dir, written[2] ?? ""), "utf8")).toContain(
-          "create index concurrently i on t (c);",
-        );
+        const nonTransactional = readFileSync(join(dir, written[2] ?? ""), "utf8");
+        expect(nonTransactional.startsWith("-- pg-delta: transaction=false\n")).toBe(true);
+        expect(nonTransactional).toContain("create index concurrently i on t (c);");
         // One "Schema written to" line per unit, each printing the workdir-relative
         // path (Go's `pull.go:76`), and one history upsert per unit.
         const err = streamText(s.out, "stderr");

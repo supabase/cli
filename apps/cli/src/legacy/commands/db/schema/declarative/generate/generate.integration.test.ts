@@ -155,7 +155,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         ),
       ),
     provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
-    provisionNextShadow: () => Effect.die("provisionNextShadow not used in declarative tests"),
+    provisionNextMigrationsShadow: () =>
+      Effect.die("next migrations shadow not used in declarative tests"),
+    provisionNextPlanShadows: () => Effect.die("next plan shadows not used in declarative tests"),
     removeShadowContainer: () => Effect.void,
   });
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];

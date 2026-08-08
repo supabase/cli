@@ -8,7 +8,8 @@ as a new timestamped migration.
 - The default pg-delta and bundled pg-topo run in-process at the versions fixed
   when the CLI is built. There is no runtime download or automatic fallback.
 - `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy catalog/edge-runtime
-  implementation. `supabase/.temp/pgdelta-version`, `PGDELTA_NPM_REGISTRY`, and
+  implementation from either the shell or project `supabase/.env` (the shell
+  wins). `supabase/.temp/pgdelta-version`, `PGDELTA_NPM_REGISTRY`, and
   catalogs directly below `supabase/.temp/pgdelta/` are legacy-only.
 - `--no-cache` bypasses legacy catalog reuse/warming. The default engine always
   extracts current state and maintains no reusable catalog cache.

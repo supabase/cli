@@ -8,7 +8,7 @@ import {
   MIGRATE_FILE_PATTERN,
   legacyCreateMigrationTable,
 } from "./legacy-migration-history.ts";
-import { legacySplitAndTrim } from "./legacy-sql-split.ts";
+import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
 
 /**
  * Applying a migration file failed (Go's `ApplyMigrations` / `ExecBatch` error).
@@ -157,12 +157,17 @@ const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
  * statement runs standalone, then batching resumes (supabase/cli#5156). The history
  * insert goes in the final batch, so the migration is recorded only after every
  * statement succeeds. A file with no such statements is a single `BEGIN`/`COMMIT`.
+ * Pg-delta files whose first line is `-- pg-delta: transaction=false` instead run
+ * every statement sequentially without a CLI-owned transaction. This keeps their
+ * session preamble, nontransactional action, and cleanup on the same connection.
  *
- * Does NOT create the history table and does NOT `RESET ALL` — Go's `ExecBatch` does
- * neither; those are the migration-apply path's responsibility (`ApplyMigrations`,
- * apply.go:65-69), so role/globals files (`legacySeedGlobals`) stay reset-free like Go.
- * When `forceNoVersion` is set the history insert is skipped regardless of filename
- * (Go's `SeedGlobals` clears `Version`).
+ * Does NOT create the history table and does not unconditionally `RESET ALL` — Go's
+ * `ExecBatch` does neither; those are the migration-apply path's responsibility
+ * (`ApplyMigrations`, apply.go:65-69), so ordinary role/globals files
+ * (`legacySeedGlobals`) stay reset-free like Go. The one exception is best-effort
+ * cleanup after a failed pg-delta no-transaction file. When `forceNoVersion` is set
+ * the history insert is skipped regardless of filename (Go's `SeedGlobals` clears
+ * `Version`).
  */
 const execMigrationBatch = <E>(
   session: LegacyDbSession,
@@ -174,7 +179,8 @@ const execMigrationBatch = <E>(
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
     const content = yield* fs.readFileString(migrationPath);
-    const statements = legacySplitAndTrim(content);
+    const parsed = legacyParseMigrationContent(content);
+    const { statements, transactionMode } = parsed;
     const filename = path.basename(migrationPath);
     const matches = MIGRATE_FILE_PATTERN.exec(filename);
     const version = forceNoVersion ? "" : (matches?.[1] ?? "");
@@ -205,9 +211,36 @@ const execMigrationBatch = <E>(
       return new Error(`${errMessage(e)}\n${msg.join("\n")}`);
     };
 
-    // A file with authored transaction boundaries owns those semantics. Execute
-    // the statements exactly as written, clean up a failed authored transaction,
-    // and only send the history insert after every statement has succeeded.
+    // The pg-delta directive is file-level execution metadata. Run the complete
+    // sequence on this session without adding transaction boundaries so session
+    // settings remain active for the nontransactional action. History is recorded
+    // only after every statement succeeds. A failed sequence gets a best-effort
+    // session reset because the generated trailing RESET ALL may not have run yet.
+    if (transactionMode === "none") {
+      const nonTransactional = Effect.gen(function* () {
+        for (const [index, statement] of statements.entries()) {
+          yield* session
+            .exec(statement)
+            .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
+        }
+        if (version.length > 0) {
+          yield* session
+            .query(INSERT_MIGRATION_VERSION, [version, name, statements])
+            .pipe(
+              Effect.mapError((cause) =>
+                atStatement(cause, statements.length, INSERT_MIGRATION_VERSION),
+              ),
+            );
+        }
+      });
+      return yield* nonTransactional.pipe(
+        Effect.tapError(() => session.exec("RESET ALL").pipe(Effect.ignore)),
+      );
+    }
+
+    // A headerless file with authored transaction boundaries owns those semantics.
+    // Execute the statements exactly as written, clean up a failed authored
+    // transaction, and only send the history insert after every statement succeeds.
     if (statements.some(legacyHasTransactionControl)) {
       const authored = Effect.gen(function* () {
         for (const [index, statement] of statements.entries()) {
