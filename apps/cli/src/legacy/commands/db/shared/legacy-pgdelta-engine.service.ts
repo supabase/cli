@@ -51,6 +51,18 @@ export interface LegacyPgDeltaRenderedFile {
   readonly actionCount?: number;
 }
 
+interface LegacyPgDeltaExtensionIntentRemoval {
+  readonly extension: string;
+  readonly intentKind: string;
+  readonly key: string;
+}
+
+/** Root object removals retained from a semantic pg-delta plan. */
+export interface LegacyPgDeltaRemovalSummary {
+  readonly extensions: ReadonlyArray<string>;
+  readonly extensionIntents: ReadonlyArray<LegacyPgDeltaExtensionIntentRemoval>;
+}
+
 interface LegacyPgDeltaDebugArtifacts {
   readonly sourceSnapshot?: string;
   readonly desiredSnapshot?: string;
@@ -64,6 +76,7 @@ export interface LegacyPgDeltaDiffResult {
   readonly changes: boolean;
   readonly sql: string;
   readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile>;
+  readonly removals?: LegacyPgDeltaRemovalSummary;
   readonly debug?: LegacyPgDeltaDebugArtifacts;
 }
 

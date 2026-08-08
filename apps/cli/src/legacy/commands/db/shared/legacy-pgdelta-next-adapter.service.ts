@@ -1,7 +1,10 @@
 import type { Pool } from "pg";
 import { Context, Data, type Effect } from "effect";
 
-import type { LegacyPgDeltaTransactionMode } from "./legacy-pgdelta-engine.service.ts";
+import type {
+  LegacyPgDeltaRemovalSummary,
+  LegacyPgDeltaTransactionMode,
+} from "./legacy-pgdelta-engine.service.ts";
 
 export type LegacyPgDeltaNextOperation =
   | "diff"
@@ -148,6 +151,7 @@ interface LegacyPgDeltaNextDeclarativePlanResult {
   readonly files: readonly LegacyPgDeltaNextRenderedFile[];
   readonly diagnostics: readonly LegacyPgDeltaNextDiagnostic[];
   readonly skipped: readonly LegacyPgDeltaNextSkippedStatement[];
+  readonly removals: LegacyPgDeltaRemovalSummary;
   readonly debug?: LegacyPgDeltaNextDebugArtifacts;
 }
 

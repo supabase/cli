@@ -46,6 +46,7 @@ import {
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
 import {
+  legacyDeclarativeCompatibilityWarning,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
@@ -311,6 +312,15 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       }
       yield* output.raw("Generated migration SQL:\n", "stderr");
       yield* output.raw(`${result.diffSQL}\n`, "stderr");
+
+      const compatibilityWarning = legacyDeclarativeCompatibilityWarning({
+        implementation: engine.implementation,
+        manifestPresent: result.manifestPresent,
+        removals: result.removals,
+      });
+      if (compatibilityWarning !== undefined) {
+        yield* output.raw(`${legacyYellow(compatibilityWarning)}\n`, "stderr");
+      }
 
       // Step 4: resolve migration name (prompt in TTY when --name unset).
       const file = Option.getOrElse(flags.file, () => DEFAULT_SYNC_NAME);

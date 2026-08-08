@@ -6,6 +6,7 @@ import { legacyFindDropStatements } from "../../../../shared/legacy-sql-split.ts
 import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseEndpoint,
+  type LegacyPgDeltaRemovalSummary,
   type LegacyPgDeltaRenderedFile,
 } from "../../shared/legacy-pgdelta-engine.service.ts";
 import {
@@ -33,6 +34,8 @@ export interface LegacyDeclarativeSyncResult {
   readonly sourceRef: string;
   readonly targetRef: string;
   readonly dropWarnings: ReadonlyArray<string>;
+  readonly manifestPresent: boolean;
+  readonly removals: LegacyPgDeltaRemovalSummary;
 }
 
 const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ message });
@@ -82,6 +85,8 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
     sourceRef: result.sourceRef,
     targetRef: result.targetRef,
     dropWarnings: legacyFindDropStatements(result.sql),
+    manifestPresent: manifest !== undefined,
+    removals: result.removals ?? { extensions: [], extensionIntents: [] },
   } satisfies LegacyDeclarativeSyncResult;
 });
 

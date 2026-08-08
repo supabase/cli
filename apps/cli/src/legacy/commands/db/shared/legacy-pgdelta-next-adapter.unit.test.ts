@@ -10,6 +10,7 @@ import {
   legacyFilterPgDeltaNextPlatformParameterAclDiagnostics,
   legacyPgDeltaNextProfile,
   legacyPgDeltaNextUserOwnedParameterAcls,
+  legacySummarizePgDeltaNextRemovals,
   type LegacyPgDeltaNextLibraries,
 } from "./legacy-pgdelta-next-adapter.layer.ts";
 import {
@@ -156,6 +157,12 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
       state.serializedPlans.push(generatedPlan);
       return JSON.stringify(generatedPlan);
     },
+    summarizeRemovals: () => ({
+      extensions: ["pgcrypto"],
+      extensionIntents: [
+        { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
+      ],
+    }),
     encodeSubject: (subject) => `subject:${subject.id}`,
   };
 
@@ -166,6 +173,57 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
 }
 
 describe("LegacyPgDeltaNextAdapter", () => {
+  it("summarizes only root extension and extension-intent removals", () => {
+    expect(
+      legacySummarizePgDeltaNextRemovals({
+        deltas: [
+          { verb: "remove", fact: { id: { kind: "extension", name: "uuid-ossp" }, payload: {} } },
+          { verb: "remove", fact: { id: { kind: "extension", name: "pgcrypto" }, payload: {} } },
+          {
+            verb: "remove",
+            fact: {
+              id: { kind: "extension", name: "nested-extension" },
+              parent: { kind: "schema", name: "extensions" },
+              payload: {},
+            },
+          },
+          {
+            verb: "remove",
+            fact: {
+              id: {
+                kind: "extensionIntent",
+                ext: "pg_cron",
+                intentKind: "job",
+                key: "refresh download metrics",
+              },
+              payload: {},
+            },
+          },
+          {
+            verb: "remove",
+            fact: {
+              id: { kind: "comment", target: { kind: "extension", name: "pgcrypto" } },
+              payload: {},
+            },
+          },
+          {
+            verb: "unlink",
+            edge: {
+              from: { kind: "extension", name: "pgcrypto" },
+              to: { kind: "schema", name: "extensions" },
+              kind: "depends",
+            },
+          },
+        ],
+      }),
+    ).toEqual({
+      extensions: ["pgcrypto", "uuid-ossp"],
+      extensionIntents: [
+        { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
+      ],
+    });
+  });
+
   it("filters platform parameter ACL coverage without hiding user-owned ACLs", () => {
     const diagnostics = [
       {
@@ -441,6 +499,12 @@ describe("LegacyPgDeltaNextAdapter", () => {
           "declarativeTarget",
         ]);
         expect(planned.skipped).toEqual([{ file: "roles.sql", statement: "create role ignored" }]);
+        expect(planned.removals).toEqual({
+          extensions: ["pgcrypto"],
+          extensionIntents: [
+            { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
+          ],
+        });
         expect(planned.debug).toEqual({
           plan: JSON.stringify({ source: "target-facts", desired: "loaded-files" }),
         });
@@ -503,6 +567,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
       }),
       serializeSnapshot: () => "unused",
       serializePlan: () => "unused",
+      summarizeRemovals: () => ({ extensions: [], extensionIntents: [] }),
       encodeSubject: (subject: string) => subject,
     });
 
@@ -550,6 +615,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
       },
       serializeSnapshot: () => "unused",
       serializePlan: () => "unused",
+      summarizeRemovals: () => ({ extensions: [], extensionIntents: [] }),
       encodeSubject: (subject: string) => subject,
     });
 

@@ -155,6 +155,12 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             files: [],
             sourceRef: "migrations",
             targetRef: "declarative",
+            removals: {
+              extensions: ["pgcrypto"],
+              extensionIntents: [
+                { extension: "pg_cron", intentKind: "job", key: "refresh metrics" },
+              ],
+            },
           });
         },
       }),
@@ -163,7 +169,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       { ...ctx(dir, declDir), debug: true, noCache: true },
       setupInputs,
     ).pipe(
-      Effect.tap(() =>
+      Effect.tap((result) =>
         Effect.sync(() => {
           expect(calls[0]?.files).toEqual([
             { name: "nested/a.sql", sql: "select 'a';" },
@@ -172,6 +178,11 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           expect(calls[0]?.manifest).toEqual({ redactSecrets: true, scope: "database" });
           expect(calls[0]?.debug).toBe(true);
           expect(calls[0]?.noCache).toBe(true);
+          expect(result.manifestPresent).toBe(true);
+          expect(result.removals).toEqual({
+            extensions: ["pgcrypto"],
+            extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],
+          });
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

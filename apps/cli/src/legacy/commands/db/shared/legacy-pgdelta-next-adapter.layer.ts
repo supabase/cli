@@ -13,6 +13,7 @@ import {
   supabaseProfile,
 } from "@supabase/pg-delta/integrations";
 import { plan, serializePlan } from "@supabase/pg-delta/plan";
+import type { Plan as PgDeltaPlan } from "@supabase/pg-delta/plan";
 import type { Policy } from "@supabase/pg-delta/policy";
 import type { SqlFormatOptions } from "@supabase/pg-delta/sql-format";
 
@@ -32,6 +33,7 @@ import {
   type LegacyPgDeltaNextSqlFile,
   type LegacyPgDeltaNextOperation,
 } from "./legacy-pgdelta-next-adapter.service.ts";
+import type { LegacyPgDeltaRemovalSummary } from "./legacy-pgdelta-engine.service.ts";
 
 interface LegacyPgDeltaNextLibraryDiagnostic<Subject> {
   readonly code: string;
@@ -121,7 +123,38 @@ export interface LegacyPgDeltaNextLibraries<FactBase, PlanOptions extends object
     },
   ) => string;
   readonly serializePlan: (plan: Plan) => string;
+  readonly summarizeRemovals: (plan: Plan) => LegacyPgDeltaRemovalSummary;
   readonly encodeSubject: (subject: Subject) => string;
+}
+
+export function legacySummarizePgDeltaNextRemovals(
+  generatedPlan: Pick<PgDeltaPlan, "deltas">,
+): LegacyPgDeltaRemovalSummary {
+  const extensions = new Set<string>();
+  const extensionIntents = new Map<
+    string,
+    LegacyPgDeltaRemovalSummary["extensionIntents"][number]
+  >();
+  for (const delta of generatedPlan.deltas) {
+    if (delta.verb !== "remove" || delta.fact.parent !== undefined) continue;
+    const id = delta.fact.id;
+    if (id.kind === "extension") {
+      extensions.add(id.name);
+      continue;
+    }
+    if (id.kind !== "extensionIntent") continue;
+    const removal = { extension: id.ext, intentKind: id.intentKind, key: id.key };
+    extensionIntents.set(`${id.ext}\u0000${id.intentKind}\u0000${id.key}`, removal);
+  }
+  return {
+    extensions: [...extensions].sort(),
+    extensionIntents: [...extensionIntents.values()].sort(
+      (left, right) =>
+        left.extension.localeCompare(right.extension) ||
+        left.intentKind.localeCompare(right.intentKind) ||
+        left.key.localeCompare(right.key),
+    ),
+  };
 }
 
 function legacyPgDeltaNextMessage(operation: LegacyPgDeltaNextOperation, cause: unknown): string {
@@ -516,6 +549,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
             file: skipped.file,
             statement: skipped.stmt,
           })),
+          removals: libraries.summarizeRemovals(result.plan),
           ...(input.debug ? { debug: { plan: libraries.serializePlan(result.plan) } } : {}),
         };
       }),
@@ -603,6 +637,7 @@ const legacyPgDeltaNextRealLibraries = {
   },
   serializeSnapshot,
   serializePlan,
+  summarizeRemovals: legacySummarizePgDeltaNextRemovals,
   encodeSubject: encodeId,
 };
 

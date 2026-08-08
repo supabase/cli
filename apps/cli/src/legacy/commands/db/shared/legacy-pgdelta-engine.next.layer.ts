@@ -65,6 +65,7 @@ function normalizeNextDiff(
       readonly transactionMode: "transactional" | "none";
       readonly actionCount: number;
     }>;
+    readonly removals?: LegacyPgDeltaDiffResult["removals"];
     readonly debug?: {
       readonly sourceSnapshot?: string;
       readonly desiredSnapshot?: string;
@@ -84,6 +85,7 @@ function normalizeNextDiff(
       transactionMode: file.transactionMode,
       actionCount: file.actionCount,
     })),
+    ...(result.removals !== undefined ? { removals: result.removals } : {}),
     ...(result.debug !== undefined
       ? {
           debug: {
