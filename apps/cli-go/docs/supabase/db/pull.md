@@ -10,9 +10,9 @@ Optionally, a new row can be inserted into the migration history table to reflec
 
 If no entries exist in the migration history table, the default diff engine uses `pg_dump` to capture all contents of the remote schemas you have created. Otherwise, this command will only diff schema changes against the remote database, similar to running `db diff --linked`.
 
-Pass `--diff-engine pg-delta` to keep the migration-file `db pull` workflow while using pg-delta for the shadow diff step. On initial pull, pg-delta replaces `pg_dump` and produces the full migration from the shadow diff alone. Pass `--declarative` to switch to the declarative pg-delta export workflow instead.
+Pass `--diff-engine pg-delta` to keep the migration-file `db pull` workflow while using pg-delta for the shadow diff step. On initial pull, pg-delta replaces `pg_dump` and produces the full migration from the shadow diff alone. Pass `--declarative` to switch to the declarative pg-delta export workflow instead; that mode replaces the declarative tree and does not create migrations or update migration history.
 
-Migration-style pull always compares the local migrations shadow with the selected live database. Declarative files and `[db.migrations].schema_paths` do not replace that target; use `db schema declarative sync` for declarative comparison.
+Migration-style pull always compares the local migrations shadow with the selected live database. Declarative files and `[db.migrations].schema_paths` do not replace that migrations baseline; use `db schema declarative sync` for declarative comparison. In non-interactive use, the prompt to record newly pulled migrations in the selected database history takes its default of yes.
 
 Pg-delta runs in-process by default and is bundled with pg-topo at CLI build time. Set `SUPABASE_USE_PG_DELTA_NEXT=false` to temporarily use the legacy edge-runtime implementation. `PGDELTA_NPM_REGISTRY`, `supabase/.temp/pgdelta-version`, and legacy catalogs directly under `supabase/.temp/pgdelta/` affect only that opt-out; the CLI never falls back automatically.
 

@@ -108,7 +108,11 @@ prints to stdout when neither `--file` nor explicit `--output` is set.
 ### `--output-format json` / `stream-json`
 
 Progress strings still go to stderr; stdout carries a single structured envelope
-`{ diff, file, schemas, engine, dropStatements }` instead of the raw SQL.
+`{ diff, file, files, schemas, engine, dropStatements, advisories? }` instead of
+the raw SQL. With the default pg-delta implementation, a non-empty `--file` diff
+and a non-empty declarative tree add the informational
+`DeclarativeSchemaNotUsedAsDiffBaseline` advisory; the same note is written to
+stderr. Inspection is best-effort and never changes command success.
 
 ## Notes / Delegation
 
@@ -122,7 +126,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--strict-coverage` applies to the bundled pg-delta engine and refuses output when
   it encounters schema objects it cannot manage.
 - Normal mode always compares the migrations shadow with the selected live
-  database. Declarative files and `schema_paths` never replace that target; use
+  database. Declarative files and `schema_paths` never replace that migrations baseline; use
   `supabase db schema declarative sync` for declarative comparison.
 - Under the legacy opt-out, the explicit `migrations` target resolves natively
   (CLI-1959): a bare

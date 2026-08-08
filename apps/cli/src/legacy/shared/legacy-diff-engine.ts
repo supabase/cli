@@ -4,7 +4,7 @@
 // directly.
 
 export const legacySchemaPathsTransitionWarning =
-  "WARNING: [db.migrations].schema_paths no longer changes the target of db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files.\n";
+  "WARNING: [db.migrations].schema_paths no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files.\n";
 
 /**
  * Whether pg-delta is the active default engine. Mirrors Go's `shouldUsePgDelta`

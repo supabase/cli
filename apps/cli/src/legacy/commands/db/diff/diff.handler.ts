@@ -6,7 +6,10 @@ import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyReadDbToml,
+  legacyResolveDeclarativeDir,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
@@ -32,6 +35,7 @@ import {
   type LegacyPgDeltaDatabaseEndpoint,
   type LegacyPgDeltaEndpoint,
 } from "../shared/legacy-pgdelta-engine.service.ts";
+import { LegacyLoadPgDeltaSqlFiles } from "../shared/legacy-pgdelta-files.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import {
   legacyIsPgDeltaDebugEnabled,
@@ -62,6 +66,20 @@ Run ${legacyAqua("supabase db reset")} to verify that the new migration does not
 // prints unchanged. No removal timeline is promised: actual removal is out of
 // scope for CLI-1960.
 const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
+
+const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
+  code: "DeclarativeSchemaNotUsedAsDiffBaseline",
+  severity: "info",
+  message: "Declarative schema files were not used as the db diff baseline.",
+  context: {
+    baseline: "supabase/migrations",
+    declarativePath,
+    fileFlagFiltersObjects: false,
+  },
+});
+
+const declarativeBaselineNote = (displayPath: string) =>
+  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
 
 /**
  * Rebuilds the `db diff` argv for the pgAdmin / pg-schema delegate path. Flags
@@ -481,6 +499,32 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     const engine = useDelta ? "pg-delta" : "migra";
     const drops = legacyFindDropStatements(out);
     const writtenFiles: Array<string> = [];
+    let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
+    if (
+      out.length >= 2 &&
+      useDelta &&
+      pgDelta.implementation === "next" &&
+      Option.isSome(flags.file) &&
+      flags.file.value.length > 0
+    ) {
+      // This is an informational, best-effort probe only. Declarative files are
+      // intentionally not inputs to normal db diff, so an unreadable or changing
+      // directory must never turn a previously successful diff into a failure.
+      const declarativeDir = legacyResolveDeclarativeDir(path, cfg.pgDelta);
+      const declarativeDirAbsolute = path.resolve(cliConfig.workdir, declarativeDir);
+      const hasDeclarativeSql = yield* Effect.gen(function* () {
+        if (!(yield* fs.exists(declarativeDirAbsolute))) return false;
+        return (yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDirAbsolute)).length > 0;
+      }).pipe(Effect.orElseSucceed(() => false));
+      if (hasDeclarativeSql) {
+        const isAbsolute = path.isAbsolute(declarativeDir);
+        const displayPath = isAbsolute
+          ? "the configured declarative schema directory"
+          : declarativeDir.split("\\").join("/");
+        ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
+        yield* output.raw(declarativeBaselineNote(displayPath), "stderr");
+      }
+    }
     if (out.length < 2) {
       yield* output.raw("No schema changes found\n", "stderr");
       // Go's `SaveDiff` gates the file write on `len(file) > 0` (`pgadmin.go`), so
@@ -550,6 +594,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         schemas: flags.schema,
         engine,
         dropStatements: drops,
+        ...(ignoredDeclarativeAdvisory === undefined
+          ? {}
+          : { advisories: [ignoredDeclarativeAdvisory] }),
       });
     }
   }).pipe(

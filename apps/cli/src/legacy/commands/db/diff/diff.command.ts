@@ -74,7 +74,9 @@ const config = {
   ),
   file: Flag.string("file").pipe(
     Flag.withAlias("f"),
-    Flag.withDescription("Saves schema diff to a new migration file."),
+    Flag.withDescription(
+      "Names and saves the complete schema diff as a new migration; it does not filter objects.",
+    ),
     Flag.optional,
   ),
   schema: Flag.string("schema").pipe(
@@ -94,7 +96,9 @@ const config = {
 export type LegacyDbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyDbDiffCommand = Command.make("diff", config).pipe(
-  Command.withDescription("Diffs the local database for schema changes."),
+  Command.withDescription(
+    "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/database are not part of this baseline. Output is printed by default; -f names and saves the complete diff as a migration and does not filter objects.",
+  ),
   Command.withShortDescription("Diffs the local database for schema changes"),
   Command.withHandler((flags) =>
     legacyDbDiff(flags).pipe(

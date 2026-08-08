@@ -646,7 +646,7 @@ describe("legacy db pull", () => {
       yield* legacyDbPull(flags());
       expect(s.provisionCalls[0]?.mode).toBe("diff");
       const err = streamText(s.out, "stderr");
-      expect(err).toContain("schema_paths no longer changes the target");
+      expect(err).toContain("schema_paths no longer changes the migrations baseline");
       // Go's `ConnectByConfig` prints the Connecting line to stderr before dialing
       // (`internal/utils/connect.go:348`), ahead of any other pull output.
       expect(err).toContain("Connecting to remote database...\n");

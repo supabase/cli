@@ -6,7 +6,17 @@ Requires the local development stack to be running when diffing against the loca
 
 Runs [djrobstep/migra](https://github.com/djrobstep/migra) in a container to compare schema differences between the target database and a shadow database. The shadow database is created by applying migrations in local `supabase/migrations` directory in a separate container. Output is written to stdout by default. For convenience, you can also save the schema diff as a new migration file by passing in `-f` flag.
 
-Normal diff mode always compares that migrations shadow with the selected live database. Declarative files under `supabase/database/` and `[db.migrations].schema_paths` do not replace the target. Use `supabase db schema declarative sync` to compare the complete declarative desired state.
+`-f dogfood_note` names the generated migration; it does not filter the diff to the `dogfood_note` object.
+
+| Command                          | Baseline/source                                       | Compared with/destination                                    | Writes                                                        |
+| -------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
+| `db diff`                        | `supabase/migrations/`                                | Live database (`--local` default, `--linked`, or `--db-url`) | stdout, or migration file(s) with `-f`                        |
+| `db pull`                        | `supabase/migrations/` plus selected database history | Live database (`--linked` default)                           | migration file(s), then optionally selected database history  |
+| `db pull --declarative`          | Selected live database                                | `supabase/database/`                                         | replaces the declarative tree; no migration or history update |
+| `db schema declarative generate` | Selected live database                                | `supabase/database/`                                         | replaces declarative files only                               |
+| `db schema declarative sync`     | `supabase/migrations/`                                | `supabase/database/`                                         | migration file(s), optionally applied to the local database   |
+
+Normal diff mode always compares the migrations shadow with the selected live database. Declarative files under `supabase/database/` and `[db.migrations].schema_paths` do not replace the migrations baseline. If migrations are empty or outdated, a saved diff can therefore include objects already represented by declarative files. Use `supabase db schema declarative sync --no-apply` to generate and review a migration from the declarative desired state before making later live changes.
 
 By default, all schemas in the target database are diffed. Use the `--schema public,extensions` flag to restrict diffing to a subset of schemas.
 

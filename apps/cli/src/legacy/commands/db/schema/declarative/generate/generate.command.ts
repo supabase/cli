@@ -64,7 +64,9 @@ export type LegacyDbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.I
 > & { readonly noCache: boolean; readonly strictCoverage: boolean };
 
 export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
-  Command.withDescription("Generate declarative schema from a database."),
+  Command.withDescription(
+    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
+  ),
   Command.withShortDescription("Generate declarative schema from a database"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {

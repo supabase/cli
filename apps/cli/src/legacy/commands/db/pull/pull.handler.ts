@@ -441,8 +441,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // (declarative.go:260-268, gated on IsPgDeltaEnabled which reads the config
           // value). db pull --declarative does not force-enable pg-delta
           // (cmd/db.go:180-182), so unlike generate/sync this branch is reachable:
-          // without it, subsequent db reset/db diff keep reading supabase/migrations
-          // and ignore the files just pulled.
+          // it preserves the legacy experimental db-reset schema-files workflow.
+          // Normal db diff and migration-style db pull still use migrations as
+          // their baseline and ignore this setting.
           if (!toml.pgDelta.enabled) {
             yield* legacyUpdateDeclarativeSchemaPathsConfig(
               fs,

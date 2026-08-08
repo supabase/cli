@@ -4,7 +4,8 @@ Native Effect port. Pulls the remote schema into either a new timestamped
 migration (diffing a throwaway shadow against the remote, native pg-delta or
 migra) or declarative files (`--declarative`, native pg-delta export). The
 migration-style path always compares migrations with the selected live database;
-declarative files and `[db.migrations].schema_paths` cannot replace its target.
+declarative files and `[db.migrations].schema_paths` cannot replace its migrations
+baseline.
 initial-migra pull (no local migrations) seeds the migration file with a native
 `pg_dump` of the remote schema (a Docker `pg_dump` container, with IPv4
 transaction-pooler fallback) and then appends the migra diff. `--experimental`'s

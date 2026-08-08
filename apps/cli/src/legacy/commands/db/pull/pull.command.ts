@@ -18,7 +18,7 @@ const config = {
   // pflag `Changed`.
   declarative: Flag.boolean("declarative").pipe(
     Flag.withDescription(
-      "Pull schema as declarative files using pg-delta instead of creating a migration.",
+      "Replace the declarative schema tree from the selected database instead of creating a migration; migration history is not updated.",
     ),
     Flag.optional,
   ),
@@ -72,7 +72,9 @@ const config = {
 export type LegacyDbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyDbPullCommand = Command.make("pull", config).pipe(
-  Command.withDescription("Pull schema from the remote database."),
+  Command.withDescription(
+    "Migration mode compares supabase/migrations with the selected live database (--linked by default), writes the complete difference as migration files, and may record them in that database's migration history. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
+  ),
   Command.withShortDescription("Pull schema from the remote database"),
   Command.withHandler((flags) =>
     legacyDbPull(flags).pipe(

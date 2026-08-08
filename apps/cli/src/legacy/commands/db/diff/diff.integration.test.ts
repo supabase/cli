@@ -350,7 +350,8 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeFiles");
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeManifest");
-      expect(stderr(s.out)).toContain("schema_paths no longer changes the target");
+      expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
+      expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
       expect(stdout(s.out)).toBe("create table result ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
@@ -589,13 +590,106 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
       expect(stdout(s.out)).toBe("");
-      expect(stderr(s.out)).toContain("schema_paths no longer changes the target");
+      expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
+      expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
+      expect(stderr(s.out)).toContain("-f names the migration; it does not filter objects");
       expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
       const dir = join(tmp.current, "supabase", "migrations");
       const files = readdirSync(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
       expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("create table live_only ();\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  for (const format of ["json", "stream-json"] as const) {
+    it.effect(`includes the ignored declarative baseline advisory in ${format} output`, () => {
+      mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "database", "items.sql"),
+        "create table items ();\n",
+      );
+      const s = setup(tmp.current, {
+        format,
+        pgDeltaImplementation: "next",
+        diffSql: "create table dogfood_note ();\n",
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(
+          flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
+        );
+        const success = s.out.messages.find((message) => message.type === "success");
+        expect(success?.data).toMatchObject({
+          diff: "create table dogfood_note ();\n",
+          engine: "pg-delta",
+          advisories: [
+            {
+              code: "DeclarativeSchemaNotUsedAsDiffBaseline",
+              severity: "info",
+              context: {
+                baseline: "supabase/migrations",
+                declarativePath: "supabase/database",
+                fileFlagFiltersObjects: false,
+              },
+            },
+          ],
+        });
+        expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
+        const written = readdirSync(join(tmp.current, "supabase", "migrations"));
+        expect(written).toHaveLength(1);
+        expect(readFileSync(join(tmp.current, "supabase", "migrations", written[0]!), "utf8")).toBe(
+          "create table dogfood_note ();\n",
+        );
+      }).pipe(Effect.provide(s.layer));
+    });
+  }
+
+  it.effect("does not emit the advisory for the legacy pg-delta implementation", () => {
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "database", "items.sql"),
+      "create table items ();\n",
+    );
+    const s = setup(tmp.current, {
+      format: "json",
+      pgDeltaImplementation: "legacy",
+      diffSql: "create table dogfood_note ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(
+        flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
+      );
+      const success = s.out.messages.find((message) => message.type === "success");
+      expect(success?.data).not.toHaveProperty("advisories");
+      expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("ignores declarative inspection errors without changing diff success", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[experimental.pgdelta]",
+        "enabled = true",
+        'declarative_schema_path = "not-a-directory.sql"',
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(tmp.current, "supabase", "not-a-directory.sql"), "select 1;\n");
+    const s = setup(tmp.current, {
+      format: "json",
+      pgDeltaImplementation: "next",
+      diffSql: "create table dogfood_note ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(
+        flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
+      );
+      const success = s.out.messages.find((message) => message.type === "success");
+      expect(success?.data).not.toHaveProperty("advisories");
+      expect(success?.data).toMatchObject({ diff: "create table dogfood_note ();\n" });
+      expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
     }).pipe(Effect.provide(s.layer));
   });
 
