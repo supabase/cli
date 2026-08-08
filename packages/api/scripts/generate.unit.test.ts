@@ -28,29 +28,30 @@ describe("generate", () => {
     expect(renderOpenApiSchema({ type: "string", format: "email", nullable: true })).toBe(
       'Schema.Union([Schema.String.annotate({ "format": "email" }), Schema.Null])',
     );
-    expect(renderOpenApiSchema({ type: "string", format: "date-time", nullable: true })).toEqual(
-      expect.stringContaining('Schema.String.annotate({ "format": "date-time" }).check'),
+    expect(renderOpenApiSchema({ type: "string", format: "date-time", nullable: true })).toBe(
+      'Schema.Union([Schema.String.annotate({ "format": "date-time" }), Schema.Null])',
     );
   });
 
-  test("normalizes date-time schemas to strict RFC3339 timestamps with numeric offsets", () => {
-    const sanitized = sanitizeOpenApiSchema({
-      type: "string",
-      format: "date-time",
-      pattern: "Z-only-pattern-from-upstream",
-    });
-    expect(typeof sanitized.pattern).toBe("string");
-    if (typeof sanitized.pattern !== "string") {
-      throw new Error("Expected sanitized date-time pattern");
-    }
-    const dateTime = new RegExp(sanitized.pattern);
+  test("drops the spec's Z-only pattern from date-time strings (#6115)", () => {
+    expect(
+      renderOpenApiSchema({
+        type: "string",
+        format: "date-time",
+        pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+        nullable: true,
+      }),
+    ).toBe('Schema.Union([Schema.String.annotate({ "format": "date-time" }), Schema.Null])');
+  });
 
-    expect(dateTime.test("2026-08-07T10:11:12Z")).toBe(true);
-    expect(dateTime.test("2026-08-07T10:11:12+00:00")).toBe(true);
-    expect(dateTime.test("2026-08-07T12:41:12+02:30")).toBe(true);
-    expect(dateTime.test("2026-08-07 10:11:12Z")).toBe(false);
-    expect(dateTime.test("2026-08-07T10:11:12+25:00")).toBe(false);
-    expect(dateTime.test("not-a-timestamp")).toBe(false);
+  test("drops even an offset-tolerant date-time pattern (#6115)", () => {
+    // The spec's most permissive variant still rejects offset-less values and
+    // the lowercase `t`/`z` RFC 3339 §5.6 allows, so no date-time pattern survives.
+    const offsetTolerant =
+      "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$";
+    expect(
+      renderOpenApiSchema({ type: "string", format: "date-time", pattern: offsetTolerant }),
+    ).not.toContain("isPattern");
   });
 
   test("accepts booleans for string-encoded boolean query parameters", () => {

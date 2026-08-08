@@ -215,14 +215,6 @@ function identifier(value: string): string {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-// The Management API's checked-in OpenAPI currently carries a Z-only pattern
-// alongside `format: "date-time"`. OpenAPI date-time is RFC3339, whose time
-// offset may be either Z or a numeric `+/-HH:MM` offset. Normalize every such
-// node so generated response contracts accept the complete wire format while
-// retaining strict calendar/time validation.
-const RFC3339_DATE_TIME_PATTERN =
-  "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$";
-
 // Keys that we want to strip from a schema node because they describe
 // documentation / example values rather than the value's shape. JSON Schema's
 // `default` is a primitive (or array/object) literal used for documentation —
@@ -298,8 +290,13 @@ export function sanitizeOpenApiSchema(
     sanitized.pattern = UUID_PATTERN;
   }
 
+  // The spec's `date-time` patterns reject timestamps the Management API
+  // itself emits: most are Z-anchored, and even the most permissive variant
+  // rejects offset-less values and the lowercase `t`/`z` RFC 3339 §5.6 allows
+  // (supabase/cli#6115). Keeping any of them means owning a guess about every
+  // shape the API may serialize, so keep `format` and drop the pattern.
   if (sanitized.type === "string" && sanitized.format === "date-time") {
-    sanitized.pattern = RFC3339_DATE_TIME_PATTERN;
+    delete sanitized.pattern;
   }
 
   return sanitized;
