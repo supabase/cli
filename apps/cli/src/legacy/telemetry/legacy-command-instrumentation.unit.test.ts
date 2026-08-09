@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { Flag } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
@@ -11,7 +11,17 @@ import {
 } from "../../shared/legacy/global-flags.ts";
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
+import {
+  PropErrorCategory,
+  PropErrorFingerprint,
+  PropErrorKind,
+  PropHasSuggestion,
+  PropSuggestedCommand,
+  PropSuggestionType,
+  PropWorkflow,
+} from "../../shared/telemetry/event-catalog.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
+import { LegacyDbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { withLegacyCommandInstrumentation } from "./legacy-command-instrumentation.ts";
 import {
@@ -19,6 +29,16 @@ import {
   LegacyInvalidOutputFormatError,
 } from "../shared/legacy-go-output-flag.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
+
+const FAILURE_PROPERTY_NAMES = [
+  PropErrorKind,
+  PropErrorCategory,
+  PropErrorFingerprint,
+  PropHasSuggestion,
+  PropSuggestionType,
+  PropSuggestedCommand,
+  PropWorkflow,
+] as const;
 
 function mockLegacyIdentityStitch(opts: { stitchedDistinctId?: string }) {
   return {
@@ -61,6 +81,30 @@ function mockContextualAnalytics() {
   return { layer, captured };
 }
 
+function failingAnalytics(defect: unknown) {
+  return Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: () => Effect.die(defect),
+      identify: () => Effect.void,
+      alias: () => Effect.void,
+      groupIdentify: () => Effect.void,
+    }),
+  );
+}
+
+function interruptingAnalytics() {
+  return Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: () => Effect.interrupt,
+      identify: () => Effect.void,
+      alias: () => Effect.void,
+      groupIdentify: () => Effect.void,
+    }),
+  );
+}
+
 describe("withLegacyCommandInstrumentation", () => {
   it.live("annotates the command span and emits cli_command_executed", () => {
     const analytics = mockContextualAnalytics();
@@ -90,6 +134,9 @@ describe("withLegacyCommandInstrumentation", () => {
           expect(event?.properties.exit_code).toBe(0);
           expect(typeof event?.properties.duration_ms).toBe("number");
           expect(event?.properties.output_format).toBe("text");
+          for (const property of FAILURE_PROPERTY_NAMES) {
+            expect(event?.properties).not.toHaveProperty(property);
+          }
         }),
       ),
     );
@@ -615,10 +662,13 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
-  it.live("captures failed commands with exit_code=1", () => {
+  it.live("adds sanitized metadata from the original typed failure", () => {
     const analytics = mockContextualAnalytics();
+    const secret = "dump failed for postgres://customer.internal/private";
 
-    return withLegacyCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
+    return withLegacyCommandInstrumentation()(
+      Effect.fail(new LegacyDbDumpRunError({ message: secret })),
+    ).pipe(
       Effect.provide(analytics.layer),
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
@@ -628,14 +678,72 @@ describe("withLegacyCommandInstrumentation", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
-          expect(analytics.captured[0]?.properties.exit_code).toBe(1);
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "db_connection",
+            error_fingerprint: "tag:LegacyDbDumpRunError",
+            has_suggestion: true,
+            suggestion_type: "update_config",
+          });
+          expect(analytics.captured[0]?.properties).not.toHaveProperty(PropSuggestedCommand);
+          expect(analytics.captured[0]?.properties).not.toHaveProperty(PropWorkflow);
+          expect(JSON.stringify(analytics.captured[0])).not.toContain(secret);
         }),
       ),
       Effect.asVoid,
     );
   });
 
-  it.live("records exit_code=1 when a handler set a non-zero exit code without failing", () => {
+  it.live("preserves the command failure when telemetry capture defects", () => {
+    const failure = new LegacyDbDumpRunError({ message: "command failure" });
+
+    return Effect.fail(failure).pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(failingAnalytics(new Error("telemetry defect"))),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(failure);
+            expect(Cause.hasDies(exit.cause)).toBe(false);
+          }
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("propagates fiber interruption from telemetry capture", () => {
+    // A capture failure or defect is swallowed (best-effort telemetry), but an
+    // interruption landing during the trailing capture must not be — the fiber
+    // is being cancelled and swallowing would fight the cancellation.
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(interruptingAnalytics()),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+          }
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("classifies db lint machine-mode fail-on like its typed text-mode error", () => {
     // Go records the telemetry exit code from the real process exit code
     // (`cmd/root.go:177` -> `exitCode(err)` = 1). `db lint`/`db advisors` set
     // ProcessControl's exit code in json/stream-json mode after a --fail-on
@@ -657,7 +765,110 @@ describe("withLegacyCommandInstrumentation", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
-          expect(analytics.captured[0]?.properties.exit_code).toBe(1);
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "invalid_config",
+            error_fingerprint: "tag:LegacyDbLintFailOnError",
+            has_suggestion: false,
+            suggestion_type: "none",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.live("classifies db advisors machine-mode fail-on like its typed text-mode error", () => {
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+
+    return Effect.gen(function* () {
+      const pc = yield* ProcessControl;
+      yield* pc.setExitCode(1);
+    }).pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(processControl.layer),
+      Effect.provide(mockOutput({ format: "json" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "advisors"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "advisors"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "invalid_config",
+            error_fingerprint: "tag:LegacyDbAdvisorsFailOnError",
+            has_suggestion: false,
+            suggestion_type: "none",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.live("classifies a command that sets its exit code outside the instrumentation", () => {
+    // `db dump` converts its run failure into an exit code in the command pipe
+    // (`Effect.catchTag(...)` applied AFTER this wrapper), not inside the
+    // handler like `db lint`/`db advisors`. Instrumentation is the innermost
+    // wrapper, so it still sees the typed failure and must classify it rather
+    // than fall back to the process-controlled `unknown` bucket. Reordering
+    // that pipe would silently degrade this command's telemetry.
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+    const failure = new LegacyDbDumpRunError({ message: "container exited 1" });
+
+    return Effect.fail(failure).pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.catchTag("LegacyDbDumpRunError", () =>
+        Effect.gen(function* () {
+          const pc = yield* ProcessControl;
+          yield* pc.setExitCode(1);
+        }),
+      ),
+      Effect.provide(analytics.layer),
+      Effect.provide(processControl.layer),
+      Effect.provide(mockOutput({ format: "json" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "db_connection",
+            error_fingerprint: "tag:LegacyDbDumpRunError",
+          });
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("uses a static unknown fallback for other process-controlled failures", () => {
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+
+    return Effect.gen(function* () {
+      const pc = yield* ProcessControl;
+      yield* pc.setExitCode(2);
+    }).pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(processControl.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["unknown", "command"]) })),
+      Effect.provide(commandRuntimeLayer(["unknown", "command"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "unknown",
+            error_category: "unknown",
+            error_fingerprint: "error:ProcessControlledFailure",
+            has_suggestion: false,
+            suggestion_type: "none",
+          });
         }),
       ),
     );

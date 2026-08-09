@@ -63,6 +63,22 @@ It is emitted once per handled command invocation and includes:
 - `exit_code`
 - `duration_ms`
 
+Failed invocations (`exit_code != 0`) also carry a sanitized error
+classification:
+
+- `error_kind`
+- `error_category`
+- `error_fingerprint`
+- `has_suggestion`
+- `suggestion_type`
+- `suggested_command` (only when the remediation is an allowlisted command)
+
+These values come exclusively from the closed taxonomy in
+`src/shared/telemetry/error-actionability.ts` — never from raw error text —
+and the KPI query semantics (strict recovery, repeat errors, internal/unknown
+bug rate) are documented there in `CliErrorActionabilityMetricDefinitions`.
+A `workflow` property is reserved in the catalog but not emitted yet.
+
 Flag capture is intentionally conservative:
 
 - `flags_used` is always captured

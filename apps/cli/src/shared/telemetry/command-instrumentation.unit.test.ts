@@ -1,10 +1,47 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Cause, Data, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
 import { withCommandInstrumentation } from "./command-instrumentation.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "./error-actionability.ts";
+import {
+  PropErrorCategory,
+  PropErrorFingerprint,
+  PropErrorKind,
+  PropHasSuggestion,
+  PropSuggestedCommand,
+  PropSuggestionType,
+  PropWorkflow,
+} from "./event-catalog.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+
+const FAILURE_PROPERTY_NAMES = [
+  PropErrorKind,
+  PropErrorCategory,
+  PropErrorFingerprint,
+  PropHasSuggestion,
+  PropSuggestionType,
+  PropSuggestedCommand,
+  PropWorkflow,
+] as const;
+
+class InstrumentationAuthError extends Data.TaggedError("InstrumentationAuthError")<{
+  readonly message: string;
+  readonly path: string;
+  readonly sql: string;
+  readonly projectRef: string;
+  readonly hostname: string;
+  readonly token: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 function mockContextualAnalytics() {
   const captured: Array<{
@@ -33,6 +70,30 @@ function mockContextualAnalytics() {
   );
 
   return { layer, captured };
+}
+
+function failingAnalytics(defect: unknown) {
+  return Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: () => Effect.die(defect),
+      identify: () => Effect.void,
+      alias: () => Effect.void,
+      groupIdentify: () => Effect.void,
+    }),
+  );
+}
+
+function interruptingAnalytics() {
+  return Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: () => Effect.interrupt,
+      identify: () => Effect.void,
+      alias: () => Effect.void,
+      groupIdentify: () => Effect.void,
+    }),
+  );
 }
 
 describe("withCommandInstrumentation", () => {
@@ -92,15 +153,27 @@ describe("withCommandInstrumentation", () => {
           expect(command?.properties.flags_used).toEqual(["detach", "exclude"]);
           expect(command?.properties.flag_values).toEqual({});
           expect(command?.properties.exit_code).toBe(0);
+          for (const property of FAILURE_PROPERTY_NAMES) {
+            expect(command?.properties).not.toHaveProperty(property);
+          }
         }),
       ),
     );
   });
 
-  it.live("captures failed commands with a non-zero exit code", () => {
+  it.live("adds sanitized actionability metadata and preserves the original failure", () => {
     const analytics = mockContextualAnalytics();
+    const secrets = {
+      message: "failed at /Users/alice/private/config.toml",
+      path: "/Users/alice/private/config.toml",
+      sql: "select * from customer_private_table",
+      projectRef: "abcdefghijklmnopqrst",
+      hostname: "db.customer.internal",
+      token: "customer-secret-token",
+    };
+    const failure = new InstrumentationAuthError(secrets);
 
-    const program = withCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
+    const program = withCommandInstrumentation()(Effect.fail(failure)).pipe(
       Effect.provide(analytics.layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
@@ -110,16 +183,114 @@ describe("withCommandInstrumentation", () => {
       ),
       Effect.provide(commandRuntimeLayer(["login"])),
       Effect.exit,
-      Effect.tap(() =>
+      Effect.tap((exit) =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
-          expect(analytics.captured[0]?.event).toBe("cli_command_executed");
-          expect(analytics.captured[0]?.properties.exit_code).toBe(1);
+          const event = analytics.captured[0];
+          expect(event?.event).toBe("cli_command_executed");
+          expect(event?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "auth",
+            error_fingerprint: "tag:InstrumentationAuthError",
+            has_suggestion: true,
+            suggestion_type: "login",
+            suggested_command: "supabase login",
+          });
+          expect(event?.properties).not.toHaveProperty(PropWorkflow);
+          const encoded = JSON.stringify(event);
+          for (const secret of Object.values(secrets)) expect(encoded).not.toContain(secret);
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(failure);
+          }
         }),
       ),
     );
 
     return program.pipe(Effect.asVoid);
+  });
+
+  it.live("classifies defects as internal panics without capturing their message", () => {
+    const analytics = mockContextualAnalytics();
+    const secret = "panic at /Users/alice/customer-project";
+
+    return Effect.die(new TypeError(secret)).pipe(
+      withCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["branches", "list"]) })),
+      Effect.provide(commandRuntimeLayer(["branches", "list"])),
+      Effect.exit,
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "internal_bug",
+            error_category: "panic",
+            error_fingerprint: "error:TypeError",
+            has_suggestion: true,
+            suggestion_type: "rerun_debug",
+          });
+          expect(JSON.stringify(analytics.captured[0])).not.toContain(secret);
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("preserves the command failure when telemetry capture defects", () => {
+    const failure = new InstrumentationAuthError({
+      message: "command failure",
+      path: "path",
+      sql: "sql",
+      projectRef: "project",
+      hostname: "host",
+      token: "token",
+    });
+
+    return Effect.fail(failure).pipe(
+      withCommandInstrumentation(),
+      Effect.provide(failingAnalytics(new Error("telemetry defect"))),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["login"]) })),
+      Effect.provide(commandRuntimeLayer(["login"])),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(failure);
+            expect(Cause.hasDies(exit.cause)).toBe(false);
+          }
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("propagates fiber interruption from telemetry capture", () => {
+    // A capture failure or defect is swallowed (best-effort telemetry), but an
+    // interruption landing during the trailing capture must not be — the fiber
+    // is being cancelled and swallowing would fight the cancellation.
+    return Effect.void.pipe(
+      withCommandInstrumentation(),
+      Effect.provide(interruptingAnalytics()),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["login"]) })),
+      Effect.provide(commandRuntimeLayer(["login"])),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+          }
+        }),
+      ),
+      Effect.asVoid,
+    );
   });
 
   it.live("captures flag values only when explicitly allowlisted", () => {

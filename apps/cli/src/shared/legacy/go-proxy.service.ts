@@ -16,7 +16,11 @@ interface LegacyGoProxyShape {
    * variables onto the subprocess (merged on top of the inherited process env);
    * use it to pass values the user supplied as environment variables back to the
    * proxy as environment variables, rather than cross-mapping them onto CLI
-   * flags (CLI-1617).
+   * flags (CLI-1617). Child telemetry is always disabled because the parent
+   * command owns the single `cli_command_executed` event. Disabling it
+   * wholesale is safe: the only Go-side events besides the root command event
+   * belong to `link` and `login`, and both commands are native TS — no proxied
+   * invocation can lose a distinct Go-only event.
    */
   readonly exec: (
     args: ReadonlyArray<string>,

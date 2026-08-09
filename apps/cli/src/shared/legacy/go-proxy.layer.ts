@@ -202,10 +202,13 @@ export function makeGoProxyLayer(opts?: {
               // Scoped via `Effect.scoped` so listeners are always removed on
               // normal completion, failure, or fiber interruption.
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              // Per-call env (execOpts.env) overlays the construction-time env;
-              // `extendEnv: true` keeps both on top of the inherited process env.
-              const env =
-                opts?.env || execOpts?.env ? { ...opts?.env, ...execOpts?.env } : undefined;
+              // Parent instrumentation owns command telemetry. Disable it in
+              // the child so one invocation can never emit duplicate events.
+              const env = {
+                ...opts?.env,
+                ...execOpts?.env,
+                SUPABASE_TELEMETRY_DISABLED: "1",
+              };
               const command = ChildProcess.make(binary, [...globalArgs, ...args], {
                 cwd: execOpts?.cwd ?? opts?.cwd,
                 env,
@@ -242,8 +245,11 @@ export function makeGoProxyLayer(opts?: {
               }
               const binary = resolved.found;
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              const env =
-                opts?.env || execOpts?.env ? { ...opts?.env, ...execOpts?.env } : undefined;
+              const env = {
+                ...opts?.env,
+                ...execOpts?.env,
+                SUPABASE_TELEMETRY_DISABLED: "1",
+              };
               // Capture stdout (pipe) while keeping stderr inherited, so the child's
               // progress still reaches the user but its stdout is collected for
               // wrapping rather than written to our stdout. stdin defaults to
