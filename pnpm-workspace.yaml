@@ -4,6 +4,8 @@ packages:
   - "tools/*"
 
 allowBuilds:
+  # Transitive dep of @supabase/pg-delta; its build script is not needed.
+  '@launchql/protobufjs': false
   '@parcel/watcher': true
   "@swc/core": true
   esbuild: true
