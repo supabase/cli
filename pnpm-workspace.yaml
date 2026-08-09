@@ -49,7 +49,7 @@ minimumReleaseAgeExclude:
   - "@effect/platform-node-shared@4.0.0-beta.103"
   - "@effect/sql-pg@4.0.0-beta.103"
   - "@effect/vitest@4.0.0-beta.103"
-  - "@supabase/pg-delta@1.0.0-alpha.33"
+  - "@supabase/pg-delta@1.0.0-alpha.34"
   - "@supabase/pg-topo@1.0.0-alpha.5"
   - "effect@4.0.0-beta.103"
 
