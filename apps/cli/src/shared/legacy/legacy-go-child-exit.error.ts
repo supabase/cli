@@ -1,5 +1,11 @@
 import { Data, Runtime } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
+
 /**
  * A spawned `supabase-go` child process — via `LegacyGoProxy.exec`/`execCapture`, or
  * (historically, before CLI-1955 removed it) the hidden `db __db-bootstrap` seam —
@@ -52,4 +58,8 @@ export class LegacyGoChildExitError extends Data.TaggedError("LegacyGoChildExitE
   readonly message: string;
 }> {
   override readonly [Runtime.errorExitCode] = this.exitCode;
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.unknown;
+  }
 }

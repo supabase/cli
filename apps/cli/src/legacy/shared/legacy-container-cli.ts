@@ -2,6 +2,12 @@ import { Data, Effect, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Container CLIs tried in order: Docker is preferred, Podman is the fallback
  * for Docker-less hosts (e.g. Podman-only Linux setups).
@@ -17,16 +23,21 @@ type Spawner = ChildProcessSpawner["Service"];
 /**
  * Raised when neither `docker` nor `podman` can be spawned at all (e.g. neither
  * is installed or on `PATH`) — distinct from a spawned process exiting non-zero.
- * Not exported: callers never need to match on this type directly, they fold it
- * into their own tagged error via {@link legacyDescribeContainerCliFailure} so
- * the "no runtime found" root cause survives instead of collapsing into a
- * generic "failed to ..." message.
+ * Callers never need to match on this type directly, they fold it into their
+ * own tagged error via {@link legacyDescribeContainerCliFailure} so the "no
+ * runtime found" root cause survives instead of collapsing into a generic
+ * "failed to ..." message. Exported only so the coverage test can verify its
+ * own actionability declaration.
  */
-class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
+export class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
   "LegacyContainerRuntimeNotFoundError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
 /**
  * Exported so `legacy-docker-suggest.ts`'s daemon-unreachable matcher can test

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Effect, Exit, Layer, Option, Redacted } from "effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -8,7 +9,11 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import * as Schema from "effect/Schema";
 
 import { operationDefinitions } from "../generated/contracts.ts";
-import { makeSupabaseApiClient } from "./client.ts";
+import {
+  makeSupabaseApiClient,
+  markSupabaseApiInputErrorAsUserInput,
+  SupabaseApiInputError,
+} from "./client.ts";
 
 const textDecoder = new TextDecoder();
 
@@ -155,6 +160,83 @@ const config = {
 } as const;
 
 describe("makeSupabaseApiClient", () => {
+  test("defaults request-schema failures to generated-client provenance", async () => {
+    let requests = 0;
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
+
+    const executeError = await Effect.runPromise(
+      client
+        .execute(operationDefinitions.v1DeleteAFunction, {
+          ref: "invalid-ref",
+          function_slug: "hello-world",
+        })
+        .pipe(Effect.flip),
+    );
+    const executeRawError = await Effect.runPromise(
+      client
+        .executeRaw(operationDefinitions.v1DeleteAFunction, {
+          ref: "invalid-ref",
+          function_slug: "hello-world",
+        })
+        .pipe(Effect.flip),
+    );
+
+    for (const error of [executeError, executeRawError]) {
+      expect(error).toBeInstanceOf(SupabaseApiInputError);
+      if (!(error instanceof SupabaseApiInputError)) {
+        throw new Error("expected SupabaseApiInputError");
+      }
+      expect(error.source).toBe("generated_client");
+    }
+
+    if (!(executeRawError instanceof SupabaseApiInputError)) {
+      throw new Error("expected SupabaseApiInputError");
+    }
+    expect(markSupabaseApiInputErrorAsUserInput(executeRawError)).toBe(executeRawError);
+    expect(executeRawError.source).toBe("user_input");
+    expect(requests).toBe(0);
+  });
+
+  test("fails request-body construction before sending a request", async () => {
+    class BrokenBlob extends Blob {
+      override arrayBuffer(): Promise<ArrayBuffer> {
+        return Promise.reject(new Error("body read failed"));
+      }
+    }
+
+    let requests = 0;
+    const error = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.executeRaw(operationDefinitions.v1CreateAFunction, {
+            ref: "abcdefghijklmnopqrst",
+            slug: "demo",
+            body: new BrokenBlob([]),
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
+            return Effect.succeed(functionResponse(request, 201));
+          }),
+        ),
+        Effect.flip,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(HttpBody.HttpBodyError);
+    expect(requests).toBe(0);
+  });
+
   test("retries transport errors for POST requests", async () => {
     let attempts = 0;
 

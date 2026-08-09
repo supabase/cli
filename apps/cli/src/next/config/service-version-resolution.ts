@@ -6,17 +6,26 @@ import {
   SERVICE_NAMES,
 } from "@supabase/stack/effect";
 import { Data, Effect, Option } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { ProjectLocalServiceVersions } from "./project-local-service-versions.service.ts";
 import { ProjectLinkState } from "./project-link-state.service.ts";
 
 export type ResolvedServiceVersionContext = StackVersionPlan;
 
-class InvalidServiceVersionOverrideError extends Data.TaggedError(
+export class InvalidServiceVersionOverrideError extends Data.TaggedError(
   "InvalidServiceVersionOverrideError",
 )<{
   readonly detail: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 function isServiceName(value: string): value is ServiceName {
   return (SERVICE_NAMES as ReadonlyArray<string>).includes(value);

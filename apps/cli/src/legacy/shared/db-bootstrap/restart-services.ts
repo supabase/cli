@@ -12,6 +12,11 @@
 import { Data, Effect, Option, Result } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua } from "../legacy-colors.ts";
 import {
   collectText,
@@ -28,7 +33,11 @@ type Spawner = ChildProcessSpawner["Service"];
 /** `docker restart <id>` (the db container itself) failed — used only by PG14's `RestartDatabase`. */
 export class LegacyContainerRestartError extends Data.TaggedError("LegacyContainerRestartError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 /**
  * Port of Go's `Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{})`
@@ -94,7 +103,11 @@ const legacyRestartSatelliteService = (
 /** One or more satellite-service restarts failed. Messages are newline-joined, matching Go's `errors.Join`. */
 export class LegacyRestartServicesError extends Data.TaggedError("LegacyRestartServicesError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 /**
  * Port of Go's `restartServices` restart half (`reset.go:259-271`): restarts
@@ -146,7 +159,11 @@ function legacyKongRecoverySuggestion(kongId: string): string {
 export class LegacyKongReloadError extends Data.TaggedError("LegacyKongReloadError")<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 /** `docker exec <id> <cmd...>`, combined stdout+stderr into one buffer — mirrors Go's shared `io.Writer` in `DockerExecOnceWithStream(ctx, KongId, "", nil, cmd, &out, &out)`. Never fails the Effect itself: a spawn failure (no docker/podman) folds into `exitCode: 1`. */
 function legacyExecCaptureCombined(

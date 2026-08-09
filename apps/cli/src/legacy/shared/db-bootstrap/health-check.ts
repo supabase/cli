@@ -16,6 +16,11 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
+import {
   legacySpawnContainerCliWithRuntime,
   type LegacyContainerRuntime,
 } from "../legacy-container-cli.ts";
@@ -62,10 +67,14 @@ export interface LegacyHealthCheckFailure {
   readonly reason: string;
 }
 
-/** Internal-only: one probe round's failures, narrowing which containers are still watched next round. */
-class LegacyHealthCheckProbeError extends Data.TaggedError("LegacyHealthCheckProbeError")<{
+/** Runtime-internal probe sentinel; exported only for the exhaustive actionability guard. */
+export class LegacyHealthCheckProbeError extends Data.TaggedError("LegacyHealthCheckProbeError")<{
   readonly failures: ReadonlyArray<LegacyHealthCheckFailure>;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 /**
  * The retry loop's final, and only surfaced, failure — mirrors Go returning
@@ -83,7 +92,11 @@ export class LegacyHealthCheckTimeoutError extends Data.TaggedError(
    * pointing at an HTTP request logger is a non-sequitur (as in CLI-1973).
    */
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 /**
  * PostgREST's local Kong gateway coordinates, mirroring Go's

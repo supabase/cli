@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * Extracts a display message from a thrown `cause`. Every `Effect.try` catch in this
  * command's handler/signing-key resolver wraps a function that only ever throws a real
@@ -28,26 +34,42 @@ export class LegacyGenBearerJwtRoleRequiredError extends Data.TaggedError(
   "LegacyGenBearerJwtRoleRequiredError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /** `supabase/config.toml` itself is malformed. Mirrors `gen signing-key`'s own error shape. */
 export class LegacyGenBearerJwtConfigParseError extends Data.TaggedError(
   "LegacyGenBearerJwtConfigParseError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /** `[auth].signing_keys_path` is configured but the file could not be read. */
 export class LegacyGenBearerJwtReadError extends Data.TaggedError("LegacyGenBearerJwtReadError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /** `[auth].signing_keys_path`'s file is not valid JSON / not a JWK array. */
 export class LegacyGenBearerJwtDecodeError extends Data.TaggedError(
   "LegacyGenBearerJwtDecodeError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Go's `getSigningKey` Branch A (`bearerjwt.go:46-50`): the pasted stdin JWK is not
@@ -57,7 +79,11 @@ export class LegacyGenBearerJwtKeyParseError extends Data.TaggedError(
   "LegacyGenBearerJwtKeyParseError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 /**
  * Go's `getSigningKey` Branch B (`bearerjwt.go:67`): the entered kid matched no
@@ -67,7 +93,11 @@ export class LegacyGenBearerJwtKeyNotFoundError extends Data.TaggedError(
   "LegacyGenBearerJwtKeyNotFoundError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 /**
  * Go's `getSigningKey` Branch C (`bearerjwt.go:70-79`): the TTY key picker
@@ -80,7 +110,11 @@ export class LegacyGenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
   "LegacyGenBearerJwtKeyPickerAbortedError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
 
 /**
  * Go's `parseClaims` payload merge (`cmd/gen.go:209-211`). Byte-matches
@@ -90,7 +124,11 @@ export class LegacyGenBearerJwtPayloadError extends Data.TaggedError(
   "LegacyGenBearerJwtPayloadError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 /**
  * Go's `config.GenerateAsymmetricJWT` (`pkg/config/apikeys.go:88-113`) — unsupported
@@ -100,4 +138,8 @@ export class LegacyGenBearerJwtPayloadError extends Data.TaggedError(
  */
 export class LegacyGenBearerJwtSignError extends Data.TaggedError("LegacyGenBearerJwtSignError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}

@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * Conflicting database-target flags. Reproduces cobra's
  * `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` error byte-for-byte
@@ -7,7 +13,11 @@ import { Data } from "effect";
  */
 export class LegacyDbPullTargetFlagsError extends Data.TaggedError("LegacyDbPullTargetFlagsError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `--declarative` / `--use-pg-delta` combined with `--diff-engine`. Reproduces
@@ -18,7 +28,11 @@ export class LegacyDbPullEngineConflictError extends Data.TaggedError(
   "LegacyDbPullEngineConflictError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * The remote migration history does not match local files. Byte-matches Go's
@@ -30,7 +44,11 @@ export class LegacyDbPullMigrationConflictError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.migrationDrift;
+  }
+}
 
 /**
  * The diff produced no schema changes. Byte-matches Go's `errInSync`
@@ -40,7 +58,11 @@ export class LegacyDbPullMigrationConflictError extends Data.TaggedError(
  */
 export class LegacyDbPullInSyncError extends Data.TaggedError("LegacyDbPullInSyncError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Writing the migration file / updating the remote migration-history table failed.
@@ -48,7 +70,11 @@ export class LegacyDbPullInSyncError extends Data.TaggedError("LegacyDbPullInSyn
  */
 export class LegacyDbPullWriteError extends Data.TaggedError("LegacyDbPullWriteError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * The initial-pull pg_dump container exited non-zero. Go's `dumpRemoteSchema`
@@ -60,4 +86,15 @@ export class LegacyDbPullWriteError extends Data.TaggedError("LegacyDbPullWriteE
 export class LegacyDbPullDumpError extends Data.TaggedError("LegacyDbPullDumpError")<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+  /**
+   * Set when the failure is opening/truncating the local migration file before
+   * any pg_dump attempt — a filesystem permission problem, not a database
+   * connection failure. The actual pg_dump-run failures leave it unset and keep
+   * the `dbConnection` classification.
+   */
+  readonly fileOpen?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.fileOpen === true ? actionability.permission : actionability.dbConnection;
+  }
+}

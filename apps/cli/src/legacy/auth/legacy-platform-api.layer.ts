@@ -47,7 +47,7 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
       // already validates the keyring/file paths; validate the env token here too so
       // a malformed SUPABASE_ACCESS_TOKEN fails with the invalid-token error rather
       // than being sent to the API.
-      yield* validateLegacyAccessToken(Redacted.value(configuredToken.value));
+      yield* validateLegacyAccessToken(Redacted.value(configuredToken.value), "env");
       return configuredToken;
     }
     return yield* credentials.getAccessToken;

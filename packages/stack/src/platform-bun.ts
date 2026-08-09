@@ -16,7 +16,7 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
         const requestInit: BunUnixRequestInit = { ...init, unix: socketPath };
         return fetch(`http://localhost${path}`, requestInit);
       },
-      catch: (cause) => new UnixHttpClientError({ socketPath, path, cause }),
+      catch: (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
     }),
 });
 

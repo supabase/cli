@@ -50,6 +50,7 @@ const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<st
       new NoBranchNameError({
         detail: "Branch creation cancelled.",
         suggestion: "Provide a branch name: `supabase branches create <name>`",
+        cancelled: true,
       }),
     );
   }

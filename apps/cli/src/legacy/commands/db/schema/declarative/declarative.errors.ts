@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * Declarative commands were invoked without `--experimental` and without
  * `[experimental.pgdelta] enabled = true`. Byte-matches Go's gate error
@@ -12,7 +18,11 @@ export class LegacyDeclarativeNotEnabledError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * A target could not be resolved in non-interactive mode. Byte-matches Go's
@@ -24,7 +34,11 @@ export class LegacyDeclarativeNonInteractiveError extends Data.TaggedError(
   "LegacyDeclarativeNonInteractiveError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * A mutually-exclusive flag group was violated. Reproduces cobra's
@@ -37,7 +51,11 @@ export class LegacyDeclarativeMutuallyExclusiveFlagsError extends Data.TaggedErr
   "LegacyDeclarativeMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * The interactive custom-database-URL prompt was empty or unparseable. Byte-matches
@@ -48,7 +66,11 @@ export class LegacyDeclarativeInvalidDbUrlError extends Data.TaggedError(
   "LegacyDeclarativeInvalidDbUrlError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `db schema declarative generate` ran but produced no declarative files (sync's
@@ -59,7 +81,11 @@ export class LegacyDeclarativeNoFilesGeneratedError extends Data.TaggedError(
   "LegacyDeclarativeNoFilesGeneratedError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Diffing declarative schema to migrations failed. Wraps
@@ -69,7 +95,11 @@ export class LegacyDeclarativeNoFilesGeneratedError extends Data.TaggedError(
  */
 export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarativeDiffError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Applying the generated migration to the local database failed. Wraps Go's
@@ -79,7 +109,19 @@ export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarat
  */
 export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclarativeApplyError")<{
   readonly message: string;
-}> {}
+  /**
+   * Set when this failure came from connecting to the local Postgres instance
+   * (`dbConnection.connect`) rather than the migration SQL failing to apply.
+   */
+  readonly connect?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.connect === true) {
+      return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+    }
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Materializing the declarative export on disk failed. Byte-matches Go's

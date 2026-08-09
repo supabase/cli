@@ -84,6 +84,11 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 
 import { Output } from "../../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyIsSqlState } from "../legacy-connect-errors.ts";
 import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
@@ -145,17 +150,23 @@ const errMessage = (e: unknown): string =>
  * One or more replication slots are still active (retryable — the WAL sender
  * that owns the slot may still be tearing down), OR counting them failed
  * outright (permanent — Go's `backoff.PermanentError`, `reset.go:236-238`:
- * a query-execution failure is never retried, only "count > 0" is). Not
- * exported outside this module — callers discriminate this via the
- * {@link LegacyRecreateLocalDatabaseError} union's `_tag`, never by importing
- * the class itself (same pattern as `legacy-docker-remove-all.ts`).
+ * a query-execution failure is never retried, only "count > 0" is). Exported
+ * only so the exhaustive actionability guard can inspect its
+ * declaration; runtime callers discriminate it through the
+ * {@link LegacyRecreateLocalDatabaseError} union's `_tag`.
  */
-class LegacyResetReplicationSlotsError extends Data.TaggedError(
+export class LegacyResetReplicationSlotsError extends Data.TaggedError(
   "LegacyResetReplicationSlotsError",
 )<{
   readonly message: string;
   readonly retryable: boolean;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.retryable
+      ? { ...actionability.dbFinding, fingerprint_suffix: "replication_slots_active" }
+      : { ...actionability.dbConnection, fingerprint_suffix: "replication_slots_query" };
+  }
+}
 
 /** Every failure the PG14/PG15 `db reset` recreate composition can produce. */
 export type LegacyRecreateLocalDatabaseError =
@@ -256,6 +267,7 @@ export const legacyResetDisconnectClients = Effect.fnUntraced(function* (session
       return yield* Effect.fail(
         new LegacyDbSetupError({
           message: `failed to disconnect clients: ${failure.message}`,
+          reason: "database",
         }),
       );
     }
@@ -427,6 +439,7 @@ const legacyRecreateLocalDatabase14 = <E>(
               (error) =>
                 new LegacyDbSetupError({
                   message: `failed to create temp directory: ${errMessage(error)}`,
+                  reason: "filesystem",
                 }),
             ),
           );

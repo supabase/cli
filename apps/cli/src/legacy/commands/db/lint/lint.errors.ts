@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * Tagged errors for `db lint`, one per Go failure path
  * (`internal/db/lint/lint.go`). The `message` byte-matches Go's `errors.Errorf`
@@ -12,34 +18,62 @@ import { Data } from "effect";
 /** cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` (`db.go`). */
 export class LegacyDbLintMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyDbLintMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /** `failed to begin transaction: %w` (`lint.go:111`). */
 export class LegacyDbLintBeginTxError extends Data.TaggedError("LegacyDbLintBeginTxError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}
 
 /** `failed to list schemas: %w` (`drop.go:46`, via `ListUserSchemas`). */
 export class LegacyDbLintListSchemasError extends Data.TaggedError("LegacyDbLintListSchemasError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /** `failed to enable pgsql_check: %w` (`lint.go:126`). */
 export class LegacyDbLintEnableCheckError extends Data.TaggedError("LegacyDbLintEnableCheckError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /** `failed to query rows: %w` (`lint.go:140`). */
 export class LegacyDbLintQueryError extends Data.TaggedError("LegacyDbLintQueryError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /** `failed to marshal json: %w` (`lint.go:151`). */
 export class LegacyDbLintMalformedJsonError extends Data.TaggedError(
   "LegacyDbLintMalformedJsonError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /** `fail-on is set to %s, non-zero exit` (`lint.go:72`). */
 export class LegacyDbLintFailOnError extends Data.TaggedError("LegacyDbLintFailOnError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}

@@ -1,4 +1,10 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 // ---------------------------------------------------------------------------
 // HTTP-bound errors — one (Network + UnexpectedStatus) pair per Go errorf site.
@@ -10,7 +16,11 @@ export class LegacyProjectsListNetworkError extends Data.TaggedError(
   "LegacyProjectsListNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyProjectsListUnexpectedStatusError extends Data.TaggedError(
   "LegacyProjectsListUnexpectedStatusError",
@@ -18,13 +28,30 @@ export class LegacyProjectsListUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+  /**
+   * Set when the failure is a 200 response whose body could not be decoded
+   * (unparseable JSON / not an array) rather than a genuine non-200 status —
+   * an API response problem, not a bad status code.
+   */
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.decode === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacyProjectsCreateNetworkError extends Data.TaggedError(
   "LegacyProjectsCreateNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyProjectsCreateUnexpectedStatusError extends Data.TaggedError(
   "LegacyProjectsCreateUnexpectedStatusError",
@@ -32,7 +59,11 @@ export class LegacyProjectsCreateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // Interactive org list fetched by `create` when `--org-id` is omitted
 // (`create.go:97-105`).
@@ -40,7 +71,14 @@ export class LegacyProjectsOrgsListNetworkError extends Data.TaggedError(
   "LegacyProjectsOrgsListNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyProjectsOrgsListUnexpectedStatusError extends Data.TaggedError(
   "LegacyProjectsOrgsListUnexpectedStatusError",
@@ -48,13 +86,24 @@ export class LegacyProjectsOrgsListUnexpectedStatusError extends Data.TaggedErro
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacyProjectsDeleteNetworkError extends Data.TaggedError(
   "LegacyProjectsDeleteNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
   "LegacyProjectsDeleteUnexpectedStatusError",
@@ -62,20 +111,35 @@ export class LegacyProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // 404 branch of `delete.Run` (`delete.go:37-38`): "Project does not exist:<ref>".
 export class LegacyProjectsDeleteNotFoundError extends Data.TaggedError(
   "LegacyProjectsDeleteNotFoundError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 export class LegacyProjectsApiKeysNetworkError extends Data.TaggedError(
   "LegacyProjectsApiKeysNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyProjectsApiKeysUnexpectedStatusError extends Data.TaggedError(
   "LegacyProjectsApiKeysUnexpectedStatusError",
@@ -83,7 +147,11 @@ export class LegacyProjectsApiKeysUnexpectedStatusError extends Data.TaggedError
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pure-path errors (validation, prompt-time semantics, user cancellation).
@@ -94,7 +162,11 @@ export class LegacyProjectsEnvNotSupportedError extends Data.TaggedError(
   "LegacyProjectsEnvNotSupportedError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 // Non-interactive `create` missing required params — mirrors Go's PreRunE
 // marking `--org-id`, `--db-password`, `--region` required + ExactArgs(1)
@@ -103,14 +175,22 @@ export class LegacyProjectsCreateMissingArgError extends Data.TaggedError(
   "LegacyProjectsCreateMissingArgError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 // Interactive `create` name prompt returned blank (`create.go:94`).
 export class LegacyProjectsCreateNameEmptyError extends Data.TaggedError(
   "LegacyProjectsCreateNameEmptyError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 // `delete` non-interactive with no positional ref — mirrors Go's
 // `cobra.ExactArgs(1)` on a non-TTY (`projects.go:109-113`).
@@ -118,7 +198,11 @@ export class LegacyProjectsDeleteRefRequiredError extends Data.TaggedError(
   "LegacyProjectsDeleteRefRequiredError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 // User declined the delete confirmation prompt (`delete.go:24-25`,
 // `errors.New(context.Canceled)`).
@@ -126,4 +210,8 @@ export class LegacyProjectsDeleteCancelledError extends Data.TaggedError(
   "LegacyProjectsDeleteCancelledError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}

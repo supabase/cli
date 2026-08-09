@@ -1,10 +1,23 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 export class LegacySslEnforcementGetNetworkError extends Data.TaggedError(
   "LegacySslEnforcementGetNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacySslEnforcementGetUnexpectedStatusError extends Data.TaggedError(
   "LegacySslEnforcementGetUnexpectedStatusError",
@@ -12,13 +25,24 @@ export class LegacySslEnforcementGetUnexpectedStatusError extends Data.TaggedErr
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacySslEnforcementUpdateNetworkError extends Data.TaggedError(
   "LegacySslEnforcementUpdateNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacySslEnforcementUpdateUnexpectedStatusError extends Data.TaggedError(
   "LegacySslEnforcementUpdateUnexpectedStatusError",
@@ -26,7 +50,11 @@ export class LegacySslEnforcementUpdateUnexpectedStatusError extends Data.Tagged
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // Verbatim Go string from `apps/cli-go/internal/ssl_enforcement/update/update.go:27`.
 export class LegacySslEnforcementNoEnableDisableFlagError extends Data.TaggedError(
@@ -36,6 +64,10 @@ export class LegacySslEnforcementNoEnableDisableFlagError extends Data.TaggedErr
 }> {
   constructor() {
     super({ message: "enable/disable not specified" });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -52,5 +84,9 @@ export class LegacySslEnforcementMutuallyExclusiveFlagsError extends Data.Tagged
       message:
         "if any flags in the group [enable-db-ssl-enforcement disable-db-ssl-enforcement] are set none of the others can be",
     });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }

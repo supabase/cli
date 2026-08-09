@@ -20,6 +20,7 @@ import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import { LEGACY_GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
+  LegacyBranchesBranchNameEmptyError,
   LegacyBranchesCreateCancelledError,
   LegacyBranchesCreateNetworkError,
   LegacyBranchesCreateUnexpectedStatusError,
@@ -84,6 +85,12 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
     }
   }
 
+  if (branchName.length === 0) {
+    return yield* new LegacyBranchesBranchNameEmptyError({
+      message: "branch name cannot be empty",
+    });
+  }
+
   const ref = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -107,7 +114,24 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
         // Mirror Go's `create.go:34-37`: on any non-201 status (including
         // gated 4xx), run the plan-gate check before mapping the error.
         Effect.catch(
-          legacyGateMapError({ projectRef: ref, featureKey: "branching_limit" }, mapCreateErrorRaw),
+          legacyGateMapError(
+            { projectRef: ref, featureKey: "branching_limit" },
+            (cause, upgradeSuggested) =>
+              Effect.gen(function* () {
+                const mapped = yield* Effect.flip(mapCreateErrorRaw(cause));
+                if (mapped._tag === "LegacyBranchesCreateUnexpectedStatusError") {
+                  return yield* Effect.fail(
+                    new LegacyBranchesCreateUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                    }),
+                  );
+                }
+                return yield* Effect.fail(mapped);
+              }),
+          ),
         ),
       );
     yield* creating?.clear() ?? Effect.void;
