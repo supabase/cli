@@ -26,7 +26,9 @@ export class NoBranchNameError extends Data.TaggedError("NoBranchNameError")<{
   readonly cancelled?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.cancelled === true ? actionability.cancelled : actionability.provideFlags;
+    return this.cancelled === true
+      ? { ...actionability.cancelled, fingerprint_suffix: "cancelled" }
+      : actionability.provideFlags;
   }
 }
 

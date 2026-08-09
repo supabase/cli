@@ -56,7 +56,7 @@ export class LegacyDbConfigLoginRoleStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -80,7 +80,7 @@ export class LegacyDbConfigListBansStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -104,7 +104,7 @@ export class LegacyDbConfigUnbanStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

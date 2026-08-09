@@ -24,7 +24,7 @@ export class LegacyPostgresConfigGetUnexpectedStatusError extends Data.TaggedErr
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -58,7 +58,7 @@ export class LegacyPostgresConfigUpdateUnexpectedStatusError extends Data.Tagged
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -102,7 +102,7 @@ export class LegacyPostgresConfigDeleteUnexpectedStatusError extends Data.Tagged
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

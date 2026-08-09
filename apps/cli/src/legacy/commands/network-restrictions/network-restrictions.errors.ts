@@ -27,7 +27,7 @@ export class LegacyNetworkRestrictionsGetUnexpectedStatusError extends Data.Tagg
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -52,7 +52,7 @@ export class LegacyNetworkRestrictionsUpdateUnexpectedStatusError extends Data.T
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

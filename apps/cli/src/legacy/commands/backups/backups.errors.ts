@@ -25,7 +25,7 @@ export class LegacyBackupListUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -50,6 +50,6 @@ export class LegacyBackupRestoreUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }

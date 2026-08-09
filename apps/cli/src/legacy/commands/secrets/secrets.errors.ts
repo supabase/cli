@@ -32,7 +32,7 @@ export class LegacySecretsListUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -55,7 +55,7 @@ export class LegacySecretsSetUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -80,7 +80,7 @@ export class LegacySecretsUnsetUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -92,15 +92,30 @@ export class LegacySecretsEnvFileOpenError extends Data.TaggedError(
   "LegacySecretsEnvFileOpenError",
 )<{
   readonly message: string;
+  readonly reason: "not_found" | "permission" | "other";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
+    if (this.reason === "not_found") {
+      return { ...actionability.provideFlags, fingerprint_suffix: "not_found" };
+    }
+    if (this.reason === "permission") {
+      return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+    }
+    return { ...actionability.unknown, fingerprint_suffix: "platform_error" };
   }
 }
 
 export class LegacySecretsEnvFileParseError extends Data.TaggedError(
   "LegacySecretsEnvFileParseError",
 )<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+export class LegacySecretsSetInputError extends Data.TaggedError("LegacySecretsSetInputError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

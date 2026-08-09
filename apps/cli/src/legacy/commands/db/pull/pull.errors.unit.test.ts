@@ -12,7 +12,7 @@ describe("LegacyDbPullDumpError actionability", () => {
     );
     expect(result.error_kind).toBe("user_actionable");
     expect(result.error_category).toBe("permission");
-    expect(result.error_fingerprint).toBe("tag:LegacyDbPullDumpError");
+    expect(result.error_fingerprint).toBe("tag:LegacyDbPullDumpError:filesystem");
   });
 
   it("classifies a pg_dump-run failure as a db-connection problem", () => {
@@ -21,6 +21,6 @@ describe("LegacyDbPullDumpError actionability", () => {
     );
     expect(result.error_kind).toBe("user_actionable");
     expect(result.error_category).toBe("db_connection");
-    expect(result.error_fingerprint).toBe("tag:LegacyDbPullDumpError");
+    expect(result.error_fingerprint).toBe("tag:LegacyDbPullDumpError:connect");
   });
 });

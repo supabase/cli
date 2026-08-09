@@ -22,6 +22,15 @@ describe("LegacyEdgeRuntimeScriptError actionability", () => {
     expect(result.error_fingerprint).toBe("tag:LegacyEdgeRuntimeScriptError:registry_pull");
   });
 
+  it("classifies an image-inspect failure as invalid config", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyEdgeRuntimeScriptError({ message: "error diffing schema: ...", docker: "inspect" }),
+    );
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.error_fingerprint).toBe("tag:LegacyEdgeRuntimeScriptError:image_inspect");
+  });
+
   it("classifies a non-docker script failure as a user db finding", () => {
     const result = classifyCliErrorActionability(
       new LegacyEdgeRuntimeScriptError({ message: "error diffing schema: exit 1:\n..." }),

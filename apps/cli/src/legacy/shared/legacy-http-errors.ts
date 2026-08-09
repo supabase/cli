@@ -1,5 +1,6 @@
-import type { SupabaseApiError } from "@supabase/api/effect";
+import { SupabaseApiInputError, type SupabaseApiError } from "@supabase/api/effect";
 import { Effect } from "effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
@@ -72,9 +73,17 @@ export function mapLegacyHttpError<N, S>(opts: {
   readonly statusError: StatusErrorFactory<S>;
   readonly networkMessage: (cause: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-}): (cause: SupabaseApiError) => Effect.Effect<never, N | S> {
+}): (
+  cause: SupabaseApiError,
+) => Effect.Effect<never, N | S | SupabaseApiInputError | HttpBody.HttpBodyError> {
   return (cause) =>
     Effect.gen(function* () {
+      if (cause instanceof SupabaseApiInputError || cause instanceof HttpBody.HttpBodyError) {
+        // These failures occur while the generated client validates or builds
+        // the request. Keep their identity because this generic mapper cannot
+        // safely infer user provenance or reclassify them as response errors.
+        return yield* Effect.fail(cause);
+      }
       if (HttpClientError.isHttpClientError(cause)) {
         if (RESPONSE_ERROR_TAGS.has(cause.reason._tag) && cause.response !== undefined) {
           const status = cause.response.status;
@@ -95,10 +104,10 @@ export function mapLegacyHttpError<N, S>(opts: {
           new opts.networkError({ message: opts.networkMessage(description) }),
         );
       }
-      // SchemaError or HttpBodyError — the server returned a response whose
-      // body failed schema decoding (a 200 the generated client could not
-      // parse). This is not a transport failure, so flag `decode` to classify
-      // it as an API-response problem rather than a network problem.
+      // SchemaError — the server returned a response whose body failed schema
+      // decoding (a 200 the generated client could not parse). This is not a
+      // transport failure, so flag `decode` to classify it as an API-response
+      // problem rather than a network problem.
       return yield* Effect.fail(
         new opts.networkError({ message: opts.networkMessage(String(cause)), decode: true }),
       );

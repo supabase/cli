@@ -16,7 +16,7 @@ export class LegacyProjectRefReadError extends Data.TaggedError("LegacyProjectRe
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.relinkProject;
+    return actionability.permission;
   }
 }
 

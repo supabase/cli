@@ -81,7 +81,7 @@ export class LegacyBootstrapHealthError extends Data.TaggedError("LegacyBootstra
    * service reported unhealthy. */
   readonly status?: number;
   /** Set when the health poll's response came back with a 200 the generated
-   * client could not decode (`SchemaError`/`HttpBodyError`) — an API-response
+   * client could not decode (`SchemaError`) — an API-response
    * problem, not a transport failure. */
   readonly decode?: boolean;
   /** Set when the health poll failed without any HTTP response (DNS, TLS,

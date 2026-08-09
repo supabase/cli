@@ -9,15 +9,15 @@ import {
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/** Transport (or body-decode) failure while fetching `GET /v1/projects/{ref}`. */
+/** Transport (or response-decode) failure while fetching `GET /v1/projects/{ref}`. */
 export class LegacyLinkProjectStatusNetworkError extends Data.TaggedError(
   "LegacyLinkProjectStatusNetworkError",
 )<{
   readonly message: string;
   /**
    * Set when the failure was the generated client rejecting the response body
-   * (`SchemaError` / `HttpBodyError`) rather than a transport failure — an API
-   * response problem instead of a network one.
+   * (`SchemaError`) rather than a transport failure — an API response problem
+   * instead of a network one.
    */
   readonly decode?: boolean;
 }> {
@@ -91,7 +91,7 @@ export class LegacyLinkAuthTokenError extends Data.TaggedError("LegacyLinkAuthTo
     // The shared mapper wraps any non-200 in this tag; the status policy maps
     // 401 → re-login, 404 → user-supplied ref not found, everything else →
     // API status.
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -103,6 +103,6 @@ export class LegacyLinkMissingKeyError extends Data.TaggedError("LegacyLinkMissi
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.permission;
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }

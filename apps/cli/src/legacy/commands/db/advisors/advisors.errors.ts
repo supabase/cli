@@ -112,7 +112,7 @@ export class LegacyDbAdvisorsSecurityStatusError extends Data.TaggedError(
   "LegacyDbAdvisorsSecurityStatusError",
 )<{ readonly status: number; readonly body: string; readonly message: string }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -137,7 +137,7 @@ export class LegacyDbAdvisorsPerformanceStatusError extends Data.TaggedError(
   "LegacyDbAdvisorsPerformanceStatusError",
 )<{ readonly status: number; readonly body: string; readonly message: string }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

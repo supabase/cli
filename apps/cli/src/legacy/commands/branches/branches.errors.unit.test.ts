@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
+  LegacyBranchesBranchingDisabledError,
   LegacyBranchesCreateUnexpectedStatusError,
   LegacyBranchesDeleteUnexpectedStatusError,
   LegacyBranchesPauseUnexpectedStatusError,
@@ -111,4 +112,15 @@ describe("branches create 409 = duplicate branch name", () => {
     expect(result.error_category).toBe("plan_limit");
     expect(result.suggestion_type).toBe("upgrade_plan");
   });
+});
+
+it("classifies the branching-disabled remediation as running the suggested command", () => {
+  const result = classifyCliErrorActionability(
+    new LegacyBranchesBranchingDisabledError({
+      message: "Preview branching is disabled.",
+      suggestion: "Create your first branch with: supabase branches create",
+    }),
+  );
+  expect(result.suggestion_type).toBe("run_command");
+  expect(result.suggested_command).toBe("supabase branches create");
 });

@@ -104,6 +104,6 @@ export class LegacyDbQueryUnexpectedStatusError extends Data.TaggedError(
     if (this.status === 400) {
       return { ...actionability.dbFinding, fingerprint_suffix: "query" };
     }
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }

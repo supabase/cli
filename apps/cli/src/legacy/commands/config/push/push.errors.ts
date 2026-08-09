@@ -28,7 +28,7 @@ interface NetworkErrorArgs {
 
 /**
  * A network-error shape that may instead represent a 200-response body decode
- * failure (`SchemaError` / `HttpBodyError` folded in by `mapLegacyHttpError`).
+ * failure (`SchemaError` folded in by `mapLegacyHttpError`).
  * `decode: true` reclassifies the failure as an API-response problem rather
  * than a transport/network problem.
  */
@@ -69,7 +69,7 @@ export class LegacyConfigPushListAddonsStatusError extends Data.TaggedError(
   "LegacyConfigPushListAddonsStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -88,7 +88,7 @@ export class LegacyConfigPushApiReadStatusError extends Data.TaggedError(
   "LegacyConfigPushApiReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 export class LegacyConfigPushApiUpdateNetworkError extends Data.TaggedError(
@@ -104,7 +104,7 @@ export class LegacyConfigPushApiUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushApiUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -123,7 +123,7 @@ export class LegacyConfigPushDbReadStatusError extends Data.TaggedError(
   "LegacyConfigPushDbReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 export class LegacyConfigPushDbUpdateNetworkError extends Data.TaggedError(
@@ -139,7 +139,7 @@ export class LegacyConfigPushDbUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushDbUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -158,7 +158,7 @@ export class LegacyConfigPushNetworkRestrictionsReadStatusError extends Data.Tag
   "LegacyConfigPushNetworkRestrictionsReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 export class LegacyConfigPushNetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
@@ -174,7 +174,7 @@ export class LegacyConfigPushNetworkRestrictionsUpdateStatusError extends Data.T
   "LegacyConfigPushNetworkRestrictionsUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -193,7 +193,7 @@ export class LegacyConfigPushSslEnforcementReadStatusError extends Data.TaggedEr
   "LegacyConfigPushSslEnforcementReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 export class LegacyConfigPushSslEnforcementUpdateNetworkError extends Data.TaggedError(
@@ -209,7 +209,7 @@ export class LegacyConfigPushSslEnforcementUpdateStatusError extends Data.Tagged
   "LegacyConfigPushSslEnforcementUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -228,7 +228,7 @@ export class LegacyConfigPushAuthReadStatusError extends Data.TaggedError(
   "LegacyConfigPushAuthReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 export class LegacyConfigPushAuthUpdateNetworkError extends Data.TaggedError(
@@ -244,7 +244,7 @@ export class LegacyConfigPushAuthUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushAuthUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -263,7 +263,7 @@ export class LegacyConfigPushStorageReadStatusError extends Data.TaggedError(
   "LegacyConfigPushStorageReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 export class LegacyConfigPushStorageUpdateNetworkError extends Data.TaggedError(
@@ -279,7 +279,7 @@ export class LegacyConfigPushStorageUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushStorageUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -298,6 +298,6 @@ export class LegacyConfigPushEnableWebhookStatusError extends Data.TaggedError(
   "LegacyConfigPushEnableWebhookStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }

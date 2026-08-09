@@ -47,10 +47,10 @@ export class LegacyStorageGatewayStatusError extends Data.TaggedError(
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     // The tenant Storage gateway is not the Management API: a 401/403 here
     // means stale local service keys, which `supabase login` cannot fix, so
-    // the Management-API auth/permission policy must not apply. A 404 is a
-    // user-supplied ss:///bucket/path that matched nothing (the friendly
-    // bucket-not-found cases are intercepted by the handlers before this error
-    // propagates), which the status policy classifies as user input.
+    // the Management-API auth/permission policy must not apply. This tag also
+    // spans collection and capability-probe routes (including unsupported
+    // vector routes returning 404), so it cannot safely opt every 404 into the
+    // named-resource policy.
     if (this.status === 401 || this.status === 403) {
       return { ...actionability.apiStatus, fingerprint_suffix: "gateway_auth" };
     }

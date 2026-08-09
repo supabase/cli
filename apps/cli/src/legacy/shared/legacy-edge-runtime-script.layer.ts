@@ -136,7 +136,12 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
                 (cause) =>
                   new LegacyEdgeRuntimeScriptError({
                     message: `${opts.errPrefix}: ${cause.message}`,
-                    docker: cause.reason === "spawn" || cause.daemonDown ? "daemon" : "pull",
+                    docker:
+                      cause.reason === "spawn" || cause.daemonDown
+                        ? "daemon"
+                        : cause.reason === "pull"
+                          ? "pull"
+                          : "inspect",
                   }),
               ),
             );

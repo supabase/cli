@@ -13,7 +13,7 @@ describe("NoBranchNameError actionability", () => {
     );
     expect(result.error_kind).toBe("user_cancelled");
     expect(result.error_category).toBe("cancelled");
-    expect(result.error_fingerprint).toBe("tag:NoBranchNameError");
+    expect(result.error_fingerprint).toBe("tag:NoBranchNameError:cancelled");
   });
 
   it("classifies a genuinely missing branch name as provide-flags", () => {

@@ -71,6 +71,6 @@ export class LegacyStorageAuthTokenError extends Data.TaggedError("LegacyStorage
     // The shared mapper wraps any non-200 in this tag; the status policy maps
     // 401 → re-login, 404 → user-supplied ref not found, everything else →
     // API status.
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }

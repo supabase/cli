@@ -14,8 +14,9 @@ import {
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
 import { Duration, Effect, Option, Schema, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
@@ -193,13 +194,10 @@ function formatUnexpectedStatusBody(text: string): string {
 function mapTransportError(
   prefix: string,
   error: unknown,
-): FunctionsApiTransportError | SupabaseApiInputError {
-  // The generated client's input schema rejected the request before any
-  // request was sent (e.g. a user-supplied ref failing the `ref` pattern).
-  // That is an input-phase failure, not a transport failure — pass it through
-  // unchanged so the actionability adapter classifies it as invalid input
-  // instead of network.
-  if (error instanceof SupabaseApiInputError) {
+): FunctionsApiTransportError | SupabaseApiInputError | HttpBody.HttpBodyError {
+  // The request mixes user input with CLI-generated bundle metadata. Preserve
+  // validation/build failures so their provenance is not inferred from text.
+  if (error instanceof SupabaseApiInputError || error instanceof HttpBody.HttpBodyError) {
     return error;
   }
 
@@ -1860,6 +1858,7 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
       lastError = new FunctionsApiStatusError({
         status: response.value.status,
         message: `unexpected ${action} function status ${response.value.status}: ${body}`,
+        notFoundIsInvalidInput: shouldUpdate,
       });
     } else {
       lastError = response.error;

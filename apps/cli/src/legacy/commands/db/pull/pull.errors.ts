@@ -95,6 +95,8 @@ export class LegacyDbPullDumpError extends Data.TaggedError("LegacyDbPullDumpErr
   readonly fileOpen?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.fileOpen === true ? actionability.permission : actionability.dbConnection;
+    return this.fileOpen === true
+      ? { ...actionability.permission, fingerprint_suffix: "filesystem" }
+      : { ...actionability.dbConnection, fingerprint_suffix: "connect" };
   }
 }

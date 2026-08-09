@@ -22,7 +22,7 @@ export class LegacyEdgeRuntimeScriptError extends Data.TaggedError("LegacyEdgeRu
    * external network problem. `undefined` for genuine script/config failures,
    * which keep the user-SQL classification.
    */
-  readonly docker?: "daemon" | "pull";
+  readonly docker?: "daemon" | "inspect" | "pull";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.docker === "daemon") {
@@ -30,6 +30,9 @@ export class LegacyEdgeRuntimeScriptError extends Data.TaggedError("LegacyEdgeRu
     }
     if (this.docker === "pull") {
       return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+    }
+    if (this.docker === "inspect") {
+      return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
     }
     return actionability.dbFinding;
   }

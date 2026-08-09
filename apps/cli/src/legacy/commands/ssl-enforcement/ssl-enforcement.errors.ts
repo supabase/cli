@@ -27,7 +27,7 @@ export class LegacySslEnforcementGetUnexpectedStatusError extends Data.TaggedErr
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -52,7 +52,7 @@ export class LegacySslEnforcementUpdateUnexpectedStatusError extends Data.Tagged
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

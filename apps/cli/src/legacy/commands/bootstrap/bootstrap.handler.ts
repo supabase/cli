@@ -423,14 +423,14 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   );
 });
 
-// Whether `cause` is the generated client's `SchemaError`/`HttpBodyError` — a
-// 200 response the client could not decode, as opposed to a transport
-// failure (DNS, TLS, timeout).
+// Whether `cause` is the generated client's `SchemaError` — a 200 response the
+// client could not decode, as opposed to a transport failure (DNS, TLS,
+// timeout).
 function isDecodeFailureCause(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null || !("_tag" in cause)) {
     return false;
   }
-  return cause._tag === "SchemaError" || cause._tag === "HttpBodyError";
+  return cause._tag === "SchemaError";
 }
 
 // Mirrors Go's `checkProjectHealth` non-200 branch: `Error status %d: %s`.

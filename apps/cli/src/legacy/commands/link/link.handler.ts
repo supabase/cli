@@ -66,8 +66,8 @@ const classifyProjectError = (
     );
   }
   // Everything else: a transport `HttpClientError` (no response) is a network
-  // failure; a non-`HttpClientError` (the generated client's `SchemaError` /
-  // `HttpBodyError` rejecting the response body) is an API response problem.
+  // failure; a non-`HttpClientError` (the generated client's `SchemaError`
+  // rejecting the response body) is an API response problem.
   return Effect.fail(
     new LegacyLinkProjectStatusNetworkError({
       message: `failed to retrieve remote project status: ${String(cause)}`,

@@ -4,6 +4,7 @@ import { open, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, FileSystem, Option } from "effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
@@ -153,13 +154,10 @@ function validateDownloadFlags(
 function mapTransportError(
   prefix: string,
   error: unknown,
-): FunctionsApiTransportError | SupabaseApiInputError {
-  // The generated client's input schema rejected the request before any
-  // request was sent (e.g. a user-supplied ref failing the `ref` pattern).
-  // That is an input-phase failure, not a transport failure — pass it through
-  // unchanged so the actionability adapter classifies it as invalid input
-  // instead of network.
-  if (error instanceof SupabaseApiInputError) {
+): FunctionsApiTransportError | SupabaseApiInputError | HttpBody.HttpBodyError {
+  // This mapper is shared by requests with different input ownership. Preserve
+  // validation/build failures so their provenance is not inferred from text.
+  if (error instanceof SupabaseApiInputError || error instanceof HttpBody.HttpBodyError) {
     return error;
   }
 
@@ -700,6 +698,7 @@ const downloadBody = Effect.fnUntraced(function* (
     new FunctionsApiStatusError({
       status: response.status,
       message: `Error status ${response.status}: ${body}`,
+      notFoundIsInvalidInput: true,
     }),
   );
 });
