@@ -694,14 +694,19 @@ describe("legacyCreateContainer secretFiles", () => {
 });
 
 describe("legacyEnsureNetwork", () => {
-  it.live("creates the network with labels", () => {
-    const mock = mockSpawner(() => ({ exitCode: 0 }));
+  it.live("creates the network with labels when it does not exist yet", () => {
+    const mock = mockSpawner((args) =>
+      args[1] === "inspect"
+        ? { exitCode: 1, stderr: "Error: No such network: supabase_network_proj\n" }
+        : { exitCode: 0 },
+    );
     return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {
       "com.supabase.cli.project": "proj",
       "com.docker.compose.project": "proj",
     }).pipe(
       Effect.map(() => {
         expect(mock.spawned).toEqual([
+          ["network", "inspect", "supabase_network_proj"],
           [
             "network",
             "create",
@@ -712,6 +717,21 @@ describe("legacyEnsureNetwork", () => {
             "supabase_network_proj",
           ],
         ]);
+      }),
+    );
+  });
+
+  it.live("never spawns a create for an already-existing network", () => {
+    const mock = mockSpawner((args) =>
+      args[1] === "inspect"
+        ? { exitCode: 0 }
+        : { exitCode: 1, stderr: "error during connect: write: broken pipe\n" },
+    );
+    return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {
+      "com.supabase.cli.project": "proj",
+    }).pipe(
+      Effect.map(() => {
+        expect(mock.spawned).toEqual([["network", "inspect", "supabase_network_proj"]]);
       }),
     );
   });

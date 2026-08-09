@@ -242,6 +242,7 @@ function defaultRoute(opts: { readonly neverHealthy?: ReadonlySet<string> } = {}
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
+    if (args[0] === "network" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "context" && args[1] === "inspect") return { exitCode: 1 };
@@ -3629,6 +3630,29 @@ content_path = "./templates/custom_notice.html"
         );
         const networkFlagIndex = kongCreate?.args.indexOf("--network") ?? -1;
         expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("never spawns a create for a pre-created --network-id network", () => {
+      const base = defaultRoute();
+      const route = (args: ReadonlyArray<string>): RouteResult => {
+        if (args[0] === "network" && args[1] === "inspect") return { exitCode: 0 };
+        if (args[0] === "network" && args[1] === "create") {
+          return { exitCode: 1, stderr: ["error during connect: write: broken pipe"] };
+        }
+        return base(args);
+      };
+      const { layer, child } = setup({ networkId: Option.some("custom-net"), route });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        expect(child.spawned.some((s) => s.args[0] === "network" && s.args[1] === "create")).toBe(
+          false,
+        );
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "network" && s.args[1] === "inspect" && s.args[2] === "custom-net",
+          ),
+        ).toBe(true);
       }).pipe(Effect.provide(layer));
     });
 
