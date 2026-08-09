@@ -12,6 +12,7 @@ import {
   extractCommandPath,
   shouldReportFailure,
   shouldUseGlobalSignalInterrupt,
+  hasRootVersionFlag,
 } from "./run.ts";
 
 // Real command tree (not a hand-rolled stand-in) so `classifyParseErrorConsoleOutput`'s
@@ -497,5 +498,20 @@ describe("classifyParseErrorConsoleOutput", () => {
         args: [],
       }),
     ).toBe("flush-unchanged");
+  });
+});
+
+describe("hasRootVersionFlag", () => {
+  it.each([
+    [["--version"], true],
+    [["-v"], true],
+    [["--debug", "-v"], true],
+    [["--profile", "-v"], false],
+    [["--profile=x", "-v"], true],
+    [["db", "reset", "--version", "20240101000000"], false],
+    [["migration", "squash", "--version", "x"], false],
+    [[], false],
+  ])("%j -> %s", (args, expected) => {
+    expect(hasRootVersionFlag(args as ReadonlyArray<string>)).toBe(expected);
   });
 });

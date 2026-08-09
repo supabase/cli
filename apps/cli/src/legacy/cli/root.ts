@@ -156,7 +156,13 @@ export const legacyRoot = Command.make("supabase").pipe(
           ? legacyQuietProgressTextOutputLayer
           : outputLayerFor(outputFormat);
 
-        return Layer.mergeAll(outputLayer, makeGoProxyLayer({ globalArgs }));
+        // This shell prints the upgrade notice itself (`legacy/cli/main.ts`'s
+        // `afterSuccess`), so its Go children must not print their own. The
+        // `next` shell owns no notice and leaves its children's alone.
+        return Layer.mergeAll(
+          outputLayer,
+          makeGoProxyLayer({ globalArgs, env: { SUPABASE_NO_UPDATE_NOTIFIER: "1" } }),
+        );
       }),
     ),
   ),

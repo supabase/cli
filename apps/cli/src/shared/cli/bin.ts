@@ -46,10 +46,26 @@ if (!binPath) {
   );
 }
 
+// A terminal Ctrl-C signals the whole foreground group; the compiled binary
+// owns signal semantics, so the shim only waits and mirrors its exit.
+// Registering handlers disables the default terminate action even while
+// execFileSync blocks the event loop.
+const holdSignal = () => {};
+const heldSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+for (const signal of heldSignals) process.on(signal, holdSignal);
 try {
   execFileSync(binPath, process.argv.slice(2), { stdio: "inherit" });
 } catch (e) {
   if (e && typeof e === "object" && "status" in e && typeof e.status === "number")
     process.exit(e.status);
-  throw e;
+  if (e && typeof e === "object" && "signal" in e && typeof e.signal === "string") {
+    // Mirror a signal death so the parent shell sees the conventional 128+n.
+    for (const signal of heldSignals) process.removeListener(signal, holdSignal);
+    process.kill(process.pid, e.signal as NodeJS.Signals);
+    setInterval(() => {}, 1_000); // keep the loop alive until it lands
+  } else {
+    throw e;
+  }
+} finally {
+  for (const signal of heldSignals) process.removeListener(signal, holdSignal);
 }

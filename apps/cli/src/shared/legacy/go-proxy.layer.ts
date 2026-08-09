@@ -134,6 +134,12 @@ export function formatGoBinaryNotFoundError(tried: ReadonlyArray<string>): strin
  */
 export function makeGoProxyLayer(opts?: {
   cwd?: string;
+  /**
+   * Extra env for every spawned child. A shell that prints the upgrade notice
+   * itself must pass `SUPABASE_NO_UPDATE_NOTIFIER: "1"` here so its children
+   * stay quiet (see `legacy/cli/root.ts`); a shell that prints none must not,
+   * or its delegated commands lose the notice entirely.
+   */
   env?: Record<string, string>;
   globalArgs?: ReadonlyArray<string>;
   /**

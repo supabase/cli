@@ -328,6 +328,26 @@ describe("makeGoProxyLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("passes the layer's env to children, letting per-call env win", () => {
+    // The legacy root suppresses its Go children's notifier through this env.
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = makeGoProxyLayer({
+      binary: TEST_BINARY,
+      env: { SUPABASE_NO_UPDATE_NOTIFIER: "1" },
+    }).pipe(Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)));
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      yield* proxy.exec(["projects", "list"]);
+      yield* proxy.execCapture(["gen", "keys"]);
+      yield* proxy.exec(["projects", "list"], { env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" } });
+
+      expect(spawner.spawned[0]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("1");
+      expect(spawner.spawned[1]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("1");
+      expect(spawner.spawned[2]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("0");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("propagates non-zero exit codes via LegacyGoChildExitError", () => {
     const spawner = mockSpawner({ kind: "success", code: 7 });
     const pc = mockProcessControl();

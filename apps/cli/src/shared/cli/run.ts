@@ -106,6 +106,21 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
   return commandArgs;
 }
 
+/** Whether argv sets the ROOT `--version`/`-v` flag — not a subcommand's flag of the same name, and not a token consumed as a value-taking global flag's value (`--profile -v`). */
+export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
+  if (extractCommandPath(args).length > 0) return false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--version" || arg === "-v") return true;
+    if (!arg.startsWith("-")) continue;
+    const [flag] = arg.split("=", 1);
+    if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+      index += 1;
+    }
+  }
+  return false;
+}
+
 /** Whether the global signal-interrupt handler should wrap this invocation. */
 export function shouldUseGlobalSignalInterrupt(
   args: ReadonlyArray<string>,
@@ -486,6 +501,12 @@ export interface RunCliOptions {
    * adding to the shared list.
    */
   readonly additionalSelfManagedSignalCommands?: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * Runs just before the process exits on any invocation that exits 0 — the
+   * seam for the legacy shell's upgrade notice. Must never fail, and cannot
+   * change the exit code.
+   */
+  readonly afterSuccess?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
 }
 
 function cliProgramFor(
@@ -599,6 +620,17 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const processControl = yield* ProcessControl;
       const output = yield* Output;
       const exit = yield* program.pipe(Effect.exit);
+      // Runs on every exit-0 invocation (`--help` included), like Go's
+      // `Execute()` tail. Signals stay held so a Ctrl-C during the ≤3s-bounded
+      // hook cannot turn an already-successful command into exit 130.
+      const afterSuccess = (code: number) =>
+        code === 0 && options.afterSuccess !== undefined
+          ? Effect.scoped(
+              processControl
+                .holdSignals(["SIGINT", "SIGTERM", "SIGHUP"])
+                .pipe(Effect.andThen(options.afterSuccess(args))),
+            )
+          : Effect.void;
       if (Exit.isFailure(exit)) {
         const exitCode = exitCodeForFailure(exit.cause);
         // See `shouldReportFailure` for the reporting rules (and why they're
@@ -610,9 +642,11 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
         if (shouldReportFailure(exit.cause, exitCode)) {
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
+        yield* afterSuccess(exitCode);
         return yield* processControl.exit(exitCode);
       }
       const exitCode = yield* processControl.getExitCode;
+      yield* afterSuccess(exitCode ?? 0);
       return yield* processControl.exit(exitCode ?? 0);
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),

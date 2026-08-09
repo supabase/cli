@@ -101,7 +101,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               // doesn't emit its own `cli_command_executed` on top of the user's
               // TS command (matching the explicit LegacyGoProxy delegates).
               // `extendEnv` keeps the rest of the environment.
-              env: { SUPABASE_TELEMETRY_DISABLED: "1" },
+              env: { SUPABASE_TELEMETRY_DISABLED: "1", SUPABASE_NO_UPDATE_NOTIFIER: "1" },
               detached: false,
             });
             const handle = yield* spawner.spawn(command).pipe(
@@ -249,6 +249,8 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               stdin: "inherit",
               stdout: "inherit",
               stderr: "inherit",
+              // The TS parent owns the upgrade notice; this child's stderr is inherited.
+              env: { SUPABASE_NO_UPDATE_NOTIFIER: "1" },
               extendEnv: true,
               detached: false,
             });

@@ -1,4 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, test } from "vitest";
 import { runSupabase } from "../../../tests/helpers/cli.ts";
 
 /**
@@ -58,5 +62,58 @@ describe("legacy CLI required-flag/choice parse errors (CLI-1901)", () => {
     expect(
       stderr.trim().endsWith("Try rerunning the command with --debug to troubleshoot the error."),
     ).toBe(true);
+  });
+});
+
+/** Real-subprocess proof of the `afterSuccess` wiring; everything else lives in `legacy-upgrade-notice.unit.test.ts`. */
+describe("legacy CLI upgrade notice (#5853)", () => {
+  let workdir: string;
+
+  afterEach(() => {
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  test("prints the cached notice on success and honors SUPABASE_NO_UPDATE_NOTIFIER", async () => {
+    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
+    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
+    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+
+    const enabled = await runSupabase(["branches"], {
+      entrypoint: "legacy",
+      cwd: workdir,
+      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+    });
+    expect(enabled.exitCode).toBe(0);
+    expect(enabled.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
+
+    const suppressed = await runSupabase(["branches"], { entrypoint: "legacy", cwd: workdir });
+    expect(suppressed.exitCode).toBe(0);
+    expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
+
+    // `--help` exits through the plain-success branch, bare `branches` through
+    // the clean-ShowHelp one — both handledProgram call sites must fire.
+    const helped = await runSupabase(["branches", "--help"], {
+      entrypoint: "legacy",
+      cwd: workdir,
+      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+    });
+    expect(helped.exitCode).toBe(0);
+    expect(helped.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
+  });
+
+  test("a failing command exits non-zero and prints no notice", async () => {
+    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
+    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
+    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+
+    const { exitCode, stderr } = await runSupabase(["branches", "--nope"], {
+      entrypoint: "legacy",
+      cwd: workdir,
+      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+    });
+    expect(exitCode).toBe(1);
+    expect(stderr).not.toContain("A new version of Supabase CLI is available");
   });
 });
