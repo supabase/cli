@@ -11,6 +11,12 @@ import { LegacyLoginVerificationError } from "../commands/login/login.errors.ts"
 
 const POLL_TIMEOUT = "10 seconds";
 
+// HttpClientError reasons that mean the response arrived but its body could not
+// be decoded (including a 2xx whose body isn't valid JSON). These are API
+// response problems, not transport ones, so they classify by `decode` rather
+// than as a network failure. Mirrors `next/auth/api.layer.ts`.
+const BODY_DECODE_REASONS = new Set<string>(["DecodeError", "EmptyBodyError"]);
+
 function readString(obj: unknown, key: string): string {
   if (typeof obj === "object" && obj !== null && key in obj) {
     const value = (obj as Record<string, unknown>)[key];
@@ -38,6 +44,7 @@ export const legacyLoginApiLayer = Layer.effect(
             return yield* Effect.fail(
               new LegacyLoginVerificationError({
                 message: `Error status ${response.status}: ${body}`,
+                statusCode: response.status,
               }),
             );
           }
@@ -51,12 +58,20 @@ export const legacyLoginApiLayer = Layer.effect(
         }).pipe(
           // Map transport / JSON-decode failures to the retry-driving error.
           // The explicit non-200 `LegacyLoginVerificationError` above passes
-          // through untouched (it is not an `HttpClientError`).
+          // through untouched (it is not an `HttpClientError`). A body-decode
+          // reason means the response arrived but its body was unparseable — an
+          // API response problem (`decode`), not a transport (`network`) one.
           Effect.catchTag("HttpClientError", (cause) =>
             Effect.fail(
-              new LegacyLoginVerificationError({
-                message: `failed to execute http request: ${cause.message}`,
-              }),
+              BODY_DECODE_REASONS.has(cause.reason._tag)
+                ? new LegacyLoginVerificationError({
+                    message: `failed to execute http request: ${cause.message}`,
+                    decode: true,
+                  })
+                : new LegacyLoginVerificationError({
+                    message: `failed to execute http request: ${cause.message}`,
+                    network: true,
+                  }),
             ),
           ),
           Effect.timeoutOrElse({
@@ -65,6 +80,7 @@ export const legacyLoginApiLayer = Layer.effect(
               Effect.fail(
                 new LegacyLoginVerificationError({
                   message: "failed to execute http request: request timed out",
+                  network: true,
                 }),
               ),
           }),

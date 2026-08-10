@@ -48,6 +48,11 @@ import {
 } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua, legacyYellow } from "../legacy-colors.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { legacyCheckDbToml, legacyLoadProjectEnv } from "../legacy-db-config.toml-read.ts";
@@ -61,16 +66,19 @@ import { legacyRecreateLocalDatabase } from "./recreate-local-database.ts";
  * The local database container is not running. Byte-matches Go's
  * `utils.ErrNotRunning` (`internal/utils/misc.go:116`), `"<aqua>supabase start</aqua>
  * is not running."`, returned by `AssertSupabaseDbIsRunning` before the local
- * reset (`internal/db/reset/reset.go:57`). Not exported outside this module —
- * callers discriminate this via the failure's own message, never by importing the
- * class itself (same pattern as `recreate-local-database.ts`'s own
- * `LegacyResetReplicationSlotsError`).
+ * reset (`internal/db/reset/reset.go:57`). Exported only so the exhaustive
+ * actionability guard can inspect its declaration; runtime callers consume the
+ * enclosing effect rather than importing this class.
  */
-class LegacyResetLocalDbNotRunningError extends Data.TaggedError(
+export class LegacyResetLocalDbNotRunningError extends Data.TaggedError(
   "LegacyResetLocalDbNotRunningError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 /** Go's `toLogMessage` (`internal/db/reset/reset.go:88-91`). */
 const toLogMessage = (version: string): string =>

@@ -9,12 +9,18 @@ import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
+import { legacyIsDockerDaemonUnreachable } from "../../../shared/legacy-docker-suggest.ts";
 import {
   legacyResolveLocalProjectId,
   localDbContainerId,
 } from "../../../shared/legacy-docker-ids.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
+
+const legacyShadowDockerCause = (
+  stderr: string,
+): { readonly docker: "daemon" } | Record<never, never> =>
+  legacyIsDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
 
 /**
  * Real `LegacyDeclarativeSeam`: runs the bundled `supabase-go`'s hidden
@@ -155,7 +161,11 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               extendEnv: true,
             }).pipe(
               Effect.mapError(
-                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect service",
+                    docker: "daemon",
+                  }),
               ),
             );
             const stderrChunks: Array<Uint8Array> = [];
@@ -165,13 +175,21 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               }),
             ).pipe(
               Effect.mapError(
-                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect service",
+                    docker: "daemon",
+                  }),
               ),
             );
             const inspectExit = yield* child.exitCode.pipe(
               Effect.map(Number),
               Effect.mapError(
-                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect service",
+                    docker: "daemon",
+                  }),
               ),
             );
             if (inspectExit === 0) return; // already running
@@ -201,6 +219,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                     stderr.length > 0
                       ? `failed to inspect service: ${stderr}`
                       : "failed to inspect service",
+                  ...legacyShadowDockerCause(stderr),
                 }),
               );
             }
@@ -285,6 +304,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -299,6 +319,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -311,6 +332,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -320,6 +342,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -343,6 +366,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                     stderr.length > 0
                       ? `failed to inspect local Postgres container: ${stderr}`
                       : "failed to inspect local Postgres container.",
+                  ...legacyShadowDockerCause(stderr),
                 }),
               );
             }

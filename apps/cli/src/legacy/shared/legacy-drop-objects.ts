@@ -1,11 +1,20 @@
 import { Data, Effect } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 
 /** Dropping the user schemas failed (Go's `DropUserSchemas` error). */
 export class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationDropError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * The embedded `DO $$ ... $$` block from Go's `pkg/migration/queries/drop.sql`,

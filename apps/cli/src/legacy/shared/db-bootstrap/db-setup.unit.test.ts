@@ -125,9 +125,30 @@ function mockAlwaysCachedSpawner(): ChildProcessSpawner.ChildProcessSpawner["Ser
 
 function mockDockerRunFails() {
   const layer = Layer.succeed(LegacyDockerRun, {
-    run: () => Effect.fail(new LegacyDockerRunError({ message: "failed to run docker" })),
-    runCapture: () => Effect.fail(new LegacyDockerRunError({ message: "failed to run docker" })),
-    runStream: () => Effect.fail(new LegacyDockerRunError({ message: "failed to run docker" })),
+    run: () =>
+      Effect.fail(
+        new LegacyDockerRunError({
+          message: "failed to run docker",
+          reason: "spawn",
+          daemonDown: false,
+        }),
+      ),
+    runCapture: () =>
+      Effect.fail(
+        new LegacyDockerRunError({
+          message: "failed to run docker",
+          reason: "spawn",
+          daemonDown: false,
+        }),
+      ),
+    runStream: () =>
+      Effect.fail(
+        new LegacyDockerRunError({
+          message: "failed to run docker",
+          reason: "spawn",
+          daemonDown: false,
+        }),
+      ),
   });
   return { layer };
 }

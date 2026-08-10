@@ -2,15 +2,21 @@ import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { URL } from "node:url";
-import { FunctionResponse, operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import {
+  FunctionResponse,
+  operationDefinitions,
+  SupabaseApiInputError,
+  type ApiClient,
+} from "@supabase/api/effect";
 import {
   inferFunctionsManifest,
   loadProjectConfig,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
 import { Duration, Effect, Option, Schema, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
@@ -33,6 +39,7 @@ import {
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
+import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
 const DENO1_EDGE_RUNTIME_VERSION = "1.68.4";
@@ -171,17 +178,39 @@ function decodeFunctionListResponse(value: unknown): ReadonlyArray<RemoteFunctio
   return decodeFunctionListResponseSchema(normalized);
 }
 
-function mapTransportError(prefix: string, error: unknown): Error {
+// Format a raw response body for an unexpected-status error message. When the
+// body is JSON, re-stringify it so the message stays byte-identical to the
+// previous `JSON.stringify(parsedBody)` form; otherwise fall back to the raw
+// text (a non-JSON body was previously impossible because the response was
+// eagerly JSON-decoded before the status check).
+function formatUnexpectedStatusBody(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text));
+  } catch {
+    return text;
+  }
+}
+
+function mapTransportError(
+  prefix: string,
+  error: unknown,
+): FunctionsApiTransportError | SupabaseApiInputError | HttpBody.HttpBodyError {
+  // The request mixes user input with CLI-generated bundle metadata. Preserve
+  // validation/build failures so their provenance is not inferred from text.
+  if (error instanceof SupabaseApiInputError || error instanceof HttpBody.HttpBodyError) {
+    return error;
+  }
+
   if (HttpClientError.isHttpClientError(error)) {
     const description = error.reason.description ?? error.reason._tag;
-    return new Error(`${prefix}: ${description}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${description}` });
   }
 
   if (error instanceof Error) {
-    return new Error(`${prefix}: ${error.message}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${error.message}` });
   }
 
-  return new Error(`${prefix}: ${String(error)}`);
+  return new FunctionsApiTransportError({ message: `${prefix}: ${String(error)}` });
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -1514,7 +1543,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
 });
 
 const listRemoteFunctions = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
-  let lastError: Error | undefined;
+  let lastError: Error | FunctionsApiStatusError | undefined;
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* api
       .executeRaw(operationDefinitions.v1ListAllFunctions, { ref: projectRef })
@@ -1531,15 +1560,23 @@ const listRemoteFunctions = Effect.fnUntraced(function* (api: ApiClient, project
     if (result.success) {
       const body = yield* result.response.text.pipe(Effect.orElseSucceed(() => ""));
       if (result.response.status === 200) {
+        // A 200 whose body is not the expected JSON is an API-response problem,
+        // not a transport failure — surface it via FunctionsApiStatusError so it
+        // classifies as api_status rather than network.
         return yield* Effect.try({
           try: () => decodeFunctionListResponse(JSON.parse(body)),
           catch: (error) =>
-            new Error(
-              `failed to read functions list: ${error instanceof Error ? error.message : String(error)}`,
-            ),
+            new FunctionsApiStatusError({
+              status: result.response.status,
+              message: `failed to read functions list: ${error instanceof Error ? error.message : String(error)}`,
+              decode: true,
+            }),
         });
       }
-      lastError = new Error(`unexpected list functions status ${result.response.status}: ${body}`);
+      lastError = new FunctionsApiStatusError({
+        status: result.response.status,
+        message: `unexpected list functions status ${result.response.status}: ${body}`,
+      });
       if (result.response.status < 500 && result.response.status !== 429) {
         return yield* Effect.fail(lastError);
       }
@@ -1645,12 +1682,14 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
         },
       })
       .pipe(
+        // Read the body as text (never failing) so the status check below wins:
+        // a non-201 with a non-JSON body, or a 201 with malformed JSON, must
+        // classify as a status/response problem — not fall through
+        // `mapTransportError` as a network failure.
         Effect.map((raw) => ({
           status: raw.status,
           headers: raw.headers,
-          body: raw.json.pipe(
-            Effect.mapError((error) => mapTransportError("failed to deploy function", error)),
-          ),
+          body: raw.text.pipe(Effect.orElseSucceed(() => "")),
         })),
         Effect.mapError((error) => mapTransportError("failed to deploy function", error)),
       ),
@@ -1658,15 +1697,23 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   const body = yield* response.body;
   if (response.status !== 201) {
     return yield* Effect.fail(
-      new Error(`unexpected deploy status ${response.status}: ${JSON.stringify(body)}`),
+      new FunctionsApiStatusError({
+        status: response.status,
+        message: `unexpected deploy status ${response.status}: ${formatUnexpectedStatusBody(body)}`,
+      }),
     );
   }
+  // A 201 whose body is not the expected JSON is an API-response problem, not a
+  // transport failure — surface it via FunctionsApiStatusError so it classifies
+  // as api_status rather than network.
   return yield* Effect.try({
-    try: () => decodeDeployFunctionResponse(body),
+    try: () => decodeDeployFunctionResponse(JSON.parse(body)),
     catch: (error) =>
-      new Error(
-        `failed to read deploy response: ${error instanceof Error ? error.message : String(error)}`,
-      ),
+      new FunctionsApiStatusError({
+        status: response.status,
+        message: `failed to read deploy response: ${error instanceof Error ? error.message : String(error)}`,
+        decode: true,
+      }),
   });
 });
 
@@ -1691,7 +1738,7 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
 ) {
-  let lastError: Error | undefined;
+  let lastError: Error | FunctionsApiStatusError | undefined;
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* rateLimitedRequest("bulk updating functions", () =>
       api
@@ -1700,12 +1747,12 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
           body: functions.map(toBulkUpdateItem),
         })
         .pipe(
+          // Read the body as text (never failing) so the status check wins even
+          // if the body cannot be read.
           Effect.map((raw) => ({
             status: raw.status,
             headers: raw.headers,
-            body: raw.text.pipe(
-              Effect.mapError((error) => mapTransportError("failed to bulk update", error)),
-            ),
+            body: raw.text.pipe(Effect.orElseSucceed(() => "")),
           })),
           Effect.mapError((error) => mapTransportError("failed to bulk update", error)),
         ),
@@ -1724,7 +1771,10 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
       if (result.response.status === 200) {
         return;
       }
-      lastError = new Error(`unexpected bulk update status ${result.response.status}: ${body}`);
+      lastError = new FunctionsApiStatusError({
+        status: result.response.status,
+        message: `unexpected bulk update status ${result.response.status}: ${body}`,
+      });
       if (result.response.status < 500) {
         return yield* Effect.fail(lastError);
       }
@@ -1746,7 +1796,7 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
   exists: boolean,
 ) {
   let shouldUpdate = exists;
-  let lastError: Error | undefined;
+  let lastError: Error | FunctionsApiStatusError | undefined;
 
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const action = shouldUpdate ? "update" : "create";
@@ -1786,19 +1836,30 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
     if (response.success) {
       const expectedStatus = shouldUpdate ? 200 : 201;
       if (response.value.status === expectedStatus) {
-        const body = yield* response.value.json.pipe(
-          Effect.mapError((error) => mapTransportError("failed to read function response", error)),
-        );
-        return decodeDeployFunctionResponse(body);
+        // A success status with a malformed / unexpected JSON body is an
+        // API-response problem, not a transport failure — surface it via
+        // FunctionsApiStatusError so it classifies as api_status not network.
+        const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));
+        return yield* Effect.try({
+          try: () => decodeDeployFunctionResponse(JSON.parse(body)),
+          catch: (error) =>
+            new FunctionsApiStatusError({
+              status: response.value.status,
+              message: `failed to read function response: ${error instanceof Error ? error.message : String(error)}`,
+              decode: true,
+            }),
+        });
       }
 
       const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));
       if (!shouldUpdate && body.includes("Duplicated function slug")) {
         shouldUpdate = true;
       }
-      lastError = new Error(
-        `unexpected ${action} function status ${response.value.status}: ${body}`,
-      );
+      lastError = new FunctionsApiStatusError({
+        status: response.value.status,
+        message: `unexpected ${action} function status ${response.value.status}: ${body}`,
+        notFoundIsInvalidInput: shouldUpdate,
+      });
     } else {
       lastError = response.error;
     }
@@ -1828,7 +1889,10 @@ const deleteRemoteFunction = Effect.fnUntraced(function* (
   }
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   return yield* Effect.fail(
-    new Error(`unexpected delete function status ${response.status}: ${body}`),
+    new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected delete function status ${response.status}: ${body}`,
+    }),
   );
 });
 

@@ -117,6 +117,11 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
 import type { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
@@ -180,7 +185,40 @@ alter default privileges for role postgres in schema public
  */
 export class LegacyDbSetupError extends Data.TaggedError("LegacyDbSetupError")<{
   readonly message: string;
-}> {}
+  readonly reason:
+    | "database"
+    | "filesystem"
+    | "invalid_config"
+    | "docker_daemon"
+    | "registry_pull"
+    | "image_inspect";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    switch (this.reason) {
+      case "database":
+        return { ...actionability.dbFinding, fingerprint_suffix: "database" };
+      case "filesystem":
+        return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+      case "docker_daemon":
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "registry_pull":
+        return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      case "image_inspect":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
+      default:
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+    }
+  }
+}
+
+function legacyDbSetupDockerReason(
+  reason: "spawn" | "inspect" | "pull",
+  daemonDown: boolean,
+): LegacyDbSetupError["reason"] {
+  if (reason === "spawn" || daemonDown) return "docker_daemon";
+  if (reason === "pull") return "registry_pull";
+  return "image_inspect";
+}
 
 /** Every failure {@link legacyStartSetupLocalDatabase} can produce. */
 export type LegacyStartSetupLocalDatabaseError =
@@ -483,6 +521,7 @@ const legacyExecSqlConstant = Effect.fnUntraced(function* (
       (error) =>
         new LegacyDbSetupError({
           message: `failed to write ${filename}: ${errMessage(error)}`,
+          reason: "filesystem",
         }),
     ),
   );
@@ -491,7 +530,7 @@ const legacyExecSqlConstant = Effect.fnUntraced(function* (
     fs,
     path,
     filePath,
-    (message) => new LegacyDbSetupError({ message }),
+    (message) => new LegacyDbSetupError({ message, reason: "database" }),
   );
 });
 
@@ -626,10 +665,21 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
   // (review: Codex, PR #6022).
   const result = yield* docker
     .runStream(runOpts, { onStdout: () => Effect.void, teeStderr: opts.debug })
-    .pipe(Effect.mapError((cause) => new LegacyDbSetupError({ message: cause.message })));
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyDbSetupError({
+            message: cause.message,
+            reason: legacyDbSetupDockerReason(cause.reason, cause.daemonDown),
+          }),
+      ),
+    );
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
-      new LegacyDbSetupError({ message: `error running container: exit ${result.exitCode}` }),
+      new LegacyDbSetupError({
+        message: `error running container: exit ${result.exitCode}`,
+        reason: "database",
+      }),
     );
   }
 });
@@ -758,6 +808,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
       catch: (cause) =>
         new LegacyDbSetupError({
           message: `invalid config for storage: ${errMessage(cause)}`,
+          reason: "invalid_config",
         }),
     });
     yield* legacyRunStartMigrateJob(spawner, {
@@ -870,6 +921,7 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
       (error) =>
         new LegacyDbSetupError({
           message: `failed init current branch: ${errMessage(error)}`,
+          reason: "filesystem",
         }),
     ),
   );
@@ -879,6 +931,7 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
       (error) =>
         new LegacyDbSetupError({
           message: `failed init current branch: ${errMessage(error)}`,
+          reason: "filesystem",
         }),
     ),
   );
@@ -893,6 +946,7 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
       (error) =>
         new LegacyDbSetupError({
           message: `failed init current branch: ${errMessage(error)}`,
+          reason: "filesystem",
         }),
     ),
   );
@@ -925,6 +979,7 @@ export const legacySetupDatabase = (
               (error) =>
                 new LegacyDbSetupError({
                   message: `failed to create temp directory: ${errMessage(error)}`,
+                  reason: "filesystem",
                 }),
             ),
           );
@@ -955,6 +1010,7 @@ export const legacySetupDatabase = (
         (error) =>
           new LegacyDbSetupError({
             message: `failed to check roles.sql: ${errMessage(error)}`,
+            reason: "filesystem",
           }),
       ),
     );
@@ -964,7 +1020,7 @@ export const legacySetupDatabase = (
         fs,
         path,
         customRolesPath,
-        (message) => new LegacyDbSetupError({ message }),
+        (message) => new LegacyDbSetupError({ message, reason: "database" }),
       );
     }
   });
@@ -1012,6 +1068,10 @@ export const legacyStartSetupLocalDatabase = (
       warnOnUnresolvedEnv: false,
     });
 
+    // SetupDatabase: initSchema -> ApplyApiPrivileges -> vault secrets -> custom-roles seed
+    // (start.go:383-399) — extracted to {@link legacySetupDatabase} so shadow-database
+    // provisioning (CLI-1956) can reuse this exact sequence without also reaching
+    // `apply.MigrateAndSeed` below.
     yield* legacySetupDatabase(spawner, {
       ...input,
       apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
