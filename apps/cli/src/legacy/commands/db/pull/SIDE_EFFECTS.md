@@ -29,7 +29,10 @@ Notes/Delegation section below).
 | Path                                                                                                                                 | Format     | When                                                                                                                                             |
 | ------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `<workdir>/supabase/config.toml`                                                                                                     | TOML       | always (db port/password, `[experimental.pgdelta]`)                                                                                              |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                                            | dotenv     | shadow provisioning (`--declarative` and migration-style pull; not the delegated `--experimental` structured-dump path)                          |
+| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                                               | PEM        | shadow provisioning, when `api.enabled && api.tls.enabled`                                                                                       |
 | `<workdir>/supabase/migrations/*.sql`                                                                                                | SQL        | history reconciliation + shadow provisioning                                                                                                     |
+| `<workdir>/supabase/roles.sql`                                                                                                       | SQL        | migration-style pull only (`--declarative`'s bare shadow skips `SetupDatabase`); missing file tolerated                                          |
 | `~/.supabase/access-token`                                                                                                           | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`                                                                                                    |
 | `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | linked ref resolution                                                                                                                            |
 | `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` (pg-delta declarative dir) / `<workdir>/supabase/schemas/**` | SQL        | migration-style pull against the local target only: 3-source declarative-schema fallback ladder, first non-empty source wins (same as `db diff`) |
@@ -67,13 +70,17 @@ Notes/Delegation section below).
 
 ## Environment Variables
 
-| Variable                         | Purpose                                                                          | Required? |
-| -------------------------------- | -------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`          | auth for the linked target                                                       | no        |
-| `SUPABASE_DB_PASSWORD`           | remote DB password (overridden by `-p`)                                          | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA` | force pg-delta diff engine                                                       | no        |
-| `SUPABASE_EXPERIMENTAL`          | selects the deprecated structured-dump branch (still delegates to Go, see below) | no        |
-| `PGDELTA_NPM_REGISTRY`           | scoped npm registry for edge-runtime                                             | no        |
+| Variable                                                                              | Purpose                                                                                                | Required? |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------- |
+| `SUPABASE_ACCESS_TOKEN`                                                               | auth for the linked target                                                                             | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (overridden by `-p`)                                                                | no        |
+| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads | no        |
+| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                       | no        |
+| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`)       | no        |
+| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                    | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta diff engine                                                                             | no        |
+| `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated structured-dump branch (still delegates to Go, see below)                       | no        |
+| `PGDELTA_NPM_REGISTRY`                                                                | scoped npm registry for edge-runtime                                                                   | no        |
 
 ## Exit Codes
 

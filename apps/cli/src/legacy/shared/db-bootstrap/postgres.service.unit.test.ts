@@ -447,7 +447,7 @@ describe("legacyBuildShadowPostgresContainerSpec", () => {
     expect(spec.labels).toEqual({});
   });
 
-  test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal — matching Go's NewContainerConfig, which sources it from utils.Config.Db.Password for both the real container and the shadow", () => {
+  test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal — the deliberate TS extension the input's own doc describes (Go rejects the toml key at config load and always uses 'postgres')", () => {
     const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput({ password: "hunter2" }));
     expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
   });

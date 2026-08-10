@@ -11,15 +11,17 @@ import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts"
  * natively — see `legacy-pgdelta.cache.ts`'s `legacyResolveMigrationsCatalogRef`
  * and `legacyGetMigrationsCatalogRef` respectively; CLI-1956 then ported the
  * shadow those two functions provision off the Go seam too (see
- * `legacy-pgdelta.cache.ts`'s `exportViaShadowCatalog`), so nothing under this
- * seam provisions a shadow database at all any more. `"baseline"` and
+ * `legacy-pgdelta.cache.ts`'s `exportViaShadowCatalog`), so no TS-side caller
+ * routes shadow provisioning through this seam any more. `"baseline"` and
  * `"declarative"` remain seam-backed because they need a shadow provisioned with
- * ONLY the platform baseline (no migrations) or with declarative files applied —
- * neither has a native TS equivalent yet (`start.SetupDatabase` against an
- * arbitrary shadow, and `pgdelta.ApplyDeclarative`), and porting either
- * overlaps with CLI-1956's native shadow-provisioning work. CLI-1823 (native
- * pg-delta lib) and CLI-1956's remaining follow-ups are the tracked next steps
- * for retiring the rest of this seam.
+ * ONLY the platform baseline (no migrations) or with declarative files applied,
+ * and the Go subprocess still provisions that shadow itself. The underlying
+ * primitives ARE natively ported now (`legacySetupDatabase`,
+ * `shared/db-bootstrap/db-setup.ts`, and `legacyApplyDeclarativePgDelta`,
+ * `legacy-pgdelta.apply.ts` — both CLI-1956); what's left is composing the
+ * baseline/declarative catalog export on top of them. CLI-1823 (native
+ * pg-delta lib) and the remaining `db schema declarative` porting work are the
+ * tracked next steps for retiring the rest of this seam.
  */
 export type LegacyCatalogMode = "baseline" | "declarative";
 

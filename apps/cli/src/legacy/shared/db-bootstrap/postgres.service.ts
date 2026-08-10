@@ -32,9 +32,13 @@ import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 
-/** Go's `Db.Password` default (`pkg/config/config.go:459`). `db.password` has no
- * config.toml field (`toml:"-"`, `pkg/config/db.go:88`), so this is the only value
- * this port can ever observe — matches `DEFAULT_DB_PASSWORD` in
+/** Go's `Db.Password` default (`pkg/config/config.go:459`). In Go this is the only
+ * value the field can ever hold on a db path: viper decodes with the `json` tag
+ * (`config.go:749-750`), and `json:"-"` (`pkg/config/db.go:88`) both blocks the
+ * `SUPABASE_DB_PASSWORD` env binding and makes a literal `[db] password` key a fatal
+ * `UnmarshalExact` error (`'db' has invalid keys: password`). The TS port honors the
+ * toml key as a deliberate extension — see `legacyBuildShadowPostgresContainerSpec`'s
+ * `password` field below. Matches `DEFAULT_DB_PASSWORD` in
  * `legacy-local-config-values.ts`, not imported from there since that constant
  * isn't exported and status/stop's resolver is otherwise unrelated to this module. */
 const LEGACY_POSTGRES_PASSWORD = "postgres";
@@ -442,9 +446,13 @@ export interface LegacyShadowPostgresContainerSpecInput {
   readonly shadowPort: number;
   /**
    * `[db] password` (already resolved from `config.toml`, `DEFAULT_DB_PASSWORD`/"postgres" when
-   * unset) — matches Go's `NewContainerConfig`, which sources `POSTGRES_PASSWORD` from the SAME
-   * `utils.Config.Db.Password` for both the real local container and the shadow
-   * (`CreateShadowDatabase` reuses `NewContainerConfig` verbatim, `diff.go:140`). Must be threaded
+   * unset). Honoring the toml key is a deliberate TS extension, NOT Go parity: Go's
+   * `NewContainerConfig` does source `POSTGRES_PASSWORD` from `utils.Config.Db.Password` for both
+   * the real container and the shadow (`CreateShadowDatabase` reuses it verbatim, `diff.go:140`),
+   * but in Go that field is invariably the `"postgres"` default — `json:"-"` (`db.go:88`, the tag
+   * viper decodes with, `config.go:749-750`) makes a literal `[db] password` key a fatal
+   * `UnmarshalExact` config error, and blocks the env binding. The TS extension mirrors what
+   * `--local` connections already do on develop (`legacy-db-config.layer.ts`). Must be threaded
    * through so the shadow's actual Postgres password matches what
    * `legacyShadowRunInputFromLocalContainerInputs`'s caller connects with — otherwise a
    * non-default `[db] password` authenticates against the wrong secret.

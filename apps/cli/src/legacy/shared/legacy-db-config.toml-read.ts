@@ -1599,11 +1599,15 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     );
   }
 
-  // Go's `db.Password` is tagged `json:"-"` (`apps/cli-go/pkg/config/db.go:88`), so
-  // it is NOT bound from `SUPABASE_DB_PASSWORD` — the local password is the fixed
-  // config value/`"postgres"` default. `DB_PASSWORD` is read only by linked password
-  // resolution (`legacy-db-config.layer.ts`), so the local password must not source
-  // it or `db query --local` etc. would authenticate with a remote secret.
+  // Go's `db.Password` is tagged `json:"-"` (`apps/cli-go/pkg/config/db.go:88`, the
+  // tag viper decodes with) — that blocks the `SUPABASE_DB_PASSWORD` env binding AND
+  // makes a literal `[db] password` toml key a fatal `UnmarshalExact` config error in
+  // Go (`'db' has invalid keys: password`), so Go's local password is invariably the
+  // `"postgres"` default. Honoring the toml key here is a deliberate TS extension
+  // (established for `--local` connections, `legacy-db-config.layer.ts`). `DB_PASSWORD`
+  // is read only by linked password resolution (`legacy-db-config.layer.ts`), so the
+  // local password must not source it or `db query --local` etc. would authenticate
+  // with a remote secret.
   const passwordRaw = typeof db?.["password"] === "string" ? db["password"] : undefined;
 
   // Go expands a quoted `env(VAR)` reference for `major_version` and then decodes
