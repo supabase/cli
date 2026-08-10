@@ -130,6 +130,24 @@ describe("managed stack acceptance contract", () => {
       `${linkedWorktreeScenario.id}: selection must use checkout checkout-b for worktree-b`,
     );
 
+    const namedStackScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.named-stacks-are-context-scoped",
+      );
+    if (namedStackScenario === undefined || namedStackScenario.when.interface !== "cli") {
+      throw new Error("identity.named-stacks-are-context-scoped fixture is required");
+    }
+    const actionSelectingDefaultStack = {
+      ...namedStackScenario,
+      when: {
+        ...namedStackScenario.when,
+        argv: namedStackScenario.when.argv.map((arg) => (arg === "review" ? "default" : arg)),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([actionSelectingDefaultStack])).toContain(
+      `${namedStackScenario.id}: explicit stack name default disagrees with selected stack review`,
+    );
+
     const undeclaredWrite = {
       ...scenario,
       expected: {
@@ -392,6 +410,33 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([qualificationForUnknownPlatform])).toContain(
       `${qualificationScenario.id}: native qualification uses unknown platform solaris-sparc`,
+    );
+
+    const failedQualificationScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "native-qualification.one-service-failure-disables-platform",
+      );
+    if (failedQualificationScenario === undefined) {
+      throw new Error(
+        "native-qualification.one-service-failure-disables-platform fixture is required",
+      );
+    }
+    const qualificationPartitionsContradictResult = {
+      ...failedQualificationScenario,
+      given: failedQualificationScenario.given.map((fact) =>
+        fact.kind === "native-qualification"
+          ? {
+              ...fact,
+              qualifiedServices: managedNativeServiceMatrix.services.map(([service]) => service),
+              failedServices: [],
+            }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([qualificationPartitionsContradictResult]),
+    ).toContain(
+      `${failedQualificationScenario.id}: native preflight decision must match its qualification partitions`,
     );
 
     const statusScenario: ManagedStackContractScenario | undefined =
@@ -668,6 +713,28 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([duplicateSiblingAllocation])).toContain(
       `${siblingAllocationScenario.id}: allocated port 55424 is assigned more than once`,
+    );
+
+    const exactPortScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(({ id }) => id === "ports.explicit-free-port-is-used");
+    if (exactPortScenario === undefined || exactPortScenario.when.interface !== "managed-api") {
+      throw new Error("ports.explicit-free-port-is-used fixture is required");
+    }
+    const actionRequestingDifferentExactPort = {
+      ...exactPortScenario,
+      when: {
+        ...exactPortScenario.when,
+        input: {
+          ...exactPortScenario.when.input,
+          portIntents: { "api.port": { intent: "exact", port: 54322 } },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    const exactPortErrors = validateManagedStackContractFixtures([
+      actionRequestingDifferentExactPort,
+    ]);
+    expect(exactPortErrors).toContain(
+      `${exactPortScenario.id}: exact port request api.port must match its config fact`,
     );
 
     const stickyPortScenario: ManagedStackContractScenario | undefined =
@@ -1198,6 +1265,19 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([runtimeCreationWithoutLegacyState])).toContain(
       `${runtimeCreationScenario.id}: managed creation must declare legacy state absent or incompatible`,
     );
+    if (runtimeCreationScenario.when.interface !== "managed-api") {
+      throw new Error("runtime.explicit-api-overrides-auto managed API fixture is required");
+    }
+    const runtimeActionDisagreesWithRequest = {
+      ...runtimeCreationScenario,
+      when: {
+        ...runtimeCreationScenario.when,
+        input: { ...runtimeCreationScenario.when.input, runtime: "docker" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([runtimeActionDisagreesWithRequest])).toContain(
+      `${runtimeCreationScenario.id}: explicit runtime docker must match its managed-api request fact`,
+    );
 
     const credentialCreationScenario = managedStackContractFixtures.find(
       ({ id }) => id === "credentials.configured-values-are-authoritative",
@@ -1219,6 +1299,23 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([credentialCreationWithoutLegacyState])).toContain(
       `${credentialCreationScenario.id}: managed creation must declare legacy state absent or incompatible`,
+    );
+    if (credentialCreationScenario.when.interface !== "managed-api") {
+      throw new Error(
+        "credentials.configured-values-are-authoritative managed API fixture is required",
+      );
+    }
+    const credentialActionUsingDifferentReference = {
+      ...credentialCreationScenario,
+      when: {
+        ...credentialCreationScenario.when,
+        input: { ...credentialCreationScenario.when.input, auth: "configured-auth-v2" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([credentialActionUsingDifferentReference]),
+    ).toContain(
+      `${credentialCreationScenario.id}: configured credential input configured-auth-v2 must match persisted references`,
     );
 
     const portCreationScenario = managedStackContractFixtures.find(
@@ -1304,6 +1401,62 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([duplicateConcurrentCreation])).toContain(
       `${concurrencyScenario.id}: concurrent race must create once and reuse thereafter`,
+    );
+
+    const isolatedStateRootScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "api-boundary.managed-api-accepts-isolated-state-root",
+      );
+    if (
+      isolatedStateRootScenario === undefined ||
+      isolatedStateRootScenario.when.interface !== "managed-api"
+    ) {
+      throw new Error("api-boundary.managed-api-accepts-isolated-state-root fixture is required");
+    }
+    const actionUsingDifferentStateRoot = {
+      ...isolatedStateRootScenario,
+      when: {
+        ...isolatedStateRootScenario.when,
+        input: { ...isolatedStateRootScenario.when.input, stateRoot: "/tmp/other-root" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([actionUsingDifferentStateRoot])).toContain(
+      `${isolatedStateRootScenario.id}: isolated state root input must match its options and observed boundary`,
+    );
+
+    const isolatedResolutionWithoutAbsentTarget = {
+      ...isolatedStateRootScenario,
+      given: isolatedStateRootScenario.given.filter((fact) => fact.kind !== "managed-target"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([isolatedResolutionWithoutAbsentTarget])).toContain(
+      `${isolatedStateRootScenario.id}: managed creation must declare absent target stack-main-default`,
+    );
+
+    const isolatedResolutionWithoutIdentityClaims = {
+      ...isolatedStateRootScenario,
+      given: isolatedStateRootScenario.given.filter((fact) => fact.kind !== "identity-claim"),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([isolatedResolutionWithoutIdentityClaims]),
+    ).toContain(
+      `${isolatedStateRootScenario.id}: creating Git identity project-a requires an absent project claim`,
+    );
+
+    const bootstrapCopyScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "bootstrap.first-start-copies-compatible-legacy-state",
+      );
+    if (bootstrapCopyScenario === undefined) {
+      throw new Error("bootstrap.first-start-copies-compatible-legacy-state fixture is required");
+    }
+    const copyFromRunningLegacyState = {
+      ...bootstrapCopyScenario,
+      given: bootstrapCopyScenario.given.map((fact) =>
+        fact.kind === "legacy-state" ? { ...fact, lifecycle: "running" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([copyFromRunningLegacyState])).toContain(
+      `${bootstrapCopyScenario.id}: bootstrap copy requires absent target stack-main-default and compatible stopped legacy state`,
     );
   });
 
