@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, PlatformError } from "effect";
 
 import {
   mockOutput,
@@ -17,6 +18,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySecretsSet } from "./set.handler.ts";
 
 function mockLegacyDebugLoggerTracked() {
@@ -31,6 +33,28 @@ function mockLegacyDebugLoggerTracked() {
       http: () => Effect.void,
     }),
   };
+}
+
+function permissionDeniedReadLayer(target: string) {
+  return Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (real) =>
+      FileSystem.FileSystem.of({
+        ...real,
+        readFileString: (path, encoding) =>
+          path === target
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readFileString",
+                  pathOrDescriptor: path,
+                }),
+              )
+            : real.readFileString(path, encoding),
+      }),
+    ),
+  ).pipe(Layer.provide(BunServices.layer));
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +202,12 @@ describe("legacy secrets set integration", () => {
           }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsSetInputError");
+          const classified = classifyCliCauseActionability(exit.cause);
+          expect(classified.error_kind).toBe("user_actionable");
+          expect(classified.error_category).toBe("invalid_input");
+        }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
@@ -423,7 +453,37 @@ FOO = "literal-foo"
         const errJson = JSON.stringify(exit.cause);
         expect(errJson).toContain("LegacySecretsEnvFileOpenError");
         expect(errJson).toContain("failed to open env file");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+          error_fingerprint: "tag:LegacySecretsEnvFileOpenError:not_found",
+        });
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("classifies an unreadable env file as a permission failure", () => {
+    const envPath = join(tempRoot.current, "private.env");
+    const { layer: baseLayer, api } = setup();
+    const layer = Layer.mergeAll(baseLayer, permissionDeniedReadLayer(envPath));
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.some(envPath),
+          secrets: [],
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "user_actionable",
+          error_category: "permission",
+          suggestion_type: "none",
+          error_fingerprint: "tag:LegacySecretsEnvFileOpenError:filesystem",
+        });
+      }
+      expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

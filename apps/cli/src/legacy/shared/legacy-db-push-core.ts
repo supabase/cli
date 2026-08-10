@@ -6,9 +6,9 @@ import { Output } from "../../shared/output/output.service.ts";
 import {
   legacyListLocalMigrations,
   legacyTryCacheMigrationsCatalog,
-} from "../commands/db/shared/legacy-pgdelta.cache.ts";
-import { type LegacyPgDeltaContext } from "../commands/db/shared/legacy-pgdelta.ts";
-import { legacyParseBoolEnv } from "../commands/db/shared/legacy-diff-engine.ts";
+} from "./legacy-pgdelta.cache.ts";
+import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+import { legacyParseBoolEnv } from "./legacy-diff-engine.ts";
 import {
   LEGACY_ERR_MISSING_LOCAL,
   LEGACY_ERR_MISSING_REMOTE,
@@ -105,6 +105,7 @@ export interface LegacyDbPushCoreInput {
   readonly includeAll: boolean;
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
+  readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /**
    * `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
@@ -161,6 +162,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
     includeAll,
     includeRoles,
     includeSeed,
+    includeVault,
     dnsResolver,
     projectId,
     toml,
@@ -313,7 +315,9 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
               new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
             );
           }
-          yield* legacyUpsertVaultSecrets(session, vaultSecrets);
+          if (includeVault) {
+            yield* legacyUpsertVaultSecrets(session, vaultSecrets);
+          }
           yield* legacyApplyMigrations(session, fs, path, pending, applyError);
           const cacheEnabled =
             toml.pgDelta.enabled ||
@@ -339,6 +343,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             cwd: workdir,
             npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
             denoVersion: toml.denoVersion,
+            projectEnv: toml.projectEnv,
           };
           yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
             enabled: cacheEnabled,

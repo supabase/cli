@@ -70,8 +70,10 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
       const args = makeGoProxyLegacyBundleArgs(proxyFlags.functionName, projectRef);
       const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
       return captureOutput
-        ? Effect.asVoid(proxy.execCapture(args, { env, stdin: "ignore" }))
-        : proxy.exec(args, { env });
+        ? Effect.asVoid(
+            proxy.execCapture(args, { env, stdin: "ignore", suppressChildTelemetry: true }),
+          )
+        : proxy.exec(args, { env, suppressChildTelemetry: true });
     },
   }).pipe(
     Effect.ensuring(

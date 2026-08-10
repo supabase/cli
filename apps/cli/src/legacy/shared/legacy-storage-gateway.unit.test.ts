@@ -5,6 +5,8 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
+import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
+import { LegacyStorageGatewayStatusError } from "./legacy-storage-gateway.errors.ts";
 import { legacyBucketBody, legacyMakeStorageGateway } from "./legacy-storage-gateway.ts";
 
 describe("legacyBucketBody", () => {
@@ -34,6 +36,17 @@ describe("legacyBucketBody", () => {
         allowedMimeTypes: ["image/png"],
       }),
     ).toEqual({ public: false, file_size_limit: 52_428_800, allowed_mime_types: ["image/png"] });
+  });
+});
+
+describe("LegacyStorageGatewayStatusError actionability", () => {
+  it("keeps a shared gateway 404 on API status because the tag also wraps capability probes", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyStorageGatewayStatusError({ status: 404, body: "ignored", message: "ignored" }),
+    );
+    expect(result.error_kind).toBe("external_service");
+    expect(result.error_category).toBe("api_status");
+    expect(result.error_fingerprint).toBe("tag:LegacyStorageGatewayStatusError:api_status");
   });
 });
 

@@ -26,7 +26,23 @@ const spawnError = () =>
   // credential-free message that still points at the likely cause.
   new LegacyDockerRunError({
     message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+    reason: "spawn",
+    daemonDown: false,
   });
+
+/**
+ * Docker's/Podman's "image not found" stderr shape for `image inspect` — the subprocess
+ * equivalent of Go's `errdefs.IsNotFound`, mirroring `db-bootstrap/container-lifecycle.ts`'s
+ * (private) `isVolumeNotFoundMessage` for `volume inspect`. Confirmed empirically: `docker image
+ * inspect <missing>` prints `Error response from daemon: No such image: <ref>` and exits 1;
+ * an uncached Podman inspect exits non-zero with the differently worded `<ref>: image not
+ * known` instead (Podman's `libimage` not-found error, independent of Docker's daemon-response
+ * wording — see e.g. containers/podman-compose#358's `failed to find image …: image not known`
+ * trace). Both must resolve to "not cached" or the pull loop below never runs on a Podman-only
+ * host, matching the same Docker/Podman fallback `spawnContainerCli` already builds in.
+ */
+const isImageNotFoundMessage = (message: string): boolean =>
+  /no such image/iu.test(message) || /image not known/iu.test(message);
 
 const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
@@ -99,14 +115,25 @@ export function legacyMakeDockerImageResolver(
       );
       if (exitCode === 0) return true;
       const stderr = new TextDecoder().decode(concat(stderrChunks)).trim();
-      if (legacyIsDockerDaemonUnreachable(stderr)) {
-        return yield* Effect.fail(
-          new LegacyDockerRunError({
-            message: `failed to inspect docker image: ${stderr}\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}`,
-          }),
-        );
-      }
-      return false;
+      // Go's `DockerResolveImageIfNotCached` proceeds to the pull loop only when the inspect
+      // error is a confirmed `errdefs.IsNotFound` — any OTHER inspect error (daemon unreachable,
+      // an auth-plugin denial, an invalid reference, an API error, ...) returns immediately
+      // instead (`internal/utils/docker.go:326-334`). Defaulting anything-but-daemon-unreachable
+      // to "not cached" (as this used to) would instead send every OTHER inspect failure through
+      // the multi-registry pull loop too — performing unauthorized network operations, delaying
+      // the failure by each retry backoff, and replacing the real inspect error with a pull
+      // aggregate. So this must default to failing, and only treat a confirmed not-found as a
+      // cache miss — the inverse of the daemon-unreachable-only gate this replaced.
+      if (isImageNotFoundMessage(stderr)) return false;
+      const daemonDown = legacyIsDockerDaemonUnreachable(stderr);
+      const hint = daemonDown ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}` : "";
+      return yield* Effect.fail(
+        new LegacyDockerRunError({
+          message: `failed to inspect docker image: ${stderr}${hint}`,
+          reason: "inspect",
+          daemonDown,
+        }),
+      );
     }).pipe(Effect.scoped);
 
   const pullImage = (
@@ -281,6 +308,8 @@ export function legacyMakeDockerImageResolver(
       return yield* Effect.fail(
         new LegacyDockerRunError({
           message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
+          reason: "pull",
+          daemonDown: failures.some(legacyIsDockerDaemonUnreachable),
         }),
       );
     });

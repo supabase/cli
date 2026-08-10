@@ -86,7 +86,7 @@ Always check `src/shared/` before writing new infrastructure. Do not duplicate w
 | `shared/output/json-error-handling.ts` | `withJsonErrorHandling` middleware                                              |
 | `shared/output/errors.ts`              | `NonInteractiveError`                                                           |
 | `shared/runtime/`                      | `Browser`, `Stdin`, `Tty`, `ProcessControl`, `RuntimeInfo` services + layers    |
-| `shared/telemetry/`                    | `withCommandInstrumentation`, `Analytics`, tracing                              |
+| `shared/telemetry/`                    | `withCommandInstrumentation`, `Analytics`, tracing, `error-actionability.ts`    |
 
 Also check the following `legacy/` infrastructure before writing equivalent helpers from scratch:
 
@@ -298,12 +298,12 @@ The legacy shell sends the same PostHog events to the same product analytics pip
 - **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
 - **When promoting a command from proxy to native, reproduce every `phtelemetry.*` call in the Go counterpart.** Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested`. The current Go custom events that legacy ports must reproduce when natively ported:
 
-  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                               |
-  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                | `internal/login/login.go:283-296`                                       |
-  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                        | `internal/link/link.go:60`                                              |
-  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                              | `internal/start/start.go:1245`                                          |
-  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (`SuggestUpgradeOnError` is envelope-first; hostnames + vanity get are envelope-only) | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/` |
+  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                                                                      |
+  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                | `internal/login/login.go:283-296`                                                                              |
+  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                        | `internal/link/link.go:60`                                                                                     |
+  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                              | formerly `internal/start/start.go:1245` (deleted as unreachable in CLI-1966; last present at commit a253ccba2) |
+  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (`SuggestUpgradeOnError` is envelope-first; hostnames + vanity get are envelope-only) | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/`                                        |
 
   Reference pattern for login: `next/commands/login/login.handler.ts:38-62`.
 
@@ -338,6 +338,34 @@ Every legacy command port must include a `SIDE_EFFECTS.md` in its command direct
 - **Exit codes** — including error conditions
 
 Use the template at `src/legacy/SIDE_EFFECTS_TEMPLATE.md`. This document is the compatibility checklist for the port and the primary input to the E2E test suite.
+
+---
+
+## Error Classification
+
+Every error the CLI raises carries a classification used for KPI reporting: is this failure the user's to fix, an external service problem, or a CLI bug? `shared/telemetry/error-actionability.ts` owns the closed vocabulary. Classification is declared on the error class itself and is never inferred later from message text. This applies to both shells.
+
+**When you add an error class anywhere in `apps/cli/src`**, export it and give it an own `[ErrorActionabilityId]` getter:
+
+```ts
+export class LegacyThingMissingError extends Data.TaggedError("LegacyThingMissingError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+```
+
+- **Reuse a preset from `actionability`** rather than assembling fields by hand: `authLogin`, `authToken`, `provideFlags`, `invalidInput`, `invalidConfig`, `dbConnection`, `dbFinding`, `migrationDrift`, `permission`, `accountAccess`, `planLimit`, `projectNotLinked`, `missingProjectRef`, `relinkProject`, `dockerNotRunning`, `startStack`, `stopStack`, `externalNetwork`, `apiStatus`, `cancelled`, `internalPanic`, `impossibleState`, `unknown`. For an error carrying a Management API status, return `statusCodeActionability(this.status)` instead of mapping status codes yourself.
+- **Branch only on typed fields the error already carries** — `this.status`, a closed `reason` union, a boolean the producer set. Never parse `message`.
+- **Nothing user-controlled may appear in a declaration.** The result is sent to PostHog, so no paths, SQL, project refs, hostnames, URLs, tokens, or response bodies — only closed enum values.
+- **Split materially different causes with `fingerprint_suffix`**, choosing a value from `CLI_ERROR_FINGERPRINT_SUFFIXES` (module-private — extend it in place), so unrelated failures sharing one class do not group together as repeats.
+- **An instance-dependent getter must stay valid when its fields are absent** — the drift guard evaluates it against a field-less probe.
+
+**Errors defined outside `apps/cli/src`** (`@supabase/stack`, `@supabase/config`, `@supabase/process-compose`, `@supabase/api`, `effect`) cannot carry a declaration. Add a structural adapter keyed by `_tag` to `externalActionabilityByTag` in that same module, branching on the producer's typed fields.
+
+`error-actionability-coverage.unit.test.ts` enforces this. It scans every `TaggedError("Tag")`, every `*Error("Tag")` factory, and every `class X extends Error` under `apps/cli/src`, and fails when a class is unexported or has no own declaration. A failure there is the guard working: classify the new error rather than loosening the guard, because `unknown` in production telemetry must mean a genuinely unforeseen failure, not one nobody categorized.
 
 ---
 
@@ -482,4 +510,4 @@ bun run --parallel "*:check"
 
 ### `apps/cli-go/`
 
-The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly.
+The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly. Exception: `internal/start` (Go's `supabase start`) was deleted outright as unreachable once ported (CLI-1966) — for that command, the last commit with the source intact (`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative reference instead.

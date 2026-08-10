@@ -3,6 +3,11 @@ import { Data, Effect, Option } from "effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyResolvedDbConfig } from "../../../shared/legacy-db-config.types.ts";
@@ -60,7 +65,11 @@ export interface LegacyInspectQuerySpec {
  */
 export class LegacyInspectMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyInspectMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Cell formatters — pure, exported, unit-tested. Each reproduces a Go `fmt`

@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Opening a Postgres connection failed. Mirrors Go's `pgx`/`pgconn` connect
@@ -9,7 +14,17 @@ import { Data } from "effect";
 export class LegacyDbConnectError extends Data.TaggedError("LegacyDbConnectError")<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+  /**
+   * True when the failure was dial-level (`legacyIsDialFailure`) rather than
+   * a server, auth, or config error — the fresh-db bootstrap's connect retry
+   * keys off this field (`db-setup.ts`, #6136).
+   */
+  readonly retryable?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}
 
 /**
  * Executing a SQL statement against an open connection failed. Mirrors the Go
@@ -38,7 +53,11 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
    * caret under the error position (`pkg/migration/file.go:98`, `markError`).
    */
   readonly position?: number;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * A server-side `COPY (...) TO STDOUT` stream failed. Mirrors Go's
@@ -57,4 +76,8 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
  */
 export class LegacyDbCopyError extends Data.TaggedError("LegacyDbCopyError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}

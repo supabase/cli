@@ -38,7 +38,7 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoRemoveUnexpectedStatusError") {
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
@@ -48,9 +48,18 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
         return yield* Effect.fail(
           new LegacySsoRemoveNotFoundError({
             message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+            upgradeSuggested,
           }),
         );
       }
+      return yield* Effect.fail(
+        new LegacySsoRemoveUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        }),
+      );
     }
     return yield* Effect.fail(mapped);
   });

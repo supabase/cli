@@ -35,6 +35,19 @@ jobs:
           go tool gotestsum -- -race -v -count=1 ./... \
           -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out
 
+      # internal/start (docker-compose/v2, buildx, moby/buildkit, k8s client-go,
+      # aws-sdk-go-v2, notary, secret-detector) was deleted outright as
+      # unreachable (CLI-1966) -- this guards against silently reintroducing
+      # that dependency tree via some other package, since nothing else checks
+      # the shipped binary's size on every change.
+      - name: Verify the heavy orchestration dependency tree stays out of the module
+        run: |
+          set -euo pipefail
+          go list -deps . > /tmp/deps.txt
+          ! grep -Eq \
+            'docker/compose|docker/buildx|moby/buildkit|k8s\.io/client-go|aws-sdk-go-v2' \
+            /tmp/deps.txt
+
       - name: Check existing coverage cache
         id: coverage-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -78,7 +91,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4
         with:
           version: 2026.7.0
           install: true
@@ -92,30 +105,6 @@ jobs:
           install-mode: none
           only-new-issues: true
           working-directory: apps/cli-go
-
-  start:
-    name: Start
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache: true
-      - run: go build main.go
-      - run: ./main init
-      - run: sed -i '/\[db.pooler\]/{n;s/.*/enabled = true/}' supabase/config.toml
-      - run: ./main start --workdir tests
-        env:
-          SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
-      - name: Install websocat
-        run: |
-          sudo wget -qO /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
-          sudo chmod a+x /usr/local/bin/websocat
-          websocat --version
-      - run: ./e2e-test.sh ./main
 
   link:
     name: Link

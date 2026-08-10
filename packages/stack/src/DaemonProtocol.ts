@@ -4,7 +4,14 @@ import { StackStateSchema } from "./StateManager.ts";
 const DaemonErrorCodeSchema = Schema.Literals([
   "SERVICE_NOT_FOUND",
   "SERVICE_NOT_READY",
+  "STACK_READINESS_TIMEOUT",
   "STACK_BUILD_ERROR",
+]);
+
+const StackBuildReasonSchema = Schema.Literals([
+  "invalid_config",
+  "docker_not_running",
+  "asset_preparation",
 ]);
 
 export const DaemonErrorResponseSchema = Schema.Struct({
@@ -12,6 +19,8 @@ export const DaemonErrorResponseSchema = Schema.Struct({
   error: Schema.String,
   service: Schema.optionalKey(Schema.String),
   exitCode: Schema.optionalKey(Schema.Number),
+  timeoutMs: Schema.optionalKey(Schema.Number),
+  reason: Schema.optionalKey(StackBuildReasonSchema),
 });
 
 export type DaemonErrorResponse = typeof DaemonErrorResponseSchema.Type;

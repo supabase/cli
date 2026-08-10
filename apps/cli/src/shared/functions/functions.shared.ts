@@ -1,7 +1,7 @@
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
+import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 
 const functionSlugPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
@@ -22,6 +22,13 @@ export const FUNCTIONS_PROJECT_REF_SAFE_FLAGS = ["project-ref"] as const;
 // (`cmd/functions.go:158,182`).
 export const FUNCTIONS_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker", "legacy-bundle"] as const;
 
+// Go: `Images.EdgeRuntime`'s default tag is baked into the binary via the
+// embedded Dockerfile (`legacy-edge-runtime-image.ts` reads the same source)
+// — sourced from there rather than `@supabase/stack`'s independently-
+// maintained catalog, so a Dockerfile pin bump can never drift from what the
+// `functions` Docker paths resolve.
+const DEFAULT_EDGE_RUNTIME_TAG = dockerfileServiceImage("edgeruntime").split(":")[1] ?? "";
+
 /**
  * Go: `Config.EdgeRuntime.Image` reflects `supabase/.temp/edge-runtime-version`
  * when present (`pkg/config/config.go:847-849`) — shared by every `functions`
@@ -36,6 +43,6 @@ export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabas
   ).pipe(
     Effect.map((version) => version.trim()),
     Effect.catch(() => Effect.succeed("")),
-    Effect.map((version) => version || DEFAULT_VERSIONS["edge-runtime"]),
+    Effect.map((version) => version || DEFAULT_EDGE_RUNTIME_TAG),
   );
 });

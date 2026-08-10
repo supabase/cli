@@ -1,71 +1,16 @@
 import {
+  DEFAULT_VERSIONS,
+  SERVICE_NAMES,
   dockerImageCandidatesForArtifact,
   dockerImageForArtifact,
   imageTagPrefixForService,
-} from "./ServiceArtifacts.ts";
+} from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
-export type ServiceName =
-  | "postgres"
-  | "postgrest"
-  | "auth"
-  | "edge-runtime"
-  | "realtime"
-  | "storage"
-  | "imgproxy"
-  | "mailpit"
-  | "pgmeta"
-  | "studio"
-  | "analytics"
-  | "vector"
-  | "pooler";
+export { DEFAULT_VERSIONS, SERVICE_NAMES } from "./ServiceCatalog.ts";
+export type { ServiceName } from "./ServiceName.ts";
 
-export const SERVICE_NAMES = [
-  "postgres",
-  "postgrest",
-  "auth",
-  "edge-runtime",
-  "realtime",
-  "storage",
-  "imgproxy",
-  "mailpit",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "vector",
-  "pooler",
-] as const satisfies ReadonlyArray<ServiceName>;
-
-export interface VersionManifest {
-  readonly postgres: string;
-  readonly postgrest: string;
-  readonly auth: string;
-  readonly "edge-runtime": string;
-  readonly realtime: string;
-  readonly storage: string;
-  readonly imgproxy: string;
-  readonly mailpit: string;
-  readonly pgmeta: string;
-  readonly studio: string;
-  readonly analytics: string;
-  readonly vector: string;
-  readonly pooler: string;
-}
-
-export const DEFAULT_VERSIONS: VersionManifest = {
-  postgres: "17.6.1.158",
-  postgrest: "14.15",
-  auth: "2.194.0",
-  "edge-runtime": "1.74.2",
-  realtime: "2.120.3",
-  storage: "1.67.20",
-  imgproxy: "v3.8.0",
-  mailpit: "v1.30.2",
-  pgmeta: "0.96.6",
-  studio: "2026.07.27-sha-cbb076d",
-  analytics: "1.47.1",
-  vector: "0.53.0-alpine",
-  pooler: "2.9.7",
-} as const;
+export type VersionManifest = Readonly<Record<ServiceName, string>>;
 
 export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = Object.fromEntries(
   SERVICE_NAMES.flatMap((service) => {

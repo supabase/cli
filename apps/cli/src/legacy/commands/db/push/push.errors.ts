@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Conflicting database-target flags. Reproduces cobra's
@@ -7,7 +12,11 @@ import { Data } from "effect";
  */
 export class LegacyDbPushTargetFlagsError extends Data.TaggedError("LegacyDbPushTargetFlagsError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Remote migration versions are missing from the local directory. Byte-matches
@@ -19,7 +28,11 @@ export class LegacyDbPushMissingLocalError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.migrationDrift;
+  }
+}
 
 /**
  * Local migration files are ordered before the remote head and `--include-all`
@@ -31,7 +44,11 @@ export class LegacyDbPushMissingRemoteError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.migrationDrift;
+  }
+}
 
 /**
  * The user declined a confirmation prompt. Go returns `errors.New(context.Canceled)`
@@ -39,12 +56,20 @@ export class LegacyDbPushMissingRemoteError extends Data.TaggedError(
  */
 export class LegacyDbPushCancelledError extends Data.TaggedError("LegacyDbPushCancelledError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
 
 /** Locating `supabase/roles.sql` failed (Go's `failed to find custom roles: %w`). */
 export class LegacyDbPushRolesError extends Data.TaggedError("LegacyDbPushRolesError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * A migration / seed / globals / vault statement failed while applying. Carries
@@ -53,4 +78,8 @@ export class LegacyDbPushRolesError extends Data.TaggedError("LegacyDbPushRolesE
  */
 export class LegacyDbPushApplyError extends Data.TaggedError("LegacyDbPushApplyError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}

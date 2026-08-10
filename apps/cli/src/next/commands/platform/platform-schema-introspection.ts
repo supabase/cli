@@ -154,12 +154,16 @@ function toPlatformSchemaNode(options: {
   readonly required: boolean;
   readonly sensitive: boolean;
   readonly description?: string;
+  readonly ancestors?: ReadonlySet<PlatformOpenApiSchema>;
 }): PlatformSchemaNode {
   const resolved = resolvePlatformOpenApiSchema(options.schema);
-  const objectShape = getPlatformOpenApiObjectShape(options.schema);
-  const kind = classifyPlatformSchemaKind(options.schema);
+  const isRecursive = options.ancestors?.has(resolved) === true;
+  const ancestors = new Set(options.ancestors);
+  ancestors.add(resolved);
+  const objectShape = isRecursive ? undefined : getPlatformOpenApiObjectShape(options.schema);
+  const kind = isRecursive ? "unknown" : classifyPlatformSchemaKind(options.schema);
   const enumValues = enumValuesForNode(options.schema);
-  const unionVariants = unionVariantsFor(options.schema);
+  const unionVariants = isRecursive ? [] : unionVariantsFor(options.schema);
 
   const properties =
     objectShape && Object.keys(objectShape.properties).length > 0
@@ -170,17 +174,19 @@ function toPlatformSchemaNode(options: {
             label: humanizeFieldName(name),
             required: objectShape.required.has(name),
             sensitive: isSensitiveField(name),
+            ancestors,
           }),
         )
       : undefined;
 
   const items =
-    resolved.type === "array" && resolved.items !== undefined
+    !isRecursive && resolved.type === "array" && resolved.items !== undefined
       ? toPlatformSchemaNode({
           schema: resolved.items,
           label: options.label ? `${options.label} Item` : "Item",
           required: true,
           sensitive: options.sensitive,
+          ancestors,
         })
       : undefined;
 
@@ -192,6 +198,7 @@ function toPlatformSchemaNode(options: {
             label: options.label ? `${options.label} Variant ${index + 1}` : `Variant ${index + 1}`,
             required: options.required,
             sensitive: options.sensitive,
+            ancestors,
           }),
         )
       : undefined;

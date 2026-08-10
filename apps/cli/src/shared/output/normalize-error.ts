@@ -121,6 +121,11 @@ const mappedError = (
       }
       return undefined;
     }
+    case "UnknownSubcomand":
+      return {
+        code: "UnknownSubcommand",
+        message: readString(error, "message") ?? "Unknown subcommand",
+      };
     case "ShowHelp": {
       // Effect CLI wraps parse errors in a ShowHelp envelope (`CliError.ts`)
       // whose `errors` array holds the underlying causes. If exactly one of
@@ -191,7 +196,8 @@ export function normalizeCliError(
       return mapped;
     }
 
-    const code = readString(error, "_tag") ?? "UnknownError";
+    const rawCode = readString(error, "_tag") ?? "UnknownError";
+    const code = rawCode === "UnknownSubcomand" ? "UnknownSubcommand" : rawCode;
     const message = readString(error, "message") ?? readString(error, "detail") ?? code;
     const detail = readString(error, "detail");
     // Raw read: some producers' suggestion text is meaningful leading/trailing

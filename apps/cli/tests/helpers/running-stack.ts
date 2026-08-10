@@ -1,8 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
-import { unixHttpClientLayer } from "@supabase/stack";
 import {
-  DaemonServer,
   DEFAULT_VERSIONS,
   fullVersionManifest,
   type PartialVersionManifest,
@@ -14,7 +12,9 @@ import {
   type StackInfo,
   type StackMetadata,
   type StackState,
+  unixHttpClientLayer,
 } from "@supabase/stack/effect";
+import { DaemonServer } from "@supabase/stack/testing";
 import { Effect, Layer, ManagedRuntime, Option, Stream } from "effect";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";

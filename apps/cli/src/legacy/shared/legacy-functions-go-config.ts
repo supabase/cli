@@ -34,6 +34,17 @@ export const legacyFunctionsGoConfigCompat: FunctionsGoConfigCompat = {
             projectRoot,
             context.projectEnvValues,
             context.loaded?.document,
+            // No `[remotes.<ref>]` override-tier gating (empty set, the
+            // parameter default): the remote block itself already merged over
+            // the base config at file level via `legacyLoadLocalProjectContext`'s
+            // `projectRef` threading above. Known narrow divergence: without
+            // the key set, an ambient `SUPABASE_EDGE_RUNTIME_DENO_VERSION`
+            // still beats a matched remote block's own `deno_version`, where
+            // Go's OVERRIDE-tier `v.Set` would win — computing the keys here
+            // needs `legacy-db-config.toml-read.ts`'s remote-resolution
+            // pipeline, which this `loadProjectConfig`-based path doesn't run
+            // (review round on CLI-1963).
+            undefined,
             projectRef,
           ),
         catch: toError,

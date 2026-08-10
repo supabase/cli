@@ -2,6 +2,11 @@ import { Data, Effect, Result } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+import {
   containerCliExitCode,
   legacyContainerCliExitCodeAndStdout,
   legacyDescribeContainerCliFailure,
@@ -18,35 +23,59 @@ type Spawner = ChildProcessSpawner["Service"];
  * Failure taxonomy for {@link legacyDockerRemoveAll}. Each variant is a neutral, stage-tagged
  * cause carrying only a `.message` — same generalization pattern as `legacy-docker-lifecycle.ts`'s
  * `LegacyDockerLifecycleListError`/`LegacyDockerLifecycleInspectError`. Callers (`stop.handler.ts`
- * via `Effect.catchTags`; `start.rollback.ts` via a blanket swallow) discriminate/consume these by
- * their string `_tag`, never by importing the classes themselves, so only the union below is
- * exported — matching every constructor's actual usage (confirmed via `knip`).
+ * via `Effect.catchTags`; `legacy/shared/db-bootstrap/rollback.ts` via a blanket swallow) discriminate/consume these by
+ * their string `_tag`, never by importing the classes themselves. The classes
+ * are exported so the exhaustive telemetry guard can verify their declarations.
  */
-class LegacyDockerRemoveAllListError extends Data.TaggedError("LegacyDockerRemoveAllListError")<{
+export class LegacyDockerRemoveAllListError extends Data.TaggedError(
+  "LegacyDockerRemoveAllListError",
+)<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllStopError extends Data.TaggedError("LegacyDockerRemoveAllStopError")<{
+export class LegacyDockerRemoveAllStopError extends Data.TaggedError(
+  "LegacyDockerRemoveAllStopError",
+)<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllContainerPruneError extends Data.TaggedError(
+export class LegacyDockerRemoveAllContainerPruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllContainerPruneError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllVolumePruneError extends Data.TaggedError(
+export class LegacyDockerRemoveAllVolumePruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllVolumePruneError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllNetworkPruneError extends Data.TaggedError(
+export class LegacyDockerRemoveAllNetworkPruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllNetworkPruneError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
 /**
  * Extracts the deleted-object IDs/names from `docker`/`podman` `… prune`
@@ -97,7 +126,7 @@ export type LegacyDockerRemoveAllError =
  * removal step below) has EXITED SUCCESSFULLY — not at the initial listing, and not before
  * containers are even stopped — with the exact containers that listing found, id/name/workdir
  * together. A TS-port-only hook with no Go equivalent, for callers (`stop.handler.ts`,
- * `start.rollback.ts`) that need those same containers for {@link legacyCleanupStartSecrets}
+ * `legacy/shared/db-bootstrap/rollback.ts`) that need those same containers for {@link legacyCleanupStartSecrets}
  * (Go itself doesn't stage host-disk secrets, so it has no reason to know them). It exists so
  * those callers get this data from THIS function's own single `docker ps` listing instead of
  * issuing a second, separately-formatted `docker ps` call, which would double the real Docker

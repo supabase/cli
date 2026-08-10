@@ -57,14 +57,17 @@ export function legacyViperEnvBoolWithProjectFallback(
 }
 
 /**
- * `viper.GetString` for a `SUPABASE_*` key where a project `supabase/.env`
- * value may also apply — same shell-presence-suppresses-file-value semantics
- * as {@link legacyViperEnvBoolWithProjectFallback} (see its doc comment),
- * just without the bool cast.
+ * `viper.GetString` for a `SUPABASE_*` key where a project `supabase/.env` value may also
+ * apply — same shell-*presence*-wins semantics as {@link legacyViperEnvBoolWithProjectFallback}
+ * (godotenv.Load's "don't override a key that already exists in `os.Environ()`" check is
+ * presence-based, not value-based, so an empty shell value still blocks the project file's
+ * value), but for a plain string-typed viper-bound flag — no `ParseBool`/`cast.ToBool` coercion,
+ * just the raw merged string (or `""` when the key is absent from both, matching `viper.GetString`
+ * always returning a string rather than `undefined`). `??` (not `||`) encodes the presence check.
  */
 export function legacyViperEnvStringWithProjectFallback(
   name: string,
-  projectEnv: Readonly<Record<string, string>>,
-): string | undefined {
-  return process.env[name] ?? projectEnv[name];
+  projectEnv: Record<string, string>,
+): string {
+  return process.env[name] ?? projectEnv[name] ?? "";
 }

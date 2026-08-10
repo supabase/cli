@@ -72,6 +72,7 @@ export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(functio
     catch: (cause) =>
       new LegacyConfigPushListAddonsNetworkError({
         message: `failed to list addons: ${String(cause)}`,
+        decode: true,
       }),
   });
 

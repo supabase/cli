@@ -40,7 +40,7 @@ construct its layer from a validated `ResolvedGraph`, a `ChildProcessSpawner` Ad
 
 - executable, arguments, environment, and working directory;
 - dependencies and a dependency wait timeout;
-- optional HTTP, TCP, or exec health check;
+- optional HTTP, TCP, or exec health check with separate startup and liveness failure thresholds;
 - shutdown signal and grace period;
 - restart policy and restart budget;
 - `started` and `healthy` lifecycle hooks;
@@ -58,7 +58,9 @@ one of three conditions:
 
 `startService(name)` starts the requested definition and its transitive dependencies.
 `stopService(name)` and `restartService(name)` also include active dependents so a caller cannot
-leave an already-running dependent attached to a restarted dependency.
+leave an already-running dependent attached to a restarted dependency. The pure restart-closure
+calculation preserves inactive connector services on a dependency path to an active descendant;
+otherwise restarting the descendant without its connector would violate graph order.
 
 `updateServiceDefinition(name, replacement)` validates a graph with the replacement and then swaps
 the graph used for subsequent starts and restarts. It does not mutate a process generation that is
@@ -98,6 +100,10 @@ service maintained, and `stopped` records an explicit stop. Desired state is ind
 intermediate observed states and is what prevents an explicit stop from being undone by restart
 policy.
 
+`pid` identifies only a currently live process. Process exit, supervisory termination, hook
+failure, restart, and forced shutdown clear it. A health-triggered termination does not fabricate
+an `exitCode`; the code remains `null` unless the process itself reports an exit.
+
 `ServiceState` extends `Data.Class`, so Effect's `Equal.equals` can compare values structurally. It
 does not make two separately allocated objects equal under JavaScript `===`, and
 `SubscriptionRef.set` is not itself a distinct-update filter. Callers that want to suppress
@@ -106,7 +112,8 @@ redundant publications must compare before writing.
 `ServiceTransition` is the only normal path for observed-status changes. `applyEvent()` rejects
 illegal `(status, event)` pairs by returning `null`; `transition()` applies a legal event atomically
 through `SubscriptionRef.modifyEffect`. Races such as a late health callback during shutdown are
-therefore ignored without corrupting state.
+therefore ignored without corrupting state. The transition classification is keyed by every event
+tag, so adding an event fails type checking until its legal source statuses are defined.
 
 ## Lifecycle of one process generation
 
@@ -117,9 +124,9 @@ For each requested definition, `Orchestrator` runs this sequence:
    backoff, allowing a caller to reserve external resources.
 3. Wait for dependencies, bounded by `dependencyTimeoutSeconds` (default: 120 seconds).
 4. Transition to `Starting`.
-5. Call `beforeSpawn` immediately before every spawn. The stack uses it to release a reserved port
-   as late as possible. For a supervised Docker command there is still a spawn-to-container-bind
-   window because no supervisor/container bind handshake exists.
+5. Call `beforeSpawn` immediately before every spawn. A caller can use it to release a reserved port
+   as late as possible. For a supervised child there is still a spawn-to-bind window because no
+   supervisor/child bind handshake exists.
 6. Spawn either the configured process or its optional supervisor.
 7. Register a scoped finalizer before exposing `Running`.
 8. Run `started` hooks sequentially. Only successful hooks allow `ProcessSpawned` to publish
@@ -127,10 +134,15 @@ For each requested definition, `Orchestrator` runs this sequence:
 9. Stream stdout and stderr into `LogBuffer`.
 10. Run the health loop, or run `healthy` hooks immediately when no health check exists, then
     publish `Healthy`.
-11. Race process exit against an unhealthy-restart request and apply restart policy.
+11. Race process exit against unhealthy or hook failure, finalize the child, and apply restart
+    policy to process-exit and unhealthy causes.
 
 The service keeps the same state stream across restart generations. Restart backoff is
 `min(30 seconds, 2^(restartCount - 1))`.
+
+A no-health-check, `restart: "no"` process is treated as one-shot work. A small isolated poll of
+`ChildProcessHandle.isRunning` compensates for adapters that can report process completion before
+their `exitCode` Effect becomes observable; it is not part of the general lifecycle loop.
 
 ### Lifecycle hooks
 
@@ -140,7 +152,8 @@ declaration order. Each hook has a timeout (default: 30 seconds) and either:
 - `fail`: publish `HookFailed` and stop running later hooks for that trigger;
 - `ignore`: append a diagnostic log and continue.
 
-The supplied logger writes tagged stdout/stderr lines into the service's normal log stream.
+The supplied logger writes tagged stdout/stderr lines into the service's normal log stream. A
+failing hook finalizes its process generation before publishing terminal `Failed` state.
 
 ## Health and readiness
 
@@ -151,17 +164,25 @@ The supplied logger writes tagged stdout/stderr lines into the service's normal 
 - exec: successful for exit code `0`.
 
 After `initialDelaySeconds`, probes repeat every `periodSeconds`. Each attempt is bounded by
-`timeoutSeconds`; consecutive success and failure counters reset each other. The current
-implementation calls `onHealthy` after `successThreshold`, and calls `onUnhealthy` after
-`failureThreshold` only after that same process generation has first become healthy. Consequently,
-initial probe failures leave a service in `Running` rather than publishing `Unhealthy`; callers
-must not treat the current generic `waitReady` Interface as a startup deadline.
+`timeoutSeconds`; consecutive success and failure counters reset each other. Before a process
+generation has ever become healthy, `startupFailureThreshold` controls when it becomes
+`Unhealthy`. It defaults to `failureThreshold` for compatibility. After the first healthy result,
+all later failures use `failureThreshold`, including after an unhealthy-to-healthy recovery.
+Initial probe failures are therefore observable rather than leaving the service indefinitely in
+`Running`.
+
+An unhealthy process uses the same pure restart-budget decision as a process exit. When restart is
+enabled and the budget is exhausted, the supervisor terminates the child and publishes `Failed`
+with `pid: null`, `exitCode: null`, and a stable health-exhaustion error. With restart policy `no`,
+the live process remains observable as `Unhealthy`.
 
 `waitReady(name)` is intentionally unbounded. For long-running definitions it succeeds at
-`Healthy` and fails at a non-restarting terminal state. For `restart: "no"` one-shot definitions,
-successful completion is readiness. `waitAllReady()` considers only definitions whose desired
-state is `running`, so intentionally inactive definitions do not block lazy callers. Higher-level
-Modules own any finite user-facing deadline.
+`Healthy` and fails at a non-restarting terminal state. A `restart: "no"` definition without a
+health check is treated as one-shot work, where successful completion is readiness; a
+health-checked definition remains subject to health readiness even when restart is disabled.
+`waitAllReady()` considers only definitions whose desired state is `running`, so intentionally
+inactive definitions do not block lazy callers. Higher-level Modules own any finite user-facing
+deadline.
 
 ## Restart policies
 
@@ -187,7 +208,9 @@ interrupts its lifecycle fiber. The generation finalizer:
 
 Whole-graph stop sets desired state first and then stops dependents before dependencies. The global
 shutdown budget defaults to 60 seconds. If that budget expires, the orchestrator logs the timeout
-and clears all fibers; it does not fail with `ShutdownTimeoutError`.
+and force-terminates active children before waiting for teardown to finish. Services that were
+running reach terminal `Stopped` state with `pid: null` and exit code `143`; stop does not fail with
+`ShutdownTimeoutError`.
 
 In-process cleanup and orphan supervision solve different failure modes:
 
@@ -196,9 +219,15 @@ In-process cleanup and orphan supervision solve different failure modes:
   owner's stdin closes, its PID disappears, the supervisor receives a termination signal, or the
   managed child exits while cleanup is configured.
 
-`ExternalCleanupAction` currently supports removing a Docker container or a filesystem path. The
-supervisor validates the decoded configuration and ignores individual cleanup failures so cleanup
-remains best-effort and idempotent.
+`ExternalCleanupAction` supports a shell-free `RunCommand` with an executable, argument array, and
+optional timeout (default 5 seconds), plus `RemovePath` for filesystem cleanup. Cleanup commands
+receive the managed child's sanitized environment, without the supervisor self-dispatch protocol
+variables. The supervisor rejects a malformed decoded cleanup contract before spawning the child,
+while individual execution failures remain best-effort. Callers must choose idempotent commands
+because owner-loss signals can race. `RunCommand` actions execute serially, so their aggregate
+duration can approach the sum of their individual timeouts. Each command runs in its own process
+group on Unix, while Windows uses `taskkill /T`; a timeout therefore terminates the command tree
+rather than only its root. Filesystem retry delays may overlap command execution.
 
 ## Supervisor runtime
 
@@ -231,7 +260,8 @@ virtual filesystem. The package therefore uses three internal environment variab
 The CLI entrypoint calls `enableSupervisorSelfDispatchForCompiledBun()` before normal command
 dispatch, checks `isSupervisorRuntimeRequested()`, and invokes `runSupervisorRuntimeFromEnv()`.
 The supervisor removes all three variables before starting the managed command, preventing the
-protocol from leaking recursively into a service.
+protocol from leaking recursively into a service. Contract tests run the same encoded supervisor
+configuration through both the source-file argument path and environment-based self-dispatch path.
 
 The stack daemon has a separate Supabase-owned marker, `SUPABASE_STACK_RUN_DAEMON`; it is documented
 in [the stack detach-mode guide](../../stack/docs/detach-mode.md#compiled-executable-re-entry).
@@ -248,15 +278,13 @@ plus live per-service and merged `PubSub` streams. `historyAll` can filter by se
 Streams contain new entries only; callers explicitly request history when they need replay.
 
 When a process exits unexpectedly or becomes unhealthy, the orchestrator appends recent buffered
-output to its diagnostics. `truncate` currently clears both a service's history and its entries in
-the merged history; it has no production caller.
+output to its diagnostics.
 
 ## Error model
 
 Graph construction can fail with `MissingDependencyError` or `CyclicDependencyError`. Lifecycle
 lookup uses `ServiceNotFoundError`; spawn preparation uses `SpawnError`; readiness uses
-`ServiceReadyError`. Global shutdown timeout is logged and force-cleared, so the exported
-`ShutdownTimeoutError` does not represent a current failure path.
+`ServiceReadyError`. Global shutdown timeout is logged and force-cleared.
 
 ## Testing through Interfaces
 

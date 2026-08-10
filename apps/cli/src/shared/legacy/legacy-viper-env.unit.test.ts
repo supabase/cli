@@ -7,6 +7,7 @@ import {
 } from "./legacy-viper-env.ts";
 
 const KEY = "SUPABASE_TEST_VIPER_BOOL";
+const STRING_KEY = "SUPABASE_TEST_VIPER_STRING";
 
 describe("legacyViperEnvBool", () => {
   afterEach(() => {
@@ -77,30 +78,35 @@ describe("legacyViperEnvBoolWithProjectFallback", () => {
 
 describe("legacyViperEnvStringWithProjectFallback", () => {
   afterEach(() => {
-    delete process.env[KEY];
+    delete process.env[STRING_KEY];
   });
 
-  it("returns the shell value and ignores the project value when both are set", () => {
-    process.env[KEY] = "shell-value";
-    expect(legacyViperEnvStringWithProjectFallback(KEY, { [KEY]: "project-value" })).toBe(
-      "shell-value",
-    );
+  it("falls back to the project value only when the shell var is absent", () => {
+    delete process.env[STRING_KEY];
+    expect(
+      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
+    ).toBe("project-value");
+    expect(legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
   });
 
-  it("treats an empty shell value as present (godotenv never overwrites an existing key)", () => {
-    process.env[KEY] = "";
-    expect(legacyViperEnvStringWithProjectFallback(KEY, { [KEY]: "project-value" })).toBe("");
+  it("keeps the shell value over a project value", () => {
+    process.env[STRING_KEY] = "shell-value";
+    expect(
+      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
+    ).toBe("shell-value");
   });
 
-  it("falls back to the project value when the shell var is absent", () => {
-    delete process.env[KEY];
-    expect(legacyViperEnvStringWithProjectFallback(KEY, { [KEY]: "project-value" })).toBe(
-      "project-value",
-    );
+  it("treats an empty shell value as present (blocks the project value)", () => {
+    // Same presence-based semantics as legacyViperEnvBoolWithProjectFallback: godotenv.Load's
+    // "don't override a key already in os.Environ()" check is key-existence, not value-truthiness.
+    process.env[STRING_KEY] = "";
+    expect(
+      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
+    ).toBe("");
   });
 
-  it("returns undefined when the key is absent from both the shell and the project env", () => {
-    delete process.env[KEY];
-    expect(legacyViperEnvStringWithProjectFallback(KEY, {})).toBeUndefined();
+  it("returns an empty string (not undefined) when absent from both, matching viper.GetString", () => {
+    delete process.env[STRING_KEY];
+    expect(legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
   });
 });

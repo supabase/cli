@@ -6,6 +6,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path } from "effect";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
@@ -21,7 +26,11 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly code?: string;
   readonly detail?: string;
   readonly position?: number;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 function fakeSession(
   opts: {

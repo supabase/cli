@@ -1,16 +1,15 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpServer } from "effect/unstable/http";
-import {
-  resolveDaemonConfig,
-  type DaemonConfigInput,
-  type PlatformFactory,
-} from "./createStack.ts";
+import { ApiProxy } from "./ApiProxy.ts";
+import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
 import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { runningServiceVersionsForConfig } from "./StackMetadata.ts";
 import { foregroundDaemonLayer } from "./layers.ts";
+import { LocalStackLifecycle } from "./LocalStack.ts";
 import { Stack } from "./Stack.ts";
+import { resolveDaemonConfig, type DaemonConfigInput } from "./StackConfigResolver.ts";
 import { StateManager, type StackState } from "./StateManager.ts";
 
 /** Factory for creating the daemon's Unix socket HTTP server (platform-specific). */
@@ -26,12 +25,12 @@ export interface DaemonStartMessage {
   readonly socketPath: string;
 }
 
-export interface DaemonStartedMessage {
+interface DaemonStartedMessage {
   readonly type: "started";
   readonly state: StackState;
 }
 
-export interface DaemonErrorMessage {
+interface DaemonErrorMessage {
   readonly type: "error";
   readonly message: string;
 }
@@ -49,7 +48,9 @@ export async function runDaemon(
   const msg = await waitForMessage<DaemonStartMessage>();
   const { socketPath } = msg;
 
-  let appRuntime: ManagedRuntime.ManagedRuntime<Stack | StateManager, never> | undefined;
+  let appRuntime:
+    | ManagedRuntime.ManagedRuntime<Stack | StateManager | ApiProxy | LocalStackLifecycle, never>
+    | undefined;
   let daemonRuntime: ManagedRuntime.ManagedRuntime<DaemonServer, never> | undefined;
   let portLease: PortLease | undefined;
 
@@ -76,12 +77,14 @@ export async function runDaemon(
     // Build the app layer (Stack + ApiProxy)
     const appLayer = foregroundDaemonLayer(config, platformFactory, portLease);
 
-    appRuntime = ManagedRuntime.make(appLayer);
+    const localAppRuntime = ManagedRuntime.make(appLayer);
+    appRuntime = localAppRuntime;
 
     // Build the stack (services are started later via POST /start)
-    const localStack = await appRuntime.runPromise(Stack);
-    const info = await appRuntime.runPromise(localStack.getInfo());
-    const localStateManager = await appRuntime.runPromise(StateManager);
+    const localStack = await localAppRuntime.runPromise(Stack);
+    const localStackLifecycle = await localAppRuntime.runPromise(LocalStackLifecycle);
+    const info = await localAppRuntime.runPromise(localStack.getInfo());
+    const localStateManager = await localAppRuntime.runPromise(StateManager);
 
     // Build daemon management server on Unix socket
     const daemonLayer = DaemonServer.layer.pipe(
@@ -89,8 +92,9 @@ export async function runDaemon(
       Layer.provide(daemonServerFactory(socketPath)),
     );
 
-    daemonRuntime = ManagedRuntime.make(daemonLayer);
-    await daemonRuntime.runPromise(DaemonServer);
+    const localDaemonRuntime = ManagedRuntime.make(daemonLayer);
+    daemonRuntime = localDaemonRuntime;
+    await localDaemonRuntime.runPromise(DaemonServer);
 
     // Claim live state before acknowledging startup to the parent.
     const state: StackState = {
@@ -117,8 +121,21 @@ export async function runDaemon(
     process.send!(response);
     process.disconnect?.();
 
-    const daemon = await daemonRuntime.runPromise(DaemonServer);
-    await Promise.race([daemonRuntime.runPromise(daemon.awaitShutdown), waitForSignal()]);
+    const daemon = await localDaemonRuntime.runPromise(DaemonServer);
+    // Any terminal stack disposal is a whole-runtime failure: keeping the management or proxy
+    // servers alive would expose disposed state. Route it through the server's delayed shutdown
+    // signal so the request that caused disposal can flush its typed response first.
+    const shutdownAfterLocalStackDisposal = localAppRuntime
+      .runPromise(localStackLifecycle.awaitDisposed)
+      .then(async () => {
+        await localDaemonRuntime.runPromise(daemon.beginShutdown);
+        await localDaemonRuntime.runPromise(daemon.awaitShutdown);
+      });
+    await Promise.race([
+      localDaemonRuntime.runPromise(daemon.awaitShutdown),
+      shutdownAfterLocalStackDisposal,
+      waitForSignal(),
+    ]);
     await shutdownDaemon({ appRuntime, daemonRuntime });
     process.exit(0);
   } catch (err) {
@@ -162,7 +179,10 @@ function waitForSignal(): Promise<"SIGINT" | "SIGTERM"> {
 }
 
 async function shutdownDaemon(opts: {
-  readonly appRuntime?: ManagedRuntime.ManagedRuntime<Stack, never>;
+  readonly appRuntime?: ManagedRuntime.ManagedRuntime<
+    Stack | StateManager | ApiProxy | LocalStackLifecycle,
+    never
+  >;
   readonly daemonRuntime?: ManagedRuntime.ManagedRuntime<DaemonServer, never>;
 }): Promise<void> {
   await opts.daemonRuntime?.dispose().catch(() => {});

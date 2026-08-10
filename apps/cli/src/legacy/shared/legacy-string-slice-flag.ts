@@ -1,3 +1,10 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Parses a pflag `StringSliceVar` flag: CSV-splits each occurrence via
  * `encoding/csv` and accumulates across repeats, matching `readAsCSV` in
@@ -32,6 +39,7 @@ const lengthNL = (b: Uint8Array): number => (b.length > 0 && b[b.length - 1] ===
  *    `readAsCSV` propagates `csv.Reader.Read`'s `io.EOF` unchanged).
  */
 export class LegacyStringSliceFlagParseError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyStringSliceFlagParseError";
   readonly value: string;
   private constructor(value: string, message: string) {
     super(message);
@@ -55,6 +63,10 @@ export class LegacyStringSliceFlagParseError extends Error {
   /** Mirrors pflag propagating `io.EOF` (value is nothing but blank lines). */
   static eof(value: string): LegacyStringSliceFlagParseError {
     return new LegacyStringSliceFlagParseError(value, "EOF");
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
   }
 }
 

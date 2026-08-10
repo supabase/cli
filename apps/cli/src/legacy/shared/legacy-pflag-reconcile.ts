@@ -1,8 +1,17 @@
 import { Data, Effect, FileSystem, Option, Path, Result } from "effect";
 
-import type { PflagArgvScan } from "../../shared/cli/cobra-flag-groups.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import {
+  lastExplicitLongFlagValue,
+  type PflagArgvScan,
+} from "../../shared/cli/cobra-flag-groups.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyProfileFilePath } from "../config/legacy-profile-file.ts";
 import { legacyLoadProfile, type LegacyLoadedProfile } from "./legacy-profile-load.ts";
 import { legacyParseStringSliceFlag } from "./legacy-string-slice-flag.ts";
@@ -33,7 +42,11 @@ import { legacyValidateWorkdirIsDirectory } from "./legacy-workdir-validation.ts
  */
 export class LegacyPflagWorkdirError extends Data.TaggedError("LegacyPflagWorkdirError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Reconciles an Effect-parsed option flag with pflag semantics
@@ -191,8 +204,9 @@ export const legacyValidatePflagWorkdir = Effect.fnUntraced(function* (
  * - otherwise the Effect-parsed value covers pre-command-path placement
  *   (`supabase --profile x sso add …`) the anchored scan cannot see. The
  *   parsed flag cannot distinguish an explicit `--profile supabase` from the
- *   flag's default, so that value is treated as unset — the same proxy the
- *   config layer uses (`legacy-cli-config.layer.ts`).
+ *   flag's default, so that value is treated as unset (the config layer
+ *   closes the same gap with its own argv scan,
+ *   `legacy-cli-config.layer.ts`).
  */
 export function legacyPflagProfileValue(
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
@@ -241,9 +255,12 @@ export function legacyPflagProfileValue(
  * flag-shaped values, repeat resolution, explicit `--profile supabase`
  * shadowing the env, an untrimmed persisted-file token) — or when the token
  * is empty, which Go deterministically rejects. Where the two agree (every
- * normal invocation), the layer's resolution stands unchanged, including its
- * pre-existing lenient missing/malformed-file fallback, which predates this
- * PR and applies shell-wide (tracked separately from CLI-1982).
+ * normal invocation), the layer's resolution stands unchanged — it uses the
+ * same strict `legacyLoadProfile` and explicit-flag detection
+ * (supabase/cli#6091). Argv shapes where pflag's token consumption diverges
+ * from the Effect parser can still fail the layer build before this
+ * reconcile runs; those fail-closed on both sides, possibly with different
+ * detail text.
  *
  * `serviceOption` throughout: outside the real CLI tree (handler-level tests
  * provide argv via `Stdio.layerTest`) the flag settings and `RuntimeInfo`
@@ -257,16 +274,27 @@ export const legacyResolvePflagProfile = Effect.fnUntraced(function* (
   const env = process.env["SUPABASE_PROFILE"];
   const envProfile = env !== undefined && env.length > 0 ? env : undefined;
 
-  // viper-effective explicit token vs the config layer's explicit token
-  // (`resolveProfile`, `legacy-cli-config.layer.ts`: parsed flag ≠ default →
-  // env). When both agree on a non-empty explicit token, the layer resolved
-  // the exact same profile the Go binary would target.
+  // viper-effective explicit token vs the config layer's explicit token.
+  // The layer-model MUST mirror `resolveProfile` exactly (raw argv scan →
+  // parsed flag ≠ default → env): the layer's scan treats the last raw
+  // `--profile` occurrence as explicit even when pflag consumed it as another
+  // flag's value, so omitting it here would make the comparison miss a layer
+  // that shadowed the env and silently target the wrong host. When both agree
+  // on a non-empty explicit token, the layer resolved the exact same profile
+  // the Go binary would target.
+  const scanExplicit = Option.match(yield* Effect.serviceOption(CliArgs), {
+    onNone: () => undefined,
+    onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
+  });
   const goExplicit = legacyPflagProfileValue(scan, parsedProfile, envProfile);
-  const layerExplicit = Option.isSome(parsedProfile)
-    ? parsedProfile
-    : envProfile !== undefined
-      ? Option.some(envProfile)
-      : Option.none<string>();
+  const layerExplicit =
+    scanExplicit !== undefined
+      ? Option.some(scanExplicit)
+      : Option.isSome(parsedProfile)
+        ? parsedProfile
+        : envProfile !== undefined
+          ? Option.some(envProfile)
+          : Option.none<string>();
   if (
     Option.isSome(goExplicit) &&
     Option.isSome(layerExplicit) &&

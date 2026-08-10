@@ -1,5 +1,10 @@
 import type { Effect, Option } from "effect";
 import { Data, Schema, Context } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 const LocalServiceVersionsSchema = Schema.Struct({
   postgres: Schema.optionalKey(Schema.String),
@@ -28,7 +33,11 @@ export class InvalidLocalServiceVersionsStateError extends Data.TaggedError(
 )<{
   readonly detail: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 interface ProjectLocalServiceVersionsShape {
   readonly load: Effect.Effect<

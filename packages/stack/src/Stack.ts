@@ -1,10 +1,13 @@
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
-import { Effect, Layer, Schema, Context, Stream } from "effect";
-import { StackBuildError } from "./errors.ts";
-import type { FunctionsConfig } from "./functions.ts";
-import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
-import type { EdgeRuntimeConfig, ResolvedStackConfig } from "./StackBuilder.ts";
+import { Context, Effect, Schema, Stream } from "effect";
+import { StackBuildError, StackReadinessError } from "./errors.ts";
+import {
+  ResolvedFunctionsBundleSchema,
+  type FunctionsReloadConfig,
+  type ResolvedFunctionsBundle,
+} from "./functions.ts";
+import type { EdgeRuntimeConfig, ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 
 export interface StackInfo {
@@ -34,45 +37,53 @@ const EdgeRuntimeConfigSchema = Schema.Struct({
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
-const FunctionsConfigSchema = Schema.Struct({
-  envFile: Schema.optionalKey(Schema.String),
-  noVerifyJwt: Schema.optionalKey(Schema.Boolean),
-});
-
 export const EdgeRuntimeReloadConfigSchema = Schema.Struct({
   edgeRuntime: EdgeRuntimeConfigSchema,
-  functions: Schema.optionalKey(FunctionsConfigSchema),
+  functions: Schema.optionalKey(ResolvedFunctionsBundleSchema),
 });
 
 export interface EdgeRuntimeReloadConfig {
   readonly edgeRuntime: EdgeRuntimeConfig;
-  readonly functions?: FunctionsConfig;
+  readonly functions?: ResolvedFunctionsBundle;
 }
-
-type StackService = typeof Stack.Service;
 
 export class Stack extends Context.Service<
   Stack,
   {
     readonly getInfo: () => Effect.Effect<StackInfo>;
-    readonly start: () => Effect.Effect<void, ServiceReadyError | StackBuildError>;
+    readonly start: () => Effect.Effect<
+      void,
+      ServiceReadyError | StackBuildError | StackReadinessError
+    >;
     readonly stop: () => Effect.Effect<void>;
     readonly dispose: () => Effect.Effect<void>;
     readonly startService: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+    ) => Effect.Effect<
+      void,
+      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+    >;
     readonly stopService: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
     readonly restartService: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+    ) => Effect.Effect<
+      void,
+      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+    >;
     readonly reloadFunctions: (
-      opts?: FunctionsConfig,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+      opts?: FunctionsReloadConfig,
+    ) => Effect.Effect<
+      void,
+      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+    >;
     readonly reloadEdgeRuntime: (
       opts: EdgeRuntimeReloadConfig,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+    ) => Effect.Effect<
+      void,
+      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+    >;
     readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
     readonly stateChanges: (
@@ -81,8 +92,14 @@ export class Stack extends Context.Service<
     readonly allStateChanges: () => Stream.Stream<StackServiceState>;
     readonly waitReady: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
-    readonly waitAllReady: () => Effect.Effect<void, ServiceReadyError | StackBuildError>;
+      opts?: ReadyOptions,
+    ) => Effect.Effect<
+      void,
+      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+    >;
+    readonly waitAllReady: (
+      opts?: ReadyOptions,
+    ) => Effect.Effect<void, ServiceReadyError | StackBuildError | StackReadinessError>;
     readonly subscribeLogs: (name: string) => Stream.Stream<LogEntry>;
     readonly subscribeAllLogs: (services?: ReadonlyArray<string>) => Stream.Stream<LogEntry>;
     readonly logHistory: (name: string, limit?: number) => Effect.Effect<ReadonlyArray<LogEntry>>;
@@ -91,35 +108,4 @@ export class Stack extends Context.Service<
       services?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<LogEntry>>;
   }
->()("stack/Stack") {
-  static layer = (
-    _config: ResolvedStackConfig,
-  ): Layer.Layer<Stack, StackBuildError, StackLifecycleCoordinator> =>
-    Layer.effect(
-      this,
-      Effect.gen(function* () {
-        const coordinator = yield* StackLifecycleCoordinator;
-        return {
-          getInfo: coordinator.getInfo,
-          start: coordinator.start,
-          stop: coordinator.stop,
-          dispose: coordinator.dispose,
-          startService: coordinator.startService,
-          stopService: coordinator.stopService,
-          restartService: coordinator.restartService,
-          reloadFunctions: coordinator.reloadFunctions,
-          reloadEdgeRuntime: coordinator.reloadEdgeRuntime,
-          getState: coordinator.getState,
-          getAllStates: coordinator.getAllStates,
-          stateChanges: coordinator.stateChanges,
-          allStateChanges: coordinator.allStateChanges,
-          waitReady: coordinator.waitReady,
-          waitAllReady: coordinator.waitAllReady,
-          subscribeLogs: coordinator.subscribeLogs,
-          subscribeAllLogs: coordinator.subscribeAllLogs,
-          logHistory: coordinator.logHistory,
-          logHistoryAll: coordinator.logHistoryAll,
-        } satisfies StackService;
-      }),
-    );
-}
+>()("stack/Stack") {}

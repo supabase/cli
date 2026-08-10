@@ -1,12 +1,14 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
-import { Effect, Fiber, Layer, ManagedRuntime, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Result, Stream } from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
-import { StackBuildError } from "./errors.ts";
+import { StackBuildError, StackReadinessError } from "./errors.ts";
+import type { FunctionsReloadConfig, ResolvedFunctionsBundle } from "./functions.ts";
 import { RemoteStack } from "./RemoteStack.ts";
-import { Stack, type StackInfo } from "./Stack.ts";
+import { Stack, type EdgeRuntimeReloadConfig, type StackInfo } from "./Stack.ts";
+import type { ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
@@ -44,7 +46,21 @@ const AUTH_STATE = new StackServiceState({
   error: null,
 });
 
-const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE, AUTH_STATE];
+const HEALTH_FAILED_STATE = new StackServiceState({
+  name: "edge-runtime",
+  status: "Failed",
+  pid: null,
+  exitCode: null,
+  restartCount: 2,
+  startedAt: Date.now(),
+  error: "Health check failed and restart budget was exhausted",
+});
+
+const MOCK_STATES: ReadonlyArray<StackServiceState> = [
+  POSTGRES_STATE,
+  AUTH_STATE,
+  HEALTH_FAILED_STATE,
+];
 
 const MOCK_LOGS: ReadonlyArray<LogEntry> = [
   { timestamp: 1000, service: "postgres", stream: "stdout", line: "starting" },
@@ -59,13 +75,22 @@ const MOCK_LOGS: ReadonlyArray<LogEntry> = [
 function mockStack(
   options: {
     readonly startServiceBuildError?: string;
+    readonly startServiceBuildReason?:
+      | "invalid_config"
+      | "docker_not_running"
+      | "asset_preparation";
     readonly startServiceReadyError?: string;
     readonly waitReadyBuildError?: string;
+    readonly waitReadyBuildReason?: "invalid_config" | "docker_not_running" | "asset_preparation";
+    readonly waitReadyTimeoutMs?: number;
     readonly restartServiceReadyError?: string;
   } = {},
 ) {
   let stopped = false;
   const serviceCalls: string[] = [];
+  const functionReloads: FunctionsReloadConfig[] = [];
+  const edgeRuntimeReloads: EdgeRuntimeReloadConfig[] = [];
+  const readinessCalls: Array<{ readonly target: string; readonly options?: ReadyOptions }> = [];
 
   const layer = Layer.succeed(Stack, {
     getInfo: () => Effect.succeed(MOCK_INFO),
@@ -82,7 +107,14 @@ function mockStack(
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
         : options.startServiceBuildError !== undefined
-          ? Effect.fail(new StackBuildError({ detail: options.startServiceBuildError }))
+          ? Effect.fail(
+              new StackBuildError({
+                detail: options.startServiceBuildError,
+                ...(options.startServiceBuildReason === undefined
+                  ? {}
+                  : { reason: options.startServiceBuildReason }),
+              }),
+            )
           : options.startServiceReadyError !== undefined
             ? Effect.fail(
                 new ServiceReadyError({
@@ -112,12 +144,14 @@ function mockStack(
           : Effect.sync(() => {
               serviceCalls.push(`restart:${name}`);
             }),
-    reloadFunctions: () =>
+    reloadFunctions: (config) =>
       Effect.sync(() => {
+        functionReloads.push(config ?? {});
         serviceCalls.push("reload-functions");
       }),
-    reloadEdgeRuntime: () =>
+    reloadEdgeRuntime: (config) =>
       Effect.sync(() => {
+        edgeRuntimeReloads.push(config);
         serviceCalls.push("reload-edge-runtime");
       }),
     getState: (name: string) => {
@@ -132,18 +166,36 @@ function mockStack(
         : Effect.fail(new ServiceNotFoundError({ name }));
     },
     allStateChanges: () => Stream.fromIterable(MOCK_STATES),
-    waitReady: (name: string) => {
+    waitReady: (name: string, readyOptions?: ReadyOptions) => {
       const match = MOCK_STATES.find((s) => s.name === name);
       if (match === undefined) return Effect.fail(new ServiceNotFoundError({ name }));
       if (options.waitReadyBuildError !== undefined) {
-        return Effect.fail(new StackBuildError({ detail: options.waitReadyBuildError }));
+        return Effect.fail(
+          new StackBuildError({
+            detail: options.waitReadyBuildError,
+            ...(options.waitReadyBuildReason === undefined
+              ? {}
+              : { reason: options.waitReadyBuildReason }),
+          }),
+        );
+      }
+      if (options.waitReadyTimeoutMs !== undefined) {
+        return Effect.fail(
+          new StackReadinessError({
+            target: name,
+            timeoutMs: options.waitReadyTimeoutMs,
+            detail: `Timed out waiting for ${name}`,
+          }),
+        );
       }
       return Effect.sync(() => {
+        readinessCalls.push({ target: name, options: readyOptions });
         serviceCalls.push(`ready:${name}`);
       });
     },
-    waitAllReady: () =>
+    waitAllReady: (readyOptions?: ReadyOptions) =>
       Effect.sync(() => {
+        readinessCalls.push({ target: "stack", options: readyOptions });
         serviceCalls.push("ready:all");
       }),
     subscribeLogs: (name: string) =>
@@ -171,8 +223,25 @@ function mockStack(
       return stopped;
     },
     serviceCalls,
+    readinessCalls,
+    functionReloads,
+    edgeRuntimeReloads,
   };
 }
+
+const functionsBundle: ResolvedFunctionsBundle = {
+  env: { SHARED_SECRET: "shared-secret-value" },
+  functions: [
+    {
+      name: "hello",
+      verifyJWT: false,
+      entrypointPath: "/project/supabase/functions/hello/index.ts",
+      importMapPath: null,
+      staticFiles: [],
+      env: { FUNCTION_SECRET: "function-secret-value" },
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Layer builder — DaemonServer backed by mock Stack on TCP port
@@ -192,7 +261,7 @@ function buildClientLayer(url: string): Layer.Layer<Stack, never, never> {
     request: (socketPath, path, init) =>
       Effect.tryPromise({
         try: () => fetch(`${url}${path}`, init),
-        catch: (cause) => new UnixHttpClientError({ socketPath, path, cause }),
+        catch: (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
       }),
   });
   return RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer));
@@ -233,9 +302,16 @@ describe("RemoteStack integration", () => {
     const states = await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) => stack.getAllStates()),
     );
-    expect(states).toHaveLength(2);
+    expect(states).toHaveLength(3);
     expect(states.at(0)?.name).toBe("postgres");
     expect(states.at(1)?.name).toBe("auth");
+    expect(states.at(2)).toMatchObject({
+      name: "edge-runtime",
+      status: "Failed",
+      pid: null,
+      exitCode: null,
+      error: "Health check failed and restart budget was exhausted",
+    });
   });
 
   test("getState returns a single service state", async () => {
@@ -267,9 +343,15 @@ describe("RemoteStack integration", () => {
     expect(exit._tag).toBe("Failure");
   });
 
-  test("waitReady delegates to the daemon coordinator", async () => {
-    await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.waitReady("auth")));
+  test("waitReady passes one validated finite override through the daemon", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.waitReady("auth", { mode: "finite", timeoutMs: 250 })),
+    );
     expect(mock.serviceCalls).toContain("ready:auth");
+    expect(mock.readinessCalls).toContainEqual({
+      target: "auth",
+      options: { mode: "finite", timeoutMs: 250 },
+    });
   });
 
   test("waitReady rejects dot path segments locally", async () => {
@@ -280,9 +362,38 @@ describe("RemoteStack integration", () => {
     expect(mock.serviceCalls).not.toContain("ready:all");
   });
 
-  test("waitAllReady delegates to the daemon coordinator", async () => {
+  test("waitAllReady sends explicit inherit semantics to the daemon", async () => {
     await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.waitAllReady()));
     expect(mock.serviceCalls).toContain("ready:all");
+    expect(mock.readinessCalls).toContainEqual({
+      target: "stack",
+      options: { mode: "inherit" },
+    });
+  });
+
+  test("preserves StackReadinessError across the daemon transport", async () => {
+    const failingMock = mockStack({ waitReadyTimeoutMs: 75 });
+    const failingServer = ManagedRuntime.make(buildServerLayer(failingMock));
+    let failingClient: ManagedRuntime.ManagedRuntime<Stack, never> | undefined;
+    try {
+      const daemon = await failingServer.runPromise(DaemonServer);
+      const addr = daemon.address;
+      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
+      failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
+
+      const error = await failingClient.runPromise(
+        Effect.flatMap(Stack, (stack) => stack.waitReady("auth")).pipe(Effect.flip),
+      );
+      expect(error._tag).toBe("StackReadinessError");
+      if (error._tag === "StackReadinessError") {
+        expect(error.target).toBe("auth");
+        expect(error.timeoutMs).toBe(75);
+      }
+    } finally {
+      await failingClient?.dispose();
+      await failingServer.dispose();
+    }
   });
 
   test("interrupting waitReady aborts the daemon request", async () => {
@@ -306,7 +417,8 @@ describe("RemoteStack integration", () => {
                 { once: true },
               );
             }),
-          catch: (cause) => new UnixHttpClientError({ socketPath, path, cause }),
+          catch: (cause) =>
+            new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
         }),
     });
     const runtime = ManagedRuntime.make(
@@ -322,11 +434,92 @@ describe("RemoteStack integration", () => {
     }
   });
 
+  test("distinguishes daemon status failures from protocol failures", async () => {
+    const scenarios = [
+      { response: new Response("failed", { status: 500 }), reason: "status" },
+      {
+        response: new Response("not-json", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+        reason: "protocol",
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const clientLayer = Layer.succeed(UnixHttpClient, {
+        request: () => Effect.succeed(scenario.response),
+      });
+      const runtime = ManagedRuntime.make(
+        RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer)),
+      );
+      try {
+        const exit = await runtime.runPromise(
+          Effect.flatMap(Stack, (stack) => stack.getInfo()).pipe(Effect.exit),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const defect = Cause.findDefect(exit.cause);
+          expect(Result.isSuccess(defect)).toBe(true);
+          if (Result.isSuccess(defect)) {
+            expect(defect.success).toBeInstanceOf(UnixHttpClientError);
+            expect(defect.success).toMatchObject({ reason: scenario.reason, path: "/status" });
+          }
+        }
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  });
+
+  test("preserves daemon identity for invalid SSE responses", async () => {
+    const scenarios = [
+      { response: () => new Response("failed", { status: 500 }), reason: "status" },
+      {
+        response: () =>
+          new Response("data: not-json\n\n", {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        reason: "protocol",
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const clientLayer = Layer.succeed(UnixHttpClient, {
+        request: () => Effect.succeed(scenario.response()),
+      });
+      const runtime = ManagedRuntime.make(
+        RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer)),
+      );
+      try {
+        const exit = await runtime.runPromise(
+          Effect.flatMap(Stack, (stack) => Stream.runCollect(stack.subscribeAllLogs())).pipe(
+            Effect.exit,
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const defect = Cause.findDefect(exit.cause);
+          expect(Result.isSuccess(defect)).toBe(true);
+          if (Result.isSuccess(defect)) {
+            expect(defect.success).toBeInstanceOf(UnixHttpClientError);
+            expect(defect.success).toMatchObject({ reason: scenario.reason, path: "/logs" });
+          }
+        }
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  });
+
   test("preserves StackBuildError across remote service operations", async () => {
     const failingMock = mockStack({
       restartServiceReadyError: "restart failed readiness",
       startServiceBuildError: "stack is stopped",
+      startServiceBuildReason: "docker_not_running",
       waitReadyBuildError: "service has not been activated",
+      waitReadyBuildReason: "invalid_config",
     });
     const failingServer = ManagedRuntime.make(buildServerLayer(failingMock));
     let failingClient: ManagedRuntime.ManagedRuntime<Stack, never> | undefined;
@@ -341,11 +534,17 @@ describe("RemoteStack integration", () => {
         Effect.flatMap(Stack, (stack) => stack.startService("auth")).pipe(Effect.flip),
       );
       expect(startError._tag).toBe("StackBuildError");
+      if (startError._tag === "StackBuildError") {
+        expect(startError.reason).toBe("docker_not_running");
+      }
 
       const readyError = await failingClient.runPromise(
         Effect.flatMap(Stack, (stack) => stack.waitReady("auth")).pipe(Effect.flip),
       );
       expect(readyError._tag).toBe("StackBuildError");
+      if (readyError._tag === "StackBuildError") {
+        expect(readyError.reason).toBe("invalid_config");
+      }
 
       const restartError = await failingClient.runPromise(
         Effect.flatMap(Stack, (stack) => stack.restartService("auth")).pipe(Effect.flip),
@@ -396,13 +595,46 @@ describe("RemoteStack integration", () => {
     expect(mock.serviceCalls).toContain("restart:postgres");
   });
 
+  test("reloadFunctions transports the validated bundle in a JSON body", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) => stack.reloadFunctions({ functions: functionsBundle })),
+    );
+
+    expect(mock.functionReloads).toEqual([{ functions: functionsBundle }]);
+  });
+
+  test("reloadFunctions returns a typed build error for an invalid bundle", async () => {
+    const invalidBundle = {
+      ...functionsBundle,
+      functions: [{ ...functionsBundle.functions[0]!, entrypointPath: "relative/index.ts" }],
+    };
+
+    const error = await clientRuntime.runPromise(
+      Effect.flatMap(Stack, (stack) =>
+        stack.reloadFunctions({ functions: invalidBundle }).pipe(Effect.flip),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(StackBuildError);
+    expect(error._tag).toBe("StackBuildError");
+    if (error._tag === "StackBuildError") {
+      expect(error.detail).toBe("Invalid Edge Functions reload payload");
+    }
+  });
+
   test("reloadEdgeRuntime records the call", async () => {
     await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) =>
-        stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } }),
+        stack.reloadEdgeRuntime({
+          edgeRuntime: { policy: "oneshot" },
+          functions: functionsBundle,
+        }),
       ),
     );
     expect(mock.serviceCalls).toContain("reload-edge-runtime");
+    expect(mock.edgeRuntimeReloads).toEqual([
+      { edgeRuntime: { policy: "oneshot" }, functions: functionsBundle },
+    ]);
   });
 
   test("logHistory returns entries", async () => {

@@ -1,5 +1,7 @@
 import type { ServiceDef } from "@supabase/process-compose";
-import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
+import { dockerNetworkArgs } from "../Platform.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
+import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
 interface PostgrestServiceOptions {
   readonly dbPort: number;
@@ -8,6 +10,7 @@ interface PostgrestServiceOptions {
   readonly extraSearchPath: ReadonlyArray<string>;
   readonly maxRows: number;
   readonly jwtSecret: string;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
 interface NativePostgrestOptions extends PostgrestServiceOptions {
@@ -17,7 +20,7 @@ interface NativePostgrestOptions extends PostgrestServiceOptions {
 interface DockerPostgrestOptions extends PostgrestServiceOptions {
   readonly image: string;
   readonly dbHost: string;
-  readonly networkArgs: readonly string[];
+  readonly platformOs: string;
   readonly adminPort: number;
   readonly apiPort: number;
 }
@@ -43,17 +46,14 @@ const postgrestHealthCheck = (port: number) => ({
     path: "/",
     scheme: "http" as const,
   },
-  periodSeconds: 0.5,
-  failureThreshold: 20,
+  ...stackHealthBudgets.postgrest,
 });
-
-const postgrestDependencies = [{ service: "postgres-init", condition: "completed" as const }];
 
 export const makePostgrestService = (opts: NativePostgrestOptions): ServiceDef => ({
   name: "postgrest",
   command: `${opts.binPath}/postgrest`,
   env: postgrestEnv(opts),
-  dependencies: postgrestDependencies,
+  dependencies: opts.dependencies,
   healthCheck: postgrestHealthCheck(opts.port),
   supervision: {},
   restart: "unless-stopped",
@@ -64,17 +64,13 @@ export const makePostgrestServiceDocker = (opts: DockerPostgrestOptions): Servic
     ...postgrestEnv(opts, opts.dbHost),
     PGRST_ADMIN_SERVER_PORT: String(opts.adminPort),
   };
-  const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const containerName = `supabase-postgrest-${opts.apiPort}`;
-
-  return {
+  return dockerRunService({
     name: "postgrest",
-    command: "docker",
-    args: ["run", "--rm", "--name", containerName, ...opts.networkArgs, ...envArgs, opts.image],
-    dependencies: postgrestDependencies,
+    apiPort: opts.apiPort,
+    image: opts.image,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port, opts.adminPort]),
+    env,
+    dependencies: opts.dependencies,
     healthCheck: postgrestHealthCheck(opts.port),
-    cleanup: dockerServiceCleanup(containerName),
-    supervision: { orphanCleanup: dockerServiceOrphanCleanup(containerName) },
-    restart: "unless-stopped",
-  };
+  });
 };

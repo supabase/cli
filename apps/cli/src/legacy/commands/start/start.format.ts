@@ -35,28 +35,6 @@ export const LEGACY_START_STARTING_CONTAINERS_MESSAGE = "Starting containers...\
 export const LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE = "Waiting for health checks...\n";
 
 /**
- * Go's `fmt.Fprintln(w, "Starting database...")`
- * (`apps/cli-go/internal/db/start/start.go:165-175`) — printed right before
- * the Postgres container itself is created/started, when the pre-create
- * volume-existence check finds no existing volume (a brand-new, first-ever
- * `start`).
- */
-export const LEGACY_START_STARTING_DATABASE_MESSAGE = "Starting database...\n";
-
-/**
- * Go's `fmt.Fprintln(w, "Starting database from backup...")`
- * (`apps/cli-go/internal/db/start/start.go:165-175`) — printed instead of
- * {@link LEGACY_START_STARTING_DATABASE_MESSAGE} when the pre-create
- * volume-existence check finds an EXISTING volume (a restart reusing the
- * already-persisted Postgres data). Despite the wording, this has nothing to
- * do with any `--from-backup` file-restore flag — Go's own `fromBackup`
- * parameter is always empty for a plain `start`, so this is the only branch
- * ever reached in that call path.
- */
-export const LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE =
-  "Starting database from backup...\n";
-
-/**
  * Go's `fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n",
  * utils.Aqua("supabase"))` (`apps/cli-go/internal/start/start.go:84`) —
  * printed on success (or an ignored unhealthy-timeout), immediately before the

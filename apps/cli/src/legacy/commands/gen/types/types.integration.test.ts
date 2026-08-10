@@ -562,8 +562,8 @@ const nonTypescriptProjectRefScenarios = [
 }>;
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyGenCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 describe("legacy gen types", () => {
@@ -814,7 +814,13 @@ describe("legacy gen types", () => {
     // Effect parser produces for this argv (both `local` and `linked` parse as
     // independently true, since its tokenizer is unaware of pflag's value
     // consumption — CLI-1982); only the pflag-faithful scan can tell them apart.
-    const { layer } = setup({ args: ["gen", "types", "-s", "--linked", "--local"] });
+    // `childExitCode: 1` fails the local target's `container inspect`, keeping the
+    // downstream failure deterministic before the real SSL probe can reach whatever
+    // is listening on the local db port.
+    const { layer } = setup({
+      args: ["gen", "types", "-s", "--linked", "--local"],
+      childExitCode: 1,
+    });
 
     return Effect.gen(function* () {
       const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
@@ -824,6 +830,7 @@ describe("legacy gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("failed to inspect service");
         expect(String(exit.cause)).not.toContain("if any flags in the group");
       }
     });

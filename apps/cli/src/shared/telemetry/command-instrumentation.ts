@@ -1,4 +1,4 @@
-import { Clock, Effect, Exit, Option, Stdio } from "effect";
+import { Cause, Clock, Effect, Exit, Option, Stdio } from "effect";
 import {
   CommandRuntime,
   getCommandRuntimeCommand,
@@ -7,6 +7,13 @@ import {
 import { Output } from "../output/output.service.ts";
 import { withAnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
+import {
+  EventCommandExecuted,
+  PropDurationMs,
+  PropExitCode,
+  PropOutputFormat,
+} from "./event-catalog.ts";
+import { failureTelemetryPropertiesForCause } from "./failure-metadata.ts";
 
 interface CommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -119,12 +126,21 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         const finishedAt = yield* Clock.currentTimeMillis;
 
         yield* analytics
-          .capture("cli_command_executed", {
-            exit_code: Exit.isSuccess(exit) ? 0 : 1,
-            duration_ms: finishedAt - startedAt,
-            output_format: output.format,
+          .capture(EventCommandExecuted, {
+            [PropExitCode]: Exit.isSuccess(exit) ? 0 : 1,
+            [PropDurationMs]: finishedAt - startedAt,
+            [PropOutputFormat]: output.format,
+            ...(Exit.isFailure(exit) ? failureTelemetryPropertiesForCause(exit.cause) : {}),
           })
-          .pipe(withAnalyticsContext(analyticsContext));
+          .pipe(
+            withAnalyticsContext(analyticsContext),
+            // Best-effort: a capture failure or defect must never replace the
+            // command's own result, but fiber interruption (Ctrl+C landing
+            // during this trailing capture) must still propagate.
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+            ),
+          );
 
         if (Exit.isFailure(exit)) {
           return yield* Effect.failCause(exit.cause);

@@ -13,6 +13,12 @@ import { BranchAlreadyExistsError, NoBranchNameError } from "../errors.ts";
 
 const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<string>) {
   if (Option.isSome(nameOpt)) {
+    if (nameOpt.value.length === 0) {
+      return yield* new NoBranchNameError({
+        detail: "Branch name cannot be empty.",
+        suggestion: "Provide a branch name: `supabase branches create <name>`",
+      });
+    }
     return { branchName: nameOpt.value, gitBranch: Option.none<string>() };
   }
 
@@ -50,6 +56,7 @@ const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<st
       new NoBranchNameError({
         detail: "Branch creation cancelled.",
         suggestion: "Provide a branch name: `supabase branches create <name>`",
+        cancelled: true,
       }),
     );
   }

@@ -71,11 +71,12 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       linkedRefForCache = projectRef;
     }
 
-    // Single Go-parity config load (`flags.LoadConfig` → `config.Load` + `Validate`):
+    // Single Go-parity config load (`flags.LoadConfig` → `config.Load` + `Validate`),
+    // except that `--skip-vault` omits only `[db.vault]` secret resolution:
     // decodes the whole config with Go's env-expansion + `strconv.ParseBool` weak typing
     // (so `enabled = "env(SEED_ENABLED)"` etc. load like Go), applies `SUPABASE_*`
-    // AutomaticEnv overrides, merges a matching `[remotes.<ref>]` block, and decrypts every
-    // `encrypted:` secret with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys —
+    // AutomaticEnv overrides, merges a matching `[remotes.<ref>]` block, and decrypts selected
+    // `encrypted:` secrets with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys —
     // aborting here (before connecting or writing) on any undecryptable/invalid config.
     // This must resolve BEFORE `resolver.resolve()`'s network activity (temp-role minting,
     // pooler fallback) so a matching `[remotes.<ref>]` override prints before it, matching
@@ -85,6 +86,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       path,
       workdir,
       projectRef !== "" ? projectRef : undefined,
+      { resolveVaultSecrets: !flags.skipVault },
     );
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
@@ -95,6 +97,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       connType,
       dnsResolver,
       password: flags.password,
+      resolveVaultSecrets: !flags.skipVault,
     });
 
     yield* legacyDbPushCore({
@@ -107,6 +110,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       includeAll: flags.includeAll,
       includeRoles: flags.includeRoles,
       includeSeed: flags.includeSeed,
+      includeVault: !flags.skipVault,
       dnsResolver,
       projectId: cliConfig.projectId,
       toml,

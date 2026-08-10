@@ -60,7 +60,8 @@ const SAML_DISABLED_MESSAGE =
 
 const readMetadata = readMetadataFile({
   openError: (args) => new LegacySsoAddMetadataFileError(args),
-  nonUtf8Error: (args) => new LegacySsoAddMetadataFileError({ message: args.message }),
+  nonUtf8Error: (args) =>
+    new LegacySsoAddMetadataFileError({ message: args.message, reason: "invalid_content" }),
 });
 
 const readAttributeMapping = readAttributeMappingFile({
@@ -306,6 +307,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
               (cause) =>
                 new LegacySsoAddMetadataFileError({
                   message: `${cause.message} Use --skip-url-validation to suppress this error`,
+                  reason: "invalid_url",
                 }),
             ),
           );
@@ -370,7 +372,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         // mapper uses (`mapLegacyHttpError`) so error output stays bounded and
         // shell-safe — the raw-HTTP path must not skip these defences.
         const bodyText = sanitizeLegacyErrorBody(rawBody);
-        yield* legacySuggestUpgrade({
+        const upgradeSuggested = yield* legacySuggestUpgrade({
           projectRef: ref,
           featureKey: "auth.saml_2",
           statusCode: response.status,
@@ -383,7 +385,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         yield* creating?.fail() ?? Effect.void;
         if (response.status === 404) {
           return yield* Effect.fail(
-            new LegacySsoAddSamlDisabledError({ message: SAML_DISABLED_MESSAGE }),
+            new LegacySsoAddSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
           );
         }
         return yield* Effect.fail(
@@ -391,6 +393,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
             status: response.status,
             body: bodyText,
             message: `Unexpected error adding identity provider: ${bodyText}`,
+            upgradeSuggested,
           }),
         );
       }

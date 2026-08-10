@@ -18,6 +18,7 @@ import {
 import { LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySsoUpdate } from "./update.handler.ts";
 
 const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
@@ -1471,6 +1472,11 @@ describe("legacy sso update integration", () => {
         // Per Go's `update.go:69`: error tail is `… Use --skip-url-validation to suppress this error.`
         // (trailing period).
         expect(dump).toContain("Use --skip-url-validation to suppress this error.");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+          error_fingerprint: "tag:LegacySsoUpdateMetadataFileError:invalid_url",
+        });
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1526,6 +1532,8 @@ describe("legacy sso update integration", () => {
 
   const withProfileEnv = (value: string | undefined) => {
     const previous = process.env["SUPABASE_PROFILE"];
+    const previousNoKeyring = process.env["SUPABASE_NO_KEYRING"];
+    process.env["SUPABASE_NO_KEYRING"] = "1";
     if (value === undefined) {
       delete process.env["SUPABASE_PROFILE"];
     } else {
@@ -1536,6 +1544,11 @@ describe("legacy sso update integration", () => {
         delete process.env["SUPABASE_PROFILE"];
       } else {
         process.env["SUPABASE_PROFILE"] = previous;
+      }
+      if (previousNoKeyring === undefined) {
+        delete process.env["SUPABASE_NO_KEYRING"];
+      } else {
+        process.env["SUPABASE_NO_KEYRING"] = previousNoKeyring;
       }
     });
   };
@@ -1828,6 +1841,10 @@ describe("legacy sso update integration", () => {
           const dump = JSON.stringify(exit.cause);
           expect(dump).toContain("LegacySsoUpdateNetworkError");
           expect(dump).toContain("failed to get sso provider:");
+          const classified = classifyCliCauseActionability(exit.cause);
+          expect(classified.error_kind).toBe("external_service");
+          expect(classified.error_category).toBe("api_status");
+          expect(classified.error_fingerprint).toBe("tag:LegacySsoUpdateNetworkError:api_response");
         }
         expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
@@ -1880,6 +1897,12 @@ describe("legacy sso update integration", () => {
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const classified = classifyCliCauseActionability(exit.cause);
+          expect(classified.error_kind).toBe("user_actionable");
+          expect(classified.error_category).toBe("plan_limit");
+          expect(classified.suggestion_type).toBe("upgrade_plan");
+        }
         const project = api.requests.find((r) =>
           r.url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`),
         );

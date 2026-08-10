@@ -1,7 +1,33 @@
 # `supabase start`
 
 Native TypeScript port of Go's `internal/start` (+ the Postgres-container half of
-`internal/db/start`). Talks directly to Docker via subprocess (`docker`/`podman`),
+`internal/db/start`).
+
+> **`internal/start` no longer exists in this repo.** It was deleted outright
+> (CLI-1966), not just excluded from the bundled binary: it was unreachable from
+> the TypeScript CLI, directly (native TS `start` talks to Docker directly and
+> never proxies to Go for it) or indirectly (no other still-live TS→Go
+> delegation seam ever called into it either — confirmed via a repo-wide `grep`
+> of `apps/cli-go` showing the only reference was `internal/start`'s own cobra
+> registration). Every `apps/cli-go/internal/start/start.go:NNN` /
+> `start_test.go:NNN` citation throughout this command's files (and the shared
+> files `legacy-service-catalog.ts`, `legacy-go-duration.ts`,
+> `legacy-local-config-values.ts` + its unit test, `shared/auth/jwks.ts`,
+> `shared/cli/run.ts`, `shared/functions/serve.ts`,
+> `legacy/commands/db/start/start.handler.ts`, and
+> `legacy/commands/db/shared/legacy-pgdelta.seam.service.ts`) refers to that
+> file's last state, permanently viewable at commit
+> `a253ccba25c21356ccd33044c4474aecb77d1ae4`:
+> https://github.com/supabase/cli/blob/a253ccba25c21356ccd33044c4474aecb77d1ae4/apps/cli-go/internal/start/start.go
+> (and `.../internal/start/start_test.go`, `.../internal/start/templates/`).
+> `internal/db/start` (referenced throughout this doc, and still present at
+> `apps/cli-go/internal/db/start/start.go`) is a separate, still-live package
+> and is unaffected — a bare `start.go:NNN` below 435 lines could otherwise be
+> mistaken for it; `start.handler.ts`, `postgres.service.ts`, and
+> `start.rollback.ts` carry their own explicit per-citation disambiguation
+> since they cite both files.
+
+This port talks directly to Docker via subprocess (`docker`/`podman`),
 mirroring Go's sequential per-container `DockerStart` — it does not use Docker Compose
 (the one `docker/compose` import Go has is an internal, best-effort concurrent
 image-pre-pull helper this port never depends on) and it does not go through
@@ -42,7 +68,11 @@ session; PG>=15: runs three one-shot `LegacyDockerRun` jobs instead, gated indep
 seeds `supabase/roles.sql`: matching Go's own print-before-read ordering
 (`pkg/migration/seed.go:88`), the `Seeding globals from roles.sql...` stderr line always
 prints, whether or not the file exists — a missing file is silently tolerated (no SQL runs),
-any other read/exec error still fails the run. Finally runs every pending migration + seed.
+any other read/exec error still fails the run. Finally runs every pending migration + seed —
+UNLESS `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled`
+is false, in which case `db.migrations.schema_paths` files are applied INSTEAD of
+`migrations/*.sql` (Go's `apply.MigrateAndSeed`, `internal/migration/apply/apply.go:19-26`);
+seed still runs either way.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
 
 `legacyStartInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
@@ -88,6 +118,7 @@ command (Go's `return seedErr` instead of the downgraded `return err`).
 | GCP JWT credentials file                                                                        | JSON   | when `analytics.backend = "bigquery"`                                                                                                                                            |
 | `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume (custom-roles seed) — the "Seeding globals..." message always prints first; the file itself is only read if it exists, tolerating a missing file               |
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume, via the standard migration-apply + seed pipeline                                                                                                              |
+| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)             | SQL    | on a fresh volume, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false                             |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text   | on every start, existence check before writing (see "Files Written")                                                                                                             |
 | `<workdir>/supabase/functions/**`                                                               | —      | when Edge Runtime starts, and independently when Studio starts (function discovery/config resolution + Docker bind mounts, regardless of whether Edge Runtime itself is enabled) |
 | `<workdir>/supabase/.temp/storage-migration`                                                    | text   | always — linked-project Storage migration pin (`DB_MIGRATIONS_FREEZE_AT`), written by `supabase link`; absent/unreadable resolves to no pin                                      |
@@ -96,11 +127,12 @@ command (Go's `return seedErr` instead of the downgraded `return err`).
 
 ## Files Written
 
-| Path                                                                                          | Format | When                                                                                                                      |
-| --------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                          |
-| `<workdir>/supabase/.temp/start-secrets/<containerName>/secret-<n>`                           | varies | for Kong (`kong.yml`, TLS cert, TLS key), Postgres (`pgsodium_root.key`), and Supavisor (`pooler_tenant.exs`) — see below |
-| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                           |
+| Path                                                                                          | Format | When                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                                                                                                                                                           |
+| `<tmpdir>/supabase-start-secret-<random>/secret` (short-lived, `docker cp`'d away)            | varies | for Kong (`kong.yml`, TLS cert, TLS key), Postgres (`pgsodium_root.key`), and Supavisor (`pooler_tenant.exs`) — see below                                                                                                                                  |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                                                                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`                  | JSON   | best-effort, on a fresh volume, after `MigrateAndSeed`, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails `start` (Go's `pgcache.TryCacheMigrationsCatalog`) |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -108,24 +140,22 @@ directly into each container's entrypoint (a `sh -c '... heredoc ...'` command) 
 never written to the host filesystem, since none of them carries secret content.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
-key, TLS private key material, and the DB password respectively) and are instead
-written to `<workdir>/supabase/.temp/start-secrets/<containerName>/` (directory mode
-`0700`, files mode `0644` — world-readable, since Kong (uid 100) and Postgres's
-post-privilege-drop `postgres` user read these bind-mounted files as non-root, and a
-Linux/Podman bind mount preserves the host file's mode verbatim) and
-bind-mounted `:ro,Z` into the container at the exact path each container's
-entrypoint/`Cmd` expects (`Z` — private SELinux relabel of these CLI-generated files so
-the confined container can read them on SELinux-enforcing hosts; no-op elsewhere) —
-see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
+key, TLS private key material, and the DB password respectively). As of
+supabase/cli#6022 these are delivered via `docker cp` straight into the created (not
+yet started) container, never a host bind mount: each one is written to a SHORT-LIVED
+`os.tmpdir()` temp file (mode `0644` — world-readable, since Kong (uid 100) and
+Postgres's post-privilege-drop `postgres` user read them back as non-root, and
+`docker cp`'s tar transfer preserves the host file's mode verbatim), `docker cp`'d into
+the container at the exact path each container's entrypoint/`Cmd` expects, then removed
+immediately — see `container-lifecycle.ts`'s `legacyCopyStartSecretFileIntoContainer`
 doc comment for the full rationale (CWE-214/522: keeping secret content out of the
-`docker create` argv the host can see via `ps`/`/proc/<pid>/cmdline`) and for why this
-directory is a DETERMINISTIC, PERSISTENT path under the project's own workdir rather
-than an ephemeral OS temp dir — every one of these three containers runs with
-`restartPolicy: "unless-stopped"`, so the files must survive a host/Docker-daemon
-restart for dockerd to successfully re-attach the bind mount. The directory is
-recreated fresh (any stale contents removed first) on every `start` invocation that
-reaches container creation, and is cleaned up immediately if `docker create`/`docker
-start` itself fails — otherwise it is left in place for the life of the container.
+`docker create`/`docker cp` argv the host can see via `ps`/`/proc/<pid>/cmdline`; and why
+`docker cp`, unlike a bind mount, works identically against a remote `DOCKER_HOST`/
+Docker-context daemon). Nothing from this delivery persists on host disk beyond the
+brief window between writing the temp file and the matching `docker cp` call returning —
+unlike the bind-mount approach this replaced, these containers' `restartPolicy:
+"unless-stopped"` restarts need nothing re-attached, since the content already lives
+inside the container's own filesystem.
 Studio reads/writes SQL snippets under `<workdir>/supabase/snippets/` at its own
 runtime — that's Studio's behavior, not something `start` itself writes.
 
@@ -156,17 +186,24 @@ not implemented.
 
 ## Environment Variables
 
-| Variable                               | Purpose                                                                                                                                                         | Required? |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_*` (any dotted config field) | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                      | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`     | Overrides the image registry used to resolve every service's image                                                                                              | no        |
-| `SUPABASE_PROJECT_ID`                  | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                  | no        |
-| `SUPABASE_WORKDIR`                     | Resolves `LegacyCliConfig.workdir`                                                                                                                              | no        |
-| `BITBUCKET_CLONE_DIR`                  | When non-empty, drops named volumes and `--security-opt` from every container create                                                                            | no        |
-| `DOCKER_HOST`                          | Read to discover the Docker daemon's own address, then re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection | no        |
-| `KONG_NGINX_WORKER_PROCESSES`          | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                             | no        |
+| Variable                                                                                                             | Purpose                                                                                                                                                                                                                                                                                           | Required? |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_*` (any dotted config field)                                                                               | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                                                                                                                                                        | no        |
+| `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                                                                                                                                                          | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                                     | Enables the post-`MigrateAndSeed` migrations-catalog cache warmup when `[experimental.pgdelta].enabled` is unset                                                                                                                                                                                  | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                                                | no        |
+| `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                                                    | no        |
+| `SUPABASE_WORKDIR`                                                                                                   | Resolves `LegacyCliConfig.workdir`                                                                                                                                                                                                                                                                | no        |
+| `BITBUCKET_CLONE_DIR`                                                                                                | When non-empty, drops named volumes and `--security-opt` from every container create                                                                                                                                                                                                              | no        |
+| `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | Read (ambient shell OR a project `.env`/`.env.<env>`/`.env.local` file — matching Go's `godotenv.Load`) to discover the Docker daemon this whole command talks to; `DOCKER_HOST` is also re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection | no        |
+| `KONG_NGINX_WORKER_PROCESSES`                                                                                        | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                                                                                                                                                               | no        |
 
 `docker`/`podman` must be resolvable on `PATH` — same fallback behavior as `stop`/`status`.
+
+`--debug` tees the fresh-volume PG15+ one-shot migrate jobs' (realtime/storage/auth) own
+stderr to the parent process's stderr in real time, matching Go's `utils.GetDebugLogger()`
+(`os.Stderr` under `--debug`, else discarded) — outside `--debug` only each job's exit code is
+surfaced on failure.
 
 ## Exit Codes
 
@@ -203,8 +240,12 @@ container prune` has actually removed them (not at the initial listing), so clea
 ever targets containers this failed run itself created AND actually tore down. Each
 container's directory is located via its own `com.supabase.cli.workdir` label (stamped on
 every container `start` creates); this run's own workdir is only the fallback for a
-container missing that label. A later successful `stop` reclaims the same directories for
-a normal (non-rollback) teardown — see `stop`'s own `SIDE_EFFECTS.md`.
+container missing that label. As of supabase/cli#6022 this reclaim step is a no-op for
+Kong/Postgres/Supavisor (nothing under their own `<containerName>` directory anymore —
+their `secretFiles` never touch host disk, see "Files Written" above); it remains
+load-bearing for Edge Runtime's own still-host-persisted staging under the same tree. A
+later successful `stop` reclaims the same directories for a normal (non-rollback)
+teardown — see `stop`'s own `SIDE_EFFECTS.md`.
 
 ## Telemetry Events Fired
 
@@ -311,7 +352,11 @@ prose, not structured data.
   `<invoking-workdir>/supabase/.temp/start-secrets/<containerName>` only for containers
   whose workdir label matches the invoking workdir, or whose missing label uses that
   workdir as a fallback. Removed containers labeled with another workdir keep their
-  `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory.
+  `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory. As of
+  supabase/cli#6022 this is a no-op for a removed Kong/Postgres/Supavisor container
+  (nothing under its own directory anymore); it still matters for a removed Edge Runtime
+  container, whose own env-file/multiline-env-script/serve-main-template staging is
+  unaffected by that change.
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
   initialization, and `start` reports the existing not-running status instead.

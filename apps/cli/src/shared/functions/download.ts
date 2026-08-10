@@ -1,9 +1,10 @@
-import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, FileSystem, Option } from "effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
@@ -40,6 +41,7 @@ import {
   InvalidFunctionSlugError,
   UnsafeFunctionDownloadPathError,
 } from "./download.errors.ts";
+import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const legacyEntrypointPath = "file:///src/index.ts";
 // Go: `utils.DockerDenoDir`/`utils.DockerEszipDir` (`internal/utils/deno.go:34-35`)
@@ -239,17 +241,26 @@ function validateDownloadFlags(
       );
 }
 
-function mapTransportError(prefix: string, error: unknown): Error {
+function mapTransportError(
+  prefix: string,
+  error: unknown,
+): FunctionsApiTransportError | SupabaseApiInputError | HttpBody.HttpBodyError {
+  // This mapper is shared by requests with different input ownership. Preserve
+  // validation/build failures so their provenance is not inferred from text.
+  if (error instanceof SupabaseApiInputError || error instanceof HttpBody.HttpBodyError) {
+    return error;
+  }
+
   if (HttpClientError.isHttpClientError(error)) {
     const description = error.reason.description ?? error.reason._tag;
-    return new Error(`${prefix}: ${description}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${description}` });
   }
 
   if (error instanceof Error) {
-    return new Error(`${prefix}: ${error.message}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${error.message}` });
   }
 
-  return new Error(`${prefix}: ${String(error)}`);
+  return new FunctionsApiTransportError({ message: `${prefix}: ${String(error)}` });
 }
 
 function hasEntrypointPath(metadata: DownloadMetadata | undefined): metadata is {
@@ -613,6 +624,7 @@ function resolveDownloadDestination(
   return Effect.fail(
     new UnsafeFunctionDownloadPathError({
       message: `refusing to extract Function file outside ${functionsRoot}: ${partPath}`,
+      unsafeResponsePath: true,
     }),
   );
 }
@@ -625,6 +637,7 @@ function ensureContainedPath(root: string, candidate: string, sourcePath: string
   return Effect.fail(
     new UnsafeFunctionDownloadPathError({
       message: `refusing to extract Function file outside ${root}: ${sourcePath}`,
+      unsafeResponsePath: true,
     }),
   );
 }
@@ -679,7 +692,10 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   if (response.status !== 200) {
     return yield* Effect.fail(
-      new Error(`unexpected list functions status ${response.status}: ${body}`),
+      new FunctionsApiStatusError({
+        status: response.status,
+        message: `unexpected list functions status ${response.status}: ${body}`,
+      }),
     );
   }
 
@@ -758,7 +774,10 @@ const getRemoteFunction = Effect.fnUntraced(function* (
       );
     default:
       return yield* Effect.fail(
-        new Error(`Failed to download Function ${slug} on the Supabase project: ${body}`),
+        new FunctionsApiStatusError({
+          status: response.status,
+          message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
+        }),
       );
   }
 
@@ -798,7 +817,13 @@ const downloadBody = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-  return yield* Effect.fail(new Error(`Error status ${response.status}: ${body}`));
+  return yield* Effect.fail(
+    new FunctionsApiStatusError({
+      status: response.status,
+      message: `Error status ${response.status}: ${body}`,
+      notFoundIsInvalidInput: true,
+    }),
+  );
 });
 
 // Go: `downloadOne` (`apps/cli-go/internal/functions/download/download.go:218-245`)

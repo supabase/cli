@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import type { ServiceDependency } from "./service-utils.ts";
 
 interface PostgresInitOptions {
   readonly postgresDir: string;
@@ -8,6 +9,7 @@ interface PostgresInitOptions {
    * Data API privileges on the `public` schema so newly-created entities require explicit GRANTs.
    */
   readonly autoExposeNewTables: boolean;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
 /**
@@ -136,7 +138,7 @@ END
       LD_LIBRARY_PATH: pgLibDir,
       PGPASSWORD: "postgres",
     },
-    dependencies: [{ service: "postgres", condition: "healthy" }],
+    dependencies: opts.dependencies,
     supervision: {},
     restart: "no",
   };

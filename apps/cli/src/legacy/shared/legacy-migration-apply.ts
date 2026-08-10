@@ -2,6 +2,11 @@ import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -14,10 +19,19 @@ import { legacySplitAndTrim } from "./legacy-sql-split.ts";
  * Applying a migration file failed (Go's `ApplyMigrations` / `ExecBatch` error).
  * Used by `migration up` and `migration down`'s migrate-and-seed step. The
  * declarative sync handler maps its own error type instead.
+ *
+ * `suggestion` carries Go's `utils.CmdSuggestion` when a caller sets one — currently
+ * only `legacyApplySchemaFiles`'s "See schema file: <fp>" (`apply.go:57`); every other
+ * caller leaves it unset, matching Go leaving `CmdSuggestion` empty on those paths.
  */
 export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigrationApplyError")<{
   readonly message: string;
-}> {}
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 // Byte order mark (U+FEFF) — stripped from the head of a statement like Go does.
 const BOM_CODE_POINT = 0xfeff;
@@ -269,7 +283,7 @@ const resetConnectionState = <E>(
  * `SET default_transaction_read_only = on`) before the history-table DDL, then create
  * the history table, then run the file's statements + the history insert.
  *
- * `mapError` lets the caller tag the failure (e.g. `LegacyDeclarativeApplyError`).
+ * `mapError` lets the caller tag the failure (e.g. `LegacyPgDeltaDeclarativeApplyError`).
  */
 export const legacyApplyMigrationFile = <E>(
   session: LegacyDbSession,

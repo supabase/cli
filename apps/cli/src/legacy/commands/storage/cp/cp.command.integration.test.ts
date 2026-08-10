@@ -32,8 +32,8 @@ import { legacyStorageCommand } from "../storage.command.ts";
 // object, which `cp.integration.test.ts` cannot exercise since it calls the
 // handler directly.
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyStorageCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup(args: ReadonlyArray<string>) {

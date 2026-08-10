@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Redacted, Sink, Stream } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -267,11 +268,20 @@ export function mockLegacyLoginApi(
 export function mockLegacyTelemetryStateTracked(): {
   readonly layer: Layer.Layer<LegacyTelemetryState>;
   readonly flushed: boolean;
+  /**
+   * Number of `flush` calls — beyond the plain `flushed` boolean, this lets a
+   * test prove a command's own `Effect.ensuring` finalizer fired EXACTLY once
+   * even when its body calls an in-process helper (e.g. `legacyResetLocalDatabase`,
+   * CLI-2062) that could, if it wrongly owned a second finalizer, double the
+   * count instead of leaving it at 1.
+   */
+  readonly flushCount: number;
   readonly stitchedDistinctId: string | undefined;
   readonly clearedDistinctId: boolean;
   readonly identityReset: boolean;
 } {
   let flushed = false;
+  let flushCount = 0;
   let stitchedDistinctId: string | undefined;
   let clearedDistinctId = false;
   let identityReset = false;
@@ -279,6 +289,7 @@ export function mockLegacyTelemetryStateTracked(): {
     get flush() {
       return Effect.sync(() => {
         flushed = true;
+        flushCount += 1;
       });
     },
     stitchLogin: (distinctId: string) =>
@@ -301,6 +312,9 @@ export function mockLegacyTelemetryStateTracked(): {
     get flushed() {
       return flushed;
     },
+    get flushCount() {
+      return flushCount;
+    },
     get stitchedDistinctId() {
       return stitchedDistinctId;
     },
@@ -316,11 +330,14 @@ export function mockLegacyTelemetryStateTracked(): {
 export function mockLegacyLinkedProjectCacheTracked(): {
   readonly layer: Layer.Layer<LegacyLinkedProjectCache>;
   readonly cached: boolean;
+  /** Number of `cache` calls — see {@link mockLegacyTelemetryStateTracked}'s own `flushCount`. */
+  readonly cacheCount: number;
   readonly cachedRef: string | undefined;
   readonly cachedApiUrl: string | undefined;
   readonly cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
 } {
   let cached = false;
+  let cacheCount = 0;
   let cachedRef: string | undefined;
   let cachedApiUrl: string | undefined;
   let cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
@@ -333,6 +350,7 @@ export function mockLegacyLinkedProjectCacheTracked(): {
     ) =>
       Effect.sync(() => {
         cached = true;
+        cacheCount += 1;
         cachedRef = ref;
         cachedApiUrl = apiUrl;
         cachedAccessToken = accessToken;
@@ -342,6 +360,9 @@ export function mockLegacyLinkedProjectCacheTracked(): {
     layer,
     get cached() {
       return cached;
+    },
+    get cacheCount() {
+      return cacheCount;
     },
     get cachedRef() {
       return cachedRef;
@@ -700,6 +721,101 @@ export function legacyFailWriteStringOnNthCallFsLayer(
       });
     }),
   ).pipe(Layer.provide(BunServices.layer));
+}
+
+// ---------------------------------------------------------------------------
+// Shadow-database container-CLI spawner — shared by `db diff`/`db pull`'s native
+// shadow-provisioning integration tests (CLI-1956). Hoisted here (it was a verbatim
+// ~55-line duplicate in both `diff.integration.test.ts` and `pull.integration.test.ts`)
+// per `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+// ---------------------------------------------------------------------------
+
+/** The shadow container's fake id — used both as `docker create`'s stdout and the `dbHost` `.slice(0, 12)` derives from. */
+export const LEGACY_FAKE_SHADOW_CONTAINER_ID = "abc123456789shadow0".padEnd(64, "0").slice(0, 64);
+
+/** Go's `container.HealthConfig`-shaped inspect JSON for a healthy container. */
+const LEGACY_SHADOW_HEALTHY_STATE =
+  '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
+
+/**
+ * A real (Docker-valid) "still starting" state — NOT `Effect.never` — so
+ * {@link legacyWaitForHealthyServices}'s retry loop genuinely retries on its real 1-second
+ * `Schedule.spaced` backoff instead of hanging on a single probe forever. Mirrors
+ * `start.integration.test.ts`'s own "never healthy" containers (same rationale: a fiber
+ * interrupted mid-retry must be observed actually suspended inside the retry loop, not merely
+ * past the initial `create` call).
+ */
+const LEGACY_SHADOW_STARTING_STATE =
+  '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
+
+/**
+ * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues
+ * (`legacyBuildLocalDbContainerInputs`'s image-cache check, `legacyCreateShadowDatabase`'s
+ * network-create + container create/start, `legacyWaitForHealthyServices`'s container
+ * inspect, and `legacyRemoveShadowDatabase`'s cleanup) — scoped-down port of
+ * `start.integration.test.ts`'s own `mockContainerCliSpawner`, since both callers only ever
+ * create one (shadow) container, never named.
+ *
+ * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead
+ * of `"healthy"` — for the interrupt-during-health-wait regression coverage (review:
+ * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
+ * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
+ * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
+ */
+export function mockLegacyShadowContainerCliSpawner(
+  opts: { readonly neverHealthy?: boolean } = {},
+): {
+  readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+  readonly spawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
+} {
+  const neverHealthy = opts.neverHealthy ?? false;
+  const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
+  const encoder = new TextEncoder();
+
+  const layer = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        const args = command._tag === "StandardCommand" ? command.args : [];
+        spawned.push({ args });
+        if (command._tag !== "StandardCommand") {
+          return yield* Effect.fail(
+            new PlatformError(
+              new SystemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                description: "spawn failed",
+              }),
+            ),
+          );
+        }
+        let stdoutLines: ReadonlyArray<string> = [];
+        if (args[0] === "create") {
+          stdoutLines = [LEGACY_FAKE_SHADOW_CONTAINER_ID];
+        } else if (args[0] === "container" && args[1] === "inspect") {
+          stdoutLines = [neverHealthy ? LEGACY_SHADOW_STARTING_STATE : LEGACY_SHADOW_HEALTHY_STATE];
+        }
+        // "image inspect", "network create", "start", "rm -f -v" all succeed with no output.
+        const stdoutBytes = stdoutLines.map((line) => encoder.encode(`${line}\n`));
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+          stdout: Stream.fromIterable(stdoutBytes),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    ),
+  );
+
+  return { layer, spawned };
 }
 
 // ---------------------------------------------------------------------------

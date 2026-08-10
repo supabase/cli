@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import {
   LegacyProjectRefResolver,
@@ -243,6 +244,7 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
   // (possibly different) linked workdir, so ignore it and resolve the pooler for
   // `ref` from the Management API instead.
   ignoreSavedUrl = false,
+  resolveVaultSecrets = true,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -252,7 +254,9 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
   // ref-aware read on the main linked branch rather than validating base config.
   // For an ad-hoc `--project-id` ref, skip the saved workdir pooler URL because
   // it belongs to the linked project, not necessarily the explicit ref.
-  const tomlValues = yield* legacyReadDbToml(fs, path, workdir, ref);
+  const tomlValues = yield* legacyReadDbToml(fs, path, workdir, ref, {
+    resolveVaultSecrets,
+  });
   let connectionString = ignoreSavedUrl
     ? undefined
     : Option.getOrUndefined(tomlValues.poolerConnectionString);
@@ -321,6 +325,7 @@ export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
   dnsResolver: "native" | "https",
   passwordFlag: Option.Option<string>,
   adHocProjectRef = false,
+  resolveVaultSecrets = true,
 ) {
   const debug = yield* LegacyDebugLogger;
   // Read lazily (per invocation) rather than at layer build, so tests and
@@ -361,6 +366,7 @@ export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
     base.password,
     adHocProjectRef,
     adHocProjectRef,
+    resolveVaultSecrets,
   );
   if (Option.isNone(poolerConn)) {
     return yield* Effect.fail(
@@ -433,6 +439,13 @@ export const legacyDbConfigLayer = Layer.effect(
       // platform-API factory + linked-project cache (Go's single root-context
       // `sync.Once`). Provided to this layer by each command runtime.
       Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
+      // Optional (absent in handler tests): the lazy rebuild of
+      // `legacyCliConfigLayer` reads it for explicit `--profile` detection, so
+      // the nested resolution matches the outer layer's.
+      Option.match(yield* Effect.serviceOption(CliArgs), {
+        onNone: () => Layer.empty,
+        onSome: (value) => Layer.succeed(CliArgs, value),
+      }),
       BunServices.layer,
     );
     // Compile-time guard: if `legacyLinkedDbResolverRuntimeLayer`'s requirements ever
@@ -449,6 +462,7 @@ export const legacyDbConfigLayer = Layer.effect(
 
     const resolve = (flags: LegacyDbConfigFlags) =>
       Effect.gen(function* () {
+        const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
         // Config is read per branch, NOT unconditionally up front: the linked branch
         // resolves the ref first and reads the `[remotes.<ref>]`-merged config (below).
         // A base read here would validate base config (db.major_version, deno_version,
@@ -462,7 +476,9 @@ export const legacyDbConfigLayer = Layer.effect(
 
         // --db-url (direct) takes precedence.
         if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
-          const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+          const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
+            resolveVaultSecrets,
+          });
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
           // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
@@ -527,7 +543,9 @@ export const legacyDbConfigLayer = Layer.effect(
             // validate the merged config here, before `resolveLinked`'s TCP probe /
             // pooler / temp-role Management API calls, rather than letting those mask
             // (or run side effects ahead of) the real config error.
-            yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
+            yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref, {
+              resolveVaultSecrets,
+            });
             const resolved = yield* legacyResolveLinkedConn(
               ref,
               cliConfig.workdir,
@@ -536,6 +554,7 @@ export const legacyDbConfigLayer = Layer.effect(
               flags.dnsResolver,
               flags.password ?? Option.none(),
               flags.adHocProjectRef ?? false,
+              resolveVaultSecrets,
             );
             // NB: the linked-project telemetry cache (GET /v1/projects/{ref}) is NOT
             // issued here. Go caches it in `PersistentPostRun`
@@ -560,7 +579,9 @@ export const legacyDbConfigLayer = Layer.effect(
         }
 
         // --local (default).
-        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
+          resolveVaultSecrets,
+        });
         return {
           conn: {
             host: localHost,
@@ -604,6 +625,7 @@ export const legacyDbConfigLayer = Layer.effect(
             password,
             true,
             adHocProjectRef,
+            flags.resolveVaultSecrets ?? true,
           );
         }).pipe(
           Effect.provide(

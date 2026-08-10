@@ -32,8 +32,10 @@ export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDo
       const args = makeGoProxyLegacyBundleArgs(proxyFlags.functionName, projectRef);
       const cwd = projectHome.projectRoot;
       return captureOutput
-        ? Effect.asVoid(proxy.execCapture(args, { cwd, stdin: "ignore" }))
-        : proxy.exec(args, { cwd });
+        ? Effect.asVoid(
+            proxy.execCapture(args, { cwd, stdin: "ignore", suppressChildTelemetry: true }),
+          )
+        : proxy.exec(args, { cwd, suppressChildTelemetry: true });
     },
   });
 });

@@ -114,14 +114,22 @@ metadata and service data remain.
 `DaemonServer` exposes the local `Stack` Interface on the Unix socket. Current routes include:
 
 - `/health`, `/status`, and `/status/stream`;
-- `/start`, `/stop`, and `/ready`;
+- `/start`, `/stop`, and `POST /ready`;
 - per-service start, stop, restart, and readiness;
 - merged and per-service live logs plus buffered history;
 - functions and Edge Runtime reload.
 
-State and log streams use SSE. Ordinary responses and typed failures use validated JSON shapes.
-`RemoteStack` decodes that transport back into the same Effect `Stack` Interface used in
-foreground mode, including `ServiceNotFoundError`, `ServiceReadyError`, and `StackBuildError`.
+State and log streams use SSE. Readiness routes use `POST` with a validated readiness-policy body;
+omitting an override sends the explicit `inherit` representation. Ordinary responses and typed
+failures use validated JSON shapes. `RemoteStack` decodes that transport back into the same Effect
+`Stack` Interface used in foreground mode, including `ServiceNotFoundError`, `ServiceReadyError`,
+`StackBuildError`, and `StackReadinessError`.
+
+Functions and Edge Runtime reload routes also use validated JSON bodies. Resolved Functions
+bundles may contain environment values, so they are deliberately excluded from daemon startup IPC,
+query parameters, durable metadata, live state, logs, and rendered validation errors. The daemon
+keeps only the active bundle in memory and writes the derived Edge Runtime file ephemerally with
+owner-only permissions.
 
 The management socket is not the public local API endpoint. `ApiProxy` still owns the configured
 HTTP API port inside the daemon process.
@@ -141,26 +149,35 @@ package. In particular:
 On normal `/stop`, the daemon gracefully stops the stack, signals HTTP shutdown after the response
 has had time to flush, disposes both managed runtimes, and removes live state/runtime paths.
 
+A readiness deadline is terminal for that local runtime: the stack disposes its scoped resources,
+the daemon returns the typed timeout response, and then the daemon shuts down. This prevents later
+requests from relaunching processes after cleanup has already run. The boundary is deliberately
+fail-closed across the whole daemon, rather than isolated to the service that timed out: once
+processes and port leases are being released, the management and proxy servers cannot safely keep
+advertising a usable runtime. This terminal path does not drain unrelated in-flight requests to
+otherwise healthy services; callers must reconnect after starting a fresh daemon.
+
 If the daemon has died, CLI stop/status detects a stale PID. Stop can use cleanup targets persisted
 in `stack.json` to force-remove known Docker containers before removing the stale state. This
 crash-recovery metadata is deliberately separate from user-facing `/status` connection data.
 
 ## Package entrypoints
 
-| File                  | Reachability and role                                                                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `src/daemon.ts`       | Shared daemon protocol and lifecycle; receives runtime-specific HTTP-server factories.                        |
-| `src/daemon-bun.ts`   | Bun daemon Adapter. Exported as `@supabase/stack/daemon-bun` for compiled CLI dispatch.                       |
-| `src/daemon-node.ts`  | Node daemon Adapter. Intentionally file-URL-only: `node.ts` resolves its path and passes it to `daemonLayer`. |
-| `src/DaemonServer.ts` | Unix-socket HTTP/SSE Adapter over `Stack`.                                                                    |
-| `src/RemoteStack.ts`  | Remote Effect `Stack` Adapter over that transport.                                                            |
-| `src/layers.ts`       | Foreground, foreground-daemon, forked-daemon, and connect layer composition.                                  |
-| `src/StateManager.ts` | Durable metadata, live-state claims, scanning, stale-state removal, and deletion.                             |
-| `src/effect.ts`       | Effect-facing exports consumed by the CLI and advanced callers.                                               |
+| File                  | Reachability and role                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `src/daemon.ts`       | Shared daemon protocol and lifecycle; receives runtime-specific HTTP-server factories.                  |
+| `src/daemon-bun.ts`   | Bun daemon Adapter. Exported as `@supabase/stack/daemon-bun` for compiled CLI dispatch.                 |
+| `src/daemon-node.ts`  | Node daemon Adapter. Intentionally file-URL-only: the internal Node platform Adapter resolves its path. |
+| `src/DaemonServer.ts` | Unix-socket HTTP/SSE Adapter over `Stack`.                                                              |
+| `src/RemoteStack.ts`  | Remote Effect `Stack` Adapter over that transport.                                                      |
+| `src/layers.ts`       | Foreground, foreground-daemon, forked-daemon, and connect layer composition.                            |
+| `src/StateManager.ts` | Durable metadata, live-state claims, scanning, stale-state removal, and deletion.                       |
+| `src/effect-*.ts`     | Conditional Effect entries that bind consumer layers to Bun or Node.                                    |
+| `src/effect.ts`       | Platform-agnostic Effect contracts re-exported by the conditional entries.                              |
 
-There is no `internals.ts`. `daemon-node.ts` is not a package export because Node root consumers
-reach it by the file URL returned from `node.ts`; it is listed under `knip.entry` in `package.json`
-so static unused-code analysis preserves that live entrypoint.
+There is no `internals.ts`. `daemon-node.ts` is not a package export because the Node Effect
+Adapter reaches it through the file URL returned by the internal platform module; it is listed
+under `knip.entry` in `package.json` so static unused-code analysis preserves that live entrypoint.
 
 ## Compiled executable re-entry
 

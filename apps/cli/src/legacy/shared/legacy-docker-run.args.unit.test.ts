@@ -115,6 +115,27 @@ describe("buildLegacyDockerArgs", () => {
     );
   });
 
+  test("omits --label entirely when labels is absent (db dump / pg_prove / edge-runtime)", () => {
+    expect(buildLegacyDockerArgs(base)).not.toContain("--label");
+  });
+
+  test("emits --label k=v for each entry, before the image (Go's DockerStart project labels)", () => {
+    const args = buildLegacyDockerArgs({
+      ...base,
+      labels: {
+        "com.supabase.cli.project": "proj",
+        "com.docker.compose.project": "proj",
+      },
+    });
+    const imageIdx = args.indexOf("supabase/pg_prove:3.36");
+    expect(args.slice(imageIdx - 4, imageIdx)).toEqual([
+      "--label",
+      "com.supabase.cli.project=proj",
+      "--label",
+      "com.docker.compose.project=proj",
+    ]);
+  });
+
   test("never serializes env values into argv (CWE-214: PGPASSWORD must not leak to ps)", () => {
     const args = buildLegacyDockerArgs({
       ...base,
