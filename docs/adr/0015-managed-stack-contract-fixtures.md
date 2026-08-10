@@ -83,10 +83,13 @@ fixtures. CLI integration coverage begins when a real command boundary exists; a
 test is not evidence that an unimplemented command already satisfies the behavior.
 
 The fixture validator therefore checks more than catalog shape: selected, written, and effected
-identities must be declared, and a selected stack's context and name must match its declared stack
+identities must be declared rather than relying on absent claims, a selection must belong to the
+checkout at the action path, and a selected stack's context and name must match its declared stack
 fact; explicit CLI and API stack IDs must match every selected, mutated, effected, and projected
-stack target; starts of existing stacks must declare a stopped lifecycle; managed state creation and
-registry publication must imply each other, as must managed-state deletion and registry tombstoning;
+stack target; starts of existing stacks must declare a stopped lifecycle, while every fresh managed
+start must declare both an absent target and legacy state that is explicitly absent or incompatible;
+managed state creation and registry publication must imply each other, as must managed-state
+deletion and registry tombstoning;
 every state write and runtime effect must identify its target; contextual CLI stack results must
 bind their output to a selected target; Git identity writes must use the correct common or worktree
 scope, context writes must name the active branch as owner, and adapters cannot recreate an identity
@@ -96,11 +99,12 @@ state or transition; ordinary folders must write their full untracked identity m
 and resolve it on reuse; branch deletion must bind the deleted ref to its checkout, Git state,
 context, and orphaned stack; managed and sticky port conflicts and persisted-runtime conflicts must
 identify their actual target; managed port ownership requires an owner stack ID that agrees with
-every projection; sticky reuse must bind the assignment to the selected target; runtime-selection
-and credential creation fixtures must establish both an absent managed target and the legacy state
-decision; a sibling automatic-port fixture must allocate a new target through the public managed
-start action without reusing sibling-owned ports; persisted-runtime preflight failures must identify
-a stopped stack; a successful bootstrap retry must follow an explicit rolled-back attempt;
+every projection; sticky reuse must bind the assignment to the selected target; a sibling automatic
+port allocation fixture must use unique service ports through the public managed start action without
+reusing sibling-owned ports; concurrent creation must bind its action target, contender count,
+result cardinality, and single-publication outcome to the declared race; persisted-runtime preflight
+failures must identify a stopped stack; a successful bootstrap retry must follow an explicit failed
+attempt that was rolled back;
 credential create, update, and copy operations must prove that global state contains references
 rather than plaintext; data-preserving prune must begin with mutable data; tracked identity markers
 must remain untouched; native qualification facts must partition the service matrix, use a declared

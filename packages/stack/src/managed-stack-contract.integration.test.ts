@@ -105,6 +105,31 @@ describe("managed stack acceptance contract", () => {
       `${independentBranchesScenario.id}: selected stack stack-feat-default is named default, not review`,
     );
 
+    const linkedWorktreeScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.linked-worktrees-share-project-not-checkout",
+      );
+    if (
+      linkedWorktreeScenario?.expected.selection === undefined ||
+      linkedWorktreeScenario.expected.output.api === undefined
+    ) {
+      throw new Error("identity.linked-worktrees-share-project-not-checkout fixture is required");
+    }
+    const siblingCheckoutSelection = {
+      ...linkedWorktreeScenario,
+      expected: {
+        ...linkedWorktreeScenario.expected,
+        selection: { ...linkedWorktreeScenario.expected.selection, checkoutId: "checkout-a" },
+        output: {
+          ...linkedWorktreeScenario.expected.output,
+          api: { ...linkedWorktreeScenario.expected.output.api, checkoutId: "checkout-a" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([siblingCheckoutSelection])).toContain(
+      `${linkedWorktreeScenario.id}: selection must use checkout checkout-b for worktree-b`,
+    );
+
     const undeclaredWrite = {
       ...scenario,
       expected: {
@@ -187,9 +212,10 @@ describe("managed stack acceptance contract", () => {
       `${trackedMarkerScenario.id}: a tracked identity marker must remain untouched`,
     );
 
-    const gitWorkspaceScenario = managedStackContractFixtures.find(
-      ({ id }) => id === "identity.fresh-clone-creates-project-and-checkout",
-    );
+    const gitWorkspaceScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.fresh-clone-creates-project-and-checkout",
+      );
     if (gitWorkspaceScenario === undefined) {
       throw new Error("identity.fresh-clone-creates-project-and-checkout fixture is required");
     }
@@ -202,6 +228,27 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([gitWorkspaceMarkerMutation])).toContain(
       `${gitWorkspaceScenario.id}: Git workspace identity must use Git-local metadata`,
+    );
+
+    if (
+      gitWorkspaceScenario.expected.selection === undefined ||
+      gitWorkspaceScenario.expected.output.json === undefined
+    ) {
+      throw new Error("identity.fresh-clone-creates-project-and-checkout selection is required");
+    }
+    const selectionUsingAbsentProject = {
+      ...gitWorkspaceScenario,
+      expected: {
+        ...gitWorkspaceScenario.expected,
+        selection: { ...gitWorkspaceScenario.expected.selection, projectId: "project-a" },
+        output: {
+          ...gitWorkspaceScenario.expected.output,
+          json: { ...gitWorkspaceScenario.expected.output.json, project_id: "project-a" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([selectionUsingAbsentProject])).toContain(
+      `${gitWorkspaceScenario.id}: selection references undeclared ID project-a`,
     );
 
     const absentLegacyScenario = managedStackContractFixtures.find(
@@ -604,6 +651,23 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([siblingAllocationCollision])).toContain(
       `${siblingAllocationScenario.id}: allocated port 55421 conflicts with a sibling target`,
+    );
+
+    const duplicateSiblingAllocation = {
+      ...siblingAllocationScenario,
+      expected: {
+        ...siblingAllocationScenario.expected,
+        output: {
+          ...siblingAllocationScenario.expected.output,
+          api: {
+            ...siblingAllocationScenario.expected.output.api,
+            ports: { api: 55424, db: 55424 },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([duplicateSiblingAllocation])).toContain(
+      `${siblingAllocationScenario.id}: allocated port 55424 is assigned more than once`,
     );
 
     const stickyPortScenario: ManagedStackContractScenario | undefined =
@@ -1132,7 +1196,7 @@ describe("managed stack acceptance contract", () => {
       given: runtimeCreationScenario.given.filter((fact) => fact.kind !== "legacy-state"),
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([runtimeCreationWithoutLegacyState])).toContain(
-      `${runtimeCreationScenario.id}: managed creation must declare legacy state absent`,
+      `${runtimeCreationScenario.id}: managed creation must declare legacy state absent or incompatible`,
     );
 
     const credentialCreationScenario = managedStackContractFixtures.find(
@@ -1154,7 +1218,92 @@ describe("managed stack acceptance contract", () => {
       given: credentialCreationScenario.given.filter((fact) => fact.kind !== "legacy-state"),
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([credentialCreationWithoutLegacyState])).toContain(
-      `${credentialCreationScenario.id}: managed creation must declare legacy state absent`,
+      `${credentialCreationScenario.id}: managed creation must declare legacy state absent or incompatible`,
+    );
+
+    const portCreationScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "ports.new-target-allocates-and-persists-omitted-ports",
+    );
+    if (portCreationScenario === undefined) {
+      throw new Error("ports.new-target-allocates-and-persists-omitted-ports fixture is required");
+    }
+    const portCreationWithoutLegacyState = {
+      ...portCreationScenario,
+      given: portCreationScenario.given.filter((fact) => fact.kind !== "legacy-state"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([portCreationWithoutLegacyState])).toContain(
+      `${portCreationScenario.id}: managed creation must declare legacy state absent or incompatible`,
+    );
+    const portCreationWithCopyableLegacyState = {
+      ...portCreationScenario,
+      given: portCreationScenario.given.map((fact) =>
+        fact.kind === "legacy-state"
+          ? {
+              ...fact,
+              lifecycle: "stopped",
+              database: "compatible",
+              storage: "compatible",
+              credentials: "compatible",
+            }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([portCreationWithCopyableLegacyState])).toContain(
+      `${portCreationScenario.id}: managed creation must declare legacy state absent or incompatible`,
+    );
+
+    const concurrencyScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.concurrent-create-publishes-once",
+      );
+    if (concurrencyScenario === undefined || concurrencyScenario.when.interface !== "managed-api") {
+      throw new Error("identity.concurrent-create-publishes-once fixture is required");
+    }
+    const singleContenderAction = {
+      ...concurrencyScenario,
+      when: {
+        ...concurrencyScenario.when,
+        input: { ...concurrencyScenario.when.input, contenders: 1 },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([singleContenderAction])).toContain(
+      `${concurrencyScenario.id}: concurrent action contenders must match the declared race of 2`,
+    );
+
+    const concurrencyForDifferentTarget = {
+      ...concurrencyScenario,
+      when: {
+        ...concurrencyScenario.when,
+        input: { ...concurrencyScenario.when.input, stackName: "review" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([concurrencyForDifferentTarget])).toContain(
+      `${concurrencyScenario.id}: concurrent action target must match context-feat/default`,
+    );
+
+    const incompleteConcurrentResults = {
+      ...concurrencyScenario,
+      expected: {
+        ...concurrencyScenario.expected,
+        details: { ...concurrencyScenario.expected.details, contender_results: ["create"] },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([incompleteConcurrentResults])).toContain(
+      `${concurrencyScenario.id}: concurrent details results must cover 2 contenders`,
+    );
+
+    const duplicateConcurrentCreation = {
+      ...concurrencyScenario,
+      expected: {
+        ...concurrencyScenario.expected,
+        details: {
+          ...concurrencyScenario.expected.details,
+          contender_results: ["create", "create"],
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([duplicateConcurrentCreation])).toContain(
+      `${concurrencyScenario.id}: concurrent race must create once and reuse thereafter`,
     );
   });
 

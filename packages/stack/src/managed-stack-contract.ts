@@ -371,6 +371,13 @@ const managedStackContractJsonEquals = (
   return false;
 };
 
+const isManagedStartAction = (action: ManagedStackContractAction): boolean =>
+  (action.interface === "cli" && action.argv[0] === "start") ||
+  (action.interface === "managed-api" &&
+    (action.method === "startStack" ||
+      action.method === "startConcurrently" ||
+      action.input.operation === "start"));
+
 export const validateManagedStackContractFixtures = (
   fixtures: ReadonlyArray<ManagedStackContractScenario>,
 ): ReadonlyArray<string> => {
@@ -669,7 +676,9 @@ export const validateManagedStackContractFixtures = (
           }
           break;
         case "identity-claim":
-          declaredIds.add(fact.id);
+          if (fact.status !== "absent") {
+            declaredIds.add(fact.id);
+          }
           switch (fact.scope) {
             case "checkout":
               checkoutIds.add(fact.id);
@@ -892,10 +901,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (
-      (scenario.area === "credentials" || scenario.area === "runtime") &&
-      scenario.expected.outcome === "create"
-    ) {
+    if (isManagedStartAction(scenario.when) && scenario.expected.outcome === "create") {
       const createdStackIds = scenario.expected.writes.flatMap((write) =>
         write.target === "managed-state" && write.operation === "create" ? [write.id] : [],
       );
@@ -908,18 +914,21 @@ export const validateManagedStackContractFixtures = (
           errors.push(`${scenario.id}: managed creation must declare absent target ${stackId}`);
         }
       }
-      if (
-        createdStackIds.length > 0 &&
-        !scenario.given.some(
-          (fact) =>
-            fact.kind === "legacy-state" &&
-            fact.lifecycle === "absent" &&
-            fact.database === "absent" &&
-            fact.storage === "absent" &&
-            fact.credentials === "absent",
-        )
-      ) {
-        errors.push(`${scenario.id}: managed creation must declare legacy state absent`);
+      const legacyState = scenario.given.find((fact) => fact.kind === "legacy-state");
+      const legacyAllowsFreshCreation =
+        legacyState?.kind === "legacy-state" &&
+        ((legacyState.lifecycle === "absent" &&
+          legacyState.database === "absent" &&
+          legacyState.storage === "absent" &&
+          legacyState.credentials === "absent") ||
+          (legacyState.lifecycle === "stopped" &&
+            (legacyState.database === "incompatible" ||
+              legacyState.storage === "incompatible" ||
+              legacyState.credentials === "incompatible")));
+      if (createdStackIds.length > 0 && !legacyAllowsFreshCreation) {
+        errors.push(
+          `${scenario.id}: managed creation must declare legacy state absent or incompatible`,
+        );
       }
     }
 
@@ -1002,6 +1011,19 @@ export const validateManagedStackContractFixtures = (
             `${scenario.id}: selected stack ${selection.stackId} is named ${selectedStack.name}, not ${selection.stackName}`,
           );
         }
+      }
+
+      const actionCheckout = scenario.given.find(
+        (fact) => fact.kind === "checkout" && fact.path === actionCwd,
+      );
+      if (
+        actionCheckout?.kind === "checkout" &&
+        (selection.projectId !== actionCheckout.projectId ||
+          selection.checkoutId !== actionCheckout.checkoutId)
+      ) {
+        errors.push(
+          `${scenario.id}: selection must use checkout ${actionCheckout.checkoutId} for ${actionCwd}`,
+        );
       }
 
       if (
@@ -1088,6 +1110,81 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.when.interface === "managed-api" && scenario.when.method === "startConcurrently") {
+      const concurrencyFacts = scenario.given.filter(
+        (fact) => fact.kind === "concurrent-operation" && fact.operation === "create-stack",
+      );
+      const concurrencyFact = concurrencyFacts.length === 1 ? concurrencyFacts[0] : undefined;
+      if (concurrencyFact?.kind !== "concurrent-operation") {
+        errors.push(`${scenario.id}: concurrent start requires exactly one create-stack fact`);
+      } else {
+        const actionContenders = scenario.when.input.contenders;
+        if (
+          typeof actionContenders !== "number" ||
+          !Number.isInteger(actionContenders) ||
+          actionContenders < 2 ||
+          actionContenders !== concurrencyFact.contenders
+        ) {
+          errors.push(
+            `${scenario.id}: concurrent action contenders must match the declared race of ${concurrencyFact.contenders}`,
+          );
+        }
+
+        const actionStackName = scenario.when.input.stackName;
+        const actionTarget =
+          selection !== undefined && typeof actionStackName === "string"
+            ? `${selection.contextId}/${actionStackName}`
+            : undefined;
+        if (actionTarget !== concurrencyFact.target) {
+          errors.push(
+            `${scenario.id}: concurrent action target must match ${concurrencyFact.target}`,
+          );
+        }
+
+        const contenderResults = [
+          {
+            projection: "details",
+            results: scenario.expected.details?.contender_results,
+          },
+          {
+            projection: "API",
+            results: scenario.expected.output.api?.contenderResults,
+          },
+        ];
+        for (const { projection, results } of contenderResults) {
+          if (!Array.isArray(results) || results.length !== concurrencyFact.contenders) {
+            errors.push(
+              `${scenario.id}: concurrent ${projection} results must cover ${concurrencyFact.contenders} contenders`,
+            );
+          }
+        }
+        const detailResults = scenario.expected.details?.contender_results;
+        const apiResults = scenario.expected.output.api?.contenderResults;
+        if (
+          Array.isArray(detailResults) &&
+          Array.isArray(apiResults) &&
+          !managedStackContractJsonEquals(detailResults, apiResults)
+        ) {
+          errors.push(`${scenario.id}: concurrent result projections must agree`);
+        }
+        if (
+          Array.isArray(detailResults) &&
+          (detailResults.filter((result) => result === "create").length !== 1 ||
+            detailResults.some((result) => result !== "create" && result !== "reuse"))
+        ) {
+          errors.push(`${scenario.id}: concurrent race must create once and reuse thereafter`);
+        }
+        if (
+          scenario.expected.details?.published_stack_count !== 1 ||
+          scenario.expected.output.api?.publishedStackCount !== 1 ||
+          scenario.expected.details?.alias_count !== 0 ||
+          scenario.expected.output.api?.aliasCount !== 0
+        ) {
+          errors.push(`${scenario.id}: concurrent race must publish one stack without aliases`);
+        }
+      }
+    }
+
     const managedPortOwners = scenario.given.flatMap((fact) =>
       fact.kind === "occupied-port" && fact.owner === "managed-stack" ? [fact] : [],
     );
@@ -1170,9 +1267,18 @@ export const validateManagedStackContractFixtures = (
           errors.push(`${scenario.id}: sibling allocation must project its allocated ports`);
         } else {
           const occupiedSiblingPorts = new Set(siblingAssignments.map(({ port }) => port));
+          const allocatedPorts = new Set<number>();
           for (const port of Object.values(projectedPorts)) {
-            if (typeof port === "number" && occupiedSiblingPorts.has(port)) {
-              errors.push(`${scenario.id}: allocated port ${port} conflicts with a sibling target`);
+            if (typeof port === "number") {
+              if (allocatedPorts.has(port)) {
+                errors.push(`${scenario.id}: allocated port ${port} is assigned more than once`);
+              }
+              allocatedPorts.add(port);
+              if (occupiedSiblingPorts.has(port)) {
+                errors.push(
+                  `${scenario.id}: allocated port ${port} conflicts with a sibling target`,
+                );
+              }
             }
           }
         }
@@ -1565,8 +1671,8 @@ const mainCheckoutContextFacts = [
   { kind: "branch", name: "main", contextId: "context-main", checkedOut: true },
 ] satisfies ReadonlyArray<ManagedStackContractFact>;
 
-const absentMainManagedStateFacts = [
-  { kind: "managed-target", stackId: "stack-main-default", exists: false },
+const freshManagedStartFacts = (stackId: string): ReadonlyArray<ManagedStackContractFact> => [
+  { kind: "managed-target", stackId, exists: false },
   {
     kind: "legacy-state",
     lifecycle: "absent",
@@ -1574,7 +1680,9 @@ const absentMainManagedStateFacts = [
     storage: "absent",
     credentials: "absent",
   },
-] satisfies ReadonlyArray<ManagedStackContractFact>;
+];
+
+const freshMainManagedStartFacts = freshManagedStartFacts("stack-main-default");
 
 const mainDefaultSelection = {
   projectId: "project-a",
@@ -1664,6 +1772,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "First start on a new branch creates an independent context and stack",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-feat-a-default"),
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "branch", name: "main", contextId: "context-main", checkedOut: false },
       {
@@ -1763,6 +1872,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Deleting and recreating a branch name creates a new context",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-new-default"),
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       {
         kind: "git-state",
@@ -1880,6 +1990,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Replacing a branch ref manually creates a new context and orphans the old one",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-new-default"),
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       {
         kind: "identity-transition",
@@ -1993,6 +2104,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "First start in a non-Git folder persists an untracked local identity",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-workspace-default"),
       {
         kind: "workspace",
         mode: "ordinary-folder",
@@ -2091,6 +2203,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Sibling linked worktrees share a project and use independent checkouts",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-b-main-default"),
       { kind: "workspace", mode: "linked-worktree", path: "worktree-a" },
       { kind: "workspace", mode: "linked-worktree", path: "worktree-b" },
       {
@@ -2142,6 +2255,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "The same branch forced into two worktrees remains checkout-isolated",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-b-main-default"),
       { kind: "checkout", path: "worktree-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "checkout", path: "worktree-b", projectId: "project-a", checkoutId: "checkout-b" },
       { kind: "branch", name: "main", contextId: "context-a-main", checkedOut: true },
@@ -2187,6 +2301,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Named stacks are scoped inside the active branch context",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-feat-review"),
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: true },
       {
@@ -2407,6 +2522,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "A fresh clone receives new project and checkout identities",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-clone-main-default"),
       { kind: "workspace", mode: "git", path: "/clone/project-a", clonedFrom: "/work/project-a" },
       {
         kind: "git-state",
@@ -2577,6 +2693,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Concurrent creation publishes one stack without aliases",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-feat-default"),
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: true },
       {
@@ -2673,6 +2790,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "A copied branch with a known owner gets a new context on first mutation",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-copy-default"),
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       {
         kind: "identity-transition",
@@ -2705,7 +2823,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       writes: [
         {
           target: "git-config",
-          operation: "update",
+          operation: "create",
           id: "context-copy",
           scope: "worktree",
           owner: "feat-copy",
@@ -2844,6 +2962,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "A tracked non-Git identity marker is inert in a fresh Git clone",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-clone-main-default"),
       { kind: "workspace", mode: "git", path: "/clone/project-a", clonedFrom: "/work/project-a" },
       {
         kind: "git-state",
@@ -2974,6 +3093,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Folder-to-Git conversion without a live claim creates Git-owned identities",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-git-default"),
       {
         kind: "identity-transition",
         operation: "folder-to-git",
@@ -3072,6 +3192,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Bare-repository worktrees share common project identity without a primary worktree",
     area: "identity",
     given: [
+      ...freshManagedStartFacts("stack-b-main-default"),
       { kind: "workspace", mode: "bare-worktree", path: "worktree-a" },
       { kind: "workspace", mode: "bare-worktree", path: "worktree-b" },
       {
@@ -3233,7 +3354,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     title: "A new target allocates and persists host-wide ports for omitted keys",
     area: "ports",
     given: [
-      { kind: "managed-target", stackId: "stack-feat-default", exists: false },
+      ...freshManagedStartFacts("stack-feat-default"),
       { kind: "config-port", key: "api.port", intent: "automatic", source: "omitted" },
       { kind: "config-port", key: "db.port", intent: "automatic", source: "omitted" },
     ],
@@ -3269,7 +3390,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     title: "A new sibling target allocates around existing host-wide port ownership",
     area: "ports",
     given: [
-      { kind: "managed-target", stackId: "stack-feat-default", exists: false },
+      ...freshManagedStartFacts("stack-feat-default"),
       { kind: "config-port", key: "api.port", intent: "automatic", source: "omitted" },
       { kind: "config-port", key: "db.port", intent: "automatic", source: "omitted" },
       {
@@ -3639,7 +3760,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     title: "An explicit managed-API runtime overrides the default automatic selection",
     area: "runtime",
     given: [
-      ...absentMainManagedStateFacts,
+      ...freshMainManagedStartFacts,
       { kind: "runtime-request", source: "managed-api", runtime: "native" },
       { kind: "runtime-request", source: "default", runtime: "auto" },
       { kind: "runtime-availability", runtime: "native", available: true },
@@ -3669,7 +3790,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     area: "runtime",
     given: [
       ...mainCheckoutContextFacts,
-      ...absentMainManagedStateFacts,
+      ...freshMainManagedStartFacts,
       { kind: "runtime-request", source: "config", runtime: "native" },
       { kind: "runtime-request", source: "default", runtime: "auto" },
       { kind: "runtime-availability", runtime: "native", available: true },
@@ -3737,7 +3858,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     title: "Automatic selection prefers usable Docker",
     area: "runtime",
     given: [
-      ...absentMainManagedStateFacts,
+      ...freshMainManagedStartFacts,
       { kind: "runtime-request", source: "default", runtime: "auto" },
       { kind: "runtime-availability", runtime: "docker", available: true },
       { kind: "runtime-availability", runtime: "native", available: true },
@@ -3765,7 +3886,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       "Automatic selection uses native only when Docker is unusable and the full graph qualifies",
     area: "runtime",
     given: [
-      ...absentMainManagedStateFacts,
+      ...freshMainManagedStartFacts,
       { kind: "runtime-request", source: "default", runtime: "auto" },
       {
         kind: "runtime-availability",
@@ -4480,7 +4601,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     title: "Configured auth values are authoritative and persist globally only by reference",
     area: "credentials",
     given: [
-      ...absentMainManagedStateFacts,
+      ...freshMainManagedStartFacts,
       { kind: "credential-state", source: "configured", valuesId: "configured-auth-v1" },
     ],
     when: {
@@ -4517,7 +4638,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     area: "credentials",
     given: [
       ...mainCheckoutContextFacts,
-      ...absentMainManagedStateFacts,
+      ...freshMainManagedStartFacts,
       { kind: "credential-state", source: "local-default", valuesId: "stable-local-defaults-v1" },
     ],
     when: { interface: "cli", argv: ["start", "--experimental"], cwd: "checkout-a" },
