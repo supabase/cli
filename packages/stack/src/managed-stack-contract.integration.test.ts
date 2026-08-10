@@ -2342,6 +2342,115 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([stoppedStackReportedRunning])).toContain(
       `${projectedManagedResultScenario.id}: projected managed status requires an active running record and persisted runtime`,
     );
+
+    const persistedRuntimeAvailabilityScenario = findScenario(
+      "runtime.persisted-runtime-reused-for-auto",
+    );
+    const persistedRuntimeWithoutAvailability = {
+      ...persistedRuntimeAvailabilityScenario,
+      given: persistedRuntimeAvailabilityScenario.given.map((fact) =>
+        fact.kind === "runtime-availability" && fact.runtime === "native"
+          ? { ...fact, runtime: "docker" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([persistedRuntimeWithoutAvailability])).toContain(
+      `${persistedRuntimeAvailabilityScenario.id}: persisted automatic runtime requires matching availability evidence`,
+    );
+
+    const qualificationScenario = findScenario(
+      "native-qualification.one-service-failure-disables-platform",
+    );
+    if (qualificationScenario.when.interface !== "managed-api") {
+      throw new Error("native qualification fixture must use the managed API");
+    }
+    const unsupportedPlatformReportedAsUnqualified = {
+      ...qualificationScenario,
+      given: qualificationScenario.given.map((fact) =>
+        fact.kind === "native-qualification" ? { ...fact, platform: "darwin-x64" } : fact,
+      ),
+      when: {
+        ...qualificationScenario.when,
+        input: { ...qualificationScenario.when.input, platform: "darwin-x64" },
+      },
+      expected: {
+        ...qualificationScenario.expected,
+        output: {
+          ...qualificationScenario.expected.output,
+          api: { ...qualificationScenario.expected.output.api, platform: "darwin-x64" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([unsupportedPlatformReportedAsUnqualified]),
+    ).toContain(
+      `${qualificationScenario.id}: unsupported native platform must use the dedicated preflight error`,
+    );
+
+    const renameScenario = findScenario("identity.branch-rename-preserves-context");
+    const renameToUnrelatedBranch = {
+      ...renameScenario,
+      given: renameScenario.given.map((fact) =>
+        fact.kind === "identity-transition" && fact.operation === "branch-rename"
+          ? { ...fact, to: "unrelated" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([renameToUnrelatedBranch])).toContain(
+      `${renameScenario.id}: branch rename must match the checked-out branch and updated context owner`,
+    );
+
+    const repositoryScenario = findScenario("api-boundary.repository-contract-is-storage-agnostic");
+    const referencedRepositoryScenario = findScenario("identity.return-to-branch-reuses-stack");
+    const adaptersAgreeOnWrongContext = {
+      ...repositoryScenario,
+      expected: {
+        ...repositoryScenario.expected,
+        output: {
+          ...repositoryScenario.expected.output,
+          api: {
+            ...repositoryScenario.expected.output.api,
+            "in-memory": {
+              outcome: "reuse",
+              projectId: "project-a",
+              checkoutId: "checkout-a",
+              contextId: "context-unrelated",
+              stackId: "stack-main-default",
+              stackName: "default",
+            },
+            "persistent-adapter": {
+              outcome: "reuse",
+              projectId: "project-a",
+              checkoutId: "checkout-a",
+              contextId: "context-unrelated",
+              stackId: "stack-main-default",
+              stackName: "default",
+            },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([
+        referencedRepositoryScenario,
+        adaptersAgreeOnWrongContext,
+      ]),
+    ).toContain(
+      `${repositoryScenario.id}: repository in-memory decision must completely match ${referencedRepositoryScenario.id}`,
+    );
+
+    const ambiguousContextScenario = findScenario("identity.branch-copy-ambiguous-read-only");
+    const independentBranchesReportedAmbiguous = {
+      ...ambiguousContextScenario,
+      given: ambiguousContextScenario.given.map((fact) =>
+        fact.kind === "branch" && fact.name === "main"
+          ? { ...fact, contextId: "context-independent" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([independentBranchesReportedAmbiguous])).toContain(
+      `${ambiguousContextScenario.id}: ambiguous context must bind at least two claiming branches to its projections`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {

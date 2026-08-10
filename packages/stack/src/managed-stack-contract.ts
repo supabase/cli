@@ -798,13 +798,22 @@ export const validateManagedStackContractFixtures = (
                 fact.kind === "runtime-availability" && fact.runtime === persistedRuntime.runtime,
             )
           : undefined;
+      if (
+        persistedRuntime?.kind === "persisted-runtime" &&
+        persistedAvailability?.kind !== "runtime-availability"
+      ) {
+        errors.push(
+          `${scenario.id}: persisted automatic runtime requires matching availability evidence`,
+        );
+      }
       const resolvedRuntime =
         persistedRuntime?.kind === "persisted-runtime" &&
-        persistedAvailability?.kind === "runtime-availability" &&
-        !persistedAvailability.available
-          ? undefined
-          : persistedRuntime?.kind === "persisted-runtime"
+        persistedAvailability?.kind === "runtime-availability"
+          ? persistedAvailability.available
             ? persistedRuntime.runtime
+            : undefined
+          : persistedRuntime?.kind === "persisted-runtime"
+            ? undefined
             : dockerAvailability?.kind === "runtime-availability" && dockerAvailability.available
               ? "docker"
               : nativeAvailability?.kind === "runtime-availability" &&
@@ -1141,6 +1150,17 @@ export const validateManagedStackContractFixtures = (
       if (referencedScenario === undefined) {
         errors.push(`${scenario.id}: repository contract must reference a declared scenario`);
       } else {
+        const referencedDecision: Readonly<Record<string, ManagedStackContractJson>> =
+          referencedScenario.expected.selection === undefined
+            ? { outcome: referencedScenario.expected.outcome }
+            : {
+                outcome: referencedScenario.expected.outcome,
+                projectId: referencedScenario.expected.selection.projectId,
+                checkoutId: referencedScenario.expected.selection.checkoutId,
+                contextId: referencedScenario.expected.selection.contextId,
+                stackId: referencedScenario.expected.selection.stackId,
+                stackName: referencedScenario.expected.selection.stackName,
+              };
         const adapters = scenario.when.input.adapters;
         if (
           !Array.isArray(adapters) ||
@@ -1206,6 +1226,11 @@ export const validateManagedStackContractFixtures = (
             ) {
               errors.push(
                 `${scenario.id}: repository ${adapter} stackId must match ${referencedScenario.id}`,
+              );
+            }
+            if (!managedStackContractJsonEquals(adapterResult, referencedDecision)) {
+              errors.push(
+                `${scenario.id}: repository ${adapter} decision must completely match ${referencedScenario.id}`,
               );
             }
             if (firstAdapterResult === undefined) {
@@ -1404,6 +1429,62 @@ export const validateManagedStackContractFixtures = (
     const checkedOutBranch = scenario.given.find(
       (fact) => fact.kind === "branch" && fact.checkedOut,
     );
+    const branchRename = scenario.given.find(
+      (fact) => fact.kind === "identity-transition" && fact.operation === "branch-rename",
+    );
+    if (branchRename?.kind === "identity-transition") {
+      const renamedContextWrite = scenario.expected.writes.find(
+        (write) =>
+          write.target === "git-config" &&
+          write.operation === "update" &&
+          checkedOutBranch?.kind === "branch" &&
+          write.id === checkedOutBranch.contextId,
+      );
+      if (
+        typeof branchRename.from !== "string" ||
+        typeof branchRename.to !== "string" ||
+        branchRename.from === branchRename.to ||
+        checkedOutBranch?.kind !== "branch" ||
+        checkedOutBranch.name !== branchRename.to ||
+        renamedContextWrite?.target !== "git-config" ||
+        renamedContextWrite.owner !== branchRename.to
+      ) {
+        errors.push(
+          `${scenario.id}: branch rename must match the checked-out branch and updated context owner`,
+        );
+      }
+    }
+    if (scenario.expected.error?.code === "ambiguous_context_owner") {
+      const projectedContextId = output.json?.context_id;
+      const projectedBranches = output.json?.branches;
+      const projectedBranchNames =
+        Array.isArray(projectedBranches) &&
+        projectedBranches.every((branch): branch is string => typeof branch === "string")
+          ? projectedBranches
+          : undefined;
+      const claimingBranchNames =
+        typeof projectedContextId === "string"
+          ? scenario.given.flatMap((fact) =>
+              fact.kind === "branch" && fact.contextId === projectedContextId ? [fact.name] : [],
+            )
+          : [];
+      const humanBranchNames = output.human?.fields.branches
+        ?.split(",")
+        .map((branch) => branch.trim())
+        .filter((branch) => branch.length > 0);
+      if (
+        typeof projectedContextId !== "string" ||
+        new Set(claimingBranchNames).size < 2 ||
+        projectedBranchNames === undefined ||
+        !managedStackContractStringSetEquals(claimingBranchNames, projectedBranchNames) ||
+        humanBranchNames === undefined ||
+        !managedStackContractStringSetEquals(claimingBranchNames, humanBranchNames)
+      ) {
+        errors.push(
+          `${scenario.id}: ambiguous context must bind at least two claiming branches to its projections`,
+        );
+      }
+    }
     if (
       scenario.when.interface === "git" &&
       scenario.when.argv[0] === "branch" &&
@@ -1611,6 +1692,14 @@ export const validateManagedStackContractFixtures = (
         }
       }
       if (scenario.when.interface === "managed-api" && scenario.when.method === "preflightNative") {
+        const platformSupported = managedNativeServiceMatrix.targetPlatforms.includes(
+          fact.platform,
+        );
+        if (!platformSupported && scenario.expected.error?.code !== "native_platform_unsupported") {
+          errors.push(
+            `${scenario.id}: unsupported native platform must use the dedicated preflight error`,
+          );
+        }
         const platformQualified = failed.size === 0 && qualified.size === nativeServices.length;
         if (
           scenario.expected.outcome !== (platformQualified ? "report" : "error") ||
@@ -6751,8 +6840,22 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
       details: { decisions_equal: true, persistence_semantics_leaked: false },
       output: {
         api: {
-          "in-memory": { outcome: "reuse", stackId: "stack-main-default" },
-          "persistent-adapter": { outcome: "reuse", stackId: "stack-main-default" },
+          "in-memory": {
+            outcome: "reuse",
+            projectId: "project-a",
+            checkoutId: "checkout-a",
+            contextId: "context-main",
+            stackId: "stack-main-default",
+            stackName: "default",
+          },
+          "persistent-adapter": {
+            outcome: "reuse",
+            projectId: "project-a",
+            checkoutId: "checkout-a",
+            contextId: "context-main",
+            stackId: "stack-main-default",
+            stackName: "default",
+          },
           equal: true,
         },
       },
