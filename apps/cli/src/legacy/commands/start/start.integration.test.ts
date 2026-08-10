@@ -3369,7 +3369,7 @@ content_path = "./templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
           // Reported by container name, with the recovery advice naming the image
           // Postgres's own health wait resolved for it.
-          expect(out.stderrText).toContain("supabase_db_demo: container is not ready");
+          expect(out.stderrText).toContain("supabase_db_demo container is not ready");
           expect(out.stderrText).toContain("supabase_db_demo's image");
           expect(out.stderrText).toContain("image rm -f public.ecr.aws/supabase/postgres:");
           // `--ignore-health-check` leaves the stack up, so a bare restart would be a
@@ -3475,7 +3475,7 @@ content_path = "./templates/custom_notice.html"
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
         // Reported by container name, not `docker create`'s opaque id, and the
         // advice names the image actually resolved for that container.
-        expect(out.stderrText).toContain("supabase_auth_demo: container is not ready");
+        expect(out.stderrText).toContain("supabase_auth_demo container is not ready");
         expect(out.stderrText).toContain("docker image rm -f public.ecr.aws/supabase/gotrue:");
         // Go never fires `cli_stack_started` on the ignored-unhealthy
         // fallthrough (`start.go:1287` sits after the `if err != nil` block) —
