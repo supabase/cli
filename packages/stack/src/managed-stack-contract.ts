@@ -30,6 +30,11 @@ export type ManagedStackContractFact =
       readonly clonedFrom?: string;
     }
   | {
+      readonly kind: "workspace-history";
+      readonly path: string;
+      readonly previousMode: "ordinary-folder";
+    }
+  | {
       readonly kind: "git-state";
       readonly workspacePath: string;
       readonly commonDirectory: string;
@@ -191,13 +196,16 @@ export type ManagedStackContractFact =
     }
   | {
       readonly kind: "direct-stack-options";
-      readonly roots: "explicit" | "omitted";
+      readonly stackRoot: "explicit" | "omitted";
+      readonly runtimeRoot: "explicit" | "omitted";
     }
   | {
       readonly kind: "direct-stack-state";
       readonly handle: string;
-      readonly stateId: string;
-      readonly roots: "temporary";
+      readonly temporaryRoots: ReadonlyArray<{
+        readonly root: "stack" | "runtime";
+        readonly stateId: string;
+      }>;
       readonly lifecycle: "created";
     }
   | {
@@ -239,8 +247,14 @@ type ManagedStackContractWrite =
     }
   | {
       readonly target: "ephemeral-state";
+      readonly operation: "create";
+      readonly id: string;
+    }
+  | {
+      readonly target: "temporary-root";
       readonly operation: "create" | "delete";
       readonly id: string;
+      readonly root: "stack" | "runtime";
     }
   | {
       readonly target: "managed-state";
@@ -257,6 +271,11 @@ type ManagedStackContractWrite =
       readonly operation: "delete" | "start" | "update";
       readonly id: string;
     };
+
+type ManagedStackContractTemporaryRootWrite = Extract<
+  ManagedStackContractWrite,
+  { readonly target: "temporary-root" }
+>;
 
 export interface ManagedStackContractEffects {
   readonly writes: ReadonlyArray<ManagedStackContractWrite>;
@@ -661,23 +680,52 @@ export const validateManagedStackContractFixtures = (
 
     if (scenario.when.interface === "stack-api" && scenario.when.method === "createStack") {
       const directOptions = scenario.given.filter((fact) => fact.kind === "direct-stack-options");
-      const explicitRootKeys = ["cacheRoot", "projectDir", "runtimeRoot", "stackRoot"];
       const directInput = scenario.when.input;
-      const hasExplicitRoot = explicitRootKeys.some((key) => typeof directInput[key] === "string");
-      const rootMode = hasExplicitRoot ? "explicit" : "omitted";
-      const hasTemporaryDetails = scenario.expected.details?.state_root === "temporary";
-      const hasTemporaryProjection = output.api?.state_root === "temporary";
-      const hasEphemeralWrite = scenario.expected.writes.some(
-        (write) => write.target === "ephemeral-state" && write.operation === "create",
+      const expectedStackRoot = typeof directInput.stackRoot === "string" ? "explicit" : "omitted";
+      const expectedRuntimeRoot =
+        typeof directInput.runtimeRoot === "string" ? "explicit" : "omitted";
+      const omittedRoots: Array<"stack" | "runtime"> = [];
+      if (expectedStackRoot === "omitted") {
+        omittedRoots.push("stack");
+      }
+      if (expectedRuntimeRoot === "omitted") {
+        omittedRoots.push("runtime");
+      }
+      const temporaryRootWrites = scenario.expected.writes.filter(
+        (write): write is ManagedStackContractTemporaryRootWrite =>
+          write.target === "temporary-root" && write.operation === "create",
       );
-      const usesTemporaryState = hasTemporaryDetails && hasTemporaryProjection && hasEphemeralWrite;
-      const exposesTemporaryState =
-        hasTemporaryDetails || hasTemporaryProjection || hasEphemeralWrite;
+      const detailRoots = scenario.expected.details?.temporary_roots;
+      const projectedRoots = output.api?.temporaryRoots;
+      const validDetailRoots =
+        Array.isArray(detailRoots) &&
+        detailRoots.every(
+          (root): root is "stack" | "runtime" => root === "stack" || root === "runtime",
+        )
+          ? detailRoots
+          : undefined;
+      const validProjectedRoots =
+        Array.isArray(projectedRoots) &&
+        projectedRoots.every(
+          (root): root is "stack" | "runtime" => root === "stack" || root === "runtime",
+        )
+          ? projectedRoots
+          : undefined;
       if (
         directOptions.length !== 1 ||
-        directOptions[0]?.roots !== rootMode ||
-        (rootMode === "omitted" && !usesTemporaryState) ||
-        (rootMode === "explicit" && exposesTemporaryState)
+        directOptions[0]?.stackRoot !== expectedStackRoot ||
+        directOptions[0]?.runtimeRoot !== expectedRuntimeRoot ||
+        temporaryRootWrites.length !== omittedRoots.length ||
+        !managedStackContractStringSetEquals(
+          temporaryRootWrites.map((write) => write.root),
+          omittedRoots,
+        ) ||
+        validDetailRoots === undefined ||
+        validDetailRoots.length !== omittedRoots.length ||
+        !managedStackContractStringSetEquals(validDetailRoots, omittedRoots) ||
+        validProjectedRoots === undefined ||
+        validProjectedRoots.length !== omittedRoots.length ||
+        !managedStackContractStringSetEquals(validProjectedRoots, omittedRoots)
       ) {
         errors.push(
           `${scenario.id}: direct stack root inputs must agree with temporary-state behavior`,
@@ -687,7 +735,7 @@ export const validateManagedStackContractFixtures = (
         scenario.expected.details?.git_inspected !== false ||
         scenario.expected.details.identity_marker_created !== false ||
         scenario.expected.details.global_registry_mutated !== false ||
-        scenario.expected.writes.some((write) => write.target !== "ephemeral-state") ||
+        scenario.expected.writes.some((write) => write.target !== "temporary-root") ||
         scenario.expected.runtimeEffects.length > 0
       ) {
         errors.push(`${scenario.id}: direct createStack must remain isolated from managed state`);
@@ -698,24 +746,66 @@ export const validateManagedStackContractFixtures = (
       const directState = scenario.given.find(
         (fact) => fact.kind === "direct-stack-state" && fact.handle === handle,
       );
+      const deletedTemporaryRoots = scenario.expected.writes.filter(
+        (write): write is ManagedStackContractTemporaryRootWrite =>
+          write.target === "temporary-root" && write.operation === "delete",
+      );
+      const removedDetailRoots = scenario.expected.details?.removed_temporary_roots;
+      const removedProjectedRoots = output.api?.removedTemporaryRoots;
+      const validRemovedDetailRoots =
+        Array.isArray(removedDetailRoots) &&
+        removedDetailRoots.every(
+          (root): root is "stack" | "runtime" => root === "stack" || root === "runtime",
+        )
+          ? removedDetailRoots
+          : undefined;
+      const validRemovedProjectedRoots =
+        Array.isArray(removedProjectedRoots) &&
+        removedProjectedRoots.every(
+          (root): root is "stack" | "runtime" => root === "stack" || root === "runtime",
+        )
+          ? removedProjectedRoots
+          : undefined;
+      const declaredTemporaryRoots =
+        directState?.kind === "direct-stack-state" ? directState.temporaryRoots : [];
       if (
         typeof handle !== "string" ||
         directState?.kind !== "direct-stack-state" ||
-        directState.roots !== "temporary" ||
         directState.lifecycle !== "created" ||
+        new Set(declaredTemporaryRoots.map(({ root }) => root)).size !==
+          declaredTemporaryRoots.length ||
         scenario.expected.outcome !== "delete" ||
-        !scenario.expected.writes.some(
-          (write) =>
-            write.target === "ephemeral-state" &&
-            write.operation === "delete" &&
-            write.id === directState.stateId,
+        deletedTemporaryRoots.length !== declaredTemporaryRoots.length ||
+        declaredTemporaryRoots.some(
+          (root) =>
+            !deletedTemporaryRoots.some(
+              (write) => write.root === root.root && write.id === root.stateId,
+            ),
         ) ||
-        scenario.expected.writes.some((write) => write.target !== "ephemeral-state") ||
+        deletedTemporaryRoots.some(
+          (write) =>
+            !declaredTemporaryRoots.some(
+              (root) => root.root === write.root && root.stateId === write.id,
+            ),
+        ) ||
+        scenario.expected.writes.some((write) => write.target !== "temporary-root") ||
         scenario.expected.runtimeEffects.length > 0 ||
         scenario.expected.details?.temporary_roots_removed !== true ||
+        validRemovedDetailRoots === undefined ||
+        validRemovedDetailRoots.length !== declaredTemporaryRoots.length ||
+        !managedStackContractStringSetEquals(
+          validRemovedDetailRoots,
+          declaredTemporaryRoots.map(({ root }) => root),
+        ) ||
         output.api?.handle !== handle ||
         output.api.disposed !== true ||
-        output.api.temporaryRootsRemoved !== true
+        output.api.temporaryRootsRemoved !== true ||
+        validRemovedProjectedRoots === undefined ||
+        validRemovedProjectedRoots.length !== declaredTemporaryRoots.length ||
+        !managedStackContractStringSetEquals(
+          validRemovedProjectedRoots,
+          declaredTemporaryRoots.map(({ root }) => root),
+        )
       ) {
         errors.push(`${scenario.id}: direct stack disposal must remove omitted temporary roots`);
       }
@@ -1471,7 +1561,9 @@ export const validateManagedStackContractFixtures = (
           }
           break;
         case "direct-stack-state":
-          declaredIds.add(fact.stateId);
+          for (const root of fact.temporaryRoots) {
+            declaredIds.add(root.stateId);
+          }
           break;
         case "identity-claim":
           if (fact.status !== "absent") {
@@ -1560,6 +1652,28 @@ export const validateManagedStackContractFixtures = (
         errors.push(`${scenario.id}: CLI action cwd must match a declared workspace`);
       }
     }
+    const workspaceHistory = scenario.given.find(
+      (fact) => fact.kind === "workspace-history" && fact.path === actionCwd,
+    );
+    if (workspaceHistory?.kind === "workspace-history") {
+      const currentWorkspace = scenario.given.find(
+        (fact) => fact.kind === "workspace" && fact.path === actionCwd,
+      );
+      const folderToGitTransition = scenario.given.find(
+        (fact) => fact.kind === "identity-transition" && fact.operation === "folder-to-git",
+      );
+      if (
+        workspaceHistory.previousMode !== "ordinary-folder" ||
+        currentWorkspace?.kind !== "workspace" ||
+        currentWorkspace.mode !== "git" ||
+        folderToGitTransition?.kind !== "identity-transition" ||
+        folderToGitTransition.from !== "ordinary-folder" ||
+        folderToGitTransition.to !== "git" ||
+        (scenario.expected.outcome !== "error" && output.json?.converted_to_git !== true)
+      ) {
+        errors.push(`${scenario.id}: folder-to-Git result must bind the workspace transition`);
+      }
+    }
     if (
       isStatusOperation &&
       (scenario.expected.details?.registered === false || output.json?.registered === false) &&
@@ -1581,6 +1695,13 @@ export const validateManagedStackContractFixtures = (
       const copiedBranch = scenario.given.find(
         (fact) => fact.kind === "branch" && fact.name === branchCopy.to,
       );
+      const originalClaim = scenario.given.find(
+        (fact) =>
+          fact.kind === "identity-claim" &&
+          fact.scope === "context" &&
+          fact.owner === branchCopy.from &&
+          fact.status === (branchCopy.originalExists ? "exact" : "absent"),
+      );
       if (
         typeof branchCopy.from !== "string" ||
         typeof branchCopy.to !== "string" ||
@@ -1593,13 +1714,6 @@ export const validateManagedStackContractFixtures = (
         );
       }
       if (scenario.expected.warning?.code === "copied_branch_context_conflict") {
-        const originalClaim = scenario.given.find(
-          (fact) =>
-            fact.kind === "identity-claim" &&
-            fact.scope === "context" &&
-            fact.status === "exact" &&
-            fact.owner === branchCopy.from,
-        );
         if (
           typeof branchCopy.from !== "string" ||
           typeof branchCopy.to !== "string" ||
@@ -1612,6 +1726,23 @@ export const validateManagedStackContractFixtures = (
         ) {
           errors.push(`${scenario.id}: copied branch warning must bind observed branch ownership`);
         }
+      }
+      if (
+        branchCopy.originalExists === true &&
+        scenario.expected.outcome === "create" &&
+        (originalClaim?.kind !== "identity-claim" ||
+          scenario.expected.details?.original_context_id !== originalClaim.id ||
+          scenario.expected.details.original_owner !== branchCopy.from ||
+          output.json?.original_context_id !== originalClaim.id)
+      ) {
+        errors.push(`${scenario.id}: copied branch creation must bind its original context`);
+      }
+      if (
+        branchCopy.originalExists === false &&
+        scenario.expected.outcome === "reuse" &&
+        (originalClaim?.kind !== "identity-claim" || output.json?.rename_detected !== true)
+      ) {
+        errors.push(`${scenario.id}: missing original branch must be reported as a rename`);
       }
     }
     if (
@@ -1626,6 +1757,20 @@ export const validateManagedStackContractFixtures = (
     const actionGitState = scenario.given.find(
       (fact) => fact.kind === "git-state" && fact.workspacePath === actionCwd,
     );
+    const actionWorkspace = scenario.given.find(
+      (fact) => fact.kind === "workspace" && fact.path === actionCwd,
+    );
+    if (actionWorkspace?.kind === "workspace" && actionWorkspace.mode === "bare-worktree") {
+      if (
+        actionGitState?.kind !== "git-state" ||
+        actionGitState.commonDirectory === actionGitState.gitDirectory ||
+        scenario.expected.details?.project_identity_location !== actionGitState.commonDirectory ||
+        scenario.expected.details.checkout_identity_location !== actionGitState.gitDirectory ||
+        output.api?.primaryWorktreeRequired !== false
+      ) {
+        errors.push(`${scenario.id}: bare-repository worktree must not require a primary worktree`);
+      }
+    }
     const checkedOutBranch = scenario.given.find(
       (fact) => fact.kind === "branch" && fact.checkedOut,
     );
@@ -2190,6 +2335,18 @@ export const validateManagedStackContractFixtures = (
           (output.json !== undefined && output.json.bootstrap !== "not-attempted"))
       ) {
         errors.push(`${scenario.id}: existing managed target must not report legacy bootstrap`);
+      }
+      const legacyState = scenario.given.find((fact) => fact.kind === "legacy-state");
+      if (
+        existingStartedTarget?.kind === "managed-target" &&
+        legacyState?.kind === "legacy-state" &&
+        (legacyState.database === "incompatible" ||
+          legacyState.storage === "incompatible" ||
+          legacyState.credentials === "incompatible") &&
+        (scenario.expected.details?.timelines_diverged !== true ||
+          output.json?.timelines_diverged !== true)
+      ) {
+        errors.push(`${scenario.id}: managed restart must report legacy timeline divergence`);
       }
     }
 
@@ -3068,7 +3225,11 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.details?.managed_result_projected === true) {
+    const cliProjectsManagedResult =
+      scenario.when.interface === "cli" &&
+      scenario.when.argv[0] === "status" &&
+      scenario.given.some((fact) => fact.kind === "managed-api-options");
+    if (cliProjectsManagedResult) {
       const managedRecord = scenario.given.find(
         (fact) => fact.kind === "managed-record" && fact.stackId === selection?.stackId,
       );
@@ -3085,6 +3246,7 @@ export const validateManagedStackContractFixtures = (
         selectedStack?.kind !== "stack" ||
         selectedStack.lifecycle !== "running" ||
         persistedRuntime?.kind !== "persisted-runtime" ||
+        scenario.expected.details?.managed_result_projected !== true ||
         scenario.expected.details.identity_decisions_in_cli !== 0 ||
         output.human?.fields.stackId !== selection.stackId ||
         output.human.fields.runtime !== persistedRuntime.runtime ||
@@ -3304,6 +3466,7 @@ export const validateManagedStackContractFixtures = (
         scenario.expected.details.registry_record_published !== false ||
         output.api?.activeTargetExists !== false ||
         output.api?.registryRecordPublished !== false ||
+        output.api?.retryable !== true ||
         scenario.expected.writes.some(
           (write) =>
             (write.target === "managed-state" && write.operation !== "delete") ||
@@ -5315,6 +5478,11 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     area: "identity",
     given: [
       {
+        kind: "workspace-history",
+        path: "/work/project-a",
+        previousMode: "ordinary-folder",
+      },
+      {
         kind: "identity-transition",
         operation: "folder-to-git",
         from: "ordinary-folder",
@@ -5385,6 +5553,11 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     given: [
       ...freshManagedStartFacts("stack-git-default"),
       {
+        kind: "workspace-history",
+        path: "/work/project-a",
+        previousMode: "ordinary-folder",
+      },
+      {
         kind: "identity-transition",
         operation: "folder-to-git",
         from: "ordinary-folder",
@@ -5429,7 +5602,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-git-default" }],
       details: { project_identity_storage: "git-local", git_index_mutated: false },
       output: {
-        json: { outcome: "create", project_id: "project-git", checkout_id: "checkout-git" },
+        json: {
+          outcome: "create",
+          project_id: "project-git",
+          checkout_id: "checkout-git",
+          converted_to_git: true,
+        },
       },
     },
   },
@@ -5438,6 +5616,11 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     title: "Folder-to-Git conversion fails on ambiguous live identity claims",
     area: "identity",
     given: [
+      {
+        kind: "workspace-history",
+        path: "/work/project-a",
+        previousMode: "ordinary-folder",
+      },
       {
         kind: "identity-transition",
         operation: "folder-to-git",
@@ -8089,7 +8272,8 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     given: [
       {
         kind: "direct-stack-options",
-        roots: "omitted",
+        stackRoot: "omitted",
+        runtimeRoot: "omitted",
       },
     ],
     when: {
@@ -8099,18 +8283,117 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     },
     expected: {
       outcome: "create",
-      writes: [{ target: "ephemeral-state", operation: "create", id: "ephemeral-stack" }],
+      writes: [
+        {
+          target: "temporary-root",
+          operation: "create",
+          id: "ephemeral-stack-root",
+          root: "stack",
+        },
+        {
+          target: "temporary-root",
+          operation: "create",
+          id: "ephemeral-runtime-root",
+          root: "runtime",
+        },
+      ],
       runtimeEffects: [],
       details: {
         git_inspected: false,
         identity_marker_created: false,
         global_registry_mutated: false,
-        state_root: "temporary",
+        temporary_roots: ["stack", "runtime"],
       },
       output: {
         api: {
           handle: "stack-handle",
-          state_root: "temporary",
+          temporaryRoots: ["stack", "runtime"],
+        },
+      },
+    },
+  },
+  {
+    id: "api-boundary.direct-create-stack-keeps-omitted-runtime-root-temporary",
+    title: "Direct createStack keeps an omitted runtime root temporary",
+    area: "api-boundary",
+    given: [
+      {
+        kind: "direct-stack-options",
+        stackRoot: "explicit",
+        runtimeRoot: "omitted",
+      },
+    ],
+    when: {
+      interface: "stack-api",
+      method: "createStack",
+      input: {
+        projectDir: "/work/project-a",
+        cacheRoot: "/work/cache",
+        stackRoot: "/work/stack",
+      },
+    },
+    expected: {
+      outcome: "create",
+      writes: [
+        {
+          target: "temporary-root",
+          operation: "create",
+          id: "ephemeral-runtime-root",
+          root: "runtime",
+        },
+      ],
+      runtimeEffects: [],
+      details: {
+        git_inspected: false,
+        identity_marker_created: false,
+        global_registry_mutated: false,
+        temporary_roots: ["runtime"],
+      },
+      output: {
+        api: {
+          handle: "partial-stack-handle",
+          temporaryRoots: ["runtime"],
+        },
+      },
+    },
+  },
+  {
+    id: "api-boundary.direct-create-stack-keeps-omitted-stack-root-temporary",
+    title: "Direct createStack keeps an omitted stack root temporary",
+    area: "api-boundary",
+    given: [
+      {
+        kind: "direct-stack-options",
+        stackRoot: "omitted",
+        runtimeRoot: "explicit",
+      },
+    ],
+    when: {
+      interface: "stack-api",
+      method: "createStack",
+      input: { runtimeRoot: "/work/runtime" },
+    },
+    expected: {
+      outcome: "create",
+      writes: [
+        {
+          target: "temporary-root",
+          operation: "create",
+          id: "ephemeral-stack-root",
+          root: "stack",
+        },
+      ],
+      runtimeEffects: [],
+      details: {
+        git_inspected: false,
+        identity_marker_created: false,
+        global_registry_mutated: false,
+        temporary_roots: ["stack"],
+      },
+      output: {
+        api: {
+          handle: "partial-stack-handle",
+          temporaryRoots: ["stack"],
         },
       },
     },
@@ -8123,8 +8406,10 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
       {
         kind: "direct-stack-state",
         handle: "stack-handle",
-        stateId: "ephemeral-stack",
-        roots: "temporary",
+        temporaryRoots: [
+          { root: "stack", stateId: "ephemeral-stack-root" },
+          { root: "runtime", stateId: "ephemeral-runtime-root" },
+        ],
         lifecycle: "created",
       },
     ],
@@ -8135,14 +8420,31 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     },
     expected: {
       outcome: "delete",
-      writes: [{ target: "ephemeral-state", operation: "delete", id: "ephemeral-stack" }],
+      writes: [
+        {
+          target: "temporary-root",
+          operation: "delete",
+          id: "ephemeral-stack-root",
+          root: "stack",
+        },
+        {
+          target: "temporary-root",
+          operation: "delete",
+          id: "ephemeral-runtime-root",
+          root: "runtime",
+        },
+      ],
       runtimeEffects: [],
-      details: { temporary_roots_removed: true },
+      details: {
+        temporary_roots_removed: true,
+        removed_temporary_roots: ["stack", "runtime"],
+      },
       output: {
         api: {
           handle: "stack-handle",
           disposed: true,
           temporaryRootsRemoved: true,
+          removedTemporaryRoots: ["stack", "runtime"],
         },
       },
     },

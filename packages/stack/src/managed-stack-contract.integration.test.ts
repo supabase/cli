@@ -1937,7 +1937,7 @@ describe("managed stack acceptance contract", () => {
     const explicitRootsReportedTemporary = {
       ...directStackScenario,
       given: directStackScenario.given.map((fact) =>
-        fact.kind === "direct-stack-options" ? { ...fact, roots: "explicit" } : fact,
+        fact.kind === "direct-stack-options" ? { ...fact, stackRoot: "explicit" } : fact,
       ),
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([explicitRootsReportedTemporary])).toContain(
@@ -3307,6 +3307,162 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([directDisposalLeaksTemporaryRoots])).toContain(
       `${directDisposalScenario.id}: direct stack disposal must remove omitted temporary roots`,
     );
+
+    const partialDirectRootsScenario = findScenario(
+      "api-boundary.direct-create-stack-keeps-omitted-runtime-root-temporary",
+    );
+    const partialDirectRootsLeakRuntimeRoot = {
+      ...partialDirectRootsScenario,
+      expected: {
+        ...partialDirectRootsScenario.expected,
+        writes: [],
+        details: { ...partialDirectRootsScenario.expected.details, temporary_roots: [] },
+        output: {
+          ...partialDirectRootsScenario.expected.output,
+          api: { ...partialDirectRootsScenario.expected.output.api, temporaryRoots: [] },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([partialDirectRootsLeakRuntimeRoot])).toContain(
+      `${partialDirectRootsScenario.id}: direct stack root inputs must agree with temporary-state behavior`,
+    );
+
+    const copiedBranchCreateScenario = findScenario(
+      "identity.branch-copy-known-owner-creates-context-on-mutation",
+    );
+    const copiedBranchCreateReportsUnrelatedAncestry = {
+      ...copiedBranchCreateScenario,
+      expected: {
+        ...copiedBranchCreateScenario.expected,
+        details: {
+          ...copiedBranchCreateScenario.expected.details,
+          original_context_id: "context-unrelated",
+        },
+        output: {
+          ...copiedBranchCreateScenario.expected.output,
+          json: {
+            ...copiedBranchCreateScenario.expected.output.json,
+            original_context_id: "context-unrelated",
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([copiedBranchCreateReportsUnrelatedAncestry]),
+    ).toContain(
+      `${copiedBranchCreateScenario.id}: copied branch creation must bind its original context`,
+    );
+
+    const retryableBootstrapScenario = findScenario("bootstrap.failed-copy-rolls-back");
+    const failedBootstrapIsNotRetryable = {
+      ...retryableBootstrapScenario,
+      expected: {
+        ...retryableBootstrapScenario.expected,
+        output: {
+          ...retryableBootstrapScenario.expected.output,
+          api: { ...retryableBootstrapScenario.expected.output.api, retryable: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([failedBootstrapIsNotRetryable])).toContain(
+      `${retryableBootstrapScenario.id}: bootstrap rollback must leave no published partial target`,
+    );
+
+    const bareWorktreeScenario = findScenario(
+      "identity.bare-repository-linked-worktrees-share-project",
+    );
+    const bareWorktreeRequiresPrimary = {
+      ...bareWorktreeScenario,
+      expected: {
+        ...bareWorktreeScenario.expected,
+        output: {
+          ...bareWorktreeScenario.expected.output,
+          api: { ...bareWorktreeScenario.expected.output.api, primaryWorktreeRequired: true },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([bareWorktreeRequiresPrimary])).toContain(
+      `${bareWorktreeScenario.id}: bare-repository worktree must not require a primary worktree`,
+    );
+
+    const missingOriginalScenario = findScenario("identity.original-gone-turns-copy-into-rename");
+    const missingOriginalHidesRename = {
+      ...missingOriginalScenario,
+      expected: {
+        ...missingOriginalScenario.expected,
+        output: {
+          ...missingOriginalScenario.expected.output,
+          json: { ...missingOriginalScenario.expected.output.json, rename_detected: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([missingOriginalHidesRename])).toContain(
+      `${missingOriginalScenario.id}: missing original branch must be reported as a rename`,
+    );
+
+    const divergedTimelineScenario = findScenario(
+      "bootstrap.managed-and-legacy-diverge-after-copy",
+    );
+    const divergedTimelineReportsSynchronization = {
+      ...divergedTimelineScenario,
+      expected: {
+        ...divergedTimelineScenario.expected,
+        details: { ...divergedTimelineScenario.expected.details, timelines_diverged: false },
+        output: {
+          ...divergedTimelineScenario.expected.output,
+          json: { ...divergedTimelineScenario.expected.output.json, timelines_diverged: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([divergedTimelineReportsSynchronization]),
+    ).toContain(
+      `${divergedTimelineScenario.id}: managed restart must report legacy timeline divergence`,
+    );
+
+    const cliProjectionScenario = findScenario("api-boundary.cli-projects-shared-managed-results");
+    const cliReimplementsManagedDecisions = {
+      ...cliProjectionScenario,
+      expected: {
+        ...cliProjectionScenario.expected,
+        details: {
+          ...cliProjectionScenario.expected.details,
+          managed_result_projected: false,
+          identity_decisions_in_cli: 1,
+        },
+        output: {
+          ...cliProjectionScenario.expected.output,
+          human: {
+            ...cliProjectionScenario.expected.output.human!,
+            fields: { stackId: "stack-main-default", runtime: "native" },
+          },
+          json: { ...cliProjectionScenario.expected.output.json, runtime: "native" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([cliReimplementsManagedDecisions])).toContain(
+      `${cliProjectionScenario.id}: projected managed status requires an active running record and persisted runtime`,
+    );
+
+    const folderConversionScenario = findScenario(
+      "identity.folder-to-git-exact-claim-preserves-identity",
+    );
+    const folderConversionLosesTransition = {
+      ...folderConversionScenario,
+      given: folderConversionScenario.given.filter(
+        (fact) => fact.kind !== "identity-transition" || fact.operation !== "folder-to-git",
+      ),
+      expected: {
+        ...folderConversionScenario.expected,
+        output: {
+          ...folderConversionScenario.expected.output,
+          json: { ...folderConversionScenario.expected.output.json, converted_to_git: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([folderConversionLosesTransition])).toContain(
+      `${folderConversionScenario.id}: folder-to-Git result must bind the workspace transition`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
@@ -3593,6 +3749,8 @@ describe("managed stack acceptance contract", () => {
       [
         "api-boundary.cli-projects-shared-managed-results",
         "api-boundary.direct-create-stack-is-ephemeral",
+        "api-boundary.direct-create-stack-keeps-omitted-runtime-root-temporary",
+        "api-boundary.direct-create-stack-keeps-omitted-stack-root-temporary",
         "api-boundary.direct-dispose-removes-temporary-roots",
         "api-boundary.managed-api-accepts-injected-repository",
         "api-boundary.managed-api-accepts-isolated-state-root",
@@ -3953,7 +4111,8 @@ describe("managed stack acceptance contract", () => {
       given: [
         {
           kind: "direct-stack-options",
-          roots: "omitted",
+          stackRoot: "omitted",
+          runtimeRoot: "omitted",
         },
       ],
       when: {
@@ -3963,18 +4122,31 @@ describe("managed stack acceptance contract", () => {
       },
       expected: {
         outcome: "create",
-        writes: [{ target: "ephemeral-state", operation: "create", id: "ephemeral-stack" }],
+        writes: [
+          {
+            target: "temporary-root",
+            operation: "create",
+            id: "ephemeral-stack-root",
+            root: "stack",
+          },
+          {
+            target: "temporary-root",
+            operation: "create",
+            id: "ephemeral-runtime-root",
+            root: "runtime",
+          },
+        ],
         runtimeEffects: [],
         details: {
           git_inspected: false,
           identity_marker_created: false,
           global_registry_mutated: false,
-          state_root: "temporary",
+          temporary_roots: ["stack", "runtime"],
         },
         output: {
           api: {
             handle: "stack-handle",
-            state_root: "temporary",
+            temporaryRoots: ["stack", "runtime"],
           },
         },
       },

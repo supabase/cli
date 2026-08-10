@@ -33,8 +33,10 @@ and links to implementation work; it is not a second source of executable truth.
 `@supabase/stack` has two distinct public responsibilities:
 
 1. Direct `createStack(config)` creates one caller-controlled stack. Omitted stack and runtime roots
-   are disposable temporary directories and are removed on disposal. It does not inspect Git,
-   create identity markers, or mutate a global managed registry.
+   are resolved independently as disposable temporary directories and are removed on disposal.
+   Supplying project, cache, or one state-root path does not make another omitted state root
+   persistent. Direct usage does not inspect Git, create identity markers, or mutate a global
+   managed registry.
 2. The explicit managed surface owns system-aware discovery, identity, stack selection, ports,
    runtime persistence, bootstrap, and reclamation. It accepts an isolated state root or injected
    repository so applications and tests can use it without the CLI.
@@ -98,9 +100,9 @@ reuse must begin from an existing target, runtime stop effects must begin from a
 target-existence facts cannot contradict stack facts;
 running-source and credential-drift reports must begin from running sources, idempotent deletion
 must begin from a tombstone, orphan deletion must target orphaned state, and failed-copy cleanup may
-delete only a target proven absent before the attempt; direct-stack root facts must agree with
-caller-supplied root inputs and temporary-state behavior, and disposing a direct stack whose roots
-were omitted must delete its declared temporary state;
+delete only a target proven absent before the attempt; direct-stack root facts must bind stack and
+runtime roots independently to caller-supplied inputs and temporary-state behavior, and disposing a
+direct stack must delete every declared temporary root;
 every state write and runtime effect must identify its target; contextual CLI stack results must
 bind their output to a selected target; Git identity writes must use the correct common or worktree
 scope, context writes must name the active branch as owner, and adapters cannot recreate an identity
