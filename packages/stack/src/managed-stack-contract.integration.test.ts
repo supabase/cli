@@ -2637,6 +2637,144 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([reducedNativeGraph])).toContain(
       `${qualificationScenario.id}: failed native qualification must expose no reduced service graph`,
     );
+
+    const automaticNativeScenario = findScenario("runtime.auto-selects-fully-qualified-native");
+    const automaticNativeWithoutDockerEvidence = {
+      ...automaticNativeScenario,
+      given: automaticNativeScenario.given.filter(
+        (fact) => fact.kind !== "runtime-availability" || fact.runtime !== "docker",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([automaticNativeWithoutDockerEvidence])).toContain(
+      `${automaticNativeScenario.id}: automatic native fallback requires explicit Docker unavailability`,
+    );
+
+    if (qualificationScenario.expected.error === undefined) {
+      throw new Error("failed native qualification fixture must project an error");
+    }
+    const qualificationUsesUnrelatedError = {
+      ...qualificationScenario,
+      expected: {
+        ...qualificationScenario.expected,
+        error: { ...qualificationScenario.expected.error, code: "unrelated_error" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([qualificationUsesUnrelatedError])).toContain(
+      `${qualificationScenario.id}: supported unqualified native platform must use native_platform_not_qualified`,
+    );
+
+    const persistedRuntimeWithoutProvenance = {
+      ...persistedRuntimeAvailabilityScenario,
+      expected: {
+        ...persistedRuntimeAvailabilityScenario.expected,
+        output: {
+          ...persistedRuntimeAvailabilityScenario.expected.output,
+          json: { ...persistedRuntimeAvailabilityScenario.expected.output.json, persisted: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([persistedRuntimeWithoutProvenance])).toContain(
+      `${persistedRuntimeAvailabilityScenario.id}: automatic persisted runtime reuse must report persisted provenance`,
+    );
+
+    const siblingPortScenario = findScenario("ports.sibling-targets-allocate-independent-ports");
+    const omittedSiblingAssignment = {
+      ...siblingPortScenario,
+      given: siblingPortScenario.given.filter(
+        (fact) => fact.kind !== "port-assignment" || fact.stackId !== "stack-main-default",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([omittedSiblingAssignment])).toContain(
+      `${siblingPortScenario.id}: sibling allocation must bind all avoided stack IDs`,
+    );
+
+    const nonDestructiveStopScenario = findScenario("reclamation.default-stop-preserves-data");
+    const nonDestructiveStopReportsDataLoss = {
+      ...nonDestructiveStopScenario,
+      expected: {
+        ...nonDestructiveStopScenario.expected,
+        details: {
+          ...nonDestructiveStopScenario.expected.details,
+          data_preserved: false,
+          registry_record_preserved: false,
+        },
+        output: {
+          ...nonDestructiveStopScenario.expected.output,
+          human: {
+            ...nonDestructiveStopScenario.expected.output.human!,
+            fields: { dataPreserved: "false" },
+          },
+          json: {
+            ...nonDestructiveStopScenario.expected.output.json,
+            data_preserved: false,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([nonDestructiveStopReportsDataLoss])).toContain(
+      `${nonDestructiveStopScenario.id}: non-destructive stop must report preserved data and registry`,
+    );
+
+    const existingManagedTargetScenario = findScenario(
+      "bootstrap.existing-managed-target-ignores-legacy",
+    );
+    const existingTargetReportsBootstrap = {
+      ...existingManagedTargetScenario,
+      expected: {
+        ...existingManagedTargetScenario.expected,
+        details: { ...existingManagedTargetScenario.expected.details, legacy_state_read: true },
+        output: {
+          ...existingManagedTargetScenario.expected.output,
+          api: {
+            ...existingManagedTargetScenario.expected.output.api,
+            bootstrap: "copied",
+            legacyStateRead: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([existingTargetReportsBootstrap])).toContain(
+      `${existingManagedTargetScenario.id}: existing managed target must not report legacy bootstrap`,
+    );
+
+    const checkoutRebindScenario = findScenario("identity.missing-previous-path-rebinds-checkout");
+    const checkoutRebindWithoutRegistryUpdate = {
+      ...checkoutRebindScenario,
+      expected: {
+        ...checkoutRebindScenario.expected,
+        writes: checkoutRebindScenario.expected.writes.filter(
+          (write) => write.target !== "registry",
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([checkoutRebindWithoutRegistryUpdate])).toContain(
+      `${checkoutRebindScenario.id}: automatic checkout rebind must persist the checkout registry update`,
+    );
+
+    const exactPortChangeScenario = findScenario("ports.config-change-on-stopped-stack-applies");
+    const exactPortChangeWithoutPersistence = {
+      ...exactPortChangeScenario,
+      expected: {
+        ...exactPortChangeScenario.expected,
+        writes: exactPortChangeScenario.expected.writes.filter(
+          (write) => write.target !== "managed-state",
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([exactPortChangeWithoutPersistence])).toContain(
+      `${exactPortChangeScenario.id}: exact port change must persist assignment before runtime start`,
+    );
+
+    const engineScopedStopScenario = findScenario("reclamation.stop-is-engine-scoped");
+    const engineScopedStopWithoutRunningLegacy = {
+      ...engineScopedStopScenario,
+      given: engineScopedStopScenario.given.map((fact) =>
+        fact.kind === "legacy-state" ? { ...fact, lifecycle: "stopped" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([engineScopedStopWithoutRunningLegacy])).toContain(
+      `${engineScopedStopScenario.id}: engine-scoped stop requires a simultaneously running legacy stack`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {

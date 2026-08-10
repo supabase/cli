@@ -886,6 +886,29 @@ export const validateManagedStackContractFixtures = (
       if (
         persistedRuntime?.kind === "persisted-runtime" &&
         persistedAvailability?.kind === "runtime-availability" &&
+        persistedAvailability.available &&
+        (scenario.expected.details?.runtime !== persistedRuntime.runtime ||
+          scenario.expected.details.auto_re_evaluated !== false ||
+          output.json?.persisted !== true)
+      ) {
+        errors.push(
+          `${scenario.id}: automatic persisted runtime reuse must report persisted provenance`,
+        );
+      }
+      if (
+        persistedRuntime === undefined &&
+        resolvedRuntime === "native" &&
+        (dockerAvailability?.kind !== "runtime-availability" ||
+          dockerAvailability.available ||
+          typeof dockerAvailability.reason !== "string")
+      ) {
+        errors.push(
+          `${scenario.id}: automatic native fallback requires explicit Docker unavailability`,
+        );
+      }
+      if (
+        persistedRuntime?.kind === "persisted-runtime" &&
+        persistedAvailability?.kind === "runtime-availability" &&
         !persistedAvailability.available
       ) {
         if (
@@ -1693,23 +1716,45 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (output.api?.rebound === true) {
-      const movedWorkspace = scenario.given.find(
-        (fact) => fact.kind === "workspace" && fact.path === actionCwd,
-      );
-      const exactClaim = scenario.given.find(
-        (fact) => fact.kind === "identity-claim" && fact.scope === "checkout",
-      );
+    const movedWorkspace = scenario.given.find(
+      (fact) => fact.kind === "workspace" && fact.path === actionCwd,
+    );
+    const exactCheckoutClaim = scenario.given.find(
+      (fact) => fact.kind === "identity-claim" && fact.scope === "checkout",
+    );
+    if (
+      movedWorkspace?.kind === "workspace" &&
+      movedWorkspace.previousPathAccess === "missing" &&
+      exactCheckoutClaim?.kind === "identity-claim" &&
+      exactCheckoutClaim.status === "exact" &&
+      scenario.expected.outcome === "reuse"
+    ) {
+      const apiRebindMatches =
+        output.api === undefined ||
+        (output.api.rebound === true && output.api.checkoutId === exactCheckoutClaim.id);
+      const jsonRebindMatches =
+        output.json === undefined ||
+        (output.json.rebound_from === movedWorkspace.previousPath &&
+          output.json.checkout_id === exactCheckoutClaim.id);
       if (
-        movedWorkspace?.kind !== "workspace" ||
-        movedWorkspace.previousPathAccess !== "missing" ||
         movedWorkspace.previousPath === undefined ||
-        exactClaim?.kind !== "identity-claim" ||
-        exactClaim.status !== "exact" ||
-        exactClaim.path !== movedWorkspace.previousPath ||
-        output.api?.checkoutId !== exactClaim.id
+        exactCheckoutClaim.path !== movedWorkspace.previousPath ||
+        !apiRebindMatches ||
+        !jsonRebindMatches
       ) {
         errors.push(`${scenario.id}: automatic checkout rebind requires a missing previous path`);
+      }
+      if (
+        !scenario.expected.writes.some(
+          (write) =>
+            write.target === "registry" &&
+            write.operation === "update" &&
+            write.id === exactCheckoutClaim.id,
+        )
+      ) {
+        errors.push(
+          `${scenario.id}: automatic checkout rebind must persist the checkout registry update`,
+        );
       }
     }
 
@@ -1774,6 +1819,15 @@ export const validateManagedStackContractFixtures = (
           );
         }
         const platformQualified = failed.size === 0 && qualified.size === nativeServices.length;
+        if (
+          platformSupported &&
+          !platformQualified &&
+          scenario.expected.error?.code !== "native_platform_not_qualified"
+        ) {
+          errors.push(
+            `${scenario.id}: supported unqualified native platform must use native_platform_not_qualified`,
+          );
+        }
         if (
           scenario.expected.outcome !== (platformQualified ? "report" : "error") ||
           scenario.expected.details?.qualified !== platformQualified ||
@@ -1879,6 +1933,25 @@ export const validateManagedStackContractFixtures = (
         errors.push(
           `${scenario.id}: absent managed target ${target.stackId} contradicts an existing stack`,
         );
+      }
+    }
+    if (isManagedStartAction(scenario.when) && scenario.expected.outcome === "reuse") {
+      const existingStartedTarget = scenario.given.find(
+        (fact) =>
+          fact.kind === "managed-target" &&
+          fact.exists &&
+          scenario.expected.runtimeEffects.some(
+            (effect) => effect.operation === "start" && effect.stackId === fact.stackId,
+          ),
+      );
+      if (
+        existingStartedTarget?.kind === "managed-target" &&
+        (scenario.expected.details?.legacy_state_read !== false ||
+          (output.api !== undefined &&
+            (output.api.bootstrap !== "not-attempted" || output.api.legacyStateRead !== false)) ||
+          (output.json !== undefined && output.json.bootstrap !== "not-attempted"))
+      ) {
+        errors.push(`${scenario.id}: existing managed target must not report legacy bootstrap`);
       }
     }
 
@@ -2478,6 +2551,25 @@ export const validateManagedStackContractFixtures = (
           `${scenario.id}: exact port change must bind previous assignment and requested value`,
         );
       }
+      if (scenario.expected.outcome === "update" && selection !== undefined) {
+        const persistenceIndex = scenario.expected.writes.findIndex(
+          (write) =>
+            write.target === "managed-state" &&
+            write.operation === "update" &&
+            write.id === selection.stackId,
+        );
+        const runtimeStartIndex = scenario.expected.writes.findIndex(
+          (write) =>
+            write.target === "runtime-state" &&
+            write.operation === "start" &&
+            write.id === selection.stackId,
+        );
+        if (persistenceIndex < 0 || runtimeStartIndex <= persistenceIndex) {
+          errors.push(
+            `${scenario.id}: exact port change must persist assignment before runtime start`,
+          );
+        }
+      }
     }
 
     if (scenario.expected.output.json?.sticky === true) {
@@ -2571,6 +2663,20 @@ export const validateManagedStackContractFixtures = (
           ? [fact]
           : [],
       );
+      const siblingStackIds = [...new Set(siblingAssignments.map(({ stackId }) => stackId))];
+      const projectedAvoidedStackIds = scenario.expected.details?.avoided_sibling_stack_ids;
+      const avoidedStackIds =
+        Array.isArray(projectedAvoidedStackIds) &&
+        projectedAvoidedStackIds.every((stackId): stackId is string => typeof stackId === "string")
+          ? projectedAvoidedStackIds
+          : undefined;
+      if (
+        (siblingStackIds.length > 0 || projectedAvoidedStackIds !== undefined) &&
+        (avoidedStackIds === undefined ||
+          !managedStackContractStringSetEquals(siblingStackIds, avoidedStackIds))
+      ) {
+        errors.push(`${scenario.id}: sibling allocation must bind all avoided stack IDs`);
+      }
       const projectedPorts = scenario.expected.output.api?.ports;
       if (!isManagedStackContractRecord(projectedPorts)) {
         if (siblingAssignments.length > 0) {
@@ -2905,6 +3011,47 @@ export const validateManagedStackContractFixtures = (
       scenario.expected.writes.some(
         (write) => write.target === "managed-state" && write.operation === "delete",
       ) || scenario.expected.runtimeEffects.some((effect) => effect.operation === "delete");
+    const nonDestructiveStop =
+      scenario.when.interface === "cli" &&
+      scenario.when.argv[0] === "stop" &&
+      scenario.expected.outcome === "update" &&
+      scenario.expected.runtimeEffects.some((effect) => effect.operation === "stop") &&
+      !destructivelyDeletesManagedState &&
+      !scenario.expected.writes.some(
+        (write) =>
+          write.target === "registry" &&
+          (write.operation === "delete" || write.operation === "tombstone"),
+      );
+    if (
+      nonDestructiveStop &&
+      (scenario.expected.details?.data_preserved !== true ||
+        scenario.expected.details.registry_record_preserved !== true ||
+        output.human?.fields.dataPreserved !== "true" ||
+        output.json?.data_preserved !== true)
+    ) {
+      errors.push(`${scenario.id}: non-destructive stop must report preserved data and registry`);
+    }
+    if (
+      scenario.expected.details?.legacy_stack_stopped !== undefined ||
+      output.json?.legacy_stack_stopped !== undefined
+    ) {
+      const runningLegacyState = scenario.given.find(
+        (fact) => fact.kind === "legacy-state" && fact.lifecycle === "running",
+      );
+      if (
+        !nonDestructiveStop ||
+        runningLegacyState?.kind !== "legacy-state" ||
+        scenario.expected.details?.managed_stack_stopped !== true ||
+        scenario.expected.details.legacy_stack_stopped !== false ||
+        scenario.expected.details.legacy_state_mutated !== false ||
+        output.json?.managed_stack_stopped !== true ||
+        output.json.legacy_stack_stopped !== false
+      ) {
+        errors.push(
+          `${scenario.id}: engine-scoped stop requires a simultaneously running legacy stack`,
+        );
+      }
+    }
     if (
       destructivelyDeletesManagedState &&
       scenario.when.interface === "cli" &&
@@ -6801,13 +6948,17 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         managed_stack_stopped: true,
         legacy_stack_stopped: false,
         legacy_state_mutated: false,
+        data_preserved: true,
+        registry_record_preserved: true,
       },
       output: {
+        human: { summary: "Stopped main/default", fields: { dataPreserved: "true" } },
         json: {
           outcome: "update",
           stack_id: "stack-main-default",
           managed_stack_stopped: true,
           legacy_stack_stopped: false,
+          data_preserved: true,
         },
       },
     },
