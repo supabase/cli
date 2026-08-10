@@ -43,6 +43,10 @@ The CLI is a consumer and presentation layer. It translates arguments into manag
 projects managed results into human and JSON output. It must not implement a second identity,
 selection, port, runtime, or lifecycle decision path.
 
+Git workspaces store project, checkout, and context identities in Git-local metadata, using common
+or worktree scope as appropriate. A tracked working-tree identity marker is inert: discovery never
+trusts or rewrites it. Ordinary non-Git folders may use an untracked local identity marker.
+
 Read-only status remains a successful `report` when it can identify a running stack but finds
 unapplied port, credential, or runtime configuration. The report includes a structured warning and
 recovery guidance. Conditions that prevent safe identity selection, such as ambiguous ownership,
@@ -75,10 +79,12 @@ fixtures. CLI integration coverage begins when a real command boundary exists; a
 test is not evidence that an unimplemented command already satisfies the behavior.
 
 The fixture validator therefore checks more than catalog shape: selected, written, and effected
-identities must be declared, runtime effects must agree with permitted state writes, and
-human/API/JSON projections cannot contradict the managed result. We deliberately do not introduce
-a parallel test-only identity resolver; it would duplicate product policy before the real managed
-surface exists and could pass while the production implementation drifts.
+identities must be declared; starts of existing stacks must declare a stopped lifecycle; managed
+state creation must publish its registry record; tracked identity markers must remain untouched;
+runtime effects must agree with permitted state writes; and human/API/JSON projections cannot
+contradict the managed result. We deliberately do not introduce a parallel test-only identity
+resolver; it would duplicate product policy before the real managed surface exists and could pass
+while the production implementation drifts.
 
 ## Implementation Handoff
 

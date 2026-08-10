@@ -386,6 +386,35 @@ export const validateManagedStackContractFixtures = (
           break;
       }
     }
+
+    if (
+      scenario.given.some(
+        (fact) => fact.kind === "git-state" && fact.trackedIdentityMarker === true,
+      ) &&
+      scenario.expected.writes.some((write) => write.target === "identity-marker")
+    ) {
+      errors.push(`${scenario.id}: a tracked identity marker must remain untouched`);
+    }
+
+    if (scenario.expected.outcome !== "create") {
+      for (const effect of scenario.expected.runtimeEffects) {
+        if (effect.operation !== "start" || effect.stackId === undefined) {
+          continue;
+        }
+        const explicitlyStopped = scenario.given.some(
+          (fact) =>
+            fact.kind === "stack" &&
+            fact.stackId === effect.stackId &&
+            fact.lifecycle === "stopped",
+        );
+        if (!explicitlyStopped) {
+          errors.push(
+            `${scenario.id}: starting existing stack ${effect.stackId} requires an explicit stopped lifecycle`,
+          );
+        }
+      }
+    }
+
     for (const write of scenario.expected.writes) {
       if (
         write.id !== undefined &&
@@ -458,6 +487,21 @@ export const validateManagedStackContractFixtures = (
     }
 
     for (const write of scenario.expected.writes) {
+      if (
+        write.target === "managed-state" &&
+        (write.operation === "copy" || write.operation === "create") &&
+        !scenario.expected.writes.some(
+          (candidate) =>
+            candidate.target === "registry" &&
+            candidate.operation === "publish" &&
+            candidate.id === write.id,
+        )
+      ) {
+        errors.push(
+          `${scenario.id}: managed-state ${write.operation} requires registry publication`,
+        );
+      }
+
       const requiredRuntimeOperation =
         write.target === "runtime-state" && write.operation === "start"
           ? "start"
@@ -1278,7 +1322,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       writes: [
-        { target: "identity-marker", operation: "create", id: "project-clone" },
+        { target: "git-config", operation: "create", id: "project-clone" },
         { target: "git-config", operation: "create", id: "checkout-clone" },
         { target: "git-config", operation: "create", id: "context-clone-main" },
         { target: "registry", operation: "publish", id: "stack-clone-main-default" },
@@ -1286,6 +1330,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         { target: "runtime-state", operation: "start", id: "stack-clone-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-clone-main-default" }],
+      details: { project_identity_storage: "git-local", git_index_mutated: false },
       output: {
         json: {
           outcome: "create",
@@ -1708,7 +1753,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       writes: [
-        { target: "identity-marker", operation: "create", id: "project-clone" },
+        { target: "git-config", operation: "create", id: "project-clone" },
         { target: "git-config", operation: "create", id: "checkout-clone" },
         { target: "git-config", operation: "create", id: "context-clone-main" },
         { target: "registry", operation: "publish", id: "stack-clone-main-default" },
@@ -1716,7 +1761,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         { target: "runtime-state", operation: "start", id: "stack-clone-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-clone-main-default" }],
-      details: { tracked_marker_ignored: true, git_index_mutated: false },
+      details: {
+        project_identity_storage: "git-local",
+        tracked_marker_ignored: true,
+        tracked_marker_mutated: false,
+        git_index_mutated: false,
+      },
       output: {
         json: {
           outcome: "create",
@@ -1815,7 +1865,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       writes: [
-        { target: "identity-marker", operation: "create", id: "project-git" },
+        { target: "git-config", operation: "create", id: "project-git" },
         { target: "git-config", operation: "create", id: "checkout-git" },
         { target: "git-config", operation: "create", id: "context-git-main" },
         { target: "registry", operation: "publish", id: "stack-git-default" },
@@ -1823,7 +1873,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         { target: "runtime-state", operation: "start", id: "stack-git-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-git-default" }],
-      details: { git_index_mutated: false },
+      details: { project_identity_storage: "git-local", git_index_mutated: false },
       output: {
         json: { outcome: "create", project_id: "project-git", checkout_id: "checkout-git" },
       },
@@ -1995,6 +2045,13 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     given: [
       { kind: "config-port", key: "api.port", intent: "exact", value: 54321, source: "local" },
       { kind: "managed-target", stackId: "stack-main-default", exists: true },
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-main-default",
+        contextId: "context-main",
+        lifecycle: "stopped",
+      },
     ],
     when: {
       interface: "managed-api",
@@ -2042,7 +2099,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       outcome: "create",
       writes: [
         { target: "managed-state", operation: "create", id: "stack-feat-default" },
-        { target: "registry", operation: "update", id: "stack-feat-default" },
+        { target: "registry", operation: "publish", id: "stack-feat-default" },
         { target: "runtime-state", operation: "start", id: "stack-feat-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-feat-default" }],
@@ -2406,6 +2463,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       outcome: "create",
       writes: [
         { target: "managed-state", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
@@ -2429,6 +2487,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       outcome: "create",
       writes: [
         { target: "managed-state", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
@@ -2498,6 +2557,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       outcome: "create",
       writes: [
         { target: "managed-state", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
@@ -2535,6 +2595,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       outcome: "create",
       writes: [
         { target: "managed-state", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
@@ -2639,6 +2700,13 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     area: "runtime",
     given: [
       { kind: "persisted-runtime", stackId: "stack-main-default", runtime: "native" },
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-main-default",
+        contextId: "context-main",
+        lifecycle: "stopped",
+      },
       { kind: "runtime-request", source: "default", runtime: "auto" },
       { kind: "runtime-availability", runtime: "docker", available: true },
       { kind: "runtime-availability", runtime: "native", available: true },
@@ -2899,8 +2967,8 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     },
   },
   {
-    id: "bootstrap.incompatible-or-absent-legacy-starts-fresh",
-    title: "A first start without compatible legacy state creates a fresh managed target",
+    id: "bootstrap.incompatible-legacy-starts-fresh",
+    title: "A first start with incompatible stopped legacy state creates a fresh managed target",
     area: "bootstrap",
     given: [
       { kind: "managed-target", stackId: "stack-main-default", exists: false },
@@ -2921,7 +2989,46 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
-      details: { bootstrap: "fresh", legacy_state_mutated: false },
+      details: {
+        bootstrap: "fresh",
+        legacy_state: "incompatible",
+        legacy_state_mutated: false,
+      },
+      output: {
+        human: { summary: "Created a fresh main/default stack", fields: { bootstrap: "fresh" } },
+        json: {
+          outcome: "create",
+          stack_id: "stack-main-default",
+          bootstrap: "fresh",
+          legacy_state_mutated: false,
+        },
+      },
+    },
+  },
+  {
+    id: "bootstrap.absent-legacy-starts-fresh",
+    title: "A first start without legacy state creates a fresh managed target",
+    area: "bootstrap",
+    given: [
+      { kind: "managed-target", stackId: "stack-main-default", exists: false },
+      {
+        kind: "legacy-state",
+        lifecycle: "absent",
+        database: "absent",
+        storage: "absent",
+        credentials: "absent",
+      },
+    ],
+    when: { interface: "cli", argv: ["start", "--experimental"], cwd: "checkout-a" },
+    expected: {
+      outcome: "create",
+      writes: [
+        { target: "managed-state", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
+        { target: "runtime-state", operation: "start", id: "stack-main-default" },
+      ],
+      runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
+      details: { bootstrap: "fresh", legacy_state: "absent", legacy_state_mutated: false },
       output: {
         human: { summary: "Created a fresh main/default stack", fields: { bootstrap: "fresh" } },
         json: {
@@ -3068,6 +3175,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       outcome: "create",
       writes: [
         { target: "managed-state", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
@@ -3093,6 +3201,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       outcome: "create",
       writes: [
         { target: "managed-state", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
@@ -4021,7 +4130,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
       },
       writes: [
         { target: "managed-state", operation: "copy", id: "stack-main-default" },
-        { target: "registry", operation: "create", id: "stack-main-default" },
+        { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [

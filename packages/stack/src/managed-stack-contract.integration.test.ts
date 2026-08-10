@@ -6,6 +6,7 @@ import { createStack } from "./node.ts";
 import {
   managedNativeServiceMatrix,
   managedStackContractFixtures,
+  type ManagedStackContractFact,
   type ManagedStackContractScenario,
   validateManagedStackContractFixtures,
 } from "./testing.ts";
@@ -69,6 +70,58 @@ describe("managed stack acceptance contract", () => {
     };
     expect(validateManagedStackContractFixtures([divergentProjection])).toContain(
       `${scenario.id}: projected outcome disagrees with the managed result`,
+    );
+
+    const existingTarget: ManagedStackContractFact = {
+      kind: "managed-target",
+      stackId: "stack-main-default",
+      exists: true,
+    };
+    const ambiguousExistingStart = {
+      ...scenario,
+      given: [...scenario.given.filter(({ kind }) => kind !== "stack"), existingTarget],
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ambiguousExistingStart])).toContain(
+      `${scenario.id}: starting existing stack stack-main-default requires an explicit stopped lifecycle`,
+    );
+
+    const trackedMarkerScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.fresh-clone-ignores-tracked-marker",
+    );
+    if (trackedMarkerScenario === undefined) {
+      throw new Error("identity.fresh-clone-ignores-tracked-marker fixture is required");
+    }
+    const identityMarkerWrite = {
+      target: "identity-marker",
+      operation: "create",
+      id: "project-clone",
+    } satisfies ManagedStackContractScenario["expected"]["writes"][number];
+    const trackedMarkerMutation = {
+      ...trackedMarkerScenario,
+      expected: {
+        ...trackedMarkerScenario.expected,
+        writes: [...trackedMarkerScenario.expected.writes, identityMarkerWrite],
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([trackedMarkerMutation])).toContain(
+      `${trackedMarkerScenario.id}: a tracked identity marker must remain untouched`,
+    );
+
+    const absentLegacyScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "bootstrap.absent-legacy-starts-fresh",
+    );
+    if (absentLegacyScenario === undefined) {
+      throw new Error("bootstrap.absent-legacy-starts-fresh fixture is required");
+    }
+    const unpublishedManagedState = {
+      ...absentLegacyScenario,
+      expected: {
+        ...absentLegacyScenario.expected,
+        writes: absentLegacyScenario.expected.writes.filter(({ target }) => target !== "registry"),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unpublishedManagedState])).toContain(
+      `${absentLegacyScenario.id}: managed-state create requires registry publication`,
     );
   });
 
@@ -198,10 +251,11 @@ describe("managed stack acceptance contract", () => {
         .sort(),
     ).toEqual(
       [
+        "bootstrap.absent-legacy-starts-fresh",
         "bootstrap.existing-managed-target-ignores-legacy",
         "bootstrap.failed-copy-rolls-back-and-retries",
         "bootstrap.first-start-copies-compatible-legacy-state",
-        "bootstrap.incompatible-or-absent-legacy-starts-fresh",
+        "bootstrap.incompatible-legacy-starts-fresh",
         "bootstrap.managed-and-legacy-diverge-after-copy",
         "bootstrap.running-legacy-source-fails-without-mutation",
       ].sort(),
@@ -538,7 +592,7 @@ describe("managed stack acceptance contract", () => {
         outcome: "create",
         writes: [
           { target: "managed-state", operation: "copy", id: "stack-main-default" },
-          { target: "registry", operation: "create", id: "stack-main-default" },
+          { target: "registry", operation: "publish", id: "stack-main-default" },
           { target: "runtime-state", operation: "start", id: "stack-main-default" },
         ],
         runtimeEffects: [
